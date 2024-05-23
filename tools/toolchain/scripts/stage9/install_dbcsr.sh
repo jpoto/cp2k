@@ -4,7 +4,7 @@
 # shellcheck disable=all
 
 [ "${BASH_SOURCE[0]}" ] && SCRIPT_NAME="${BASH_SOURCE[0]}" || SCRIPT_NAME=$0
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_NAME")" && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_NAME")/.." && pwd -P)"
 
 DBCSR_ver="2.5.0"
 DBCSR_sha256="e5c545ec16688027537f7865976b905c0783d038ec289e65635e63e961330601"
@@ -22,15 +22,13 @@ DBCSR_LIBS=''
 ! [ -d "${BUILDDIR}" ] && mkdir -p "${BUILDDIR}"
 cd "${BUILDDIR}"
 
-case "$with_dbcsr" in
+case "${with_dbcsr}" in
   __INSTALL__)
     echo "==================== Installing DBCSR ===================="
-    #
-    # to be restored to the right value when this script is included in the toolchain
-    pkg_install_dir="${INSTALLDIR}/DBCSR"
-    install_lock_file="$pkg_install_dirnstall_dir/install_successful"
+    pkg_install_dir="${INSTALLDIR}/DBCSR-${DBCSR_ver}"
+    install_lock_file="$pkg_install_dir/install_successful"
     if verify_checksums "${install_lock_file}"; then
-      echo "DBCSR-${DBCSR_ver} is already install_dbcsr.sh installed, skipping it."
+      echo "DBCSR-${DBCSR_ver} is already installed, skipping it."
     else
       if [ -f dbcsr-${DBCSR_ver}.tar.gz ]; then
         echo "dbcsr-${DBCSR_ver}.tar.gz is found"
@@ -57,6 +55,7 @@ case "$with_dbcsr" in
       if [ "$ENABLE_CUDA" == "__TRUE__" ]; then
         [ -d build-cuda ] && rm -rf "build-cuda"
         mkdir build-cuda
+        cd build-cuda
         COMPILATION_OPTIONS="${COMPILATION_OPTIONS} -DCMAKE_INSTALL_PREFIX=${pkg_install_dir}-cuda -DUSE_ACCEL=cuda -DWITH_GPU=P100"
         cmake $COMPILATION_OPTIONS ..
         make -j $(get_nprocs) > make.log 2>&1
@@ -67,13 +66,14 @@ case "$with_dbcsr" in
       if [ "$ENABLE_HIP" == "__TRUE__" ]; then
         [ -d build-hip ] && rm -rf "build-hip"
         mkdir build-hip
+        cd build-hip
         COMPILATION_OPTIONS="${COMPILATION_OPTIONS}  -DCMAKE_INSTALL_PREFIX=${pkg_install_dir}-hip -DUSE_ACCEL=hip -DWITH_GPU=Mi250"
         cmake $COMPILATION_OPTIONS ..
         make -j $(get_nprocs) > make.log 2>&1
         make install > install.log 2>&1
         cd ..
       fi
-      write_checksums "${install_lock_file}" "${SCRIPT_DIR}/$(basename ${SCRIPT_NAME})"
+      write_checksums "${install_lock_file}" "${SCRIPT_DIR}/stage9/$(basename ${SCRIPT_NAME})"
       DBCSR_CFLAGS="-I'${pkg_install_dir}/include'"
       DBCSR_LDFLAGS="-L'${pkg_install_dir}/lib' -Wl,-rpath='${pkg_install_dir}/lib'"
       DBCSR_CUDA_CFLAGS="-I'${pkg_install_dir}-cuda/include'"
@@ -92,7 +92,7 @@ case "$with_dbcsr" in
     report_error ${LINENO} "It is not possible to compile cp2k without dbcsr"
     ;;
   *)
-    echo "==================== Linking spfft to user paths ===================="
+    echo "==================== Linking DBCSR to user paths ===================="
     pkg_install_dir="$with_dbcsr"
 
     # use the lib64 directory if present (multi-abi distros may link lib/ to lib32/ instead)

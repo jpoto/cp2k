@@ -266,7 +266,7 @@ mpi_list="mpich openmpi intelmpi"
 math_list="mkl acml openblas"
 lib_list="fftw libint libxc libgrpp libxsmm cosma scalapack elpa cusolvermp plumed \
           spfft spla ptscotch superlu pexsi quip gsl spglib hdf5 libvdwxc sirius
-          libvori libtorch deepmd"
+          libvori libtorch deepmd dbcsr"
 package_list="${tool_list} ${mpi_list} ${math_list} ${lib_list}"
 # ------------------------------------------------------------------------
 
@@ -315,6 +315,8 @@ with_spla="__DONTUSE__"
 with_cosma="__INSTALL__"
 with_libvori="__INSTALL__"
 with_libtorch="__DONTUSE__"
+with_dbcsr="__INSTALL__"
+
 # for MPI, we try to detect system MPI variant
 if (command -v mpiexec > /dev/null 2>&1); then
   # check if we are dealing with openmpi, mpich or intelmpi
@@ -649,6 +651,9 @@ while [ $# -ge 1 ]; do
       ;;
     --with-spla*)
       with_spla=$(read_with "${1}")
+      ;;
+    --with-dbcsr*)
+      with_dbcsr=$(read_with "${1}")
       ;;
     --help*)
       show_help
@@ -991,6 +996,7 @@ else
   ./scripts/stage6/install_stage6.sh
   ./scripts/stage7/install_stage7.sh
   ./scripts/stage8/install_stage8.sh
+  ./scripts/stage9/install_stage9.sh  
   # Stage 9 is reserved for DBCSR.
   if [ "${no_arch_files}" = "__FALSE__" ]; then
     ./scripts/generate_arch_files.sh
