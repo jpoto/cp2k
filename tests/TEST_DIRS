@@ -4,6 +4,7 @@
 # in case a new directory is added just add it at the top of the list..
 # the order will be regularly checked and modified...
 Fist/regtest-water
+QS/regtest-dft-vdw-corr-4                                   libdftd4
 QS/regtest-ecp                                              libgrpp
 QS/regtest-ecp-2                                            libgrpp
 QS/regtest-as-3                                             libint mpiranks%2==0
