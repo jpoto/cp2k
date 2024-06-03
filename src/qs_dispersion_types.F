@@ -35,6 +35,8 @@ MODULE qs_dispersion_types
       CHARACTER(LEN=default_string_length)  :: ref_functional
       REAL(KIND=dp)                          :: scaling
       REAL(KIND=dp)                          :: rc_disp
+      REAL(KIND=dp)                          :: rc_d4
+      REAL(KIND=dp)                          :: rc_cn
       REAL(KIND=dp)                          :: exp_pre
       TYPE(section_vals_type), POINTER       :: dftd_section
       LOGICAL                                :: verbose !extended output
