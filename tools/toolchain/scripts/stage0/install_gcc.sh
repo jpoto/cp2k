@@ -115,7 +115,8 @@ case "${with_gcc}" in
     F90="${FC}"
     F77="${FC}"
     GCC_CFLAGS="-I'${pkg_install_dir}/include'"
-    GCC_LDFLAGS="-L'${pkg_install_dir}/lib64' -L'${pkg_install_dir}/lib' -Wl,-rpath,'${pkg_install_dir}/lib64' -Wl,-rpath,'${pkg_install_dir}/lib64'"
+    lib64_path=${pkg_install_dir}/lib64
+    GCC_LDFLAGS="-L'$lib64_path' -L'${pkg_install_dir}/lib' -Wl,-rpath,'$lib64_path' -Wl,-rpath,'$lib64_path'"
     ;;
   __SYSTEM__)
     echo "==================== Finding GCC from system paths ===================="
@@ -135,15 +136,16 @@ case "${with_gcc}" in
     pkg_install_dir="${with_gcc}"
     check_dir "${pkg_install_dir}/bin"
     check_dir "${pkg_install_dir}/lib"
-    check_dir "${pkg_install_dir}/lib64"
+    check_dir "/usr/lib64"
     check_dir "${pkg_install_dir}/include"
-    check_command ${pkg_install_dir}/bin/gcc "gcc" && CC="${pkg_install_dir}/bin/gcc" || exit 1
-    check_command ${pkg_install_dir}/bin/g++ "gcc" && CXX="${pkg_install_dir}/bin/g++" || exit 1
-    check_command ${pkg_install_dir}/bin/gfortran "gcc" && FC="${pkg_install_dir}/bin/gfortran" || exit 1
+    check_command ${pkg_install_dir}/bin/scorep-gcc "gcc" && CC="${pkg_install_dir}/bin/scorep-gcc" || exit 1
+    check_command ${pkg_install_dir}/bin/scorep-g++ "gcc" && CXX="${pkg_install_dir}/bin/scorep-g++" || exit 1
+    check_command ${pkg_install_dir}/bin/scorep-gfortran "gcc" && FC="${pkg_install_dir}/bin/scorep-gfortran" || exit 1
     F90="${FC}"
     F77="${FC}"
     GCC_CFLAGS="-I'${pkg_install_dir}/include'"
-    GCC_LDFLAGS="-L'${pkg_install_dir}/lib64' -L'${pkg_install_dir}/lib' -Wl,-rpath,'${pkg_install_dir}/lib64' -Wl,-rpath,'${pkg_install_dir}/lib64'"
+    lib64_path=${pkg_install_dir}/lib64
+    GCC_LDFLAGS="-L'$lib64_path' -L'${pkg_install_dir}/lib' -Wl,-rpath,'$lib64_path' -Wl,-rpath,'$lib64_path'"
     ;;
 esac
 if [ "${ENABLE_TSAN}" = "__TRUE__" ]; then
@@ -164,11 +166,11 @@ EOF
 # needs full path for mpich/openmpi builds, triggers openblas bug
 prepend_path PATH "${pkg_install_dir}/bin"
 prepend_path LD_LIBRARY_PATH "${pkg_install_dir}/lib"
-prepend_path LD_LIBRARY_PATH "${pkg_install_dir}/lib64"
+prepend_path LD_LIBRARY_PATH "${lib64_path}"
 prepend_path LD_RUN_PATH "${pkg_install_dir}/lib"
-prepend_path LD_RUN_PATH "${pkg_install_dir}/lib64"
+prepend_path LD_RUN_PATH "${lib64_path}"
 prepend_path LIBRARY_PATH "${pkg_install_dir}/lib"
-prepend_path LIBRARY_PATH "${pkg_install_dir}/lib64"
+prepend_path LIBRARY_PATH "${lib64_path}"
 prepend_path CPATH "${pkg_install_dir}/include"
 EOF
   fi

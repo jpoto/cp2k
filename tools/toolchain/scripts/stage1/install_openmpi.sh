@@ -107,10 +107,10 @@ case "${with_openmpi}" in
     check_dir "${pkg_install_dir}/bin"
     check_dir "${pkg_install_dir}/lib"
     check_dir "${pkg_install_dir}/include"
-    check_command ${pkg_install_dir}/bin/mpiexec "openmpi" && MPIRUN="${pkg_install_dir}/bin/mpiexec" || exit 1
-    check_command ${pkg_install_dir}/bin/mpicc "openmpi" && MPICC="${pkg_install_dir}/bin/mpicc" || exit 1
-    check_command ${pkg_install_dir}/bin/mpic++ "openmpi" && MPICXX="${pkg_install_dir}/bin/mpic++" || exit 1
-    check_command ${pkg_install_dir}/bin/mpifort "openmpi" && MPIFC="${pkg_install_dir}/bin/mpifort" || exit 1
+    check_command mpiexec "openmpi" && MPIRUN="mpiexec" || exit 1
+    check_command ${pkg_install_dir}/bin/scorep-mpicc "openmpi" && MPICC="${pkg_install_dir}/bin/scorepp-mpicc" || exit 1
+    check_command ${pkg_install_dir}/bin/scorep-mpicxx "openmpi" && MPICXX="${pkg_install_dir}/bin/scorep-mpicxx" || exit 1
+    check_command ${pkg_install_dir}/bin/scorep-mpif90 "openmpi" && MPIFC="${pkg_install_dir}/bin/scorep-mpif90" || exit 1
     MPIFORT="${MPIFC}"
     MPIF77="${MPIFC}"
     OPENMPI_CFLAGS="-I'${pkg_install_dir}/include'"
