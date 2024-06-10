@@ -27,6 +27,7 @@ MODULE qs_dispersion_types
 ! **************************************************************************************************
    INTEGER, PARAMETER                       :: dftd2_pp = 1
    INTEGER, PARAMETER                       :: dftd3_pp = 2
+   INTEGER, PARAMETER                       :: dftd4_pp = 3
 
    TYPE qs_dispersion_type
       INTEGER                                :: TYPE
@@ -35,8 +36,8 @@ MODULE qs_dispersion_types
       CHARACTER(LEN=default_string_length)  :: ref_functional
       REAL(KIND=dp)                          :: scaling
       REAL(KIND=dp)                          :: rc_disp
-      REAL(KIND=dp)                          :: rc_d4
-      REAL(KIND=dp)                          :: rc_cn
+      REAL(KIND=dp)                          :: rc_d4 !add. cutoff, dftd4
+      REAL(KIND=dp)                          :: rc_cn !coordination cutoff, dftd4
       REAL(KIND=dp)                          :: exp_pre
       TYPE(section_vals_type), POINTER       :: dftd_section
       LOGICAL                                :: verbose !extended output
@@ -49,6 +50,7 @@ MODULE qs_dispersion_types
       REAL(KIND=dp)                          :: alp !ad hoc parameters
       REAL(KIND=dp)                          :: s6, s8, sr6 !scaling parameters
       REAL(KIND=dp)                          :: a1, a2 !BJ scaling parameters
+      REAL(KIND=dp)                          :: s9 !scale the many-body dispersion energy (default=1.0), dftd4
       REAL(KIND=dp)                          :: eps_cn
       LOGICAL                                :: doabc !neglect C9 terms
       LOGICAL                                :: c9cnst !use constant c9 terms
@@ -118,7 +120,7 @@ MODULE qs_dispersion_types
 ! **************************************************************************************************
 
    PUBLIC :: qs_atom_dispersion_type, qs_dispersion_type
-   PUBLIC :: dftd2_pp, dftd3_pp
+   PUBLIC :: dftd2_pp, dftd3_pp, dftd4_pp
    PUBLIC :: qs_dispersion_release
 
 ! **************************************************************************************************
