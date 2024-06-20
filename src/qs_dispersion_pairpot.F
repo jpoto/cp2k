@@ -1391,9 +1391,9 @@ CONTAINS
       IF (dispersion_env%pp_type == vdw_pairpot_dftd4) THEN
 #if defined(__DFTD4)
          IF (calculate_forces .OR. debugall) THEN
-            CALL calculate_dispersion_d4_pairpot(dispersion_env, particle_set, evdw, force=force, atom_of_kind=atom_of_kind)
+            !CALL calculate_dispersion_d4_pairpot(dispersion_env, particle_set, evdw, force=force, atom_of_kind=atom_of_kind)
          ELSE
-            CALL calculate_dispersion_d4_pairpot(dispersion_env, particle_set, evdw)
+            !CALL calculate_dispersion_d4_pairpot(dispersion_env, particle_set, evdw)
          END IF
 #else
          CPABORT("Build without DFTD4")
@@ -2039,10 +2039,13 @@ CONTAINS
                END IF
             ELSE IF (disp_a%type == dftd4_pp .AND. dr > 0.001_dp) THEN
 #if defined(__DFTD4)
-               IF (use_virial .OR. atstress) THEN
+               IF (calculate_forces .OR. debugall) THEN
                   CALL calculate_dispersion_force_d4(dispersion_env, ikind, jkind, rij,  devdw, fdij)
                   atom_a = atom_of_kind(iatom)
                   atom_b = atom_of_kind(jatom)
+                  write(*,*) 'gradient:',devdw,ikind,jkind,atom_a,atom_b,fdij
+                  force(ikind)%dispersion(:, atom_a) = force(ikind)%dispersion(:, atom_a) - fdij(:)
+                  force(jkind)%dispersion(:, atom_b) = force(jkind)%dispersion(:, atom_b) + fdij(:)
                   IF (use_virial) THEN
                      CALL virial_pair_force(pv_virial_thread, -1._dp, fdij, rij)
                   END IF
@@ -2050,6 +2053,7 @@ CONTAINS
                      CALL virial_pair_force(atstr(:, :, iatom), -0.5_dp, fdij, rij)
                      CALL virial_pair_force(atstr(:, :, jatom), -0.5_dp, fdij, rij)
                   END IF   
+                  evdw = evdw + devdw
                END IF
 #else
                CPABORT("Build without DFTD4")
