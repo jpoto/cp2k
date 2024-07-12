@@ -234,6 +234,10 @@ The --with-PKG options follow the rules:
   --with-dftd4            Enable the DFTD4 package by Grimme
                           This package requires cmake, ninja
                           Default = install
+  --with-xtb              Enable the XTB package by Grimme
+                          This package requires cmake
+                          Default = install
+
 
 FURTHER INSTRUCTIONS
 
@@ -271,7 +275,7 @@ mpi_list="mpich openmpi intelmpi"
 math_list="mkl acml openblas"
 lib_list="fftw libint libxc libgrpp libxsmm cosma scalapack elpa cusolvermp plumed \
           spfft spla ptscotch superlu pexsi quip gsl spglib hdf5 libvdwxc sirius
-          libvori libtorch deepmd dftd4"
+          libvori libtorch deepmd dftd4 xtb"
 package_list="${tool_list} ${mpi_list} ${math_list} ${lib_list}"
 # ------------------------------------------------------------------------
 
@@ -322,6 +326,7 @@ with_libvori="__INSTALL__"
 with_libtorch="__DONTUSE__"
 with_ninja="__DONTUSE__"
 with_dftd4="__DONTUSE__"
+with_xtb="__INSTALL__"
 
 # for MPI, we try to detect system MPI variant
 if (command -v mpiexec > /dev/null 2>&1); then
@@ -664,6 +669,9 @@ while [ $# -ge 1 ]; do
     --with-dftd4*)
       with_dftd4=$(read_with "${1}")
       ;;
+    --with-xtb*)
+      with_xtb=$(read_with "${1}")
+      ;;
     --help*)
       show_help
       exit 0
@@ -815,7 +823,8 @@ if [ "${with_spglib}" = "__INSTALL__" ] ||
   [ "${with_spfft}" = "__INSTALL__" ] ||
   [ "${with_spla}" = "__INSTALL__" ] ||
   [ "${with_ninja}" = "__INSTALL__" ] ||
-  [ "${with_dftd4}" = "__INSTALL__" ]; then
+  [ "${with_dftd4}" = "__INSTALL__" ] ||
+  [ "${with_xtb}" = "__INSTALL__" ]; then
   [ "${with_cmake}" = "__DONTUSE__" ] && with_cmake="__INSTALL__"
 fi
 
