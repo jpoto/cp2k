@@ -24,8 +24,8 @@ MODULE kpoint_methods
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribution_get, &
         dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, &
         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
-        dbcsr_type_symmetric
+        dbcsr_p_type, dbcsr_print, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
+        dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale
@@ -1410,6 +1410,7 @@ CONTAINS
                   END DO
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
+                  WRITE (*, *) 'selecting rotmat ir=', ir, ' real_only=', real_only
                   IF (real_only) THEN
                      CALL symtrans(srpmat, rpmat, kind_rot, kpsym%rot(1:3, 1:3, is), &
                                    kpsym%f0(:, is), kpoint%atype, symmetric=.TRUE.)
@@ -1423,10 +1424,18 @@ CONTAINS
                                       cell_to_index, kpsym%xkp(1:3, is), wkpx)
                END DO
             ELSE
+               WRITE (*, *) 'no symtrans'
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
                                    cell_to_index, xkp(1:3, ik), wkp(ik))
             END IF
+         END DO
+      END DO
+
+      DO ispin = 1, nspin
+         DO ic = 1, nimg
+            WRITE (*, *) 'printing density matrix for spin, img:', ispin, ic
+            CALL dbcsr_print(denmat(ispin, ic)%matrix)
          END DO
       END DO
 
@@ -1615,9 +1624,9 @@ CONTAINS
       fsign = 1.0_dp
       IF (asym) fsign = -1.0_dp
 
+      WRITE (*, *) 'symtrans: drot perm:', dorot, perm
+
       IF (dorot .OR. perm) THEN
-         CALL cp_abort(__LOCATION__, "k-points need FULL_GRID currently. "// &
-                       "Reduced grids not yet working correctly")
          CALL dbcsr_set(smat, 0.0_dp)
          IF (perm) THEN
             CALL dbcsr_get_info(pmat, distribution=dist)
@@ -1627,6 +1636,8 @@ CONTAINS
                CALL dbcsr_iterator_start(iter, pmat)
                DO WHILE (dbcsr_iterator_blocks_left(iter))
                   CALL dbcsr_iterator_next_block(iter, irow, icol, pblock)
+                  WRITE (*, *) 'irow, icol, pblock', irow, icol, pblock
+                  FLUSH(6)
                   ip = f0(irow)
                   jp = f0(icol)
                   IF (ip <= jp) THEN
@@ -1640,10 +1651,17 @@ CONTAINS
                   END IF
                   CALL dbcsr_get_block_p(matrix=smat, row=jrow, col=jcol, BLOCK=sblock, found=found)
                   CPASSERT(found)
+                  WRITE (*, *) 'jrow, jcol, irow, sblock', jrow, jcol, sblock
+                  FLUSH(6)
                   ikind = atype(irow)
                   jkind = atype(icol)
+                  WRITE (*, *) 'ikind,jkind', ikind, jkind, atype
+                  FLUSH(6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
+                  WRITE (*, *) 'kroti:', kroti
+                  WRITE (*, *) 'krotj:', krotj
+                  FLUSH(6)
                   ! rotation
                   IF (trans) THEN
                      sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(pblock), kroti))
