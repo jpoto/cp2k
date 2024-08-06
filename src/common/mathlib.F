@@ -728,9 +728,10 @@ CONTAINS
 
       IF (r_cond < EPSILON(0.0_dp)) THEN
          WRITE (message, "(A,ES10.3)") "R_COND =", r_cond
-         CALL cp_abort(__LOCATION__, &
-                       "Bad condition number "//TRIM(message)//" (smaller than the machine "// &
-                       "working precision)")
+         !CALL cp_abort(__LOCATION__, &
+         WRITE (*, *) &
+            "Bad condition number "//TRIM(message)//" (smaller than the machine "// &
+            "working precision)"
       END IF
 
       ! Solve a system of linear equations using the LU factorization computed by dgetrf
@@ -877,9 +878,10 @@ CONTAINS
 
       IF (r_cond < EPSILON(0.0_dp)) THEN
          WRITE (message, "(A,ES10.3)") "R_COND =", r_cond
-         CALL cp_abort(__LOCATION__, &
-                       "Bad condition number "//TRIM(message)//" (smaller than the machine "// &
-                       "working precision)")
+         !CALL cp_abort(__LOCATION__, &
+         WRITE (*, *) &
+            "Bad condition number "//TRIM(message)//" (smaller than the machine "// &
+            "working precision)"
       END IF
 
       ! Solve a system of linear equations using the LU factorization computed by dgetrf
