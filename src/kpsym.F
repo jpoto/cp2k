@@ -2653,7 +2653,7 @@ CONTAINS
          ELSE
             ! IPLACE=0: add WVK to the list
             list(ihash) = istore
-            IF (istore > nmesh) THEN
+IF (istore > nmesh) THEN
                IF (iout > 0) &
                   WRITE (iout, '(A)') 'SUBROUTINE MESH *** FATAL ERROR ***'
                IF (iout > 0) &

@@ -91,6 +91,7 @@ CONTAINS
          NULLIFY (orbrot)
          CALL get_qs_env(qs_env, dft_control=dft_control)
          DO ik = 1, kpoints%nkp
+            WRITE (*, *) 'qs_basis_rotation num_k', kpoints%nkp
             kpsym => kpoints%kp_sym(ik)%kpoint_sym
             IF (kpsym%apply_symmetry) THEN
                DO irot = 1, SIZE(kpsym%rotp)
@@ -114,6 +115,7 @@ CONTAINS
                            DO ikind = 1, nkind
                               CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis, basis_type=my_basis)
                               NULLIFY (kpoints%kind_rotmat(ira, ikind)%rmat)
+                              WRITE (*, *) 'qs_basis_rotation setting rotation matrix', ira, ikind
                               CALL set_rotmat_basis(kpoints%kind_rotmat(ira, ikind)%rmat, orbrot, orb_basis)
                            END DO
                         END IF
@@ -184,7 +186,7 @@ CONTAINS
       TYPE(orbrotmat_type), DIMENSION(:), POINTER        :: orbrot
       TYPE(gto_basis_set_type), POINTER                  :: basis
 
-      INTEGER                                            :: fs1, fs2, iset, ishell, l, nset, nsgf
+      INTEGER                                            :: fs1, fs2, i, iset, ishell, l, nset, nsgf
       INTEGER, DIMENSION(:), POINTER                     :: nshell
       INTEGER, DIMENSION(:, :), POINTER                  :: first_sgf, lshell
 
@@ -200,6 +202,10 @@ CONTAINS
             fs1 = first_sgf(ishell, iset)
             fs2 = fs1 + nso(l) - 1
             rmat(fs1:fs2, fs1:fs2) = orbrot(l)%mat(1:nso(l), 1:nso(l))
+            WRITE (*, *) iset, '. set, ', ishell, '.shell'
+            DO i = 1, nso(l)
+               WRITE (*, *) orbrot(l)%mat(1:nso(l), i)
+            END DO
          END DO
       END DO
 

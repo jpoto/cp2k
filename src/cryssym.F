@@ -425,6 +425,7 @@ CONTAINS
       IF (csym%nrtot > 0 .AND. csym%istriz == 1 .AND. .NOT. fullmesh .AND. &
           .NOT. inversion_only) THEN
          ! atomic symmetry operations possible
+         write(*,*)  'nkpts, kpop:', nkpts, kpop
          csym%kpop(1:nkpts) = kpop(1:nkpts)
          DO ik = 1, nkpts
             CPASSERT(csym%kpop(ik) /= 0)
@@ -656,7 +657,7 @@ CONTAINS
       END DO
       csym%ibrot(1:nc) = ib(1:nc)
 
-      IF (csym%n_operations > nc .AND. .NOT. spglib_reduction) THEN
+IF (csym%n_operations > nc .AND. .NOT. spglib_reduction) THEN
          IF (ALLOCATED(srot)) DEALLOCATE (srot)
          ALLOCATE (srot(3, 3, csym%n_operations))
          CALL setup_spglib_operations(csym, srot, nrot)
