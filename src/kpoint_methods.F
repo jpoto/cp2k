@@ -1383,6 +1383,7 @@ CONTAINS
       indx = 0
       DO ispin = 1, nspin
          DO ik = 1, nkp
+            WRITE (*, *) '------------- printing density matrix for spin, ik:', ispin, ik
             DO ic = 1, nc
                indx = indx + 1
                CALL cp_fm_finish_copy_general(fmwork(ic), info(indx))
@@ -1402,6 +1403,7 @@ CONTAINS
 
             IF (kpsym%apply_symmetry) THEN
                wkpx = wkp(ik)/REAL(kpsym%nwght, KIND=dp)
+               write(*,*) 'weights: ik, wkpx',ik,wkpx
                DO is = 1, kpsym%nwght
                   ir = ABS(kpsym%rotp(is))
                   ira = 0
@@ -1410,7 +1412,6 @@ CONTAINS
                   END DO
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
-                  WRITE (*, *) 'selecting rotmat ir=', ir, ' real_only=', real_only
                   IF (real_only) THEN
                      CALL symtrans(srpmat, rpmat, kind_rot, kpsym%rot(1:3, 1:3, is), &
                                    kpsym%f0(:, is), kpoint%atype, symmetric=.TRUE.)
@@ -1420,22 +1421,29 @@ CONTAINS
                      CALL symtrans(scpmat, cpmat, kind_rot, kpsym%rot(1:3, 1:3, is), &
                                    kpsym%f0(:, is), kpoint%atype, antisymmetric=.TRUE.)
                   END IF
+
+                  
+                  CALL dbcsr_print(srpmat)
+                  CALL dbcsr_print(scpmat)
+
                   CALL transform_dmat(denmat, srpmat, scpmat, ispin, real_only, sab_nl, &
                                       cell_to_index, kpsym%xkp(1:3, is), wkpx)
                END DO
             ELSE
-               WRITE (*, *) 'no symtrans'
+
+               CALL dbcsr_print(rpmat)
+               CALL dbcsr_print(cpmat)
+         
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
                                    cell_to_index, xkp(1:3, ik), wkp(ik))
             END IF
          END DO
-      END DO
-
-      DO ispin = 1, nspin
-         DO ic = 1, nimg
-            WRITE (*, *) 'printing density matrix for spin, img:', ispin, ic
-            CALL dbcsr_print(denmat(ispin, ic)%matrix)
+         write(*,*) '=============================================================='
+         write(*,*) '***********complete matrix for ispin',ispin,'*****************'
+         write(*,*) '=============================================================='
+         DO is = 1, SIZE(denmat, 2)
+           CALL dbcsr_print(denmat(ispin,is)%matrix)
          END DO
       END DO
 
@@ -1624,11 +1632,12 @@ CONTAINS
       fsign = 1.0_dp
       IF (asym) fsign = -1.0_dp
 
-      WRITE (*, *) 'symtrans: drot perm:', dorot, perm
+      !WRITE (*, *) '>>>> symtrans: drot perm:', dorot, perm
 
       IF (dorot .OR. perm) THEN
          CALL dbcsr_set(smat, 0.0_dp)
          IF (perm) THEN
+            !WRITE (*, *) '>>>> with perm.'
             CALL dbcsr_get_info(pmat, distribution=dist)
             CALL dbcsr_distribution_get(dist, numnodes=numnodes)
             IF (numnodes == 1) THEN
@@ -1636,7 +1645,7 @@ CONTAINS
                CALL dbcsr_iterator_start(iter, pmat)
                DO WHILE (dbcsr_iterator_blocks_left(iter))
                   CALL dbcsr_iterator_next_block(iter, irow, icol, pblock)
-                  WRITE (*, *) 'irow, icol, pblock', irow, icol, pblock
+                  !WRITE (*, *) '>>>> irow, icol, pblock', irow, icol, pblock
                   FLUSH(6)
                   ip = f0(irow)
                   jp = f0(icol)
@@ -1651,16 +1660,15 @@ CONTAINS
                   END IF
                   CALL dbcsr_get_block_p(matrix=smat, row=jrow, col=jcol, BLOCK=sblock, found=found)
                   CPASSERT(found)
-                  WRITE (*, *) 'jrow, jcol, irow, sblock', jrow, jcol, sblock
+                  !WRITE (*, *) '>>>> jrow, jcol, irow, sblock', jrow, jcol, sblock
                   FLUSH(6)
                   ikind = atype(irow)
                   jkind = atype(icol)
-                  WRITE (*, *) 'ikind,jkind', ikind, jkind, atype
                   FLUSH(6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
-                  WRITE (*, *) 'kroti:', kroti
-                  WRITE (*, *) 'krotj:', krotj
+                  !WRITE (*, *) '>>>> kroti:', kroti
+                  !WRITE (*, *) '>>>> krotj:', krotj
                   FLUSH(6)
                   ! rotation
                   IF (trans) THEN
@@ -1678,6 +1686,7 @@ CONTAINS
             END IF
          ELSE
             ! no atom permutations, this is always local
+            !WRITE (*, *) '>>>> no atom permutations'
             CALL dbcsr_copy(smat, pmat)
             CALL dbcsr_iterator_start(iter, smat)
             DO WHILE (dbcsr_iterator_blocks_left(iter))
@@ -1697,6 +1706,8 @@ CONTAINS
                jkind = atype(icol)
                kroti => kmat(ikind)%rmat
                krotj => kmat(jkind)%rmat
+               !WRITE (*, *) '>>>> kroti:', kroti
+               !WRITE (*, *) '>>>> krotj:', krotj
                ! rotation
                IF (trans) THEN
                   sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(sblock), kroti))
@@ -1708,6 +1719,7 @@ CONTAINS
             !
          END IF
       ELSE
+         !WRITE (*, *) '>>>> no atom permutations'
          ! this is the identity operation, just copy the matrix
          CALL dbcsr_copy(smat, pmat)
       END IF
