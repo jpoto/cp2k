@@ -464,6 +464,7 @@ CONTAINS
       DO i = 1, nkp
          DO j = 1, nkm
             wvk0(1:3) = xkp(1:3, j) - wvkl(1:3, i)
+            WRITE (*, *) 'j, i, wvkl(1:3,i), xkp(1:3,j)', j, i, wvkl(1:3, i), xkp(1:3, j)
             IF (ALL(ABS(wvk0(1:3)) < 1.e-12_dp)) THEN
                wkp(j) = lwght(i)
                itoj = j
@@ -476,7 +477,7 @@ CONTAINS
             IF (kr < 0) rr(1:3) = -rr(1:3)
             DO j = 1, nkm
                wvk0(1:3) = xkp(1:3, j) - rr(1:3)
-               WRITE (*, *) 'j,wvk0(1:3)', j, wvk0(1:3)
+               WRITE (*, *) 'j,wvk0(1:3), rr(1:3)', j, wvk0(1:3), rr(1:3)
                IF (ALL(ABS(wvk0(1:3)) < 1.e-12_dp)) THEN
                   csym%kplink(1, j) = itoj
                   kpop(j) = kr
