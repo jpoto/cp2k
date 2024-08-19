@@ -100,7 +100,6 @@ CONTAINS
                            DO ikind = 1, nkind
                               CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis)
                               NULLIFY (kpoints%kind_rotmat(ira, ikind)%rmat)
-                              WRITE (*, *) 'qs_basis_rotation setting rotation matrix', ira, ikind
                               CALL set_rotmat_basis(kpoints%kind_rotmat(ira, ikind)%rmat, orbrot, orb_basis)
                            END DO
                         END IF
