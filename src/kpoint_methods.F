@@ -30,7 +30,7 @@ dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribute, &
          dbcsr_get_stored_coordinates, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
          dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, &
          dbcsr_replicate_all, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
-        dbcsr_type_no_symmetry, dbcsr_type_symmetric
+         dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale
@@ -1558,6 +1558,8 @@ CONTAINS
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
+      REAL(KIND=dp), DIMENSION(3)                        :: kp_help
+
       CALL timeset(routineN, handle)
 
       CALL get_neighbor_list_set_p(neighbor_list_sets=sab_nl, symmetric=do_symmetric)
@@ -1683,13 +1685,17 @@ CONTAINS
 
             IF (kpsym%apply_symmetry) THEN
                wkpx = wkp(ik)/REAL(kpsym%nwght, KIND=dp)
-               write(*,*) 'weights: ik, wkpx',ik,wkpx
+               write(*,*) 'weights: ik, wkpx, nwght',ik,wkpx,kpsym%nwght
+               write(*,*) 'original kpoint:',kpoint%xkp(1:3, ik)
                DO is = 1, kpsym%nwght
                   ir = ABS(kpsym%rotp(is))
                   ira = 0
                   DO jr = 1, SIZE(kpoint%ibrot)
                      IF (ir == kpoint%ibrot(jr)) ira = jr
                   END DO
+                  write(*,*) '  is, ir, ira:',is, ir, ira
+                  kp_help=MATMUL(kpoint%xkp(1:3, ik), kpsym%rot(1:3, 1:3, is))
+                  write(*,*) 'kp_help:', kp_help
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
 CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
@@ -1701,8 +1707,8 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                END DO
             ELSE
 
-               CALL dbcsr_print(rpmat)
-               CALL dbcsr_print(cpmat)
+               !CALL dbcsr_print(rpmat)
+               !CALL dbcsr_print(cpmat)
          
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
@@ -2092,6 +2098,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: kroti, krotj, pblock, sblock
       TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_iterator_type)                          :: iter
+      CHARACTER                                          :: has_symm
 
       CALL timeset(routineN, handle)
 
@@ -2127,7 +2134,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       IF (dorot .OR. perm) THEN
          CALL dbcsr_set(smat, 0.0_dp)
          IF (perm) THEN
-            !WRITE (*, *) '>>>> with perm.'
+            WRITE (*, *) '>>>> with perm.'
             CALL dbcsr_get_info(pmat, distribution=dist)
             CALL dbcsr_distribution_get(dist, numnodes=numnodes)
             IF (numnodes == 1) THEN
@@ -2148,6 +2155,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                      jcol = ip
                      trans = .TRUE.
                   END IF
+
                   CALL dbcsr_get_block_p(matrix=smat, row=jrow, col=jcol, BLOCK=sblock, found=found)
                   CPASSERT(found)
                   !WRITE (*, *) '>>>> jrow, jcol, irow, sblock', jrow, jcol, sblock
@@ -2157,8 +2165,8 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                   FLUSH(6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
-                  !WRITE (*, *) '>>>> kroti:', kroti
-                  !WRITE (*, *) '>>>> krotj:', krotj
+                  WRITE (*, *) '>>>> kroti:', kroti
+                  WRITE (*, *) '>>>> krotj:', krotj
                   FLUSH(6)
                   ! rotation
                   IF (trans) THEN
@@ -2188,7 +2196,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
             END IF
          ELSE
             ! no atom permutations, this is always local
-            !WRITE (*, *) '>>>> no atom permutations'
+            WRITE (*, *) '>>>> no atom permutations'
             CALL dbcsr_copy(smat, pmat)
             CALL dbcsr_iterator_start(iter, smat)
             DO WHILE (dbcsr_iterator_blocks_left(iter))
@@ -2204,12 +2212,15 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                   jcol = ip
                   trans = .TRUE.
                END IF
+               WRITE (*, *) '>>>> irow, icol, ip, jp', irow, icol, ip, jp
                ikind = atype(irow)
                jkind = atype(icol)
                kroti => kmat(ikind)%rmat
                krotj => kmat(jkind)%rmat
-               !WRITE (*, *) '>>>> kroti:', kroti
-               !WRITE (*, *) '>>>> krotj:', krotj
+               WRITE (*, *) '>>>> kroti:', kroti
+               WRITE (*, *) '>>>> krotj:', krotj
+               has_symm=dbcsr_get_matrix_type(smat)
+               WRITE (*, *) '>>>> trans, has_symm', trans, has_symm
                ! rotation
                IF (trans) THEN
                   CALL ensure_work_matrix(work, SIZE(krotj, 2), SIZE(sblock, 1))
