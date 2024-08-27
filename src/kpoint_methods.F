@@ -1548,6 +1548,7 @@ CONTAINS
       LOGICAL                                            :: aux_fit, do_ext, do_symmetric, my_kpgrp, &
                                                             real_only, reverse_phase
       REAL(KIND=dp)                                      :: wkpx
+      REAL(KIND=dp), DIMENSION(3)                        :: kp_help
       REAL(KIND=dp), DIMENSION(:), POINTER               :: wkp
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: xkp
       TYPE(copy_info_type), ALLOCATABLE, DIMENSION(:)    :: info
@@ -1557,8 +1558,6 @@ CONTAINS
       TYPE(kpoint_env_type), POINTER                     :: kp
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
       TYPE(mp_para_env_type), POINTER                    :: para_env
-
-      REAL(KIND=dp), DIMENSION(3)                        :: kp_help
 
       CALL timeset(routineN, handle)
 
@@ -1685,17 +1684,17 @@ CONTAINS
 
             IF (kpsym%apply_symmetry) THEN
                wkpx = wkp(ik)/REAL(kpsym%nwght, KIND=dp)
-               write(*,*) 'weights: ik, wkpx, nwght',ik,wkpx,kpsym%nwght
-               write(*,*) 'original kpoint:',kpoint%xkp(1:3, ik)
+               WRITE (*, *) 'weights: ik, wkpx, nwght', ik, wkpx, kpsym%nwght
+               WRITE (*, *) 'original kpoint:', kpoint%xkp(1:3, ik)
                DO is = 1, kpsym%nwght
                   ir = ABS(kpsym%rotp(is))
                   ira = 0
                   DO jr = 1, SIZE(kpoint%ibrot)
                      IF (ir == kpoint%ibrot(jr)) ira = jr
                   END DO
-                  write(*,*) '  is, ir, ira:',is, ir, ira
-                  kp_help=MATMUL(kpoint%xkp(1:3, ik), kpsym%rot(1:3, 1:3, is))
-                  write(*,*) 'kp_help:', kp_help
+                  WRITE (*, *) '  is, ir, ira:', is, ir, ira
+                  kp_help = MATMUL(kpoint%xkp(1:3, ik), kpsym%rot(1:3, 1:3, is))
+                  WRITE (*, *) 'kp_help:', kp_help
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
 CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
@@ -1707,19 +1706,19 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                END DO
             ELSE
 
-               !CALL dbcsr_print(rpmat)
-               !CALL dbcsr_print(cpmat)
-         
+               CALL dbcsr_print(rpmat)
+               CALL dbcsr_print(cpmat)
+
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
                                    cell_to_index, xkp(1:3, ik), wkp(ik))
             END IF
          END DO
-         write(*,*) '=============================================================='
-         write(*,*) '***********complete matrix for ispin',ispin,'*****************'
-         write(*,*) '=============================================================='
+         WRITE (*, *) '=============================================================='
+         WRITE (*, *) '***********complete matrix for ispin', ispin, '*****************'
+         WRITE (*, *) '=============================================================='
          DO is = 1, SIZE(denmat, 2)
-           CALL dbcsr_print(denmat(ispin,is)%matrix)
+            CALL dbcsr_print(denmat(ispin, is)%matrix)
          END DO
       END DO
 
@@ -2090,6 +2089,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'symtrans'
 
+      CHARACTER                                          :: has_symm
       INTEGER                                            :: handle, iatom, icol, ikind, ip, irow, &
                                                             jcol, jkind, jp, jrow, natom, numnodes
       LOGICAL                                            :: asym, dorot, found, perm, sym, trans
@@ -2098,7 +2098,6 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: kroti, krotj, pblock, sblock
       TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_iterator_type)                          :: iter
-      CHARACTER                                          :: has_symm
 
       CALL timeset(routineN, handle)
 
@@ -2143,7 +2142,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                DO WHILE (dbcsr_iterator_blocks_left(iter))
                   CALL dbcsr_iterator_next_block(iter, irow, icol, pblock)
                   !WRITE (*, *) '>>>> irow, icol, pblock', irow, icol, pblock
-                  FLUSH(6)
+                  FLUSH (6)
                   ip = f0(irow)
                   jp = f0(icol)
                   IF (ip <= jp) THEN
@@ -2159,15 +2158,15 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                   CALL dbcsr_get_block_p(matrix=smat, row=jrow, col=jcol, BLOCK=sblock, found=found)
                   CPASSERT(found)
                   !WRITE (*, *) '>>>> jrow, jcol, irow, sblock', jrow, jcol, sblock
-                  FLUSH(6)
+                  FLUSH (6)
                   ikind = atype(irow)
                   jkind = atype(icol)
-                  FLUSH(6)
+                  FLUSH (6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
                   WRITE (*, *) '>>>> kroti:', kroti
                   WRITE (*, *) '>>>> krotj:', krotj
-                  FLUSH(6)
+                  FLUSH (6)
                   ! rotation
                   IF (trans) THEN
                      CALL ensure_work_matrix(work, SIZE(krotj, 2), SIZE(pblock, 1))
@@ -2219,7 +2218,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                krotj => kmat(jkind)%rmat
                WRITE (*, *) '>>>> kroti:', kroti
                WRITE (*, *) '>>>> krotj:', krotj
-               has_symm=dbcsr_get_matrix_type(smat)
+               has_symm = dbcsr_get_matrix_type(smat)
                WRITE (*, *) '>>>> trans, has_symm', trans, has_symm
                ! rotation
                IF (trans) THEN
