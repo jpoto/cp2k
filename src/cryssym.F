@@ -345,7 +345,7 @@ CONTAINS
       ALLOCATE (csym%kpop(nkpts))
       IF (csym%symlib .AND. csym%istriz == 1 .AND. .NOT. fullmesh) THEN
          ! atomic symmetry operations possible
-         write(*,*)  'nkpts, kpop:', nkpts, kpop
+         WRITE (*, *) 'nkpts, kpop:', nkpts, kpop
          csym%kpop(1:nkpts) = kpop(1:nkpts)
          DO ik = 1, nkpts
             CPASSERT(csym%kpop(ik) /= 0)

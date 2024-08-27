@@ -14,6 +14,7 @@
 MODULE qs_energy_matrix_w
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: dbcsr_p_type,&
+                                              dbcsr_print,&
                                               dbcsr_set
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
                                               cp_fm_struct_release,&
@@ -111,6 +112,8 @@ CONTAINS
                ! energy weighted density matrices in k-space
                CALL kpoint_density_matrices(kpoints, energy_weighted=.TRUE.)
                ! energy weighted density matrices in real space
+               write(*,*) '++++++++++++++++++++ qs_energy_matrix_w +++++++++++++++++++'
+               CALL dbcsr_print(matrix_w_kp(1,1)%matrix)
                CALL kpoint_density_transform(kpoints, matrix_w_kp, .TRUE., &
                                              matrix_s_kp(1, 1)%matrix, sab_nl, fmwork)
 
