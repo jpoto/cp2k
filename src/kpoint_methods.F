@@ -22,10 +22,10 @@ MODULE kpoint_methods
                                               hairy_probes_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribution_get, &
-        dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, &
-        dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_p_type, dbcsr_print, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
-        dbcsr_type_no_symmetry, dbcsr_type_symmetric, dbcsr_get_matrix_type
+        dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_get_info, dbcsr_get_matrix_type, &
+        dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
+        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, dbcsr_print, dbcsr_set, &
+        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale
@@ -1270,6 +1270,7 @@ CONTAINS
       LOGICAL                                            :: aux_fit, do_ext, do_symmetric, my_kpgrp, &
                                                             real_only
       REAL(KIND=dp)                                      :: wkpx
+      REAL(KIND=dp), DIMENSION(3)                        :: kp_help
       REAL(KIND=dp), DIMENSION(:), POINTER               :: wkp
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: xkp
       TYPE(copy_info_type), ALLOCATABLE, DIMENSION(:)    :: info
@@ -1279,8 +1280,6 @@ CONTAINS
       TYPE(kpoint_env_type), POINTER                     :: kp
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
       TYPE(mp_para_env_type), POINTER                    :: para_env
-
-      REAL(KIND=dp), DIMENSION(3)                        :: kp_help
 
       CALL timeset(routineN, handle)
 
@@ -1405,19 +1404,23 @@ CONTAINS
 
             IF (kpsym%apply_symmetry) THEN
                wkpx = wkp(ik)/REAL(kpsym%nwght, KIND=dp)
-               write(*,*) 'weights: ik, wkpx, nwght',ik,wkpx,kpsym%nwght
-               write(*,*) 'original kpoint:',kpoint%xkp(1:3, ik)
+               WRITE (*, *) 'weights: ik, wkpx, nwght', ik, wkpx, kpsym%nwght
+               WRITE (*, *) 'original kpoint:', kpoint%xkp(1:3, ik)
                DO is = 1, kpsym%nwght
                   ir = ABS(kpsym%rotp(is))
                   ira = 0
                   DO jr = 1, SIZE(kpoint%ibrot)
                      IF (ir == kpoint%ibrot(jr)) ira = jr
                   END DO
-                  write(*,*) '  is, ir, ira:',is, ir, ira
-                  kp_help=MATMUL(kpoint%xkp(1:3, ik), kpsym%rot(1:3, 1:3, is))
-                  write(*,*) 'kp_help:', kp_help
+                  WRITE (*, *) '  is, ir, ira:', is, ir, ira
+                  kp_help = MATMUL(kpoint%xkp(1:3, ik), kpsym%rot(1:3, 1:3, is))
+                  WRITE (*, *) 'kp_help:', kp_help
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
+
+                  CALL dbcsr_print(rpmat)
+                  CALL dbcsr_print(cpmat)
+
                   IF (real_only) THEN
                      CALL symtrans(srpmat, rpmat, kind_rot, kpsym%rot(1:3, 1:3, is), &
                                    kpsym%f0(:, is), kpoint%atype, symmetric=.TRUE.)
@@ -1428,28 +1431,27 @@ CONTAINS
                                    kpsym%f0(:, is), kpoint%atype, antisymmetric=.TRUE.)
                   END IF
 
-                  
-                  !CALL dbcsr_print(srpmat)
-                  !CALL dbcsr_print(scpmat)
+                  CALL dbcsr_print(srpmat)
+                  CALL dbcsr_print(scpmat)
 
                   CALL transform_dmat(denmat, srpmat, scpmat, ispin, real_only, sab_nl, &
                                       cell_to_index, kpsym%xkp(1:3, is), wkpx)
                END DO
             ELSE
 
-               !CALL dbcsr_print(rpmat)
-               !CALL dbcsr_print(cpmat)
-         
+               CALL dbcsr_print(rpmat)
+               CALL dbcsr_print(cpmat)
+
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
                                    cell_to_index, xkp(1:3, ik), wkp(ik))
             END IF
          END DO
-         write(*,*) '=============================================================='
-         write(*,*) '***********complete matrix for ispin',ispin,'*****************'
-         write(*,*) '=============================================================='
+         WRITE (*, *) '=============================================================='
+         WRITE (*, *) '***********complete matrix for ispin', ispin, '*****************'
+         WRITE (*, *) '=============================================================='
          DO is = 1, SIZE(denmat, 2)
-           CALL dbcsr_print(denmat(ispin,is)%matrix)
+            CALL dbcsr_print(denmat(ispin, is)%matrix)
          END DO
       END DO
 
@@ -1601,6 +1603,7 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'symtrans'
 
+      CHARACTER                                          :: has_symm
       INTEGER                                            :: handle, iatom, icol, ikind, ip, irow, &
                                                             jcol, jkind, jp, jrow, natom, numnodes
       LOGICAL                                            :: asym, dorot, found, perm, sym, trans
@@ -1608,7 +1611,6 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: kroti, krotj, pblock, sblock
       TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_iterator_type)                          :: iter
-      CHARACTER                                          :: has_symm
 
       CALL timeset(routineN, handle)
 
@@ -1653,7 +1655,7 @@ CONTAINS
                DO WHILE (dbcsr_iterator_blocks_left(iter))
                   CALL dbcsr_iterator_next_block(iter, irow, icol, pblock)
                   !WRITE (*, *) '>>>> irow, icol, pblock', irow, icol, pblock
-                  FLUSH(6)
+                  FLUSH (6)
                   ip = f0(irow)
                   jp = f0(icol)
                   IF (ip <= jp) THEN
@@ -1669,15 +1671,15 @@ CONTAINS
                   CALL dbcsr_get_block_p(matrix=smat, row=jrow, col=jcol, BLOCK=sblock, found=found)
                   CPASSERT(found)
                   !WRITE (*, *) '>>>> jrow, jcol, irow, sblock', jrow, jcol, sblock
-                  FLUSH(6)
+                  FLUSH (6)
                   ikind = atype(irow)
                   jkind = atype(icol)
-                  FLUSH(6)
+                  FLUSH (6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
                   WRITE (*, *) '>>>> kroti:', kroti
                   WRITE (*, *) '>>>> krotj:', krotj
-                  FLUSH(6)
+                  FLUSH (6)
                   ! rotation
                   IF (trans) THEN
                      sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(pblock), kroti))
@@ -1717,7 +1719,7 @@ CONTAINS
                krotj => kmat(jkind)%rmat
                WRITE (*, *) '>>>> kroti:', kroti
                WRITE (*, *) '>>>> krotj:', krotj
-               has_symm=dbcsr_get_matrix_type(smat)
+               has_symm = dbcsr_get_matrix_type(smat)
                WRITE (*, *) '>>>> trans, has_symm', trans, has_symm
                ! rotation
                IF (trans) THEN
