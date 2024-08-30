@@ -76,7 +76,7 @@ MODULE bibliography
                             Stoychev2016, Futera2017, Bailey2006, Papior2017, Lehtola2018, &
                             Brieuc2016, Barca2018, Scheiber2018, Huang2011, Heaton_Burgess2007, &
                             Schuett2018, Holmberg2018, Togo2018, Staub2019, Grimme2013, Grimme2016, &
-                            Grimme2017, Kondov2007, Clabaut2020, Clabaut2021, &
+                            Grimme2017, Grimme2023, Kondov2007, Clabaut2020, Clabaut2021, &
                             Ren2011, Ren2013, Cohen2000, Rogers2002, Filippetti2000, &
                             Limpanuparb2011, Martin2003, Yin2017, Goerigk2017, &
                             Wilhelm2016a, Wilhelm2016b, Wilhelm2017, Wilhelm2018, Wilhelm2021, Lass2018, &
@@ -732,6 +732,13 @@ CONTAINS
                          "Large Molecular Systems Parametrized for All spd-Block Elements (Z = 1-86)", &
                          source="J. Chem. Theory Comput.", volume="13", pages="1989", &
                          year=2017, doi="10.1021/acs.jctc.7b00118")
+
+      CALL add_reference(key=Grimme2023, &
+                         authors=s2a("S. Grimme", "M. Mueller", "A.Hansen"), &
+                         title="A non-self-consistent tight-binding electronic structure" // &
+                         "potential in a polarized double-zeta basis set for all spd-block" // &
+                         "elements up to Z = 86",  source="J. Chem. Phys.", volume="158", &
+                         pages="124111", year=2023, doi="10.1063/5.0137838")
 
       CALL add_reference(key=Branduardi2007, &
                          authors=s2a("D. Branduardi", "F. L. Gervasio", "M. Parrinello"), &

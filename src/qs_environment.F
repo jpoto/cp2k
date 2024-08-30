@@ -303,7 +303,7 @@ CONTAINS
             do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_mndod, do_method_pnnl)
          CALL init_se_intd_array()
          is_semi = .TRUE.
-      CASE (do_method_xtb, do_method_dftb)
+      CASE (do_method_xtb, do_method_dftb, do_method_ptb)
          is_semi = .TRUE.
       CASE DEFAULT
          is_semi = .FALSE.
@@ -625,10 +625,11 @@ CONTAINS
       TYPE(se_taper_type), POINTER                       :: se_taper
       TYPE(section_vals_type), POINTER :: dft_section, et_coupling_section, et_ddapc_section, &
          ewald_section, lri_section, mp2_section, nl_section, poisson_section, pp_section, &
-         print_section, qs_section, se_section, tddfpt_section, xc_section, xtb_section
+         print_section, qs_section, se_section, tddfpt_section, xc_section, xtb_section, ptb_section
       TYPE(semi_empirical_control_type), POINTER         :: se_control
       TYPE(semi_empirical_si_type), POINTER              :: se_store_int_env
       TYPE(xtb_control_type), POINTER                    :: xtb_control
+      TYPE(ptb_control_type), POINTER                    :: ptb_control
 
       CALL timeset(routineN, handle)
       NULLIFY (logger)

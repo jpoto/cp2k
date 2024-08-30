@@ -168,6 +168,16 @@ MODULE cp_control_types
    END TYPE xtb_control_type
 
 ! **************************************************************************************************
+! \brief Control parameters for pTB calculations
+! **************************************************************************************************
+   TYPE ptb_control_type
+      !
+      CHARACTER(LEN=default_path_length)   :: parameter_file_path = ""
+      CHARACTER(LEN=default_path_length)   :: parameter_file_name = ""
+      !
+   END TYPE ptb_control_type
+
+! **************************************************************************************************
 ! \brief Control parameters for semi empirical calculations
 ! **************************************************************************************************
    TYPE semi_empirical_control_type
@@ -346,6 +356,7 @@ MODULE cp_control_types
       LOGICAL                              :: ofgpw = .FALSE.
       LOGICAL                              :: dftb = .FALSE.
       LOGICAL                              :: xtb = .FALSE.
+      LOGICAL                              :: ptb = .FALSE.
       LOGICAL                              :: semi_empirical = .FALSE.
       LOGICAL                              :: mulliken_restraint = .FALSE.
       LOGICAL                              :: ddapc_restraint = .FALSE.
@@ -369,6 +380,7 @@ MODULE cp_control_types
       TYPE(s2_restraint_type), POINTER     :: s2_restraint_control => NULL()
       TYPE(dftb_control_type), POINTER     :: dftb_control => NULL()
       TYPE(xtb_control_type), POINTER      :: xtb_control => NULL()
+      TYPE(ptb_control_type), POINTER      :: ptb_control => NULL()
       TYPE(semi_empirical_control_type), &
          POINTER                           :: se_control => NULL()
       TYPE(gapw_control_type), POINTER     :: gapw_control => NULL()
@@ -834,6 +846,7 @@ CONTAINS
       NULLIFY (qs_control%se_control)
       NULLIFY (qs_control%dftb_control)
       NULLIFY (qs_control%xtb_control)
+      NULLIFY (qs_control%ptb_control)
       NULLIFY (qs_control%cdft_control)
       NULLIFY (qs_control%ddapc_restraint_control)
 
@@ -845,6 +858,7 @@ CONTAINS
       CALL se_control_create(qs_control%se_control)
       CALL dftb_control_create(qs_control%dftb_control)
       CALL xtb_control_create(qs_control%xtb_control)
+      CALL ptb_control_create(qs_control%ptb_control)
       ALLOCATE (qs_control%cdft_control)
       CALL cdft_control_create(qs_control%cdft_control)
    END SUBROUTINE qs_control_create
@@ -866,6 +880,7 @@ CONTAINS
          CALL se_control_release(qs_control%se_control)
          CALL dftb_control_release(qs_control%dftb_control)
          CALL xtb_control_release(qs_control%xtb_control)
+         CALL ptb_control_release(qs_control%ptb_control)
          IF (ASSOCIATED(qs_control%cdft_control)) THEN
             CALL cdft_control_release(qs_control%cdft_control)
             DEALLOCATE (qs_control%cdft_control)
@@ -1087,6 +1102,29 @@ CONTAINS
          DEALLOCATE (xtb_control)
       END IF
    END SUBROUTINE xtb_control_release
+! **************************************************************************************************
+!> \brief ...
+!> \param ptb_control ...
+! **************************************************************************************************
+   SUBROUTINE ptb_control_create(xtb_control)
+      TYPE(ptb_control_type), POINTER                    :: ptb_control
+
+      CPASSERT(.NOT. ASSOCIATED(ptb_control))
+      ALLOCATE (ptb_control)
+
+   END SUBROUTINE ptb_control_create
+
+! **************************************************************************************************
+!> \brief ...
+!> \param ptb_control ...
+! **************************************************************************************************
+   SUBROUTINE ptb_control_release(ptb_control)
+      TYPE(ptb_control_type), POINTER                    :: ptb_control
+
+      IF (ASSOCIATED(ptb_control)) THEN
+         DEALLOCATE (ptb_control)
+      END IF
+   END SUBROUTINE ptb_control_release
 
 ! **************************************************************************************************
 !> \brief ...

@@ -10,7 +10,7 @@
 ! **************************************************************************************************
 MODULE cp_control_utils
    USE bibliography,                    ONLY: &
-        Andreussi2012, Dewar1977, Dewar1985, Elstner1998, Fattebert2002, Grimme2017, Hu2007, &
+        Andreussi2012, Dewar1977, Dewar1985, Elstner1998, Fattebert2002, Grimme2017, Grimme2023, Hu2007, &
         Krack2000, Lippert1997, Lippert1999, Porezag1995, Repasky2002, Rocha2006, Schenter2008, &
         Seifert1996, Souza2002, Stengel2009, Stewart1989, Stewart2007, Thiel1992, Umari2002, &
         VanVoorhis2015, VandeVondele2005a, VandeVondele2005b, Yin2017, Zhechkov2005, cite_reference
@@ -18,7 +18,7 @@ MODULE cp_control_utils
         admm_control_create, admm_control_type, ddapc_control_create, ddapc_restraint_type, &
         dft_control_create, dft_control_type, efield_type, expot_control_create, &
         maxwell_control_create, qs_control_type, tddfpt2_control_type, tddfpt_control_create, &
-        tddfpt_control_type, xtb_control_type
+        tddfpt_control_type, xtb_control_type, ptb_control_type
    USE cp_files,                        ONLY: close_file,&
                                               open_file
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
@@ -42,7 +42,7 @@ MODULE cp_control_utils
         do_method_am1, do_method_dftb, do_method_gapw, do_method_gapw_xc, do_method_gpw, &
         do_method_lrigpw, do_method_mndo, do_method_mndod, do_method_ofgpw, do_method_pdg, &
         do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_rigpw, &
-        do_method_rm1, do_method_xtb, do_pwgrid_ns_fullspace, do_pwgrid_ns_halfspace, &
+        do_method_rm1, do_method_xtb, do_method_ptb, do_pwgrid_ns_fullspace, do_pwgrid_ns_halfspace, &
         do_pwgrid_spherical, do_s2_constraint, do_s2_restraint, do_se_is_kdso, do_se_is_kdso_d, &
         do_se_is_slater, do_se_lr_ewald, do_se_lr_ewald_gks, do_se_lr_ewald_r3, do_se_lr_none, &
         gapw_1c_large, gapw_1c_medium, gapw_1c_orb, gapw_1c_small, gapw_1c_very_large, &
@@ -128,8 +128,8 @@ CONTAINS
       not_SE = .TRUE.
       CALL section_vals_val_get(dft_section, "QS%METHOD", i_val=method_id)
       SELECT CASE (method_id)
-      CASE (do_method_dftb, do_method_xtb, do_method_mndo, do_method_am1, do_method_pm3, do_method_pnnl, &
-            do_method_pm6, do_method_pm6fm, do_method_pdg, do_method_rm1, do_method_mndod)
+      CASE (do_method_dftb, do_method_xtb, do_method_ptb, do_method_mndo, do_method_am1, do_method_pm3, &
+            do_method_pnnl, do_method_pm6, do_method_pm6fm, do_method_pdg, do_method_rm1, do_method_mndod)
          not_SE = .FALSE.
       END SELECT
       ! Check for XC section and XC_FUNCTIONAL section
@@ -650,7 +650,7 @@ CONTAINS
                                 l_val=qs_control%skip_load_balance_distributed)
 
       ! For SE and DFTB possibly override with new defaults
-      IF (qs_control%semi_empirical .OR. qs_control%dftb .OR. qs_control%xtb) THEN
+      IF (qs_control%semi_empirical .OR. qs_control%dftb .OR. qs_control%xtb .OR. qs_control%ptb) THEN
          ngrid_level = 1
          multigrid_set = .FALSE.
          ! Override default cutoff value unless user specified an explicit argument..
@@ -728,14 +728,15 @@ CONTAINS
       REAL(dp), POINTER                                  :: scal(:)
       TYPE(section_vals_type), POINTER :: cdft_control_section, ddapc_restraint_section, &
          dftb_parameter, dftb_section, genpot_section, lri_optbas_section, mull_section, &
-         nonbonded_section, s2_restraint_section, se_section, xtb_parameter, xtb_section
+         nonbonded_section, s2_restraint_section, se_section, xtb_parameter, xtb_section, &
+         ptb_parameter, ptb_section
 
       CALL timeset(routineN, handle)
 
       was_present = .FALSE.
       NULLIFY (mull_section, ddapc_restraint_section, s2_restraint_section, &
                se_section, dftb_section, xtb_section, dftb_parameter, xtb_parameter, lri_optbas_section, &
-               cdft_control_section, genpot_section)
+               cdft_control_section, genpot_section, ptb_section, ptb_parameter)
 
       mull_section => section_vals_get_subs_vals(qs_section, "MULLIKEN_RESTRAINT")
       ddapc_restraint_section => section_vals_get_subs_vals(qs_section, "DDAPC_RESTRAINT")
@@ -743,8 +744,10 @@ CONTAINS
       se_section => section_vals_get_subs_vals(qs_section, "SE")
       dftb_section => section_vals_get_subs_vals(qs_section, "DFTB")
       xtb_section => section_vals_get_subs_vals(qs_section, "xTB")
+      ptb_section => section_vals_get_subs_vals(qs_section, "pTB")
       dftb_parameter => section_vals_get_subs_vals(dftb_section, "PARAMETER")
       xtb_parameter => section_vals_get_subs_vals(xtb_section, "PARAMETER")
+      ptb_parameter => section_vals_get_subs_vals(ptb_section, "PARAMETER")
       lri_optbas_section => section_vals_get_subs_vals(qs_section, "OPTIMIZE_LRI_BASIS")
       cdft_control_section => section_vals_get_subs_vals(qs_section, "CDFT")
       nonbonded_section => section_vals_get_subs_vals(xtb_section, "NONBONDED")
@@ -889,6 +892,7 @@ CONTAINS
       qs_control%pao = .FALSE.
       qs_control%dftb = .FALSE.
       qs_control%xtb = .FALSE.
+      qs_control%ptb = .FALSE.
       qs_control%semi_empirical = .FALSE.
       qs_control%ofgpw = .FALSE.
       qs_control%lrigpw = .FALSE.
@@ -917,6 +921,9 @@ CONTAINS
       CASE (do_method_xtb)
          qs_control%xtb = .TRUE.
          CALL cite_reference(Grimme2017)
+      CASE (do_method_ptb)
+         qs_control%ptb = .TRUE.
+         CALL cite_reference(Grimme2023)
       CASE (do_method_mndo)
          CALL cite_reference(Dewar1977)
          qs_control%semi_empirical = .TRUE.
@@ -1292,6 +1299,14 @@ CONTAINS
                READ (clist(3), '(F10.0)') qs_control%xtb_control%kab_vals(j)
             END DO
          END IF
+      END IF
+
+      ! pTB code
+      IF (qs_control%ptb) THEN
+         CALL section_vals_val_get(ptb_parameter, "PARAM_FILE_PATH", &
+                                   c_val=qs_control%ptb_control%parameter_file_path)
+         CALL section_vals_val_get(ptb_parameter, "PARAM_FILE_NAME", &
+                                   c_val=qs_control%ptb_control%parameter_file_name)
       END IF
 
       ! Optimize LRI basis set
@@ -1991,6 +2006,7 @@ CONTAINS
       IF (qs_control%semi_empirical) RETURN
       IF (qs_control%dftb) RETURN
       IF (qs_control%xtb) RETURN
+      IF (qs_control%ptb) RETURN
       CALL timeset(routineN, handle)
       NULLIFY (logger, print_section_vals, qs_section, qs_section_vals)
       logger => cp_get_default_logger()
