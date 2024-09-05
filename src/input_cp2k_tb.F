@@ -14,6 +14,7 @@
 MODULE input_cp2k_tb
    USE bibliography,                    ONLY: Elstner1998,&
                                               Grimme2017,&
+                                              Grimme2023,&
                                               Hu2007,&
                                               Porezag1995,&
                                               Seifert1996,&
@@ -211,6 +212,32 @@ CONTAINS
       CALL keyword_release(keyword)
 
    END SUBROUTINE create_xtb_control_section
+
+! **************************************************************************************************
+!> \brief ...
+!> \param section ...
+! **************************************************************************************************
+   SUBROUTINE create_ptb_control_section(section)
+      TYPE(section_type), POINTER                        :: section
+
+      TYPE(keyword_type), POINTER                        :: keyword
+      TYPE(section_type), POINTER                        :: subsection
+
+      CPASSERT(.NOT. ASSOCIATED(section))
+      CALL section_create(section, __LOCATION__, name="pTB", &
+                          description="Parameters needed to set up the pTB methods", &
+                          n_keywords=1, n_subsections=1, repeats=.FALSE., &
+                          citations=(/Grimme2023/))
+
+      NULLIFY (subsection)
+      CALL create_ptb_parameter_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
+      NULLIFY (keyword)
+      
+
+   END SUBROUTINE create_ptb_control_section
 
 ! **************************************************************************************************
 !> \brief ...
@@ -455,6 +482,41 @@ CONTAINS
       CALL keyword_release(keyword)
 
    END SUBROUTINE create_xtb_parameter_section
+
+   ! **************************************************************************************************
+!> \brief ...
+!> \param section ...
+! **************************************************************************************************
+   SUBROUTINE create_ptb_parameter_section(section)
+
+      TYPE(section_type), POINTER                        :: section
+
+      TYPE(keyword_type), POINTER                        :: keyword
+
+      CPASSERT(.NOT. ASSOCIATED(section))
+
+      CALL section_create(section, __LOCATION__, name="PARAMETER", &
+                          description="Information on and where to find pTB parameters", &
+                          n_keywords=1, n_subsections=0, repeats=.FALSE.)
+
+      NULLIFY (keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="PARAM_FILE_PATH", &
+                          description="Specify the directory with the xTB parameter file. ", &
+                          usage="PARAM_FILE_PATH pathname", &
+                          n_var=1, type_of_var=char_t, default_c_val="")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="PARAM_FILE_NAME", &
+                          description="Specify file that contains all xTB default parameters. ", &
+                          usage="PARAM_FILE_NAME filename", &
+                          n_var=1, type_of_var=char_t, default_c_val="pTB_parameters")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+   END SUBROUTINE create_ptb_parameter_section
+
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param section ...

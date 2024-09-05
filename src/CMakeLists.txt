@@ -830,7 +830,9 @@ list(
   xtb_ehess_force.F
   xtb_matrices.F
   xtb_parameters.F
-  xtb_types.F)
+  xtb_types.F
+  ptb_parameters.F
+  ptb_types.F)
 
 list(
   APPEND

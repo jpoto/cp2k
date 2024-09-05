@@ -60,8 +60,8 @@ MODULE qs_kind_types
    USE input_constants,                 ONLY: &
         do_method_am1, do_method_dftb, do_method_mndo, do_method_mndod, do_method_pdg, &
         do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_pw, &
-        do_method_rm1, do_method_xtb, do_qs, do_sirius, gapw_1c_large, gapw_1c_medium, &
-        gapw_1c_orb, gapw_1c_small, gapw_1c_very_large
+        do_method_rm1, do_method_xtb, do_method_ptb,  do_qs, do_sirius, gapw_1c_large, &
+        gapw_1c_medium, gapw_1c_orb, gapw_1c_small, gapw_1c_very_large
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
                                               section_vals_type,&
@@ -109,6 +109,9 @@ MODULE qs_kind_types
                                               get_xtb_atom_param,&
                                               write_xtb_atom_param,&
                                               xtb_atom_type
+   USE ptb_types,                       ONLY: get_ptb_atom_param,&
+                                              write_ptb_atom_param,&
+                                              ptb_atom_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -179,6 +182,7 @@ MODULE qs_kind_types
       TYPE(semi_empirical_type), POINTER     :: se_parameter => Null()
       TYPE(qs_dftb_atom_type), POINTER       :: dftb_parameter => Null()
       TYPE(xtb_atom_type), POINTER           :: xtb_parameter => Null()
+      TYPE(ptb_atom_type), POINTER           :: ptb_parameter => Null()
       !
       TYPE(atom_upfpot_type), POINTER        :: upf_potential => Null()
       !
@@ -434,7 +438,7 @@ CONTAINS
    SUBROUTINE get_qs_kind(qs_kind, &
                           basis_set, basis_type, ncgf, nsgf, &
                           all_potential, tnadd_potential, gth_potential, sgp_potential, upf_potential, &
-                          se_parameter, dftb_parameter, xtb_parameter, &
+                          se_parameter, dftb_parameter, xtb_parameter, ptb_parameter,&
                           dftb3_param, zeff, elec_conf, mao, lmax_dftb, &
                           alpha_core_charge, ccore_charge, core_charge, core_charge_radius, &
                           paw_proj_set, paw_atom, hard_radius, hard0_radius, max_rad_local, &
@@ -461,6 +465,7 @@ CONTAINS
       TYPE(semi_empirical_type), OPTIONAL, POINTER       :: se_parameter
       TYPE(qs_dftb_atom_type), OPTIONAL, POINTER         :: dftb_parameter
       TYPE(xtb_atom_type), OPTIONAL, POINTER             :: xtb_parameter
+      TYPE(ptb_atom_type), OPTIONAL, POINTER             :: ptb_parameter
       REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: dftb3_param, zeff
       INTEGER, DIMENSION(:), OPTIONAL, POINTER           :: elec_conf
       INTEGER, INTENT(OUT), OPTIONAL                     :: mao, lmax_dftb
@@ -553,6 +558,7 @@ CONTAINS
       IF (PRESENT(se_parameter)) se_parameter => qs_kind%se_parameter
       IF (PRESENT(dftb_parameter)) dftb_parameter => qs_kind%dftb_parameter
       IF (PRESENT(xtb_parameter)) xtb_parameter => qs_kind%xtb_parameter
+      IF (PRESENT(ptb_parameter)) ptb_parameter => qs_kind%ptb_parameter
 
       IF (PRESENT(element_symbol)) element_symbol = qs_kind%element_symbol
       IF (PRESENT(name)) name = qs_kind%name
@@ -2174,6 +2180,9 @@ CONTAINS
                          "Information provided in the input file regarding BASIS for KIND <"// &
                          TRIM(qs_kind%name)//"> will be ignored!")
 
+      CASE (do_method_ptb)
+         
+
       CASE (do_method_pw)
          ! PW DFT
          ! Allocate and initialise the potential data set structure
@@ -2628,6 +2637,8 @@ CONTAINS
             no_fail = .TRUE.
          CASE (do_method_xtb)
             no_fail = .TRUE.
+         CASE (do_method_ptb)
+            no_fail = .TRUE.
          END SELECT
       ELSE IF (method == do_sirius) THEN
          qs_method = do_method_pw
@@ -2666,6 +2677,7 @@ CONTAINS
       TYPE(qs_dftb_atom_type), POINTER                   :: dftb_parameter
       TYPE(semi_empirical_type), POINTER                 :: se_parameter
       TYPE(xtb_atom_type), POINTER                       :: xtb_parameter
+      TYPE(ptb_atom_type), POINTER                       :: ptb_parameter
 
       IF (dft_control%qs_control%semi_empirical) THEN
          CALL get_qs_kind(qs_kind, se_parameter=se_parameter)
@@ -2683,6 +2695,10 @@ CONTAINS
          CALL get_qs_kind(qs_kind, xtb_parameter=xtb_parameter)
          CPASSERT(ASSOCIATED(xtb_parameter))
          CALL write_xtb_atom_param(xtb_parameter, subsys_section)
+      ELSE IF (dft_control%qs_control%ptb) THEN
+         CALL get_qs_kind(qs_kind, ptb_parameter=ptb_parameter)
+         CPASSERT(ASSOCIATED(ptb_parameter))
+         CALL write_ptb_atom_param(ptb_parameter, subsys_section)
       END IF
 
    END SUBROUTINE check_qs_kind

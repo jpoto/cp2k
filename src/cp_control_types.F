@@ -649,6 +649,7 @@ MODULE cp_control_types
              ddapc_restraint_type, &
              dftb_control_type, &
              xtb_control_type, &
+             ptb_control_type, &
              semi_empirical_control_type, &
              s2_restraint_type, &
              admm_control_type, &
@@ -1106,7 +1107,7 @@ CONTAINS
 !> \brief ...
 !> \param ptb_control ...
 ! **************************************************************************************************
-   SUBROUTINE ptb_control_create(xtb_control)
+   SUBROUTINE ptb_control_create(ptb_control)
       TYPE(ptb_control_type), POINTER                    :: ptb_control
 
       CPASSERT(.NOT. ASSOCIATED(ptb_control))

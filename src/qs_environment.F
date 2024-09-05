@@ -39,7 +39,8 @@ MODULE qs_environment
                                               gapw_control_type,&
                                               qs_control_type,&
                                               semi_empirical_control_type,&
-                                              xtb_control_type
+                                              xtb_control_type, &
+                                              ptb_control_type
    USE cp_control_utils,                ONLY: &
         read_ddapc_section, read_dft_control, read_mgrid_section, read_qs_section, &
         read_tddfpt2_control, read_tddfpt_control, write_admm_control, write_dft_control, &
@@ -91,7 +92,7 @@ MODULE qs_environment
         dispersion_d2, dispersion_d3, dispersion_d3bj, do_et_ddapc, do_method_am1, do_method_dftb, &
         do_method_gapw, do_method_gapw_xc, do_method_gpw, do_method_lrigpw, do_method_mndo, &
         do_method_mndod, do_method_ofgpw, do_method_pdg, do_method_pm3, do_method_pm6, &
-        do_method_pm6fm, do_method_pnnl, do_method_rigpw, do_method_rm1, do_method_xtb, &
+        do_method_pm6fm, do_method_pnnl, do_method_rigpw, do_method_rm1, do_method_xtb, do_method_ptb, &
         do_qmmm_gauss, do_qmmm_swave, general_roks, kg_tnadd_embed_ri, rel_none, rel_trans_atom, &
         vdw_pairpot_dftd2, vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, wfi_aspc_nr, &
         wfi_linear_ps_method_nr, wfi_linear_wf_method_nr, wfi_ps_method_nr, &
@@ -201,6 +202,7 @@ MODULE qs_environment
                                               xtb_parameters_read,&
                                               xtb_parameters_set
    USE xtb_types,                       ONLY: allocate_xtb_atom_param
+   USE ptb_parameters,                  ONLY: ptb_parameters_setup
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -817,6 +819,11 @@ CONTAINS
             CALL ewald_pw_create(ewald_pw, ewald_env, cell, cell_ref, print_section=print_section)
             CALL set_qs_env(qs_env, ewald_env=ewald_env, ewald_pw=ewald_pw)
          END IF
+      ELSEIF (dft_control%qs_control%method_id == do_method_ptb) THEN
+            ! Read specific parameters from input
+            ptb_section => section_vals_get_subs_vals(qs_section, "pTB")
+            CALL ptb_parameters_setup(qs_kind%ptb_parameter, ptb_control%parameter_file_path, &
+                                      ptb_control%parameter_file_name, para_env)
       END IF
 
       ! lri or ri env initialization
