@@ -6,8 +6,8 @@
 [ "${BASH_SOURCE[0]}" ] && SCRIPT_NAME="${BASH_SOURCE[0]}" || SCRIPT_NAME=$0
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_NAME")/.." && pwd -P)"
 
-sirius_ver="7.5.2"
-sirius_sha256="9ae01935578532c84f1d0d673dbbcdd490e26be22efa6c4acf7129f9dc1a0c60"
+sirius_ver="7.6.0"
+sirius_sha256="e424206fecb35bb2082b5c87f0865a9536040e984b88b041e6f7d531f8a65b20"
 
 source "${SCRIPT_DIR}"/common_vars.sh
 source "${SCRIPT_DIR}"/tool_kit.sh
@@ -159,19 +159,14 @@ case "$with_sirius" in
         -DCMAKE_C_COMPILER="${MPICC}" \
         -DCMAKE_Fortran_COMPILER="${MPIFC}" \
         -DCMAKE_VERBOSE_MAKEFILE=ON \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DSIRIUS_USE_MEMORY_POOL=OFF \
         -DSIRIUS_USE_ELPA=OFF \
         ${EXTRA_CMAKE_FLAGS} .. \
         > cmake.log 2>&1 || tail -n ${LOG_LINES} cmake.log
 
       make -j $(get_nprocs) -C src >> make.log 2>&1 || tail -n ${LOG_LINES} make.log
 
-      install -d "${pkg_install_dir}/include" >> install.log 2>&1
-      install -d "${pkg_install_dir}/lib" >> install.log 2>&1
-      cp -R ../src/* "${pkg_install_dir}/include" >> install.log 2>&1
-      install -m 644 src/*.a "${pkg_install_dir}/lib" >> install.log 2>&1
-      install -m 644 src/mod_files/*.mod "${pkg_install_dir}/include" >> install.log 2>&1
+      make install >> install.log 2>&1
+
       cd ..
 
       # now do we have cuda as well
@@ -196,10 +191,9 @@ case "$with_sirius" in
           ${EXTRA_CMAKE_FLAGS} .. \
           >> cmake.log 2>&1 || tail -n ${LOG_LINES} cmake.log
         make -j $(get_nprocs) -C src >> make.log 2>&1 || tail -n ${LOG_LINES} make.log
-        install -d ${pkg_install_dir}/lib/cuda
-        install -d ${pkg_install_dir}/include/cuda
-        install -m 644 src/*.a ${pkg_install_dir}/lib/cuda >> install.log 2>&1
-        install -m 644 src/mod_files/*.mod ${pkg_install_dir}/include/cuda >> install.log 2>&1
+
+	make install >> install.log 2>&1
+
         SIRIUS_CUDA_LDFLAGS="-L'${pkg_install_dir}/lib/cuda' -Wl,-rpath,'${pkg_install_dir}/lib/cuda'"
         cd ..
       fi
@@ -254,7 +248,6 @@ case "$with_sirius" in
     echo "==================== Linking SIRIUS_Dist to user paths ===================="
     pkg_install_dir="$with_sirius"
     check_dir "${pkg_install_dir}/lib"
-    check_dir "${pkg_install_dir}/lib64"
     check_dir "${pkg_install_dir}/include"
     ;;
 esac
@@ -278,8 +271,8 @@ EOF
     cat "${BUILDDIR}/setup_sirius" >> $SETUPFILE
   fi
   cat << EOF >> "${BUILDDIR}/setup_sirius"
-export SIRIUS_CFLAGS="IF_CUDA(-I${pkg_install_dir}/include/cuda|-I${pkg_install_dir}/include)"
-export SIRIUS_FFLAGS="IF_CUDA(-I${pkg_install_dir}/include/cuda|-I${pkg_install_dir}/include)"
+export SIRIUS_CFLAGS="IF_CUDA(-I${pkg_install_dir}/include/cuda|-I${pkg_install_dir}/include -I${pkg_install_dir}/include/sirius)"
+export SIRIUS_FFLAGS="IF_CUDA(-I${pkg_install_dir}/include/cuda|-I${pkg_install_dir}/include -I${pkg_install_dir}/include/sirius)"
 export SIRIUS_LDFLAGS="-L'${pkg_install_dir}/lib' -Wl,-rpath,'${pkg_install_dir}/lib'"
 export SIRIUS_CUDA_LDFLAGS="-L'${pkg_install_dir}/lib/cuda' -Wl,-rpath,'${pkg_install_dir}/lib/cuda'"
 export SIRIUS_LIBS="${SIRIUS_LIBS}"
