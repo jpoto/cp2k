@@ -13,13 +13,11 @@ MODULE ptb_types
 
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type
-   USE cp_output_handling,              ONLY: cp_p_file,&
-                                              cp_print_key_unit_nr,&
-                                              cp_print_key_finished_output
+   USE cp_output_handling,              ONLY: cp_print_key_finished_output,&
+                                              cp_print_key_unit_nr
    USE input_section_types,             ONLY: section_vals_type
    USE kinds,                           ONLY: default_string_length,&
                                               dp
-
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -28,11 +26,11 @@ MODULE ptb_types
 
    ! *** Global parameters ***
 
-   INTEGER, PARAMETER, PRIVATE :: max_elem = 86
-   INTEGER, PARAMETER, PRIVATE :: max_shell = 7
-   INTEGER, PARAMETER, PRIVATE :: max_prim = 5
-
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'ptb_types'
+
+   INTEGER, PARAMETER, PUBLIC :: max_elem = 86
+   INTEGER, PARAMETER, PUBLIC :: max_shell = 7
+   INTEGER, PARAMETER, PUBLIC :: max_prim = 5
 
 ! **************************************************************************************************
    TYPE ptb_atom_type
@@ -52,18 +50,18 @@ MODULE ptb_types
       INTEGER, DIMENSION(max_shell)          :: lval = -1 ! l-quantum number of shell i
       REAL(KIND=dp), DIMENSION(max_shell)    :: kappa = -1.0_dp
 
-
    END TYPE ptb_atom_type
 
 ! *** Public data types ***
 
-   PUBLIC :: ptb_atom_type, get_ptb_atom_param, write_ptb_atom_param
+   PUBLIC :: ptb_atom_type, get_ptb_atom_param, write_ptb_atom_param, &
+             allocate_ptb_atom_param, deallocate_ptb_atom_param
 
 CONTAINS
 
 ! **************************************************************************************************
 !> \brief ...
-!> \param xtb_parameter ...
+!> \param ptb_parameter ...
 ! **************************************************************************************************
    SUBROUTINE allocate_ptb_atom_param(ptb_parameter)
 
@@ -90,7 +88,7 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief ...
-!> \param xtb_parameter ...
+!> \param ptb_parameter ...
 ! **************************************************************************************************
    SUBROUTINE deallocate_ptb_atom_param(ptb_parameter)
 
@@ -101,10 +99,9 @@ CONTAINS
 
    END SUBROUTINE deallocate_ptb_atom_param
 
-
 ! **************************************************************************************************
 !> \brief ...
-!> \param xtb_parameter ...
+!> \param ptb_parameter ...
 !> \param aname ...
 !> \param defined ...
 !> \param kappa ...
@@ -112,11 +109,12 @@ CONTAINS
    SUBROUTINE get_ptb_atom_param(ptb_parameter, aname, defined, kappa &
                                  )
 
-      TYPE(ptb_atom_type), POINTER                               :: ptb_parameter
-      CHARACTER(LEN=default_string_length), &       
-         INTENT(OUT), OPTIONAL                                   :: aname
-      LOGICAL, INTENT(OUT), OPTIONAL                             :: defined
-      REAL(KIND=dp), DIMENSION(max_shell), INTENT(OUT), OPTIONAL :: kappa
+      TYPE(ptb_atom_type), POINTER                       :: ptb_parameter
+      CHARACTER(LEN=default_string_length), &
+         INTENT(OUT), OPTIONAL                           :: aname
+      LOGICAL, INTENT(OUT), OPTIONAL                     :: defined
+      REAL(KIND=dp), DIMENSION(max_shell), INTENT(OUT), &
+         OPTIONAL                                        :: kappa
 
       CPASSERT(ASSOCIATED(ptb_parameter))
 
@@ -126,7 +124,6 @@ CONTAINS
       IF (PRESENT(kappa)) kappa = ptb_parameter%kappa
 
    END SUBROUTINE get_ptb_atom_param
-
 
 ! **************************************************************************************************
 !> \brief ...

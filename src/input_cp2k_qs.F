@@ -26,14 +26,14 @@ MODULE input_cp2k_qs
         do_gapw_log, do_lri_inv, do_lri_inv_auto, do_lri_pseudoinv_diag, do_lri_pseudoinv_svd, &
         do_method_am1, do_method_dftb, do_method_gapw, do_method_gapw_xc, do_method_gpw, &
         do_method_lrigpw, do_method_mndo, do_method_mndod, do_method_ofgpw, do_method_pdg, &
-        do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_rigpw, &
-        do_method_rm1, do_method_xtb, do_method_ptb, do_ppl_analytic, do_ppl_grid, do_pwgrid_ns_fullspace, &
-        do_pwgrid_ns_halfspace, do_pwgrid_spherical, do_s2_constraint, do_s2_restraint, &
-        do_spin_density, gapw_1c_large, gapw_1c_medium, gapw_1c_orb, gapw_1c_small, &
-        gapw_1c_very_large, gaussian, numerical, slater, wfi_aspc_nr, wfi_frozen_method_nr, &
-        wfi_linear_p_method_nr, wfi_linear_ps_method_nr, wfi_linear_wf_method_nr, &
-        wfi_ps_method_nr, wfi_use_guess_method_nr, wfi_use_prev_p_method_nr, &
-        wfi_use_prev_rho_r_method_nr, wfi_use_prev_wf_method_nr
+        do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_ptb, &
+        do_method_rigpw, do_method_rm1, do_method_xtb, do_ppl_analytic, do_ppl_grid, &
+        do_pwgrid_ns_fullspace, do_pwgrid_ns_halfspace, do_pwgrid_spherical, do_s2_constraint, &
+        do_s2_restraint, do_spin_density, gapw_1c_large, gapw_1c_medium, gapw_1c_orb, &
+        gapw_1c_small, gapw_1c_very_large, gaussian, numerical, slater, wfi_aspc_nr, &
+        wfi_frozen_method_nr, wfi_linear_p_method_nr, wfi_linear_ps_method_nr, &
+        wfi_linear_wf_method_nr, wfi_ps_method_nr, wfi_use_guess_method_nr, &
+        wfi_use_prev_p_method_nr, wfi_use_prev_rho_r_method_nr, wfi_use_prev_wf_method_nr
    USE input_cp2k_distribution,         ONLY: create_distribution_section
    USE input_cp2k_opt,                  ONLY: create_optimize_dmfet,&
                                               create_optimize_embed,&
@@ -41,6 +41,7 @@ MODULE input_cp2k_qs
    USE input_cp2k_scf,                  ONLY: create_cdft_control_section
    USE input_cp2k_se,                   ONLY: create_se_control_section
    USE input_cp2k_tb,                   ONLY: create_dftb_control_section,&
+                                              create_ptb_control_section,&
                                               create_xtb_control_section
    USE input_keyword_types,             ONLY: keyword_create,&
                                               keyword_release,&
@@ -435,7 +436,7 @@ CONTAINS
                           description="Specifies the electronic structure method that should be employed", &
                           usage="METHOD GAPW", &
                           enum_c_vals=s2a("GAPW", "GAPW_XC", "GPW", "LRIGPW", "RIGPW", &
-                                    "MNDO", "MNDOD", "AM1", "PM3", "PM6", "PM6-FM", "PDG", "RM1", "PNNL", "DFTB", "xTB", "OFGPW", "pTB"), &
+                             "MNDO", "MNDOD", "AM1", "PM3", "PM6", "PM6-FM", "PDG", "RM1", "PNNL", "DFTB", "xTB", "OFGPW", "pTB"), &
                           enum_desc=s2a("Gaussian and augmented plane waves method", &
                                         "Gaussian and augmented plane waves method only for XC", &
                                         "Gaussian and plane waves method", &
@@ -504,6 +505,10 @@ CONTAINS
       CALL section_release(subsection)
 
       CALL create_xtb_control_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
+      CALL create_ptb_control_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 

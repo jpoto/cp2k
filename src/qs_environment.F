@@ -37,10 +37,10 @@ MODULE qs_environment
    USE cp_control_types,                ONLY: dft_control_type,&
                                               dftb_control_type,&
                                               gapw_control_type,&
+                                              ptb_control_type,&
                                               qs_control_type,&
                                               semi_empirical_control_type,&
-                                              xtb_control_type, &
-                                              ptb_control_type
+                                              xtb_control_type
    USE cp_control_utils,                ONLY: &
         read_ddapc_section, read_dft_control, read_mgrid_section, read_qs_section, &
         read_tddfpt2_control, read_tddfpt_control, write_admm_control, write_dft_control, &
@@ -83,6 +83,7 @@ MODULE qs_environment
    USE global_types,                    ONLY: global_environment_type
    USE hartree_local_methods,           ONLY: init_coulomb_local
    USE header,                          ONLY: dftb_header,&
+                                              ptb_header,&
                                               qs_header,&
                                               se_header,&
                                               xtb_header
@@ -92,9 +93,9 @@ MODULE qs_environment
         dispersion_d2, dispersion_d3, dispersion_d3bj, do_et_ddapc, do_method_am1, do_method_dftb, &
         do_method_gapw, do_method_gapw_xc, do_method_gpw, do_method_lrigpw, do_method_mndo, &
         do_method_mndod, do_method_ofgpw, do_method_pdg, do_method_pm3, do_method_pm6, &
-        do_method_pm6fm, do_method_pnnl, do_method_rigpw, do_method_rm1, do_method_xtb, do_method_ptb, &
-        do_qmmm_gauss, do_qmmm_swave, general_roks, kg_tnadd_embed_ri, rel_none, rel_trans_atom, &
-        vdw_pairpot_dftd2, vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, wfi_aspc_nr, &
+        do_method_pm6fm, do_method_pnnl, do_method_ptb, do_method_rigpw, do_method_rm1, &
+        do_method_xtb, do_qmmm_gauss, do_qmmm_swave, general_roks, kg_tnadd_embed_ri, rel_none, &
+        rel_trans_atom, vdw_pairpot_dftd2, vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, wfi_aspc_nr, &
         wfi_linear_ps_method_nr, wfi_linear_wf_method_nr, wfi_ps_method_nr, &
         wfi_use_guess_method_nr, xc_vdw_fun_none, xc_vdw_fun_nonloc, xc_vdw_fun_pairpot
    USE input_section_types,             ONLY: section_vals_get,&
@@ -131,6 +132,9 @@ MODULE qs_environment
                                               write_qs_particle_coordinates,&
                                               write_structure_data
    USE particle_types,                  ONLY: particle_type
+   USE periodic_table,                  ONLY: init_periodic_table
+   USE ptb_parameters,                  ONLY: ptb_parameters_init
+   USE ptb_types,                       ONLY: allocate_ptb_atom_param
    USE pw_env_types,                    ONLY: pw_env_type
    USE qmmm_types_low,                  ONLY: qmmm_env_qm_type
    USE qs_basis_rotation_methods,       ONLY: qs_basis_rotation
@@ -202,7 +206,6 @@ MODULE qs_environment
                                               xtb_parameters_read,&
                                               xtb_parameters_set
    USE xtb_types,                       ONLY: allocate_xtb_atom_param
-   USE ptb_parameters,                  ONLY: ptb_parameters_setup
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -609,6 +612,7 @@ CONTAINS
       TYPE(mp2_type), POINTER                            :: mp2_env
       TYPE(nddo_mpole_type), POINTER                     :: se_nddo_mpole
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(ptb_control_type), POINTER                    :: ptb_control
       TYPE(pw_env_type), POINTER                         :: pw_env
       TYPE(qs_control_type), POINTER                     :: qs_control
       TYPE(qs_dftb_pairpot_type), DIMENSION(:, :), &
@@ -627,11 +631,11 @@ CONTAINS
       TYPE(se_taper_type), POINTER                       :: se_taper
       TYPE(section_vals_type), POINTER :: dft_section, et_coupling_section, et_ddapc_section, &
          ewald_section, lri_section, mp2_section, nl_section, poisson_section, pp_section, &
-         print_section, qs_section, se_section, tddfpt_section, xc_section, xtb_section, ptb_section
+         print_section, ptb_section, qs_section, se_section, tddfpt_section, xc_section, &
+         xtb_section
       TYPE(semi_empirical_control_type), POINTER         :: se_control
       TYPE(semi_empirical_si_type), POINTER              :: se_store_int_env
       TYPE(xtb_control_type), POINTER                    :: xtb_control
-      TYPE(ptb_control_type), POINTER                    :: ptb_control
 
       CALL timeset(routineN, handle)
       NULLIFY (logger)
@@ -689,6 +693,8 @@ CONTAINS
             CALL dftb_header(iw)
          CASE (do_method_xtb)
             CALL xtb_header(iw)
+         CASE (do_method_ptb)
+            CALL ptb_header(iw)
          END SELECT
          CALL cp_print_key_finished_output(iw, logger, dft_section, &
                                            "PRINT%PROGRAM_BANNER")
@@ -820,10 +826,29 @@ CONTAINS
             CALL set_qs_env(qs_env, ewald_env=ewald_env, ewald_pw=ewald_pw)
          END IF
       ELSEIF (dft_control%qs_control%method_id == do_method_ptb) THEN
+         !   *** Read pTB parameter file ***
+         ptb_control => dft_control%qs_control%ptb_control
+
+         CALL get_qs_env(qs_env, nkind=nkind)
+         CALL init_periodic_table()
+         DO ikind = 1, nkind
+            qs_kind => qs_kind_set(ikind)
+            ! Setup proper pTB parameters
+            CPASSERT(.NOT. ASSOCIATED(qs_kind%ptb_parameter))
+            CALL allocate_ptb_atom_param(qs_kind%ptb_parameter)
+            ! Set default parameters
+            CALL get_qs_kind(qs_kind, element_symbol=element_symbol)
+
+            CALL ptb_parameters_init(qs_kind%ptb_parameter, element_symbol, &
+                                     ptb_control%parameter_file_path, ptb_control%parameter_file_name, &
+                                     para_env)
             ! Read specific parameters from input
             ptb_section => section_vals_get_subs_vals(qs_section, "pTB")
-            CALL ptb_parameters_setup(qs_kind%ptb_parameter, ptb_control%parameter_file_path, &
-                                      ptb_control%parameter_file_name, para_env)
+            !!!!CALL ptb_parameters_read(qs_kind%xtb_parameter, element_symbol, xtb_section)
+            ! set dependent parameters
+            !!!!CALL ptb_parameters_set(qs_kind%xtb_parameter)
+            ! Generate basis set
+         END DO
       END IF
 
       ! lri or ri env initialization

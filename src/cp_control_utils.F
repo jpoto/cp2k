@@ -10,15 +10,16 @@
 ! **************************************************************************************************
 MODULE cp_control_utils
    USE bibliography,                    ONLY: &
-        Andreussi2012, Dewar1977, Dewar1985, Elstner1998, Fattebert2002, Grimme2017, Grimme2023, Hu2007, &
-        Krack2000, Lippert1997, Lippert1999, Porezag1995, Repasky2002, Rocha2006, Schenter2008, &
-        Seifert1996, Souza2002, Stengel2009, Stewart1989, Stewart2007, Thiel1992, Umari2002, &
-        VanVoorhis2015, VandeVondele2005a, VandeVondele2005b, Yin2017, Zhechkov2005, cite_reference
+        Andreussi2012, Dewar1977, Dewar1985, Elstner1998, Fattebert2002, Grimme2017, Grimme2023, &
+        Hu2007, Krack2000, Lippert1997, Lippert1999, Porezag1995, Repasky2002, Rocha2006, &
+        Schenter2008, Seifert1996, Souza2002, Stengel2009, Stewart1989, Stewart2007, Thiel1992, &
+        Umari2002, VanVoorhis2015, VandeVondele2005a, VandeVondele2005b, Yin2017, Zhechkov2005, &
+        cite_reference
    USE cp_control_types,                ONLY: &
         admm_control_create, admm_control_type, ddapc_control_create, ddapc_restraint_type, &
         dft_control_create, dft_control_type, efield_type, expot_control_create, &
         maxwell_control_create, qs_control_type, tddfpt2_control_type, tddfpt_control_create, &
-        tddfpt_control_type, xtb_control_type, ptb_control_type
+        tddfpt_control_type, xtb_control_type
    USE cp_files,                        ONLY: close_file,&
                                               open_file
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
@@ -41,16 +42,16 @@ MODULE cp_control_utils
         do_admm_purify_none, do_admm_purify_none_dm, do_ddapc_constraint, do_ddapc_restraint, &
         do_method_am1, do_method_dftb, do_method_gapw, do_method_gapw_xc, do_method_gpw, &
         do_method_lrigpw, do_method_mndo, do_method_mndod, do_method_ofgpw, do_method_pdg, &
-        do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_rigpw, &
-        do_method_rm1, do_method_xtb, do_method_ptb, do_pwgrid_ns_fullspace, do_pwgrid_ns_halfspace, &
-        do_pwgrid_spherical, do_s2_constraint, do_s2_restraint, do_se_is_kdso, do_se_is_kdso_d, &
-        do_se_is_slater, do_se_lr_ewald, do_se_lr_ewald_gks, do_se_lr_ewald_r3, do_se_lr_none, &
-        gapw_1c_large, gapw_1c_medium, gapw_1c_orb, gapw_1c_small, gapw_1c_very_large, &
-        gaussian_env, no_admm_type, numerical, ramp_env, real_time_propagation, sccs_andreussi, &
-        sccs_derivative_cd3, sccs_derivative_cd5, sccs_derivative_cd7, sccs_derivative_fft, &
-        sccs_fattebert_gygi, sic_ad, sic_eo, sic_list_all, sic_list_unpaired, sic_mauri_spz, &
-        sic_mauri_us, sic_none, slater, tddfpt_dipole_length, tddfpt_excitations, &
-        tddfpt_kernel_stda, use_mom_ref_user
+        do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_ptb, &
+        do_method_rigpw, do_method_rm1, do_method_xtb, do_pwgrid_ns_fullspace, &
+        do_pwgrid_ns_halfspace, do_pwgrid_spherical, do_s2_constraint, do_s2_restraint, &
+        do_se_is_kdso, do_se_is_kdso_d, do_se_is_slater, do_se_lr_ewald, do_se_lr_ewald_gks, &
+        do_se_lr_ewald_r3, do_se_lr_none, gapw_1c_large, gapw_1c_medium, gapw_1c_orb, &
+        gapw_1c_small, gapw_1c_very_large, gaussian_env, no_admm_type, numerical, ramp_env, &
+        real_time_propagation, sccs_andreussi, sccs_derivative_cd3, sccs_derivative_cd5, &
+        sccs_derivative_cd7, sccs_derivative_fft, sccs_fattebert_gygi, sic_ad, sic_eo, &
+        sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none, slater, &
+        tddfpt_dipole_length, tddfpt_excitations, tddfpt_kernel_stda, use_mom_ref_user
    USE input_cp2k_check,                ONLY: xc_functionals_expand
    USE input_cp2k_dft,                  ONLY: create_dft_section
    USE input_enumeration_types,         ONLY: enum_i2c,&
@@ -728,8 +729,8 @@ CONTAINS
       REAL(dp), POINTER                                  :: scal(:)
       TYPE(section_vals_type), POINTER :: cdft_control_section, ddapc_restraint_section, &
          dftb_parameter, dftb_section, genpot_section, lri_optbas_section, mull_section, &
-         nonbonded_section, s2_restraint_section, se_section, xtb_parameter, xtb_section, &
-         ptb_parameter, ptb_section
+         nonbonded_section, ptb_parameter, ptb_section, s2_restraint_section, se_section, &
+         xtb_parameter, xtb_section
 
       CALL timeset(routineN, handle)
 

@@ -45,7 +45,7 @@ MODULE input_cp2k_tb
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'input_cp2k_tb'
 
-   PUBLIC :: create_dftb_control_section, create_xtb_control_section
+   PUBLIC :: create_dftb_control_section, create_xtb_control_section, create_ptb_control_section
 
 CONTAINS
 
@@ -220,10 +220,10 @@ CONTAINS
    SUBROUTINE create_ptb_control_section(section)
       TYPE(section_type), POINTER                        :: section
 
-      TYPE(keyword_type), POINTER                        :: keyword
       TYPE(section_type), POINTER                        :: subsection
 
       CPASSERT(.NOT. ASSOCIATED(section))
+
       CALL section_create(section, __LOCATION__, name="pTB", &
                           description="Parameters needed to set up the pTB methods", &
                           n_keywords=1, n_subsections=1, repeats=.FALSE., &
@@ -233,9 +233,6 @@ CONTAINS
       CALL create_ptb_parameter_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
-
-      NULLIFY (keyword)
-      
 
    END SUBROUTINE create_ptb_control_section
 
@@ -515,7 +512,6 @@ CONTAINS
       CALL keyword_release(keyword)
 
    END SUBROUTINE create_ptb_parameter_section
-
 
 ! **************************************************************************************************
 !> \brief ...

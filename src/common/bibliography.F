@@ -735,9 +735,9 @@ CONTAINS
 
       CALL add_reference(key=Grimme2023, &
                          authors=s2a("S. Grimme", "M. Mueller", "A.Hansen"), &
-                         title="A non-self-consistent tight-binding electronic structure" // &
-                         "potential in a polarized double-zeta basis set for all spd-block" // &
-                         "elements up to Z = 86",  source="J. Chem. Phys.", volume="158", &
+                         title="A non-self-consistent tight-binding electronic structure "// &
+                         "potential in a polarized double-zeta basis set for all spd-block "// &
+                         "elements up to Z = 86", source="J. Chem. Phys.", volume="158", &
                          pages="124111", year=2023, doi="10.1063/5.0137838")
 
       CALL add_reference(key=Branduardi2007, &

@@ -1,9 +1,9 @@
 #      parameters required for the pTB method 
 # 
 # 
-max_shell      7 
-max_elem      86 
-max_prim       5 
+# max_shell      7 
+# max_elem      86 
+# max_prim       5 
 # 
 # element val ang_shell n_prim n_shell exponents coefficents 
 el        1     1.0000        3 

@@ -59,8 +59,8 @@ MODULE qs_kind_types
    USE gapw_1c_basis_set,               ONLY: create_1c_basis
    USE input_constants,                 ONLY: &
         do_method_am1, do_method_dftb, do_method_mndo, do_method_mndod, do_method_pdg, &
-        do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_pw, &
-        do_method_rm1, do_method_xtb, do_method_ptb,  do_qs, do_sirius, gapw_1c_large, &
+        do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_ptb, &
+        do_method_pw, do_method_rm1, do_method_xtb, do_qs, do_sirius, gapw_1c_large, &
         gapw_1c_medium, gapw_1c_orb, gapw_1c_small, gapw_1c_very_large
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
@@ -84,6 +84,8 @@ MODULE qs_kind_types
    USE physcon,                         ONLY: angstrom,&
                                               bohr,&
                                               evolt
+   USE ptb_types,                       ONLY: ptb_atom_type,&
+                                              write_ptb_atom_param
    USE qs_dftb_types,                   ONLY: qs_dftb_atom_type
    USE qs_dftb_utils,                   ONLY: deallocate_dftb_atom_param,&
                                               get_dftb_atom_param,&
@@ -109,9 +111,6 @@ MODULE qs_kind_types
                                               get_xtb_atom_param,&
                                               write_xtb_atom_param,&
                                               xtb_atom_type
-   USE ptb_types,                       ONLY: get_ptb_atom_param,&
-                                              write_ptb_atom_param,&
-                                              ptb_atom_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -376,6 +375,7 @@ CONTAINS
 !> \param se_parameter ...
 !> \param dftb_parameter ...
 !> \param xtb_parameter ...
+!> \param ptb_parameter ...
 !> \param dftb3_param ...
 !> \param zeff ...
 !> \param elec_conf ...
@@ -438,7 +438,7 @@ CONTAINS
    SUBROUTINE get_qs_kind(qs_kind, &
                           basis_set, basis_type, ncgf, nsgf, &
                           all_potential, tnadd_potential, gth_potential, sgp_potential, upf_potential, &
-                          se_parameter, dftb_parameter, xtb_parameter, ptb_parameter,&
+                          se_parameter, dftb_parameter, xtb_parameter, ptb_parameter, &
                           dftb3_param, zeff, elec_conf, mao, lmax_dftb, &
                           alpha_core_charge, ccore_charge, core_charge, core_charge_radius, &
                           paw_proj_set, paw_atom, hard_radius, hard0_radius, max_rad_local, &
@@ -2181,7 +2181,6 @@ CONTAINS
                          TRIM(qs_kind%name)//"> will be ignored!")
 
       CASE (do_method_ptb)
-         
 
       CASE (do_method_pw)
          ! PW DFT
@@ -2674,10 +2673,10 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: subsys_section
 
       LOGICAL                                            :: defined
+      TYPE(ptb_atom_type), POINTER                       :: ptb_parameter
       TYPE(qs_dftb_atom_type), POINTER                   :: dftb_parameter
       TYPE(semi_empirical_type), POINTER                 :: se_parameter
       TYPE(xtb_atom_type), POINTER                       :: xtb_parameter
-      TYPE(ptb_atom_type), POINTER                       :: ptb_parameter
 
       IF (dft_control%qs_control%semi_empirical) THEN
          CALL get_qs_kind(qs_kind, se_parameter=se_parameter)

@@ -128,8 +128,6 @@ MODULE input_cp2k_print_dft
    USE input_cp2k_poisson, ONLY: create_poisson_section
    USE input_cp2k_projection_rtp, ONLY: create_projection_rtp_section
    USE input_cp2k_rsgrid, ONLY: create_rsgrid_section
-   USE input_cp2k_tb, ONLY: create_dftb_control_section, &
-                            create_xtb_control_section
    USE input_cp2k_transport, ONLY: create_transport_section
    USE input_cp2k_voronoi, ONLY: create_print_voronoi_section
    USE input_cp2k_scf, ONLY: create_scf_section, &
