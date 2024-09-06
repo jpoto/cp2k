@@ -133,7 +133,8 @@ MODULE qs_environment
                                               write_structure_data
    USE particle_types,                  ONLY: particle_type
    USE periodic_table,                  ONLY: init_periodic_table
-   USE ptb_parameters,                  ONLY: ptb_parameters_init
+   USE ptb_parameters,                  ONLY: init_ptb_basis,&
+                                              ptb_parameters_init
    USE ptb_types,                       ONLY: allocate_ptb_atom_param
    USE pw_env_types,                    ONLY: pw_env_type
    USE qmmm_types_low,                  ONLY: qmmm_env_qm_type
@@ -828,7 +829,6 @@ CONTAINS
       ELSEIF (dft_control%qs_control%method_id == do_method_ptb) THEN
          !   *** Read pTB parameter file ***
          ptb_control => dft_control%qs_control%ptb_control
-
          CALL get_qs_env(qs_env, nkind=nkind)
          CALL init_periodic_table()
          DO ikind = 1, nkind
@@ -838,16 +838,14 @@ CONTAINS
             CALL allocate_ptb_atom_param(qs_kind%ptb_parameter)
             ! Set default parameters
             CALL get_qs_kind(qs_kind, element_symbol=element_symbol)
-
+            ! Read data from pTB_parmaeters file
             CALL ptb_parameters_init(qs_kind%ptb_parameter, element_symbol, &
                                      ptb_control%parameter_file_path, ptb_control%parameter_file_name, &
                                      para_env)
             ! Read specific parameters from input
             ptb_section => section_vals_get_subs_vals(qs_section, "pTB")
-            !!!!CALL ptb_parameters_read(qs_kind%xtb_parameter, element_symbol, xtb_section)
-            ! set dependent parameters
-            !!!!CALL ptb_parameters_set(qs_kind%xtb_parameter)
             ! Generate basis set
+            CALL init_ptb_basis(qs_kind%ptb_parameter, tmp_basis_set)
          END DO
       END IF
 

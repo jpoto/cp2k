@@ -11,11 +11,14 @@
 ! **************************************************************************************************
 MODULE ptb_parameters
 
+   USE basis_set_types,                 ONLY: allocate_gto_basis_set,&
+                                              gto_basis_set_type
    USE cp_parser_methods,               ONLY: parser_get_next_line,&
                                               parser_get_object
    USE cp_parser_types,                 ONLY: cp_parser_type,&
                                               parser_create
-   USE kinds,                           ONLY: default_string_length
+   USE kinds,                           ONLY: default_string_length,&
+                                              dp
    USE message_passing,                 ONLY: mp_para_env_type
    USE periodic_table,                  ONLY: nelem,&
                                               ptable
@@ -33,7 +36,7 @@ MODULE ptb_parameters
 
 ! *** Public data types ***
 
-   PUBLIC :: ptb_parameters_init
+   PUBLIC :: ptb_parameters_init, init_ptb_basis
 
 CONTAINS
 
@@ -54,8 +57,9 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
       CHARACTER(len=default_string_length)               :: filename, hline
-      INTEGER                                            :: ielem, k
+      INTEGER                                            :: icoef, ielem, ishell, k, nshell, z_num
       LOGICAL                                            :: at_end, found
+      REAL(KIND=dp)                                      :: valence
       TYPE(cp_parser_type)                               :: parser
 
       filename = ADJUSTL(TRIM(parameter_file_path))//ADJUSTL(TRIM(parameter_file_name))
@@ -70,6 +74,10 @@ CONTAINS
       END DO
 
       IF (ielem > max_elem) CPABORT('Element not available for pTB')
+      !storing information
+      param%typ = "NONE"
+      param%symbol = element_symbol
+      param%z = ielem
 
       !parse informaiton from file
       CALL parser_create(parser, filename, para_env=para_env)
@@ -79,10 +87,51 @@ CONTAINS
          CALL parser_get_next_line(parser, 1, at_end)
          IF (at_end) EXIT
          CALL parser_get_object(parser, hline)
-         WRITE (*, *) hline
+         CALL parser_get_object(parser, z_num)
+         CALL parser_get_object(parser, valence)
+         CALL parser_get_object(parser, nshell)
+         IF (z_num == ielem) THEN
+            param%nshell = nshell
+            param%valence = valence
+            DO ishell = 1, nshell
+               CALL parser_get_next_line(parser, 1, at_end)
+               CALL parser_get_object(parser, param%ind(ishell))
+               CALL parser_get_object(parser, param%nprim(ishell))
+               CALL parser_get_object(parser, param%lval(ishell))
+               CALL parser_get_next_line(parser, 1, at_end)
+               DO icoef = 1, param%nprim(ishell)
+                  CALL parser_get_object(parser, param%kappa(ishell, icoef))
+               END DO
+               CALL parser_get_next_line(parser, 1, at_end)
+               DO icoef = 1, param%nprim(ishell)
+                  CALL parser_get_object(parser, param%coef(ishell, icoef))
+               END DO
+            END DO
+         ELSE
+            CALL parser_get_next_line(parser, nshell*3, at_end)
+         END IF
       END DO
 
+      param%defined = .TRUE.
+
    END SUBROUTINE ptb_parameters_init
+
+! **************************************************************************************************
+!> \brief ...
+!> \param param ...
+!> \param gto_basis_set ...
+! **************************************************************************************************
+   SUBROUTINE init_ptb_basis(param, gto_basis_set)
+
+      TYPE(ptb_atom_type), POINTER                       :: param
+      TYPE(gto_basis_set_type), POINTER                  :: gto_basis_set
+
+      CALL allocate_gto_basis_set(gto_basis_set)
+
+      !set gto basis set information
+      gto_basis_set%nset = param%nshell
+
+   END SUBROUTINE init_ptb_basis
 
 END MODULE ptb_parameters
 
