@@ -18,8 +18,8 @@ MODULE cp_control_utils
    USE cp_control_types,                ONLY: &
         admm_control_create, admm_control_type, ddapc_control_create, ddapc_restraint_type, &
         dft_control_create, dft_control_type, efield_type, expot_control_create, &
-        maxwell_control_create, qs_control_type, tddfpt2_control_type, tddfpt_control_create, &
-        tddfpt_control_type, xtb_control_type
+        maxwell_control_create, ptb_control_type, qs_control_type, tddfpt2_control_type, &
+        tddfpt_control_create, tddfpt_control_type, xtb_control_type
    USE cp_files,                        ONLY: close_file,&
                                               open_file
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
@@ -1606,6 +1606,10 @@ CONTAINS
          CALL write_xtb_control(dft_control%qs_control%xtb_control, dft_section)
          RETURN
       END IF
+      IF (dft_control%qs_control%ptb) THEN
+         CALL write_ptb_control(dft_control%qs_control%ptb_control, dft_section)
+         RETURN
+      END IF
       CALL timeset(routineN, handle)
 
       NULLIFY (logger)
@@ -1982,6 +1986,40 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE write_xtb_control
+
+! **************************************************************************************************
+!> \brief Write the pTB control parameters to the output unit.
+!> \param ptb_control ...
+!> \param dft_section ...
+! **************************************************************************************************
+   SUBROUTINE write_ptb_control(ptb_control, dft_section)
+      TYPE(ptb_control_type), POINTER                    :: ptb_control
+      TYPE(section_vals_type), POINTER                   :: dft_section
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'write_ptb_control'
+
+      INTEGER                                            :: handle, output_unit
+      TYPE(cp_logger_type), POINTER                      :: logger
+
+      CALL timeset(routineN, handle)
+      NULLIFY (logger)
+      logger => cp_get_default_logger()
+
+      output_unit = cp_print_key_unit_nr(logger, dft_section, &
+                                         "PRINT%DFT_CONTROL_PARAMETERS", extension=".Log")
+
+      IF (output_unit > 0) THEN
+
+         WRITE (UNIT=output_unit, FMT="(/,T2,A,T31,A50)") &
+            "pTB| Parameter file", ADJUSTR(TRIM(ptb_control%parameter_file_name))
+      END IF
+
+      CALL cp_print_key_finished_output(output_unit, logger, dft_section, &
+                                        "PRINT%DFT_CONTROL_PARAMETERS")
+
+      CALL timestop(handle)
+
+   END SUBROUTINE write_ptb_control
 
 ! **************************************************************************************************
 !> \brief Purpose: Write the QS control parameters to the output unit.

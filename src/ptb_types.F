@@ -183,7 +183,7 @@ CONTAINS
 
                WRITE (UNIT=io_unit, FMT="(T16,A,T71)", advance="no") "primitves per shell "
                WRITE (UNIT=io_unit, FMT="(7I10)") ptb_parameter%nprim(1:ptb_parameter%nshell)
-               WRITE (UNIT=io_unit, FMT="(T16,A,T71)", advance="no") "ang. mom. per shell "
+               WRITE (UNIT=io_unit, FMT="(T16,A,T71)", advance="no") "ang. mom. of the shell "
                WRITE (UNIT=io_unit, FMT="(7I10)") ptb_parameter%lval(1:ptb_parameter%nshell)
                WRITE (UNIT=io_unit, FMT="(T16,A)") "  exponents:     "
                DO ishell = 1, ptb_parameter%nshell

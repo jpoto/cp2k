@@ -134,7 +134,8 @@ MODULE basis_set_types
              create_gto_from_sto_basis, &
              deallocate_sto_basis_set, &
              set_sto_basis_set, &
-             srules
+             srules, &
+             orthofun
 
    ! Public data types
    PUBLIC :: gto_basis_set_p_type, &

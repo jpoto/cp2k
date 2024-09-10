@@ -845,7 +845,9 @@ CONTAINS
             ! Read specific parameters from input
             ptb_section => section_vals_get_subs_vals(qs_section, "pTB")
             ! Generate basis set
+            NULLIFY (tmp_basis_set)
             CALL init_ptb_basis(qs_kind%ptb_parameter, tmp_basis_set)
+            CALL add_basis_set_to_container(qs_kind%basis_sets, tmp_basis_set, "ORB")
          END DO
       END IF
 
