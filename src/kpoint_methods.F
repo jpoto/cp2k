@@ -27,6 +27,9 @@ MODULE kpoint_methods
         dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
+   USE cp_files,                        ONLY: close_file,&
+                                              get_unit_number,&
+                                              open_file
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale
    USE cp_fm_pool_types,                ONLY: cp_fm_pool_p_type,&
                                               fm_pool_create_fm,&
@@ -45,7 +48,8 @@ MODULE kpoint_methods
    USE fermi_utils,                     ONLY: fermikp,&
                                               fermikp2
    USE input_constants,                 ONLY: smear_fermi_dirac
-   USE kinds,                           ONLY: default_string_length, dp
+   USE kinds,                           ONLY: default_string_length,&
+                                              dp
    USE kpoint_types,                    ONLY: get_kpoint_info,&
                                               kind_rotmat_type,&
                                               kpoint_env_create,&
@@ -78,9 +82,6 @@ MODULE kpoint_methods
                                               neighbor_list_set_p_type
    USE scf_control_types,               ONLY: smear_type
    USE util,                            ONLY: get_limit
-   USE cp_files,                        ONLY: close_file,&
-                                              get_unit_number,&
-                                              open_file
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -189,7 +190,7 @@ CONTAINS
             kpsym => kpoint%kp_sym(ik)%kpoint_sym
             IF (crys_sym%symlib .AND. .NOT. crys_sym%fullgrid .AND. crys_sym%istriz == 1) THEN
                ! set up the symmetrization information
-               write(*,*) '+++ rounding:',crys_sym%wkpoint(ik),kpsym%nwght
+               WRITE (*, *) '+++ rounding:', crys_sym%wkpoint(ik), kpsym%nwght
                kpsym%nwght = NINT(crys_sym%wkpoint(ik))
                ns = kpsym%nwght
                !
@@ -1311,7 +1312,7 @@ CONTAINS
                   WRITE (*, *) 'kp_help:', kp_help
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
-                  
+
                   CALL rotwrite(kpsym%rot(1:3, 1:3, is), kp_help)
 
                   IF (real_only) THEN
@@ -1663,7 +1664,6 @@ CONTAINS
    END SUBROUTINE matprint
 ! **************************************************************************************************
 
-
 ! **************************************************************************************************
 !> \brief ...
 !> \param mat ...
@@ -1671,18 +1671,17 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE matwrite(mat, kp)
       TYPE(dbcsr_type), POINTER                          :: mat
-      REAL(dp), INTENT(IN), DIMENSION(3)                 :: kp
+      REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
 
-      INTEGER                                            :: io_unit
-      INTEGER                                            :: i, icol, irow
+      CHARACTER(len=default_string_length)               :: kp_filename = ''
+      INTEGER                                            :: i, icol, io_unit, irow
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: mblock
       TYPE(dbcsr_iterator_type)                          :: iter
-      CHARACTER(len=default_string_length)               :: kp_filename=''
 
-      write(kp_filename,'(A,F06.2,A,F06.2,A,F06.2)') 'log_kpoint_',kp(1),'_',kp(2),'_',kp(3)
+      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2)') 'log_kpoint_', kp(1), '_', kp(2), '_', kp(3)
 
-      DO i=1,34
-         IF(kp_filename(i:i)==' ') kp_filename(i:i)='_'
+      DO i = 1, 34
+         IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
       END DO
 
       io_unit = get_unit_number()
@@ -1714,17 +1713,16 @@ CONTAINS
 !> \param kp ...
 ! **************************************************************************************************
    SUBROUTINE rotwrite(mat, kp)
-      REAL(dp), INTENT(IN), DIMENSION(3,3)               :: mat
-      REAL(dp), INTENT(IN), DIMENSION(3)                 :: kp
+      REAL(dp), DIMENSION(3, 3), INTENT(IN)              :: mat
+      REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
 
-      INTEGER                                            :: io_unit
-      INTEGER                                            :: i, icol, irow
-      CHARACTER(len=default_string_length)               :: kp_filename=''
+      CHARACTER(len=default_string_length)               :: kp_filename = ''
+      INTEGER                                            :: i, icol, io_unit, irow
 
-      write(kp_filename,'(A,F06.2,A,F06.2,A,F06.2)') 'rot_kpoint_',kp(1),'_',kp(2),'_',kp(3)
+      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2)') 'rot_kpoint_', kp(1), '_', kp(2), '_', kp(3)
 
-      DO i=1,34
-         IF(kp_filename(i:i)==' ') kp_filename(i:i)='_'
+      DO i = 1, 34
+         IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
       END DO
 
       io_unit = get_unit_number()
@@ -1734,7 +1732,7 @@ CONTAINS
                      file_position="APPEND")
 
       DO irow = 1, 3
-         WRITE (io_unit, '(3F12.6)') (mat(irow, icol),icol=1,3)
+         WRITE (io_unit, '(3F12.6)') (mat(irow, icol), icol=1, 3)
       END DO
 
       CALL close_file(unit_number=io_unit)

@@ -112,8 +112,8 @@ CONTAINS
                ! energy weighted density matrices in k-space
                CALL kpoint_density_matrices(kpoints, energy_weighted=.TRUE.)
                ! energy weighted density matrices in real space
-               write(*,*) '++++++++++++++++++++ qs_energy_matrix_w +++++++++++++++++++'
-               CALL dbcsr_print(matrix_w_kp(1,1)%matrix)
+               WRITE (*, *) '++++++++++++++++++++ qs_energy_matrix_w +++++++++++++++++++'
+               CALL dbcsr_print(matrix_w_kp(1, 1)%matrix)
                CALL kpoint_density_transform(kpoints, matrix_w_kp, .TRUE., &
                                              matrix_s_kp(1, 1)%matrix, sab_nl, fmwork)
 
