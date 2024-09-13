@@ -1308,6 +1308,8 @@ CONTAINS
                                    c_val=qs_control%ptb_control%parameter_file_path)
          CALL section_vals_val_get(ptb_parameter, "PARAM_FILE_NAME", &
                                    c_val=qs_control%ptb_control%parameter_file_name)
+         CALL section_vals_val_get(ptb_section, "CUTOFF_COORDINATION", &
+                                   r_val=qs_control%ptb_control%cn_cutoff)
       END IF
 
       ! Optimize LRI basis set

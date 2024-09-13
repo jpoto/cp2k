@@ -221,6 +221,7 @@ CONTAINS
       TYPE(section_type), POINTER                        :: section
 
       TYPE(section_type), POINTER                        :: subsection
+      TYPE(keyword_type), POINTER                        :: keyword
 
       CPASSERT(.NOT. ASSOCIATED(section))
 
@@ -233,6 +234,13 @@ CONTAINS
       CALL create_ptb_parameter_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
+
+      NULLIFY (keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="CUTOFF_COORDINATION", &
+                          description="Cutoff for the determination of the coordination number,", &
+                          usage="CUTOFF_COORD 25.0", default_r_val=25.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
 
    END SUBROUTINE create_ptb_control_section
 

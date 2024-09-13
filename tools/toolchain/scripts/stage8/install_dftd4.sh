@@ -106,7 +106,7 @@ if [ "$with_dftd4" != "__DONTUSE__" ]; then
     DFTD4_LIBDIR="${pkg_install_dir}/lib"
     [ -d "${pkg_install_dir}/lib64" ] && DFTD4_LIBDIR="${pkg_install_dir}/lib64"
 
-    DFTD4_CFLAGS="-I'${pkg_install_dir}/include' -I'${DFTD4_DFTD4}' -I'${DFTD4_MCTC}'"
+    DFTD4_CFLAGS="-I'${pkg_install_dir}/include' -I'${DFTD4_DFTD4}' -I'${DFTD4_MCTC}' -I'${DFTD4_MCHARGE}'"
     DFTD4_LDFLAGS="-L'${DFTD4_LIBDIR}' -Wl,-rpath,'${DFTD4_LIBDIR}'"
 
     cat << EOF > "${BUILDDIR}/setup_dftd4"

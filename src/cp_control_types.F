@@ -175,6 +175,7 @@ MODULE cp_control_types
       CHARACTER(LEN=default_path_length)   :: parameter_file_path = ""
       CHARACTER(LEN=default_path_length)   :: parameter_file_name = ""
       !
+      REAL(KIND=dp)                        :: cn_cutoff
    END TYPE ptb_control_type
 
 ! **************************************************************************************************

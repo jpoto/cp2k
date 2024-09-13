@@ -64,6 +64,7 @@ MODULE qs_energy_init
    USE se_core_core,                    ONLY: se_core_core_interaction
    USE se_core_matrix,                  ONLY: build_se_core_matrix
    USE xtb_matrices,                    ONLY: build_xtb_matrices
+   USE ptb_matrices,                    ONLY: build_ptb_matrices
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -311,6 +312,12 @@ CONTAINS
          CALL get_qs_env(qs_env=qs_env, dispersion_env=dispersion_env, energy=energy)
          CALL calculate_dispersion_pairpot(qs_env, dispersion_env, energy%dispersion, calc_forces)
          CALL qs_env_update_s_mstruct(qs_env)
+      ELSEIF (dft_control%qs_control%ptb) THEN
+         CALL build_ptb_matrices(qs_env=qs_env, para_env=para_env, &
+                cn_cutoff=dft_control%qs_control%ptb_control%cn_cutoff)
+         CALL get_qs_env(qs_env=qs_env, dispersion_env=dispersion_env, energy=energy)
+         CALL calculate_dispersion_pairpot(qs_env, dispersion_env, energy%dispersion, calc_forces)
+
       ELSE
          CALL build_core_hamiltonian_matrix(qs_env=qs_env, calculate_forces=.FALSE.)
          CALL qs_env_update_s_mstruct(qs_env)

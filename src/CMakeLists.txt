@@ -137,6 +137,7 @@ list(
   ec_methods.F
   ec_orth_solver.F
   ed_analysis.F
+  eeq_charge_model.F
   efield_tb_methods.F
   efield_utils.F
   eip_environment.F
@@ -462,6 +463,9 @@ list(
   preconditioner_makes.F
   preconditioner_solvers.F
   preconditioner_types.F
+  ptb_parameters.F
+  ptb_types.F
+  ptb_matrices.F
   qmmm_create.F
   qmmm_elpot.F
   qmmm_ff_fist.F
@@ -831,8 +835,7 @@ list(
   xtb_matrices.F
   xtb_parameters.F
   xtb_types.F
-  ptb_parameters.F
-  ptb_types.F)
+  )
 
 list(
   APPEND
