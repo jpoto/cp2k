@@ -515,7 +515,7 @@ CONTAINS
             DO igroup = 1, nkp_groups
                ! number of current kpoint
                ik = kp_dist(1, igroup) + ikp - 1
-               write(*,*) '+++ Transformation to D(k) for: ',xkp(1:3, ik)
+               WRITE (*, *) '+++ Transformation to D(k) for: ', xkp(1:3, ik)
                my_kpgrp = (ik >= kpoints%kp_range(1) .AND. ik <= kpoints%kp_range(2))
                indx = indx + 1
                IF (use_real_wfn) THEN
@@ -559,7 +559,7 @@ CONTAINS
 
                   CALL dbcsr_print(rmatrix)
                   CALL dbcsr_print(cmatrix)
-                  
+
                   CALL dbcsr_desymmetrize(rmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(3))
                   CALL dbcsr_desymmetrize(cmatrix, tmpmat)
@@ -750,13 +750,13 @@ CONTAINS
          ! density matrices
          CALL kpoint_density_matrices(kpoints)
          ! density matrices in real space
-         write(*,*) '+++++++++++++ qs_scf_diag ++++++++++++++++++++++++++++'
-         CALL dbcsr_print(scf_env%p_mix_new(1,1)%matrix)
+         WRITE (*, *) '+++++++++++++ qs_scf_diag ++++++++++++++++++++++++++++'
+         CALL dbcsr_print(scf_env%p_mix_new(1, 1)%matrix)
          CALL cp_fm_write_formatted(fmwork(1), 6, "matrix before kpoint 1")
          CALL cp_fm_write_formatted(fmwork(2), 6, "matrix before kpoint 2")
          CALL cp_fm_write_formatted(fmwork(3), 6, "matrix before kpoint 3")
          CALL cp_fm_write_formatted(fmwork(4), 6, "matrix before kpoint 4")
-         
+
          CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
                                        matrix_s(1, 1)%matrix, sab_nl, fmwork)
       END IF
