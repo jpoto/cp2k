@@ -51,13 +51,13 @@ dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribute, &
                                               print_kp_symmetry,&
                                               release_csym_type
    USE hairy_probes,                    ONLY: probe_occupancy_kp
-   USE input_constants,                 ONLY: smear_fermi_dirac,&
+USE input_constants,                 ONLY: smear_fermi_dirac,&
                                               smear_gaussian,&
                                               smear_mp,&
                                               smear_mv
-   USE input_cp2k_kpoints,              ONLY: use_spglib_kpoint_backend,&
+    USE input_cp2k_kpoints,              ONLY: use_spglib_kpoint_backend,&
                                               use_spglib_kpoint_symmetry
-   USE kinds,                           ONLY: dp
+    USE kinds,                           ONLY: dp
    USE kpoint_types,                    ONLY: get_kpoint_info,&
                                               kind_rotmat_type,&
                                               kpoint_env_create,&
@@ -92,6 +92,9 @@ dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribute, &
    USE smearing_utils,                  ONLY: Smearkp,&
                                               Smearkp2
    USE util,                            ONLY: get_limit
+   USE cp_files,                        ONLY: close_file,&
+                                              get_unit_number,&
+                                              open_file
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -217,6 +220,7 @@ CONTAINS
             IF (crys_sym%nrtot > 0 .AND. .NOT. crys_sym%fullgrid .AND. &
                 crys_sym%istriz == 1 .AND. .NOT. crys_sym%inversion_only) THEN
                ! set up the symmetrization information
+               write(*,*) '+++ rounding:',crys_sym%wkpoint(ik),kpsym%nwght
                kpsym%nwght = NINT(crys_sym%wkpoint(ik))
                ns = kpsym%nwght
                !
@@ -1706,8 +1710,8 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                END DO
             ELSE
 
-               CALL dbcsr_print(rpmat)
-               CALL dbcsr_print(cpmat)
+               CALL matwrite(rpmat, kpoint%xkp(1:3, ik))
+               CALL matwrite(cpmat, kpoint%xkp(1:3, ik))
 
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
@@ -2279,6 +2283,85 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       CALL dbcsr_iterator_stop(iter)
 
    END SUBROUTINE matprint
+! **************************************************************************************************
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param mat ...
+!> \param kp ...
+! **************************************************************************************************
+   SUBROUTINE matwrite(mat, kp)
+      TYPE(dbcsr_type), POINTER                          :: mat
+      REAL(dp), INTENT(IN), DIMENSION(3)                 :: kp
+
+      INTEGER                                            :: io_unit
+      INTEGER                                            :: i, icol, irow
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: mblock
+      TYPE(dbcsr_iterator_type)                          :: iter
+      CHARACTER(len=default_string_length)               :: kp_filename=''
+
+      write(kp_filename,'(A,F06.2,A,F06.2,A,F06.2)') 'log_kpoint_',kp(1),'_',kp(2),'_',kp(3)
+
+      DO i=1,34
+         IF(kp_filename(i:i)==' ') kp_filename(i:i)='_'
+      END DO
+
+      io_unit = get_unit_number()
+      CALL open_file(file_name=kp_filename, file_status="UNKNOWN", &
+                     file_form="FORMATTED", file_action="WRITE", &
+                     unit_number=io_unit, file_access="APPEND", &
+                     file_position="APPEND")
+
+      CALL dbcsr_iterator_start(iter, mat)
+      DO WHILE (dbcsr_iterator_blocks_left(iter))
+         CALL dbcsr_iterator_next_block(iter, irow, icol, mblock)
+         !
+         WRITE (io_unit, '(A,2I4)') 'BLOCK  ', irow, icol
+         DO i = 1, SIZE(mblock, 1)
+            WRITE (io_unit, '(8F12.6)') mblock(i, :)
+         END DO
+         !
+      END DO
+      CALL dbcsr_iterator_stop(iter)
+
+      CALL close_file(unit_number=io_unit)
+
+   END SUBROUTINE matwrite
+! **************************************************************************************************
+
+! **************************************************************************************************
+!> \brief ...
+!> \param mat ...
+!> \param kp ...
+! **************************************************************************************************
+   SUBROUTINE rotwrite(mat, kp)
+      REAL(dp), INTENT(IN), DIMENSION(3,3)               :: mat
+      REAL(dp), INTENT(IN), DIMENSION(3)                 :: kp
+
+      INTEGER                                            :: io_unit
+      INTEGER                                            :: i, icol, irow
+      CHARACTER(len=default_string_length)               :: kp_filename=''
+
+      write(kp_filename,'(A,F06.2,A,F06.2,A,F06.2)') 'rot_kpoint_',kp(1),'_',kp(2),'_',kp(3)
+
+      DO i=1,34
+         IF(kp_filename(i:i)==' ') kp_filename(i:i)='_'
+      END DO
+
+      io_unit = get_unit_number()
+      CALL open_file(file_name=kp_filename, file_status="UNKNOWN", &
+                     file_form="FORMATTED", file_action="WRITE", &
+                     unit_number=io_unit, file_access="APPEND", &
+                     file_position="APPEND")
+
+      DO irow = 1, 3
+         WRITE (io_unit, '(3F12.6)') (mat(irow, icol),icol=1,3)
+      END DO
+
+      CALL close_file(unit_number=io_unit)
+
+   END SUBROUTINE rotwrite
 ! **************************************************************************************************
 
 END MODULE kpoint_methods
