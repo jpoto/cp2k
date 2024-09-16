@@ -22,7 +22,8 @@ MODULE qs_dispersion_d4
                     new, &
                     new_d4_model, &
                     realspace_cutoff, &
-                    structure_type
+                    structure_type, &
+                    rational_damping_param
 #endif
    USE kinds, ONLY: dp
    USE particle_types, ONLY: particle_type
@@ -139,6 +140,24 @@ CONTAINS
          END IF
          CALL get_dispersion(mol, disp, param, cutoff, energy)
       END IF
+
+      select type(param)
+      type is (rational_damping_param)
+        write(*, '(a, ":", 1x)', advance="no") "Rational (Becke-Johnson) damping"
+      write(*, '(a)') &
+         & trim(merge("D4-ATM", "D4    ", abs(param%s9) > 0))
+      write(*, '(21("-"))')
+      write(*, '(a4, t10, f10.4)') &
+         & "s6", param%s6, &
+         & "s8", param%s8, &
+         & "s9", param%s9, &
+         & "a1", param%a1, &
+         & "a2", param%a2, &
+         & "alp", param%alp
+      write(*, '(20("-"))')
+      write(*, '(a)')
+      end select
+
 
       !dispersion energy is computed by every MPI process
       IF (para_env%num_pe > 1 .AND. para_env%mepos > 0) energy = 0.00_dp
