@@ -1432,19 +1432,19 @@ CONTAINS
                      CALL symtrans(srpmat, rpmat, kind_rot, kpsym%rot(1:3, 1:3, is), &
                                    kpsym%f0(:, is), kpoint%atype, symmetric=.TRUE.)
                      CALL symtrans(scpmat, cpmat, kind_rot, kpsym%rot(1:3, 1:3, is), &
-                                   kpsym%f0(:, is), kpoint%atype, antisymmetric=.TRUE.)
+                                   kpsym%f0(:, is), kpoint%atype, symmetric=.TRUE.)
                   END IF
 
-                  CALL matwrite(srpmat, kp_help)
-                  CALL matwrite(scpmat, kp_help)
+                  CALL matwrite(srpmat, kp_help,"real")
+                  CALL matwrite(scpmat, kp_help,"imaginary")
 
                   CALL transform_dmat(denmat, srpmat, scpmat, ispin, real_only, sab_nl, &
                                       cell_to_index, kpsym%xkp(1:3, is), wkpx)
                END DO
             ELSE
 
-               CALL matwrite(rpmat, kpoint%xkp(1:3, ik))
-               CALL matwrite(cpmat, kpoint%xkp(1:3, ik))
+               CALL matwrite(rpmat, kpoint%xkp(1:3, ik),"real")
+               CALL matwrite(cpmat, kpoint%xkp(1:3, ik),"imaginary")
 
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
@@ -1645,7 +1645,7 @@ CONTAINS
       fsign = 1.0_dp
       IF (asym) fsign = -1.0_dp
 
-      !WRITE (*, *) '>>>> symtrans: drot perm:', dorot, perm
+      WRITE (*, *) '>>>> symtrans: drot perm:', dorot, perm
 
       IF (dorot .OR. perm) THEN
          CALL dbcsr_set(smat, 0.0_dp)
@@ -1779,9 +1779,10 @@ CONTAINS
 !> \param mat ...
 !> \param kp ...
 ! **************************************************************************************************
-   SUBROUTINE matwrite(mat, kp)
+   SUBROUTINE matwrite(mat, kp, text)
       TYPE(dbcsr_type), POINTER                          :: mat
       REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
+      CHARACTER(len=*)                                   :: text 
 
       CHARACTER(len=default_string_length)               :: kp_filename = ''
       INTEGER                                            :: i, icol, io_unit, irow
@@ -1804,7 +1805,7 @@ CONTAINS
       DO WHILE (dbcsr_iterator_blocks_left(iter))
          CALL dbcsr_iterator_next_block(iter, irow, icol, mblock)
          !
-         WRITE (io_unit, '(A,2I4)') 'BLOCK  ', irow, icol
+         WRITE (io_unit, '(A,A,2I4)') text,' BLOCK: ', irow, icol
          DO i = 1, SIZE(mblock, 1)
             WRITE (io_unit, '(8F12.6)') mblock(i, :)
          END DO
