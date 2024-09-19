@@ -98,7 +98,8 @@ option(CP2K_ENABLE_CONSISTENCY_CHECKS
        OFF)
 option(CP2K_DEBUG_MODE "Enable several additional options for debugging cp2k."
        OFF)
-option(CP2K_USE_DFTD4 "Enable dispersion coorections DFTD4" OFF)
+option(CP2K_USE_DFTD4 "Enable dispersion corrections DFTD4" OFF)
+option(CP2K_USE_TBLITE "Enable semiempirical methods via tblite" ON)
 option(CP2K_USE_SIRIUS "Enable plane wave dft calculations with sirius" OFF)
 option(CP2K_USE_FFTW3 "Use fftw3 for the calculating fast fourier transforms"
        ON)
@@ -189,6 +190,7 @@ if(${cp2k_build_options_up} STREQUAL "FULL")
   set(CP2K_USE_FFTW3 ON)
   set(CP2K_USE_MPI ON)
   set(CP2K_USE_DFTD4 ON)
+  set(CP2K_USE_TBLITE ON)
   set(CP2K_USE_SIRIUS ON)
   set(CP2K_USE_LIBXSMM ON)
   set(CP2K_USE_VORI ON)
@@ -706,6 +708,11 @@ if(CP2K_USE_DFTD4)
   find_package(dftd4 REQUIRED)
 endif()
 
+if(CP2K_USE_TBLITE)
+  find_package(tblite REQUIRED)
+  find_package(mctc-lib REQUIRED)
+endif()
+
 # SIRIUS
 if(CP2K_USE_SIRIUS)
   find_package(sirius REQUIRED)
@@ -872,6 +879,14 @@ if(CP2K_USE_DFTD4)
     "   - libraries           :  ${DFTD4_LIBDIR}\n\n")
 endif()
 
+if(CP2K_USE_TBLITE)
+  message(
+    " - TBLITE :\n" "   - version             :  ${CP2K_TBLITE_VERSION}\n"
+    "   - include directories :  ${CP2K_TBLITE_INCLUDE_DIRS}\n"
+    "   - link libraries      :  ${CP2K_TBLITE_LINK_LIBRARIES}\n\n")
+
+endif()
+
 if(CP2K_USE_SIRIUS)
   message(
     " - SIRIUS :\n"
@@ -942,6 +957,10 @@ endif()
 
 if(NOT CP2K_USE_DFTD4)
   message("   - DFTD4")
+endif()
+
+if(NOT CP2K_USE_TBLITE)
+  message("   - TBLITE")
 endif()
 
 if(NOT CP2K_USE_SIRIUS)
