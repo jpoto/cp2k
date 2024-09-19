@@ -114,8 +114,12 @@ option(CMAKE_POSITION_INDEPENDENT_CODE "Enable position independent code" ON)
 option(CP2K_ENABLE_CONSISTENCY_CHECKS
        "Check that the list of compiled files and files contained in src match"
        OFF)
-option(CP2K_USE_DFTD4 "Enable dispersion corrections with DFTD4" ON)
 option(CP2K_USE_DEEPMD "Enable DeePMD" ON)
+option(CP2K_DEBUG_MODE "Enable several additional options for debugging cp2k."
+       OFF)
+option(CP2K_USE_DFTD4 "Enable dispersion corrections DFTD4" OFF)
+option(CP2K_USE_TBLITE "Enable semiempirical methods via tblite" ON)
+option(CP2K_USE_SIRIUS "Enable plane wave dft calculations with sirius" OFF)
 option(CP2K_USE_FFTW3 "Use fftw3 for the calculating fast fourier transforms"
        ON)
 option(CP2K_USE_MPI "Enable MPI support" ON)
@@ -678,6 +682,11 @@ if(CP2K_USE_DEEPMD)
   find_package(DeePMD REQUIRED CONFIG)
 endif()
 
+if(CP2K_USE_TBLITE)
+  find_package(tblite REQUIRED)
+  find_package(mctc-lib REQUIRED)
+endif()
+
 # SIRIUS
 if(CP2K_USE_SIRIUS)
   find_package(sirius REQUIRED)
@@ -885,6 +894,14 @@ if(CP2K_USE_LIBSMEAGOL)
           "   - libraries: ${CP2K_LIBSMEAGOL_LINK_LIBRARIES}\n\n")
 endif()
 
+if(CP2K_USE_TBLITE)
+  message(
+    " - TBLITE :\n" "   - version             :  ${CP2K_TBLITE_VERSION}\n"
+    "   - include directories :  ${CP2K_TBLITE_INCLUDE_DIRS}\n"
+    "   - link libraries      :  ${CP2K_TBLITE_LINK_LIBRARIES}\n\n")
+
+endif()
+
 if(CP2K_USE_SIRIUS)
   message(" - SIRIUS")
 endif()
@@ -952,6 +969,10 @@ endif()
 
 if(NOT CP2K_USE_DEEPMD)
   message("   - DeePMD")
+endif()
+
+if(NOT CP2K_USE_TBLITE)
+  message("   - TBLITE")
 endif()
 
 if(NOT CP2K_USE_SIRIUS)
