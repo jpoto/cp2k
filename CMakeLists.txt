@@ -239,6 +239,10 @@ if(${cp2k_build_options_up} STREQUAL "DEFAULT")
   set(CP2K_USE_SPGLIB ON)
 endif()
 
+if(${CP2K_USE_TBLITE} STREQUAL "ON")
+  set(CP2K_USE_DFTD4 ON)
+endif()
+
 # ##############################################################################
 # # gpu related options                                                    # #
 # ##############################################################################
@@ -711,12 +715,12 @@ if(CP2K_USE_SPLA)
 endif()
 
 if(CP2K_USE_DFTD4)
+  find_package(mctc-lib REQUIRED)
   find_package(dftd4 REQUIRED)
 endif()
 
 if(CP2K_USE_TBLITE)
   find_package(tblite REQUIRED)
-  find_package(mctc-lib REQUIRED)
 endif()
 
 # SIRIUS
@@ -891,9 +895,11 @@ endif()
 
 if(CP2K_USE_DFTD4)
   message(
-    " - DFTD4 :\n" "   - include modules     :  ${DFTD4_DFTD4};${DFTD4_MCTC}\n"
-    "   - include directories :  ${DFTD4_INCLUDE_DIR}\n"
-    "   - libraries           :  ${DFTD4_LIBDIR}\n\n")
+    " - DFTD4 :\n" "   - version     :  ${DFTD4_VERSION}\n"
+    "   - include directories :  ${DFTD4_INCLUDE_DIRS}\n"
+    "   - libraries           :  ${DFTD4_LINK_LIBRARIES}\n"
+    "   - mctc include dir.   :  ${MCTC-LIB_INCLUDE_DIRS}\n"
+    "   - mctc libraries      :  ${MCTC-LIB_LINK_LIBRARIES}\n\n")
 endif()
 
 if(CP2K_USE_TBLITE)
