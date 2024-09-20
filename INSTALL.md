@@ -491,6 +491,13 @@ DeePMD-kit - Deep Potential Molecular Dynamics. Support for DeePMD-kit can be en
 - Add `-D__SMEAGOL` to DFLAGS, `-I$(LIBSMEAGOL_DIR)/obj` to FCFLAGS and
   `-L$(LIBSMEAGOL_DIR)/lib -lsmeagol` to LIBS
 
+### 2aa. TBLITE (optional, semiempirical method)
+
+- tblite - Light-weight tight-binding framework
+- For more information see <https://github.com/tblite/tblite>
+- Add `-D__TBLITE` to DFLAGS
+>>>>>>> 418538ef6 (update compiling for DFTD4/TBLITE)
+
 ## 3. Compile
 
 ### 3a. ARCH files
