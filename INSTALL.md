@@ -480,6 +480,12 @@ DeePMD-kit - Deep Potential Molecular Dyanmics. Support for DeePMD-kit can be en
 - Add `-D__DFTD4` to DFLAGS, `-ldftd4 -lmstore -lmulticharge -lmctc-lib` to LIBS and
   `-I'${DFTD4_DFTD4}/../..' -I'${DFTD4_DFTD4}' -I'${DFTD4_MCTC}'` to CFLAGS
 
+### 2aa. TBLITE (optional, semiempirical method)
+
+- tblite - Light-weight tight-binding framework
+- For more information see <https://github.com/tblite/tblite>
+- Add `-D__TBLITE` to DFLAGS
+
 ## 3. Compile
 
 ### 3a. ARCH files
