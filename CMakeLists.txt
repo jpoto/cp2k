@@ -878,7 +878,8 @@ endif()
 
 if(CP2K_USE_DFTD4)
   message(
-    " - DFTD4 :\n" "   - version     :  ${DFTD4_VERSION}\n"
+    " - DFTD4 :\n"
+    "   - version     :  ${DFTD4_VERSION}\n"
     "   - include directories :  ${DFTD4_INCLUDE_DIRS}\n"
     "   - libraries           :  ${DFTD4_LINK_LIBRARIES}\n"
     "   - mctc include dir.   :  ${MCTC-LIB_INCLUDE_DIRS}\n"
@@ -887,7 +888,7 @@ endif()
 
 if(CP2K_USE_TBLITE)
   message(
-    " - TBLITE :\n" 
+    " - TBLITE :\n"
     "   - version             :  ${CP2K_TBLITE_VERSION}\n"
     "   - include directories :  ${CP2K_TBLITE_INCLUDE_DIRS}\n"
     "   - tblite libraries    :  ${CP2K_TBLITE_LINK_LIBRARIES}\n"
