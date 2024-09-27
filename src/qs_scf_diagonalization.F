@@ -28,7 +28,7 @@ MODULE qs_scf_diagonalization
                                               hairy_probes_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_p_type, &
-        dbcsr_print, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
+        dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
         dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
@@ -51,7 +51,7 @@ MODULE qs_scf_diagonalization
    USE cp_fm_types,                     ONLY: &
         copy_info_type, cp_fm_add_to_element, cp_fm_cleanup_copy_general, cp_fm_create, &
         cp_fm_finish_copy_general, cp_fm_get_info, cp_fm_release, cp_fm_start_copy_general, &
-        cp_fm_to_fm, cp_fm_type, cp_fm_write_formatted
+        cp_fm_to_fm, cp_fm_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type
    USE cp_output_handling,              ONLY: cp_print_key_finished_output,&
@@ -515,7 +515,6 @@ CONTAINS
             DO igroup = 1, nkp_groups
                ! number of current kpoint
                ik = kp_dist(1, igroup) + ikp - 1
-               WRITE (*, *) '+++ Transformation to D(k) for: ', xkp(1:3, ik)
                my_kpgrp = (ik >= kpoints%kp_range(1) .AND. ik <= kpoints%kp_range(2))
                indx = indx + 1
                IF (use_real_wfn) THEN
@@ -523,18 +522,12 @@ CONTAINS
                   CALL dbcsr_set(rmatrix, 0.0_dp)
                   CALL rskp_transform(rmatrix=rmatrix, rsmat=matrix_ks, ispin=ispin, &
                                       xkp=xkp(1:3, ik), cell_to_index=cell_to_index, sab_nl=sab_nl)
-
-                  CALL dbcsr_print(rmatrix)
-
                   CALL dbcsr_desymmetrize(rmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(1))
                   ! s matrix is not spin dependent
                   CALL dbcsr_set(rmatrix, 0.0_dp)
                   CALL rskp_transform(rmatrix=rmatrix, rsmat=matrix_s, ispin=1, &
                                       xkp=xkp(1:3, ik), cell_to_index=cell_to_index, sab_nl=sab_nl)
-
-                  CALL dbcsr_print(rmatrix)
-
                   CALL dbcsr_desymmetrize(rmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(3))
                ELSE
@@ -543,10 +536,6 @@ CONTAINS
                   CALL dbcsr_set(cmatrix, 0.0_dp)
                   CALL rskp_transform(rmatrix=rmatrix, cmatrix=cmatrix, rsmat=matrix_ks, ispin=ispin, &
                                       xkp=xkp(1:3, ik), cell_to_index=cell_to_index, sab_nl=sab_nl)
-
-                  CALL dbcsr_print(rmatrix)
-                  CALL dbcsr_print(cmatrix)
-
                   CALL dbcsr_desymmetrize(rmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(1))
                   CALL dbcsr_desymmetrize(cmatrix, tmpmat)
@@ -556,10 +545,6 @@ CONTAINS
                   CALL dbcsr_set(cmatrix, 0.0_dp)
                   CALL rskp_transform(rmatrix=rmatrix, cmatrix=cmatrix, rsmat=matrix_s, ispin=1, &
                                       xkp=xkp(1:3, ik), cell_to_index=cell_to_index, sab_nl=sab_nl)
-
-                  CALL dbcsr_print(rmatrix)
-                  CALL dbcsr_print(cmatrix)
-
                   CALL dbcsr_desymmetrize(rmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(3))
                   CALL dbcsr_desymmetrize(cmatrix, tmpmat)
@@ -750,13 +735,6 @@ CONTAINS
          ! density matrices
          CALL kpoint_density_matrices(kpoints)
          ! density matrices in real space
-         WRITE (*, *) '+++++++++++++ qs_scf_diag ++++++++++++++++++++++++++++'
-         CALL dbcsr_print(scf_env%p_mix_new(1, 1)%matrix)
-         CALL cp_fm_write_formatted(fmwork(1), 6, "matrix before kpoint 1")
-         CALL cp_fm_write_formatted(fmwork(2), 6, "matrix before kpoint 2")
-         CALL cp_fm_write_formatted(fmwork(3), 6, "matrix before kpoint 3")
-         CALL cp_fm_write_formatted(fmwork(4), 6, "matrix before kpoint 4")
-
          CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
                                        matrix_s(1, 1)%matrix, sab_nl, fmwork)
       END IF

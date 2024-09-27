@@ -24,8 +24,8 @@ MODULE kpoint_methods
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribution_get, &
         dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_get_info, dbcsr_get_matrix_type, &
         dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
-        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, dbcsr_print, dbcsr_set, &
-        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
+        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, dbcsr_set, dbcsr_type, &
+        dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
    USE cp_files,                        ONLY: close_file,&
@@ -39,7 +39,7 @@ MODULE kpoint_methods
    USE cp_fm_types,                     ONLY: &
         copy_info_type, cp_fm_cleanup_copy_general, cp_fm_create, cp_fm_finish_copy_general, &
         cp_fm_get_info, cp_fm_get_submatrix, cp_fm_release, cp_fm_start_copy_general, cp_fm_to_fm, &
-        cp_fm_type
+        cp_fm_type, cp_fm_write_formatted
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
    USE cryssym,                         ONLY: crys_sym_gen,&
                                               csym_type,&
@@ -1233,7 +1233,9 @@ CONTAINS
                ! Im(c)*Im(c)
                CALL parallel_gemm("N", "T", nao, nao, nmo, 1.0_dp, mo_set%mo_coeff, fwork, 1.0_dp, rpmat)
             END IF
+            CALL fm_write(cpmat, rpmat, kpoint%xkp(1:3, ikpgr), ispin)
          END DO
+         WRITE (*, *) "+++++ kpoint?", kpoint%xkp(1:3, ikpgr), kpoint%xkp(1:3, kp_range(1) + ikpgr)
       END DO
 
       CALL cp_fm_release(fwork)
@@ -1406,11 +1408,15 @@ CONTAINS
             ! symmetrization
             kpsym => kpoint%kp_sym(ik)%kpoint_sym
             CPASSERT(ASSOCIATED(kpsym))
+            WRITE (*, *) 'weights: ik, wkp(ik), nwght, wkp/nwght', &
+               ik, wkp(ik), kpsym%nwght, wkp(ik)/(REAL(kpsym%nwght, KIND=dp))
+            WRITE (*, *) 'original kpoint:', kpoint%xkp(1:3, ik)
+
+            CALL matwrite(rpmat, kpoint%xkp(1:3, ik), "org_real")
+            CALL matwrite(cpmat, kpoint%xkp(1:3, ik), "org_imaginary")
 
             IF (kpsym%apply_symmetry) THEN
-               wkpx = wkp(ik)/REAL(kpsym%nwght, KIND=dp)
-               WRITE (*, *) 'weights: ik, wkpx, nwght', ik, wkpx, kpsym%nwght
-               WRITE (*, *) 'original kpoint:', kpoint%xkp(1:3, ik)
+               wkpx = wkp(ik)/(REAL(kpsym%nwght, KIND=dp))
                DO is = 1, kpsym%nwght
                   ir = ABS(kpsym%rotp(is))
                   ira = 0
@@ -1418,7 +1424,7 @@ CONTAINS
                      IF (ir == kpoint%ibrot(jr)) ira = jr
                   END DO
                   WRITE (*, *) '  is, ir, ira:', is, ir, ira
-                  kp_help = MATMUL(kpoint%xkp(1:3, ik), kpsym%rot(1:3, 1:3, is))
+                  kp_help = MATMUL(TRANSPOSE(kpsym%rot(1:3, 1:3, is)), kpoint%xkp(1:3, ik))
                   WRITE (*, *) 'kp_help:', kp_help
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
@@ -1435,28 +1441,22 @@ CONTAINS
                                    kpsym%f0(:, is), kpoint%atype, symmetric=.TRUE.)
                   END IF
 
-                  CALL matwrite(srpmat, kp_help,"real")
-                  CALL matwrite(scpmat, kp_help,"imaginary")
+                  CALL matwrite(srpmat, kp_help, "real")
+                  CALL matwrite(scpmat, kp_help, "imaginary")
 
                   CALL transform_dmat(denmat, srpmat, scpmat, ispin, real_only, sab_nl, &
-                                      cell_to_index, kpsym%xkp(1:3, is), wkpx)
+                                      cell_to_index, kp_help, wkpx)
                END DO
             ELSE
-
-               CALL matwrite(rpmat, kpoint%xkp(1:3, ik),"real")
-               CALL matwrite(cpmat, kpoint%xkp(1:3, ik),"imaginary")
 
                ! transformation
                CALL transform_dmat(denmat, rpmat, cpmat, ispin, real_only, sab_nl, &
                                    cell_to_index, xkp(1:3, ik), wkp(ik))
             END IF
          END DO
-         WRITE (*, *) '=============================================================='
-         WRITE (*, *) '***********complete matrix for ispin', ispin, '*****************'
-         WRITE (*, *) '=============================================================='
-         DO is = 1, SIZE(denmat, 2)
-            CALL dbcsr_print(denmat(ispin, is)%matrix)
-         END DO
+
+         CALL matwrite_den(denmat, SIZE(denmat, 2), ispin, "list")
+
       END DO
 
       ! Clean up communication
@@ -1681,9 +1681,9 @@ CONTAINS
                   FLUSH (6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
-                  WRITE (*, *) '>>>> kroti:', kroti
-                  WRITE (*, *) '>>>> krotj:', krotj
-                  FLUSH (6)
+                  !WRITE (*, *) '>>>> kroti:', kroti
+                  !WRITE (*, *) '>>>> krotj:', krotj
+                  !FLUSH (6)
                   ! rotation
                   IF (trans) THEN
                      sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(pblock), kroti))
@@ -1721,10 +1721,10 @@ CONTAINS
                jkind = atype(icol)
                kroti => kmat(ikind)%rmat
                krotj => kmat(jkind)%rmat
-               WRITE (*, *) '>>>> kroti:', kroti
-               WRITE (*, *) '>>>> krotj:', krotj
+               !WRITE (*, *) '>>>> kroti:', kroti
+               !WRITE (*, *) '>>>> krotj:', krotj
                has_symm = dbcsr_get_matrix_type(smat)
-               WRITE (*, *) '>>>> trans, has_symm', trans, has_symm
+               !WRITE (*, *) '>>>> trans, has_symm', trans, has_symm
                ! rotation
                IF (trans) THEN
                   sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(sblock), kroti))
@@ -1778,11 +1778,12 @@ CONTAINS
 !> \brief ...
 !> \param mat ...
 !> \param kp ...
+!> \param text ...
 ! **************************************************************************************************
    SUBROUTINE matwrite(mat, kp, text)
       TYPE(dbcsr_type), POINTER                          :: mat
       REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
-      CHARACTER(len=*)                                   :: text 
+      CHARACTER(len=*)                                   :: text
 
       CHARACTER(len=default_string_length)               :: kp_filename = ''
       INTEGER                                            :: i, icol, io_unit, irow
@@ -1805,7 +1806,7 @@ CONTAINS
       DO WHILE (dbcsr_iterator_blocks_left(iter))
          CALL dbcsr_iterator_next_block(iter, irow, icol, mblock)
          !
-         WRITE (io_unit, '(A,A,2I4)') text,' BLOCK: ', irow, icol
+         WRITE (io_unit, '(A,A,2I4)') text, ' BLOCK: ', irow, icol
          DO i = 1, SIZE(mblock, 1)
             WRITE (io_unit, '(8F12.6)') mblock(i, :)
          END DO
@@ -1816,6 +1817,53 @@ CONTAINS
       CALL close_file(unit_number=io_unit)
 
    END SUBROUTINE matwrite
+! **************************************************************************************************
+
+! **************************************************************************************************
+!> \brief ...
+!> \param denmat ...
+!> \param n ...
+!> \param ispin ...
+!> \param text ...
+! **************************************************************************************************
+   SUBROUTINE matwrite_den(denmat, n, ispin, text)
+      TYPE(dbcsr_p_type), DIMENSION(:, :)                :: denmat
+      INTEGER, INTENT(IN)                                :: n, ispin
+      CHARACTER(len=*)                                   :: text
+
+      CHARACTER(len=default_string_length)               :: kp_filename = ''
+      INTEGER                                            :: i, icol, io_unit, irow, is
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: mblock
+      TYPE(dbcsr_iterator_type)                          :: iter
+
+      WRITE (kp_filename, '(A,I5,A)') 'trans_', ispin, '_'
+
+      DO i = 1, 25
+         IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
+      END DO
+
+      io_unit = get_unit_number()
+      CALL open_file(file_name=kp_filename, file_status="UNKNOWN", &
+                     file_form="FORMATTED", file_action="WRITE", &
+                     unit_number=io_unit, file_access="APPEND", &
+                     file_position="APPEND")
+      DO is = 1, n
+         CALL dbcsr_iterator_start(iter, denmat(ispin, is)%matrix)
+         DO WHILE (dbcsr_iterator_blocks_left(iter))
+            CALL dbcsr_iterator_next_block(iter, irow, icol, mblock)
+            !
+            WRITE (io_unit, '(A,A,2I4,A,I4)') text, ' BLOCK: ', irow, icol, ', is:', is
+            DO i = 1, SIZE(mblock, 1)
+               WRITE (io_unit, '(8F12.6)') mblock(i, :)
+            END DO
+            !
+         END DO
+         CALL dbcsr_iterator_stop(iter)
+
+      END DO
+      CALL close_file(unit_number=io_unit)
+
+   END SUBROUTINE matwrite_den
 ! **************************************************************************************************
 
 ! **************************************************************************************************
@@ -1849,6 +1897,41 @@ CONTAINS
       CALL close_file(unit_number=io_unit)
 
    END SUBROUTINE rotwrite
+! **************************************************************************************************
+
+! **************************************************************************************************
+!> \brief ...
+!> \param cpmat ...
+!> \param rpmat ...
+!> \param kp ...
+!> \param ispin ...
+! **************************************************************************************************
+   SUBROUTINE fm_write(cpmat, rpmat, kp, ispin)
+      TYPE(cp_fm_type), POINTER                          :: cpmat, rpmat
+      REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
+      INTEGER                                            :: ispin
+
+      CHARACTER(len=default_string_length)               :: kp_filename = ''
+      INTEGER                                            :: i, io_unit
+
+      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2,A,I4)') 'fm_mat_', kp(1), '_', kp(2), '_', kp(3), '_', ispin
+
+      DO i = 1, 34
+         IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
+      END DO
+
+      io_unit = get_unit_number()
+      CALL open_file(file_name=kp_filename, file_status="UNKNOWN", &
+                     file_form="FORMATTED", file_action="WRITE", &
+                     unit_number=io_unit, file_access="APPEND", &
+                     file_position="APPEND")
+
+      CALL cp_fm_write_formatted(rpmat, io_unit, "rpmat")
+      CALL cp_fm_write_formatted(cpmat, io_unit, "cpmat")
+
+      CALL close_file(unit_number=io_unit)
+
+   END SUBROUTINE fm_write
 ! **************************************************************************************************
 
 END MODULE kpoint_methods
