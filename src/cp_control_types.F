@@ -131,9 +131,11 @@ MODULE cp_control_types
    TYPE xtb_control_type
       !
       LOGICAL                              :: do_ewald = .FALSE.
+      LOGICAL                              :: do_tblite = .FALSE.
       !
       INTEGER                              :: sto_ng = 0
       INTEGER                              :: h_sto_ng = 0
+      INTEGER                              :: tblite_method = 0
       !
       CHARACTER(LEN=default_path_length)   :: parameter_file_path = ""
       CHARACTER(LEN=default_path_length)   :: parameter_file_name = ""
