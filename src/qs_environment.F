@@ -201,6 +201,10 @@ MODULE qs_environment
    USE semi_empirical_types,            ONLY: se_taper_create,&
                                               se_taper_type
    USE semi_empirical_utils,            ONLY: se_cutoff_compatible
+   USE tblite_interface,                ONLY: tb_get_basis,&
+                                              tb_init_geometry,&
+                                              tb_init_ham,&
+                                              tb_set_calculator
    USE transport,                       ONLY: transport_env_create
    USE xtb_parameters,                  ONLY: init_xtb_basis,&
                                               xtb_parameters_init,&
@@ -776,15 +780,27 @@ CONTAINS
          END IF
       ELSEIF (dft_control%qs_control%method_id == do_method_xtb) THEN
          xtb_control => dft_control%qs_control%xtb_control
+         CALL get_qs_env(qs_env, nkind=nkind)
          IF (xtb_control%do_tblite) THEN
-            !CALL tb_init_geometry(qs_env, tb)
+            ! put geometry to tblite
+            CALL tb_init_geometry(qs_env, qs_env%tb_tblite)
+            ! select tblite method
+            CALL tb_set_calculator(qs_env%tb_tblite, xtb_control%tblite_method)
+            ! intitalisation for hamiltonian
+            CALL tb_init_ham(qs_env%tb_tblite)
+            !get basis set
+            DO ikind = 1, nkind
+               qs_kind => qs_kind_set(ikind)
+               CALL get_qs_kind(qs_kind, element_symbol=element_symbol)
+               NULLIFY (tmp_basis_set)
+               CALL tb_get_basis(qs_env%tb_tblite, tmp_basis_set, element_symbol)
+               CALL add_basis_set_to_container(qs_kind%basis_sets, tmp_basis_set, "ORB")
+            END DO
          ELSE
             !   *** Read xTB parameter file ***
-
-
-           NULLIFY (ewald_env, ewald_pw)
-           CALL get_qs_env(qs_env, nkind=nkind)
-           DO ikind = 1, nkind
+            NULLIFY (ewald_env, ewald_pw)
+            CALL get_qs_env(qs_env, nkind=nkind)
+            DO ikind = 1, nkind
               qs_kind => qs_kind_set(ikind)
               ! Setup proper xTB parameters
               CPASSERT(.NOT. ASSOCIATED(qs_kind%xtb_parameter))
@@ -825,14 +841,14 @@ CONTAINS
                 CALL set_potential(qs_kind%all_potential, ccore_charge=ccore)
                 qs_kind%xtb_parameter%zeff = qs_kind%xtb_parameter%zeff - zeff_correction
               END IF
-           END DO
-           !
-           ! set repulsive potential range
-           !
-           ALLOCATE (xtb_control%rcpair(nkind, nkind))
-           CALL xtb_pp_radius(qs_kind_set, xtb_control%rcpair, xtb_control%eps_pair, xtb_control%kf)
-           ! check for Ewald
-           IF (xtb_control%do_ewald) THEN
+            END DO
+            !
+            ! set repulsive potential range
+            !
+            ALLOCATE (xtb_control%rcpair(nkind, nkind))
+            CALL xtb_pp_radius(qs_kind_set, xtb_control%rcpair, xtb_control%eps_pair, xtb_control%kf)
+            ! check for Ewald
+            IF (xtb_control%do_ewald) THEN
              ALLOCATE (ewald_env)
              CALL ewald_env_create(ewald_env, para_env)
              poisson_section => section_vals_get_subs_vals(dft_section, "POISSON")
