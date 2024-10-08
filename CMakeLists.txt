@@ -99,7 +99,7 @@ option(CP2K_ENABLE_CONSISTENCY_CHECKS
        OFF)
 option(CP2K_USE_DEEPMD "Enable DeePMD" ON)
 option(CP2K_DEBUG_MODE "Enable several additional options for debugging cp2k."
-       OFF)
+       ON)
 option(CP2K_USE_DFTD4 "Enable dispersion corrections DFTD4" OFF)
 option(CP2K_USE_TBLITE "Enable semiempirical methods via tblite" ON)
 option(CP2K_USE_SIRIUS "Enable plane wave dft calculations with sirius" OFF)
@@ -625,12 +625,8 @@ if(CP2K_USE_TBLITE)
   find_package(s-dftd3 REQUIRED)
   find_package(tblite REQUIRED)
   target_link_libraries(
-  tblite::tblite
-  INTERFACE
-    mctc-lib::mctc-lib
-    dftd4::dftd4
-    toml-f::toml-f
-    s-dftd3::s-dftd3 )
+    tblite::tblite INTERFACE mctc-lib::mctc-lib dftd4::dftd4 toml-f::toml-f
+                             s-dftd3::s-dftd3)
 endif()
 
 # SIRIUS
