@@ -115,7 +115,7 @@ CONTAINS
                WRITE (*, *) '++++++++++++++++ qs_matrix_w ++++++++++++++++++++'
                CALL dbcsr_print(matrix_w_kp(1, 1)%matrix)
                CALL kpoint_density_transform(kpoints, matrix_w_kp, .TRUE., &
-                                             matrix_s_kp(1, 1)%matrix, sab_nl, fmwork)
+                                             matrix_s_kp(1, 1)%matrix, sab_nl, fmwork, qs_env)
 
                DO is = 1, SIZE(fmwork)
                   CALL cp_fm_release(fmwork(is))
