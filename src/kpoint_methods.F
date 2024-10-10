@@ -75,6 +75,9 @@ USE input_constants,                 ONLY: smear_fermi_dirac,&
                                               mp_para_env_type
    USE parallel_gemm_api,               ONLY: parallel_gemm
    USE particle_types,                  ONLY: particle_type
+   USE qs_environment_types,            ONLY: get_qs_env,&
+                                              qs_environment_type
+   USE qs_kind_types,                   ONLY: qs_kind_type
    USE qs_matrix_pools,                 ONLY: mpools_create,&
                                               mpools_get,&
                                               mpools_rebuild_fm_pools,&
@@ -1423,7 +1426,7 @@ CONTAINS
                ! Im(c)*Im(c)
                CALL parallel_gemm("N", "T", nao, nao, nmo, 1.0_dp, mo_set%mo_coeff, fwork, 1.0_dp, rpmat)
             END IF
-            CALL fm_write(cpmat, rpmat, kpoint%xkp(1:3, ikpgr), ispin)
+            CALL jvp_fm_write(cpmat, rpmat, kpoint%xkp(1:3, ikpgr), ispin)
          END DO
          WRITE (*, *) "+++++ kpoint?", kpoint%xkp(1:3, ikpgr), kpoint%xkp(1:3, kp_range(1) + ikpgr)
       END DO
@@ -1530,10 +1533,11 @@ CONTAINS
 !> \param tempmat DBCSR matrix to be used as template
 !> \param sab_nl ...
 !> \param fmwork  FM work matrices (kpoint group)
+!> \param qs_env ...
 !> \param for_aux_fit ...
 !> \param pmat_ext ...
 ! **************************************************************************************************
-   SUBROUTINE kpoint_density_transform(kpoint, denmat, wtype, tempmat, sab_nl, fmwork, for_aux_fit, pmat_ext)
+   SUBROUTINE kpoint_density_transform(kpoint, denmat, wtype, tempmat, sab_nl, fmwork, qs_env, for_aux_fit, pmat_ext)
 
       TYPE(kpoint_type), POINTER                         :: kpoint
       TYPE(dbcsr_p_type), DIMENSION(:, :)                :: denmat
@@ -1542,6 +1546,7 @@ CONTAINS
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
       TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: fmwork
+      TYPE(qs_environment_type), POINTER                 :: qs_env
       LOGICAL, OPTIONAL                                  :: for_aux_fit
       TYPE(cp_fm_type), DIMENSION(:, :, :), INTENT(IN), &
          OPTIONAL                                        :: pmat_ext
@@ -1564,6 +1569,7 @@ CONTAINS
       TYPE(kpoint_env_type), POINTER                     :: kp
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
       TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
 
       CALL timeset(routineN, handle)
 
@@ -1621,6 +1627,9 @@ CONTAINS
 
       para_env => kpoint%blacs_env_all%para_env
       ALLOCATE (info(nspin*nkp*nc))
+
+      ! Get basis information for symmetry case
+      CALL get_qs_env(qs_env, qs_kind_set=qs_kind_set)
 
       ! Start all the communication
       indx = 0
@@ -1691,8 +1700,8 @@ CONTAINS
                ik, wkp(ik), kpsym%nwght, wkp(ik)/(REAL(kpsym%nwght, KIND=dp))
             WRITE (*, *) 'original kpoint:', kpoint%xkp(1:3, ik)
 
-            CALL matwrite(rpmat, kpoint%xkp(1:3, ik), "org_real")
-            CALL matwrite(cpmat, kpoint%xkp(1:3, ik), "org_imaginary")
+            CALL jvp_log_write(rpmat, kpoint%xkp(1:3, ik), "real", "log_org")
+            CALL jvp_log_write(cpmat, kpoint%xkp(1:3, ik), "imaginary", "log_org")
 
             IF (kpsym%apply_symmetry) THEN
                wkpx = wkp(ik)/(REAL(kpsym%nwght, KIND=dp))
@@ -1722,7 +1731,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
             END IF
          END DO
 
-         CALL matwrite_den(denmat, SIZE(denmat, 2), ispin, "list")
+         CALL jvp_den_write(denmat, SIZE(denmat, 2), ispin, "list")
 
       END DO
 
@@ -2257,6 +2266,42 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
    END SUBROUTINE symtrans
 
 ! **************************************************************************************************
+!> \brief Symmetrization of density matrix - transform to new k-point
+!> \param qs_kind_set ...
+! **************************************************************************************************
+   SUBROUTINE symtrans_1(qs_kind_set)
+      !  smat, pmat, kmat, rot, f0, atype, symmetric, antisymmetric)
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'symtrans_1'
+
+      INTEGER                                            :: handle, natom
+
+!     TYPE(dbcsr_type), POINTER                          :: smat, pmat
+!     TYPE(kind_rotmat_type), DIMENSION(:), POINTER      :: kmat
+!     REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: rot
+!     INTEGER, DIMENSION(:), INTENT(IN)                  :: f0, atype
+!     LOGICAL, INTENT(IN), OPTIONAL                      :: symmetric, antisymmetric
+
+      !    CHARACTER                                          :: has_symm
+      !    INTEGER                                            :: handle, iatom, icol, ikind, ip, irow, &
+      !                                                          jcol, jkind, jp, jrow, natom, numnodes
+      !    LOGICAL                                            :: asym, dorot, found, perm, sym, trans
+      !    REAL(KIND=dp)                                      :: dr, fsign
+      !    REAL(KIND=dp), DIMENSION(:, :), POINTER            :: kroti, krotj, pblock, sblock
+      !    TYPE(dbcsr_distribution_type)                      :: dist
+      !    TYPE(dbcsr_iterator_type)                          :: iter
+
+      CALL timeset(routineN, handle)
+
+      !Get information for the angular momentum (basis)
+      natom = SIZE(qs_kind_set)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE symtrans_1
+
+! **************************************************************************************************
 !> \brief ...
 !> \param mat ...
 ! **************************************************************************************************
@@ -2290,18 +2335,19 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 !> \param mat ...
 !> \param kp ...
 !> \param text ...
+!> \param fname ...
 ! **************************************************************************************************
-   SUBROUTINE matwrite(mat, kp, text)
+   SUBROUTINE jvp_log_write(mat, kp, text, fname)
       TYPE(dbcsr_type), POINTER                          :: mat
       REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
-      CHARACTER(len=*)                                   :: text
+      CHARACTER(len=*)                                   :: text, fname
 
       CHARACTER(len=default_string_length)               :: kp_filename = ''
       INTEGER                                            :: i, icol, io_unit, irow
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: mblock
       TYPE(dbcsr_iterator_type)                          :: iter
 
-      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2)') 'log_kpoint_', kp(1), '_', kp(2), '_', kp(3)
+      WRITE (kp_filename, '(A,A,A,F06.2,A,F06.2,A,F06.2)') 'jvp_', fname, '_', kp(1), '_', kp(2), '_', kp(3)
 
       DO i = 1, 34
          IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
@@ -2327,7 +2373,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 
       CALL close_file(unit_number=io_unit)
 
-   END SUBROUTINE matwrite
+   END SUBROUTINE jvp_log_write
 ! **************************************************************************************************
 
 ! **************************************************************************************************
@@ -2337,7 +2383,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 !> \param ispin ...
 !> \param text ...
 ! **************************************************************************************************
-   SUBROUTINE matwrite_den(denmat, n, ispin, text)
+   SUBROUTINE jvp_den_write(denmat, n, ispin, text)
       TYPE(dbcsr_p_type), DIMENSION(:, :)                :: denmat
       INTEGER, INTENT(IN)                                :: n, ispin
       CHARACTER(len=*)                                   :: text
@@ -2347,7 +2393,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: mblock
       TYPE(dbcsr_iterator_type)                          :: iter
 
-      WRITE (kp_filename, '(A,I5,A)') 'trans_', ispin, '_'
+      WRITE (kp_filename, '(A,I5,A)') 'jvp_den_', ispin, '_'
 
       DO i = 1, 25
          IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
@@ -2374,7 +2420,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       END DO
       CALL close_file(unit_number=io_unit)
 
-   END SUBROUTINE matwrite_den
+   END SUBROUTINE jvp_den_write
 ! **************************************************************************************************
 
 ! **************************************************************************************************
@@ -2382,14 +2428,14 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 !> \param mat ...
 !> \param kp ...
 ! **************************************************************************************************
-   SUBROUTINE rotwrite(mat, kp)
+   SUBROUTINE jvp_rot_write(mat, kp)
       REAL(dp), DIMENSION(3, 3), INTENT(IN)              :: mat
       REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
 
       CHARACTER(len=default_string_length)               :: kp_filename = ''
       INTEGER                                            :: i, icol, io_unit, irow
 
-      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2)') 'rot_kpoint_', kp(1), '_', kp(2), '_', kp(3)
+      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2)') 'jvp_rot_', kp(1), '_', kp(2), '_', kp(3)
 
       DO i = 1, 34
          IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
@@ -2407,7 +2453,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 
       CALL close_file(unit_number=io_unit)
 
-   END SUBROUTINE rotwrite
+   END SUBROUTINE jvp_rot_write
 ! **************************************************************************************************
 
 ! **************************************************************************************************
@@ -2417,7 +2463,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 !> \param kp ...
 !> \param ispin ...
 ! **************************************************************************************************
-   SUBROUTINE fm_write(cpmat, rpmat, kp, ispin)
+   SUBROUTINE jvp_fm_write(cpmat, rpmat, kp, ispin)
       TYPE(cp_fm_type), POINTER                          :: cpmat, rpmat
       REAL(dp), DIMENSION(3), INTENT(IN)                 :: kp
       INTEGER                                            :: ispin
@@ -2425,7 +2471,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
       CHARACTER(len=default_string_length)               :: kp_filename = ''
       INTEGER                                            :: i, io_unit
 
-      WRITE (kp_filename, '(A,F06.2,A,F06.2,A,F06.2,A,I4)') 'fm_mat_', kp(1), '_', kp(2), '_', kp(3), '_', ispin
+      WRITE (kp_filename, '(A,I4,A,F06.2,A,F06.2,A,F06.2)') 'jvp_fm_', ispin, '_', kp(1), '_', kp(2), '_', kp(3)
 
       DO i = 1, 34
          IF (kp_filename(i:i) == ' ') kp_filename(i:i) = '_'
@@ -2442,7 +2488,7 @@ CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
 
       CALL close_file(unit_number=io_unit)
 
-   END SUBROUTINE fm_write
+   END SUBROUTINE jvp_fm_write
 ! **************************************************************************************************
 
 END MODULE kpoint_methods

@@ -2372,7 +2372,7 @@ CONTAINS
 
          ! density matrices in real space
          CALL kpoint_density_transform(kpoints_Sigma, rho_ao_weighted, .FALSE., &
-                                       matrix_s(1)%matrix, sab_orb, fm_work)
+                                       matrix_s(1)%matrix, sab_orb, fm_work, qs_env)
 
          rho_ao => rho_ao_weighted(1, :)
 
