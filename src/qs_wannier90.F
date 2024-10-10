@@ -352,7 +352,7 @@ CONTAINS
       !
       CALL get_qs_env(qs_env=qs_env_kp, matrix_ks_kp=matrix_ks, matrix_s_kp=matrix_s, &
                       scf_env=scf_env, scf_control=scf_control)
-      CALL do_general_diag_kp(matrix_ks, matrix_s, kpoint, scf_env, scf_control, .FALSE., diis_step)
+      CALL do_general_diag_kp(matrix_ks, matrix_s, kpoint, scf_env, scf_control, .FALSE., diis_step, qs_env)
       !
       IF (iw > 0) THEN
          WRITE (iw, '(T69,A)') "... Finished"
