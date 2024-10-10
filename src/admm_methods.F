@@ -629,7 +629,7 @@ CONTAINS
       IF (.NOT. pmat_from_rs) CALL kpoint_density_matrices(kpoints, for_aux_fit=.TRUE.)
       CALL kpoint_density_transform(kpoints, rho_ao_aux, .FALSE., &
                                     matrix_s_aux_fit(1, 1)%matrix, sab_aux_fit, &
-                                    admm_env%scf_work_aux_fit, for_aux_fit=.TRUE.)
+                                    admm_env%scf_work_aux_fit, qs_env, for_aux_fit=.TRUE.)
 
       !ADMMQ, ADMMP, ADMMS
       IF (admm_env%do_admmq .OR. admm_env%do_admmp .OR. admm_env%do_admms) THEN
@@ -2306,7 +2306,7 @@ CONTAINS
       ! reuse the density transform to FT the KS matrix
       CALL kpoint_density_transform(kpoints, matrix_k_tilde, .FALSE., &
                                     matrix_k_tilde(1, 1)%matrix, sab_kp, &
-                                    fmwork, for_aux_fit=.FALSE., pmat_ext=fm_ks)
+                                    fmwork, qs_env, for_aux_fit=.FALSE., pmat_ext=fm_ks)
       CALL cp_fm_release(fmwork(1))
       CALL cp_fm_release(fmwork(2))
 
@@ -3153,7 +3153,7 @@ CONTAINS
       CALL cp_fm_create(fmwork(2), struct_aux_orb)
       CALL kpoint_density_transform(kpoints, matrix_skap, .FALSE., &
                                     matrix_s_aux_fit_vs_orb(1, 1)%matrix, sab_aux_fit_vs_orb, &
-                                    fmwork, for_aux_fit=.TRUE., pmat_ext=fm_skap)
+                                    fmwork, qs_env, for_aux_fit=.TRUE., pmat_ext=fm_skap)
       CALL cp_fm_release(fmwork(1))
       CALL cp_fm_release(fmwork(2))
 
@@ -3162,7 +3162,7 @@ CONTAINS
       CALL cp_fm_create(fmwork(2), struct_aux_aux)
       CALL kpoint_density_transform(kpoints, matrix_skapa, .FALSE., &
                                     matrix_s_aux_fit(1, 1)%matrix, sab_aux_fit_asymm, &
-                                    fmwork, for_aux_fit=.TRUE., pmat_ext=fm_skapa)
+                                    fmwork, qs_env, for_aux_fit=.TRUE., pmat_ext=fm_skapa)
       CALL cp_fm_release(fmwork(1))
       CALL cp_fm_release(fmwork(2))
       DEALLOCATE (fmwork)

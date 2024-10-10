@@ -325,7 +325,7 @@ CONTAINS
          ! Diagonlization in non orthonormal case
          CALL get_qs_env(qs_env, matrix_ks_kp=matrix_ks, matrix_s_kp=matrix_s)
          CALL do_general_diag_kp(matrix_ks, matrix_s, kpoints, scf_env, scf_control, .TRUE., &
-                                 diis_step, diis_error, qs_env)
+                                 diis_step, qs_env, diis_error)
          IF (diis_step) THEN
             scf_env%iter_param = diis_error
             scf_env%iter_method = "DIIS/Diag."

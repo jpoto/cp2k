@@ -365,13 +365,13 @@ CONTAINS
 !> \param scf_control  SCF control variables
 !> \param update_p ...
 !> \param diis_step ...
-!> \param diis_error ...
 !> \param qs_env ...
+!> \param diis_error ...
 !> \par History
 !>      08.2014 created [JGH]
 ! **************************************************************************************************
    SUBROUTINE do_general_diag_kp(matrix_ks, matrix_s, kpoints, scf_env, scf_control, update_p, &
-                                 diis_step, diis_error, qs_env)
+                                 diis_step, qs_env, diis_error)
 
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_ks, matrix_s
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -379,8 +379,8 @@ CONTAINS
       TYPE(scf_control_type), POINTER                    :: scf_control
       LOGICAL, INTENT(IN)                                :: update_p
       LOGICAL, INTENT(INOUT)                             :: diis_step
+      TYPE(qs_environment_type), POINTER                 :: qs_env
       REAL(dp), INTENT(INOUT), OPTIONAL                  :: diis_error
-      TYPE(qs_environment_type), OPTIONAL, POINTER       :: qs_env
 
       CHARACTER(len=*), PARAMETER :: routineN = 'do_general_diag_kp'
       COMPLEX(KIND=dp), PARAMETER :: cone = CMPLX(1.0_dp, 0.0_dp, KIND=dp), &
@@ -423,7 +423,7 @@ CONTAINS
       !Whether we use DIIS for k-points
       do_diis = .FALSE.
       IF (scf_env%iter_count > 1 .AND. .NOT. scf_env%skip_diis .AND. .NOT. use_real_wfn &
-          .AND. PRESENT(diis_error) .AND. PRESENT(qs_env)) do_diis = .TRUE.
+          .AND. PRESENT(diis_error)) do_diis = .TRUE.
 
       ! allocate some work matrices
       ALLOCATE (rmatrix, cmatrix, tmpmat)
@@ -685,7 +685,7 @@ CONTAINS
          CALL kpoint_density_matrices(kpoints)
          ! density matrices in real space
          CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
-                                       matrix_s(1, 1)%matrix, sab_nl, fmwork)
+                                       matrix_s(1, 1)%matrix, sab_nl, fmwork, qs_env)
       END IF
 
       CALL dbcsr_deallocate_matrix(rmatrix)
