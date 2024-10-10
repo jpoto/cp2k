@@ -22,9 +22,9 @@
       METHOD GPW
     &END QS
     &SCF
-#      ADDED_MOS 20
+      #      ADDED_MOS 20
       EPS_SCF 1.0E-6
-      MAX_SCF 100
+      MAX_SCF 99
       SCF_GUESS ATOMIC
       &MIXING
         ALPHA 0.4
@@ -32,10 +32,10 @@
         METHOD BROYDEN_MIXING
         NBROYDEN 8
       &END MIXING
-#      &SMEAR ON
-#        ELECTRONIC_TEMPERATURE 300
-#        METHOD FERMI_DIRAC
-#      &END SMEAR
+      #      &SMEAR ON
+      #        ELECTRONIC_TEMPERATURE 300
+      #        METHOD FERMI_DIRAC
+      #      &END SMEAR
     &END SCF
     &XC
       &XC_FUNCTIONAL PBE
