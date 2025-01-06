@@ -21,7 +21,6 @@ MODULE qs_core_energies
                                               pbc
    USE cp_dbcsr_api,                    ONLY: dbcsr_dot,&
                                               dbcsr_p_type,&
-                                              dbcsr_print,&
                                               dbcsr_type
    USE distribution_1d_types,           ONLY: distribution_1d_type
    USE kinds,                           ONLY: dp
@@ -135,8 +134,6 @@ CONTAINS
          DO ic = 1, nc
             etr = 0.0_dp
             CALL dbcsr_dot(hmat(1, ic)%matrix, pmat(ispin, ic)%matrix, etr)
-            CALL dbcsr_print(hmat(1, ic)%matrix)
-            CALL dbcsr_print(pmat(ispin, ic)%matrix)
             ecore = ecore + etr
          END DO
       END DO
