@@ -600,7 +600,7 @@ CONTAINS
       CHARACTER(len=2)                                   :: element_symbol
       INTEGER :: gfn_type, handle, ikind, ispin, iw, lmax_sphere, maxl, maxlgto, maxlgto_lri, &
          maxlppl, maxlppnl, method_id, multiplicity, my_ival, n_ao, n_mo_add, natom, nelectron, &
-         ngauss, nkind, output_unit, sort_basis, tnadd_method
+         ngauss, nkind, output_unit, sort_basis, tnadd_method, tot_orb
       INTEGER, DIMENSION(2)                              :: n_mo, nelectron_spin
       INTEGER, DIMENSION(5)                              :: occ
       LOGICAL :: all_potential_present, be_silent, do_kpoints, do_ri_hfx, do_ri_mp2, do_ri_rpa, &
@@ -796,6 +796,7 @@ CONTAINS
             ! intitalisation for hamiltonian
             CALL tb_init_ham(qs_env%tb_tblite)
             !get basis set
+            tot_orb=0
             DO ikind = 1, nkind
                qs_kind => qs_kind_set(ikind)
                ! Setup proper xTB parameters
@@ -805,7 +806,7 @@ CONTAINS
                CALL get_qs_kind(qs_kind, element_symbol=element_symbol)
 
                NULLIFY (tmp_basis_set)
-               CALL tb_get_basis(qs_env%tb_tblite, tmp_basis_set, element_symbol, qs_kind%xtb_parameter, occ)
+               CALL tb_get_basis(qs_env%tb_tblite, tmp_basis_set, element_symbol, qs_kind%xtb_parameter, occ, tot_orb=tot_orb)
                CALL add_basis_set_to_container(qs_kind%basis_sets, tmp_basis_set, "ORB")
                CALL set_xtb_atom_param(qs_kind%xtb_parameter, occupation=occ)
 

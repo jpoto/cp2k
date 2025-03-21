@@ -49,6 +49,12 @@ MODULE tblite_types
       REAL(KIND=dp), ALLOCATABLE                         :: dsedcn(:)
       REAL(KIND=dp), ALLOCATABLE                         :: dcndr(:, :, :)
       REAL(KIND=dp), ALLOCATABLE                         :: dcndL(:, :, :)
+      
+      REAL(KIND=dp), ALLOCATABLE                         :: dip_int_ket(:, :, :)
+      REAL(KIND=dp), ALLOCATABLE                         :: dip_int_bra(:, :, :)
+      REAL(KIND=dp), ALLOCATABLE                         :: quad_int_ket(:, :, :)
+      REAL(KIND=dp), ALLOCATABLE                         :: quad_int_bra(:, :, :)
+      
 
 #if defined(__TBLITE)
       TYPE(structure_type)                               :: mol
@@ -99,6 +105,11 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%dsedcn)) DEALLOCATE (tb_tblite%dsedcn)
          IF (ALLOCATED(tb_tblite%dcndr)) DEALLOCATE (tb_tblite%dcndr)
          IF (ALLOCATED(tb_tblite%dcndL)) DEALLOCATE (tb_tblite%dcndL)
+         
+         IF (ALLOCATED(tb_tblite%dip_int_ket)) DEALLOCATE (tb_tblite%dip_int_ket)
+         IF (ALLOCATED(tb_tblite%dip_int_bra)) DEALLOCATE (tb_tblite%dip_int_bra)
+         IF (ALLOCATED(tb_tblite%quad_int_ket)) DEALLOCATE (tb_tblite%quad_int_ket)
+         IF (ALLOCATED(tb_tblite%quad_int_bra)) DEALLOCATE (tb_tblite%quad_int_bra)
 
          DEALLOCATE (tb_tblite)
       END IF

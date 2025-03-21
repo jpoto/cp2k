@@ -35,7 +35,8 @@ MODULE qs_density_matrices
                                               cp_fm_get_info,&
                                               cp_fm_release,&
                                               cp_fm_to_fm,&
-                                              cp_fm_type
+                                              cp_fm_type,&
+                                              cp_fm_write_formatted
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_unit_nr,&
                                               cp_logger_type
@@ -107,6 +108,7 @@ CONTAINS
 
       IF (.NOT. mo_set%uniform_occupation) THEN ! not all orbitals 1..homo are equally occupied
          IF (my_use_dbcsr) THEN
+            WRITE (*, *) 'calculate_dm_sparse1: ', mo_set%occupation_numbers(1:mo_set%homo)
             CALL dbcsr_copy(dbcsr_tmp, mo_set%mo_coeff_b)
             CALL dbcsr_scale_by_vector(dbcsr_tmp, mo_set%occupation_numbers(1:mo_set%homo), &
                                        side='right')
@@ -115,6 +117,8 @@ CONTAINS
                                 last_k=mo_set%homo)
             CALL dbcsr_release(dbcsr_tmp)
          ELSE
+            WRITE (*, *) 'calculate_dm_sparse2: ', mo_set%occupation_numbers(1:mo_set%homo)
+            CALL cp_fm_write_formatted(mo_set%mo_coeff, 6, header='11111 MO COEF', value_format="(8F14.6)")
             CALL cp_fm_create(fm_tmp, mo_set%mo_coeff%matrix_struct)
             CALL cp_fm_to_fm(mo_set%mo_coeff, fm_tmp)
             CALL cp_fm_column_scale(fm_tmp, mo_set%occupation_numbers(1:mo_set%homo))
@@ -128,10 +132,12 @@ CONTAINS
          END IF
       ELSE
          IF (my_use_dbcsr) THEN
+            WRITE (*, *) 'calculate_dm_sparse3: ', mo_set%maxocc
             CALL dbcsr_multiply("N", "T", mo_set%maxocc, mo_set%mo_coeff_b, mo_set%mo_coeff_b, &
                                 1.0_dp, density_matrix, retain_sparsity=my_retain_sparsity, &
                                 last_k=mo_set%homo)
          ELSE
+            WRITE (*, *) 'calculate_dm_sparse4: ', mo_set%maxocc
             alpha = mo_set%maxocc
             CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=density_matrix, &
                                        matrix_v=mo_set%mo_coeff, &

@@ -35,7 +35,7 @@ MODULE qs_ks_methods
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_filter, dbcsr_get_info, dbcsr_multiply, &
-        dbcsr_p_type, dbcsr_release, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
+        dbcsr_p_type, dbcsr_print, dbcsr_release, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
         dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
@@ -1218,6 +1218,9 @@ CONTAINS
                       matrix_h_kp=matrixkp_h, &
                       scf_env=scf_env)
 
+      WRITE (*, *) '11111111111111111111111 Hamiltonian'
+      CALL dbcsr_print(matrixkp_h(1, 1)%matrix)
+
       CALL calculate_ptrace(matrixkp_h, scf_env%p_mix_new, energy%core, dft_control%nspins)
 
       ! Add the imaginary part in the RTP case
@@ -1230,8 +1233,10 @@ CONTAINS
       END IF
 
       ! kinetic energy
-      IF (ASSOCIATED(matrixkp_t)) &
+      IF (ASSOCIATED(matrixkp_t)) THEN
+         WRITE (*, *)
          CALL calculate_ptrace(matrixkp_t, scf_env%p_mix_new, energy%kinetic, dft_control%nspins)
+      END IF
 
       CALL timestop(handle)
    END SUBROUTINE evaluate_core_matrix_p_mix_new
