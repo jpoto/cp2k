@@ -14,6 +14,8 @@
 ! **************************************************************************************************
 MODULE kpoint_methods
    USE atomic_kind_types,               ONLY: get_atomic_kind
+   USE basis_set_types,                 ONLY: gto_basis_set_p_type,&
+                                              gto_basis_set_type
    USE cell_types,                      ONLY: cell_type,&
                                               real_to_scaled
    USE cp_blacs_env,                    ONLY: cp_blacs_env_create,&
@@ -1238,7 +1240,6 @@ CONTAINS
             END IF
             CALL jvp_fm_write(cpmat, rpmat, kpoint%xkp(1:3, ikpgr), ispin)
          END DO
-         WRITE (*, *) "+++++ kpoint?", kpoint%xkp(1:3, ikpgr), kpoint%xkp(1:3, kp_range(1) + ikpgr)
       END DO
 
       CALL cp_fm_release(fwork)
@@ -1667,7 +1668,6 @@ CONTAINS
                CALL dbcsr_iterator_start(iter, pmat)
                DO WHILE (dbcsr_iterator_blocks_left(iter))
                   CALL dbcsr_iterator_next_block(iter, irow, icol, pblock)
-                  !WRITE (*, *) '>>>> irow, icol, pblock', irow, icol, pblock
                   FLUSH (6)
                   ip = f0(irow)
                   jp = f0(icol)
@@ -1683,17 +1683,14 @@ CONTAINS
 
                   CALL dbcsr_get_block_p(matrix=smat, row=jrow, col=jcol, BLOCK=sblock, found=found)
                   CPASSERT(found)
-                  !WRITE (*, *) '>>>> jrow, jcol, irow, sblock', jrow, jcol, sblock
                   FLUSH (6)
                   ikind = atype(irow)
                   jkind = atype(icol)
                   FLUSH (6)
                   kroti => kmat(ikind)%rmat
                   krotj => kmat(jkind)%rmat
-                  !WRITE (*, *) '>>>> kroti:', kroti
-                  !WRITE (*, *) '>>>> krotj:', krotj
-                  !FLUSH (6)
-                  ! rotation
+                  CALL jvp_rot_print(irow, icol, ikind, kroti, " i ")
+                  CALL jvp_rot_print(jrow, jcol, jkind, krotj, " j ")
                   IF (trans) THEN
                      sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(pblock), kroti))
                   ELSE
@@ -1725,15 +1722,13 @@ CONTAINS
                   jcol = ip
                   trans = .TRUE.
                END IF
-               WRITE (*, *) '>>>> irow, icol, ip, jp', irow, icol, ip, jp
                ikind = atype(irow)
                jkind = atype(icol)
                kroti => kmat(ikind)%rmat
                krotj => kmat(jkind)%rmat
-               !WRITE (*, *) '>>>> kroti:', kroti
-               !WRITE (*, *) '>>>> krotj:', krotj
+               CALL jvp_rot_print(irow, icol, ikind, kroti, " i ")
+               CALL jvp_rot_print(jrow, jcol, jkind, krotj, " j ")
                has_symm = dbcsr_get_matrix_type(smat)
-               !WRITE (*, *) '>>>> trans, has_symm', trans, has_symm
                ! rotation
                IF (trans) THEN
                   sblock = fsign*MATMUL(TRANSPOSE(krotj), MATMUL(TRANSPOSE(sblock), kroti))
@@ -1745,8 +1740,6 @@ CONTAINS
             !
          END IF
       ELSE
-         !WRITE (*, *) '>>>> no atom permutations'
-         ! this is the identity operation, just copy the matrix
          CALL dbcsr_copy(smat, pmat)
       END IF
 
@@ -1757,17 +1750,28 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Symmetrization of density matrix - transform to new k-point
 !> \param qs_kind_set ...
+!> \param sab_nl ...
 ! **************************************************************************************************
-   SUBROUTINE symtrans_1(qs_kind_set)
-      !  smat, pmat, kmat, rot, f0, atype, symmetric, antisymmetric)
+   SUBROUTINE symtrans_1(qs_kind_set, sab_nl)
+      !   smat, pmat, kmat, rot, f0, atype, symmetric, antisymmetric)
+      !TYPE(dbcsr_type), POINTER                          :: smat, pmat
+      !TYPE(kind_rotmat_type), DIMENSION(:), POINTER      :: kmat
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_nl
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'symtrans_1'
 
-      INTEGER                                            :: handle, natom
+      INTEGER                                            :: handle, iatom, ikind, jatom, jkind, &
+                                                            natom, slot
+      INTEGER, DIMENSION(3)                              :: cell
+      LOGICAL                                            :: do_symmetric
+      REAL(KIND=dp), DIMENSION(3)                        :: rab
+      TYPE(gto_basis_set_p_type), DIMENSION(:), POINTER  :: basis_set_list
+      TYPE(gto_basis_set_type), POINTER                  :: basis_set_a, basis_set_b
 
-!     TYPE(dbcsr_type), POINTER                          :: smat, pmat
-!     TYPE(kind_rotmat_type), DIMENSION(:), POINTER      :: kmat
+!REAL(KIND=dp), DIMENSION(3, 3)                     :: rot
+
 !     REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: rot
 !     INTEGER, DIMENSION(:), INTENT(IN)                  :: f0, atype
 !     LOGICAL, INTENT(IN), OPTIONAL                      :: symmetric, antisymmetric
@@ -1785,6 +1789,26 @@ CONTAINS
 
       !Get information for the angular momentum (basis)
       natom = SIZE(qs_kind_set)
+
+      ! check for symmetry
+      CPASSERT(SIZE(sab_nl) > 0)
+      CALL get_neighbor_list_set_p(neighbor_list_sets=sab_nl, symmetric=do_symmetric)
+
+      DO slot = 1, sab_nl(1)%nl_size
+
+         ikind = sab_nl(1)%nlist_task(slot)%ikind
+         jkind = sab_nl(1)%nlist_task(slot)%jkind
+         iatom = sab_nl(1)%nlist_task(slot)%iatom
+         jatom = sab_nl(1)%nlist_task(slot)%jatom
+         cell(:) = sab_nl(1)%nlist_task(slot)%cell(:)
+         rab(1:3) = sab_nl(1)%nlist_task(slot)%r(1:3)
+
+         basis_set_a => basis_set_list(ikind)%gto_basis_set
+         IF (.NOT. ASSOCIATED(basis_set_a)) CYCLE
+         basis_set_b => basis_set_list(jkind)%gto_basis_set
+         IF (.NOT. ASSOCIATED(basis_set_b)) CYCLE
+
+      END DO
 
       CALL timestop(handle)
 
@@ -1980,4 +2004,31 @@ CONTAINS
    END SUBROUTINE jvp_fm_write
 ! **************************************************************************************************
 
+! **************************************************************************************************
+!> \brief ...
+!> \param irow ...
+!> \param icol ...
+!> \param ikind ...
+!> \param kroti ...
+!> \param text ...
+! **************************************************************************************************
+   SUBROUTINE jvp_rot_print(irow, icol, ikind, kroti, text)
+
+      INTEGER                                            :: irow, icol, ikind
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: kroti
+      CHARACTER(len=*)                                   :: text
+
+      INTEGER                                            :: i, j
+      INTEGER, DIMENSION(2)                              :: rshape
+
+      WRITE (*, *) ' ++++ krot: ', text, 'row, col, kind', irow, icol, ikind
+      rshape = SHAPE(kroti)
+      DO i = 1, rshape(2)
+         WRITE (*, *) (kroti(j, i), j=1, rshape(1))
+      END DO
+
+   END SUBROUTINE jvp_rot_print
+! **************************************************************************************************
+
 END MODULE kpoint_methods
+
