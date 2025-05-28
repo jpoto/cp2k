@@ -80,7 +80,7 @@ CONTAINS
          NULLIFY (orbrot)
          CALL get_qs_env(qs_env, dft_control=dft_control)
          DO ik = 1, kpoints%nkp
-            WRITE (*, *) 'qs_basis_rotation num_k', kpoints%nkp
+            WRITE (*, *) '+++ qs_basis_rotation num_k', kpoints%nkp
             kpsym => kpoints%kp_sym(ik)%kpoint_sym
             IF (kpsym%apply_symmetry) THEN
                DO irot = 1, SIZE(kpsym%rotp)
