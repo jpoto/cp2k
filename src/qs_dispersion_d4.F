@@ -72,7 +72,7 @@ MODULE qs_dispersion_d4
 
 CONTAINS
 
-#if defined(__DFTD4)
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
@@ -119,11 +119,13 @@ CONTAINS
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(virial_type), POINTER                         :: virial
-
+      
+#if defined(__DFTD4)
       CLASS(damping_param), ALLOCATABLE                  :: param
       TYPE(d4_model)                                     :: disp
       TYPE(structure_type)                               :: mol
       TYPE(realspace_cutoff)                             :: cutoff
+#endif
 
       CALL timeset(routineN, handle)
 
@@ -167,11 +169,12 @@ CONTAINS
       ! method 2 from paper on PBC seems not to work
       enshift = 1
       !IF (ALL(periodic == 0)) enshift = 1
-
+      
+#if defined(__DFTD4)
       !prepare for the call to the dispersion function
       CALL new(mol, atomtype, xyz, lattice=cell%hmat, periodic=lperiod)
       CALL new_d4_model(disp, mol)
-
+      
       IF (dispersion_env%ref_functional == "none") THEN
          CALL get_rational_damping("pbe", param, s9=0.0_dp)
          SELECT TYPE (param)
@@ -203,6 +206,7 @@ CONTAINS
       IF (cutoff%disp3 > cutoff%disp2) THEN
          CPABORT("D4: Three-body cutoff should be smaller than two-body cutoff")
       END IF
+#endif
 
       IF (calculate_forces) THEN
          grad = .TRUE.
@@ -213,7 +217,7 @@ CONTAINS
       END IF
 
       IF (dispersion_env%d4_reference_code) THEN
-
+#if defined(__DFTD4)
          !> Wrapper to handle the evaluation of dispersion energy and derivatives
          IF (.NOT. dispersion_env%doabc) THEN
             CPWARN("Using D4_REFERENCE_CODE enforces calculation of C9 term.")
@@ -243,7 +247,9 @@ CONTAINS
             CPWARN("Atomic energies not available for D4 reference code")
             atomic_energy = 0.0_dp
          END IF
-
+#else
+         CPABORT("CP2K build without DFTD4")
+#endif
       ELSE
 
          IF (iw > 0) THEN
@@ -264,11 +270,15 @@ CONTAINS
 
          td = 0.0_dp
          IF (debug .AND. iw > 0) THEN
+#if defined(__DFTD4)
             ts = m_walltime()
             CALL refd4_debug(param, disp, mol, cutoff, grad, dispersion_env%doabc, &
                              enerd2, enerd3, cnd, qd, Edcn, Edq, gdeb, sdeb)
             te = m_walltime()
             td = te - ts
+#else
+         CPABORT("CP2K build without DFTD4")
+#endif
          END IF
 
          tc = 0.0_dp
@@ -476,11 +486,12 @@ CONTAINS
       END IF
 
       DEALLOCATE (xyz, atomtype)
-
+      
       CALL timestop(handle)
 
    END SUBROUTINE calculate_dispersion_d4_pairpot
 
+#if defined(__DFTD4)
 ! **************************************************************************************************
 !> \brief ...
 !> \param param ...
@@ -578,38 +589,6 @@ CONTAINS
       END IF
 
    END SUBROUTINE refd4_debug
-
-#else
-
-! **************************************************************************************************
-!> \brief ...
-!> \param qs_env ...
-!> \param dispersion_env ...
-!> \param evdw ...
-!> \param calculate_forces ...
-!> \param iw ...
-!> \param atomic_energy ...
-! **************************************************************************************************
-   SUBROUTINE calculate_dispersion_d4_pairpot(qs_env, dispersion_env, evdw, calculate_forces, &
-                                              iw, atomic_energy)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(qs_dispersion_type), INTENT(IN), POINTER      :: dispersion_env
-      REAL(KIND=dp), INTENT(INOUT)                       :: evdw
-      LOGICAL, INTENT(IN)                                :: calculate_forces
-      INTEGER, INTENT(IN)                                :: iw
-      REAL(KIND=dp), DIMENSION(:), OPTIONAL              :: atomic_energy
-
-      MARK_USED(qs_env)
-      MARK_USED(dispersion_env)
-      MARK_USED(evdw)
-      MARK_USED(calculate_forces)
-      MARK_USED(iw)
-      MARK_USED(atomic_energy)
-
-      CPABORT("CP2K build without DFTD4")
-
-   END SUBROUTINE calculate_dispersion_d4_pairpot
-
 #endif
 
 ! **************************************************************************************************
