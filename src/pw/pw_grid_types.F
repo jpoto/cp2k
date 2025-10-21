@@ -50,7 +50,7 @@ MODULE pw_grid_types
    ! all you always wanted to know about grids, but were...
 ! **************************************************************************************************
    TYPE pw_grid_type
-      LOGICAL :: fft_compatible_grid = .FALSE.
+      LOGICAL :: fft_usable_grid = .FALSE.
       INTEGER(int_8) :: ngpts = 0_int_8 ! # grid points
       INTEGER(int_8) :: ngpts_cut = 0_int_8 ! # grid points within cutoff
       INTEGER, DIMENSION(2, 3) :: bounds = 0 ! lower and upper bounds

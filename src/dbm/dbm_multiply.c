@@ -374,7 +374,6 @@ void dbm_multiply(const bool transa, const bool transb, const double alpha,
 
   // Wait for all other MPI ranks to complete, then release ressources.
   dbm_comm_iterator_stop(iter);
-  backend_stop(ctx);
 
   if (NULL != matrix_d) {
     ctx = backend_start(matrix_d);
@@ -397,6 +396,7 @@ void dbm_multiply(const bool transa, const bool transb, const double alpha,
     }
     dbm_release(matrix_d);
   }
+  backend_stop(ctx);
 
   // Release filter thresholds.
   free(rows_max_eps);

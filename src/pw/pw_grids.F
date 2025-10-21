@@ -114,6 +114,7 @@ CONTAINS
       pw_grid%para%mode = PW_MODE_LOCAL
       pw_grid%reference = 0
       pw_grid%ref_count = 1
+      pw_grid%fft_usable_grid = .FALSE.
       NULLIFY (pw_grid%g)
       NULLIFY (pw_grid%gsq)
       NULLIFY (pw_grid%g_hatmap)
@@ -289,7 +290,7 @@ CONTAINS
       TYPE(pw_grid_type), POINTER                        :: pw_grid
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cell_hmat
 
-      CLASS(mp_comm_type), INTENT(IN) :: mp_comm
+      CLASS(mp_comm_type), INTENT(IN)                    :: mp_comm
       INTEGER, INTENT(in), OPTIONAL                      :: grid_span
       REAL(KIND=dp), INTENT(IN), OPTIONAL                :: cutoff
       INTEGER, DIMENSION(2, 3), INTENT(IN), OPTIONAL     :: bounds, bounds_local
@@ -365,7 +366,7 @@ CONTAINS
       ELSE
          my_fft_compatible_grid = .FALSE.
       END IF
-      pw_grid%fft_compatible_grid = .TRUE.
+      pw_grid%fft_usable_grid = .TRUE.
 
       IF (PRESENT(ncommensurate)) THEN
          my_ncommensurate = ncommensurate
