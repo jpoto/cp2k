@@ -179,7 +179,7 @@ CONTAINS
          bo(1, :) = -gmax/2
          bo(2, :) = +gmax/2
          CALL pw_grid_create(pw_big_grid, mp_comm_self, cell_ref%hmat, grid_span=HALFSPACE, bounds=bo, spherical=.TRUE., &
-                             fft_usage=.FALSE., iounit=output_unit)
+                             fft_compatible_grid=.FALSE., iounit=output_unit)
          NULLIFY (pw_pool)
          CALL pw_pool_create(pw_pool, pw_grid=pw_big_grid)
          ewald_pw%pw_big_pool => pw_pool
@@ -204,8 +204,8 @@ CONTAINS
          cutoff_radius = exp_radius(0, 2.0_dp*alphasq, epsilon, norm)
 
          CALL dg_pme_grid_setup(cell_ref%hmat, npts_s, cutoff_radius, &
-                                pw_small_grid, pw_big_grid, para_env, rs_dims=[para_env%num_pe, 1], &
-                                iounit=output_unit, fft_usage=.TRUE.)
+                                pw_small_grid, pw_big_grid, para_env, rs_dims=(/para_env%num_pe, 1/), &
+                                iounit=output_unit, fft_compatible_grid=.TRUE.)
          ! Write some useful info
          IF (output_unit > 0) THEN
             WRITE (output_unit, '( A,T71,E10.4 )') &
@@ -258,7 +258,7 @@ CONTAINS
          END IF
          npts_s = gmax
          CALL pw_grid_create(pw_big_grid, para_env, cell_ref%hmat, grid_span=HALFSPACE, npts=npts_s, spherical=.TRUE., &
-                             rs_dims=[para_env%num_pe, 1], iounit=output_unit, fft_usage=.TRUE.)
+                             rs_dims=(/para_env%num_pe, 1/), iounit=output_unit, fft_compatible_grid=.TRUE.)
 
          ! pw pools initialized
          NULLIFY (pw_pool)

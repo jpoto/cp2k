@@ -729,7 +729,7 @@ CONTAINS
          CALL pw_grid_create(pw_grid, force_env%para_env, cell_mix%hmat, grid_span=settings%grid_span(1), &
                              npts=settings%npts(:, 1), cutoff=settings%cutoff(1), &
                              spherical=settings%is_spherical, odd=settings%is_odd, &
-                             fft_usage=.TRUE., ncommensurate=0, icommensurate=1, &
+                             fft_compatible_grid=.TRUE., ncommensurate=0, icommensurate=1, &
                              blocked=do_pw_grid_blocked_false, rs_dims=mixed_rs_dims, &
                              iounit=iounit)
          ! Check if the layout was successfully created

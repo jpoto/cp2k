@@ -271,7 +271,7 @@ CONTAINS
 !> \param npts ...
 !> \param spherical ...
 !> \param odd ...
-!> \param fft_usage ...
+!> \param fft_compatible_grid ...
 !> \param ncommensurate ...
 !> \param icommensurate ...
 !> \param blocked ...
@@ -283,7 +283,7 @@ CONTAINS
 !>      this is the function that should be used in the future
 ! **************************************************************************************************
    SUBROUTINE pw_grid_create_extended(pw_grid, mp_comm, cell_hmat, grid_span, cutoff, bounds, bounds_local, npts, &
-                                      spherical, odd, fft_usage, ncommensurate, icommensurate, blocked, ref_grid, &
+                                      spherical, odd, fft_compatible_grid, ncommensurate, icommensurate, blocked, ref_grid, &
                                       rs_dims, iounit)
 
       TYPE(pw_grid_type), POINTER                        :: pw_grid
@@ -294,7 +294,7 @@ CONTAINS
       REAL(KIND=dp), INTENT(IN), OPTIONAL                :: cutoff
       INTEGER, DIMENSION(2, 3), INTENT(IN), OPTIONAL     :: bounds, bounds_local
       INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL        :: npts
-      LOGICAL, INTENT(in), OPTIONAL                      :: spherical, odd, fft_usage
+      LOGICAL, INTENT(in), OPTIONAL                      :: spherical, odd, fft_compatible_grid
       INTEGER, INTENT(in), OPTIONAL                      :: ncommensurate, icommensurate, blocked
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
       INTEGER, DIMENSION(2), INTENT(in), OPTIONAL        :: rs_dims
@@ -305,7 +305,7 @@ CONTAINS
       INTEGER                                            :: handle, my_icommensurate, &
                                                             my_ncommensurate
       INTEGER, DIMENSION(3)                              :: n
-      LOGICAL                                            :: my_fft_usage, my_odd, my_spherical
+      LOGICAL                                            :: my_fft_compatible_grid, my_odd, my_spherical
       REAL(KIND=dp)                                      :: cell_deth, my_cutoff
       REAL(KIND=dp), DIMENSION(3, 3)                     :: cell_h_inv
 
@@ -360,11 +360,12 @@ CONTAINS
          my_odd = .FALSE.
       END IF
 
-      IF (PRESENT(fft_usage)) THEN
-         my_fft_usage = fft_usage
+      IF (PRESENT(fft_compatible_grid)) THEN
+         my_fft_compatible_grid = fft_compatible_grid
       ELSE
-         my_fft_usage = .FALSE.
+         my_fft_compatible_grid = .FALSE.
       END IF
+      pw_grid%fft_compatible_grid = .TRUE.
 
       IF (PRESENT(ncommensurate)) THEN
          my_ncommensurate = ncommensurate
@@ -397,9 +398,9 @@ CONTAINS
             my_cutoff = pw_find_cutoff(npts, cell_h_inv)
             my_cutoff = 0.5_dp*my_cutoff*my_cutoff
          END IF
-         IF (my_fft_usage) THEN
+         IF (my_fft_compatible_grid) THEN
             n = pw_grid_init_setup(cell_hmat, cutoff=my_cutoff, &
-                                   spherical=my_spherical, odd=my_odd, fft_usage=my_fft_usage, &
+                                   spherical=my_spherical, odd=my_odd, fft_compatible_grid=my_fft_compatible_grid, &
                                    ncommensurate=my_ncommensurate, icommensurate=my_icommensurate, &
                                    ref_grid=ref_grid, n_orig=n)
          END IF
@@ -407,7 +408,7 @@ CONTAINS
                                spherical=my_spherical)
       ELSE IF (PRESENT(cutoff)) THEN
          n = pw_grid_init_setup(cell_hmat, cutoff=cutoff, &
-                                spherical=my_spherical, odd=my_odd, fft_usage=my_fft_usage, &
+                                spherical=my_spherical, odd=my_odd, fft_compatible_grid=my_fft_compatible_grid, &
                                 ncommensurate=my_ncommensurate, icommensurate=my_icommensurate, &
                                 ref_grid=ref_grid)
          CALL set_pw_grid_info(pw_grid, npts=n, cutoff=cutoff, &
@@ -518,7 +519,7 @@ CONTAINS
 !> \param iounit ...
 !> \par History
 !>      JGH (20-Dec-2000) : Adapted for parallel use
-!>      JGH (28-Feb-2001) : New optional argument fft_usage
+!>      JGH (28-Feb-2001) : New optional argument fft_compatible_grid
 !>      JGH (21-Mar-2001) : Reference grid code
 !>      JGH (21-Mar-2001) : New optional argument symm_usage
 !>      JGH (22-Mar-2001) : Simplify group assignment (mp_comm_dup)

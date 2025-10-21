@@ -91,10 +91,10 @@ CONTAINS
 !> \param grid_ref ...
 !> \param rs_dims ...
 !> \param iounit ...
-!> \param fft_usage ...
+!> \param fft_compatible_grid ...
 ! **************************************************************************************************
    SUBROUTINE dg_pme_grid_setup(b_cell_hmat, npts_s, cutoff_radius, grid_s, grid_b, &
-                                mp_comm, grid_ref, rs_dims, iounit, fft_usage)
+                                mp_comm, grid_ref, rs_dims, iounit, fft_compatible_grid)
 
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: b_cell_hmat
       INTEGER, DIMENSION(:), INTENT(IN)                  :: npts_s
@@ -105,7 +105,7 @@ CONTAINS
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: grid_ref
       INTEGER, DIMENSION(2), INTENT(in), OPTIONAL        :: rs_dims
       INTEGER, INTENT(IN), OPTIONAL                      :: iounit
-      LOGICAL, INTENT(IN), OPTIONAL                      :: fft_usage
+      LOGICAL, INTENT(IN), OPTIONAL                      :: fft_compatible_grid
 
       INTEGER, DIMENSION(2, 3)                           :: bounds_b, bounds_s
       REAL(KIND=dp)                                      :: cutoff, ecut
@@ -116,10 +116,10 @@ CONTAINS
       ecut = 0.5_dp*cutoff*cutoff
       IF (PRESENT(grid_ref)) THEN
          CALL pw_grid_create(grid_b, mp_comm, b_cell_hmat, bounds=bounds_b, grid_span=HALFSPACE, cutoff=ecut, spherical=.TRUE., &
-                             ref_grid=grid_ref, rs_dims=rs_dims, iounit=iounit, fft_usage=fft_usage)
+                             ref_grid=grid_ref, rs_dims=rs_dims, iounit=iounit, fft_compatible_grid=fft_compatible_grid)
       ELSE
          CALL pw_grid_create(grid_b, mp_comm, b_cell_hmat, bounds=bounds_b, grid_span=HALFSPACE, cutoff=ecut, spherical=.TRUE., &
-                             rs_dims=rs_dims, iounit=iounit, fft_usage=fft_usage)
+                             rs_dims=rs_dims, iounit=iounit, fft_compatible_grid=fft_compatible_grid)
       END IF
 
       CALL dg_find_basis(grid_b%npts, b_cell_hmat, unit_cell_hmat)
@@ -127,7 +127,7 @@ CONTAINS
       CALL dg_set_cell(bounds_s(2, :) - bounds_s(1, :) + 1, unit_cell_hmat, s_cell_hmat)
 
       CALL pw_grid_create(grid_s, mp_comm_self, s_cell_hmat, bounds=bounds_s, grid_span=HALFSPACE, &
-                          cutoff=ecut, iounit=iounit, fft_usage=fft_usage)
+                          cutoff=ecut, iounit=iounit, fft_compatible_grid=fft_compatible_grid)
 
    END SUBROUTINE dg_pme_grid_setup
 

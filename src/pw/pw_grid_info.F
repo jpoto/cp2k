@@ -36,19 +36,19 @@ CONTAINS
 !> \param cutoff ...
 !> \param spherical ...
 !> \param odd ...
-!> \param fft_usage ...
+!> \param fft_compatible_grid ...
 !> \param ncommensurate ...
 !> \param icommensurate ...
 !> \param ref_grid ...
 !> \param n_orig ...
 !> \return ...
 ! **************************************************************************************************
-   FUNCTION pw_grid_init_setup(hmat, cutoff, spherical, odd, fft_usage, ncommensurate, &
+   FUNCTION pw_grid_init_setup(hmat, cutoff, spherical, odd, fft_compatible_grid, ncommensurate, &
                                icommensurate, ref_grid, n_orig) RESULT(n)
 
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: hmat
       REAL(KIND=dp), INTENT(IN)                          :: cutoff
-      LOGICAL, INTENT(IN)                                :: spherical, odd, fft_usage
+      LOGICAL, INTENT(IN)                                :: spherical, odd, fft_compatible_grid
       INTEGER, INTENT(IN)                                :: ncommensurate, icommensurate
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
       INTEGER, INTENT(IN), OPTIONAL                      :: n_orig(3)
@@ -70,7 +70,7 @@ CONTAINS
          CPASSERT(ALL(ref_grid%npts == n*2**(my_icommensurate - 1)))
          CPASSERT(ALL(pw_grid_n_for_fft(n) == n))
       ELSE
-         n = pw_grid_find_n(hmat, cutoff=cutoff, fft_usage=fft_usage, ncommensurate=ncommensurate, &
+         n = pw_grid_find_n(hmat, cutoff=cutoff, fft_compatible_grid=fft_compatible_grid, ncommensurate=ncommensurate, &
                             spherical=spherical, odd=odd, n_orig=n_orig)
       END IF
 
@@ -80,7 +80,7 @@ CONTAINS
 !> \brief returns the n needed for the grid with all the given constraints
 !> \param hmat ...
 !> \param cutoff ...
-!> \param fft_usage ...
+!> \param fft_compatible_grid ...
 !> \param spherical ...
 !> \param odd ...
 !> \param ncommensurate ...
@@ -88,12 +88,12 @@ CONTAINS
 !> \return ...
 !> \author fawzi
 ! **************************************************************************************************
-   FUNCTION pw_grid_find_n(hmat, cutoff, fft_usage, spherical, odd, ncommensurate, &
+   FUNCTION pw_grid_find_n(hmat, cutoff, fft_compatible_grid, spherical, odd, ncommensurate, &
                            n_orig) RESULT(n)
 
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: hmat
       REAL(KIND=dp), INTENT(IN)                          :: cutoff
-      LOGICAL, INTENT(IN)                                :: fft_usage, spherical, odd
+      LOGICAL, INTENT(IN)                                :: fft_compatible_grid, spherical, odd
       INTEGER, INTENT(IN)                                :: ncommensurate
       INTEGER, INTENT(IN), OPTIONAL                      :: n_orig(3)
       INTEGER, DIMENSION(3)                              :: n
@@ -126,7 +126,7 @@ CONTAINS
          n = pw_grid_n_from_cutoff(hmat, cutoff)
       END IF
 
-      IF (fft_usage) THEN
+      IF (fft_compatible_grid) THEN
          n = pw_grid_n_for_fft(n, odd=odd)
 
          IF (.NOT. spherical) THEN

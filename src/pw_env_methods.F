@@ -418,7 +418,7 @@ CONTAINS
             IF (ASSOCIATED(old_pw_grid)) THEN
                CALL pw_grid_create(pw_grid, para_env, my_cell%hmat, grid_span=grid_span, &
                                    cutoff=cutilev, &
-                                   spherical=spherical, odd=odd, fft_usage=.TRUE., &
+                                   spherical=spherical, odd=odd, fft_compatible_grid=.TRUE., &
                                    ncommensurate=ncommensurate, icommensurate=igrid_level, &
                                    blocked=do_pw_grid_blocked_false, &
                                    ref_grid=old_pw_grid, &
@@ -428,7 +428,7 @@ CONTAINS
             ELSE
                CALL pw_grid_create(pw_grid, para_env, my_cell%hmat, grid_span=grid_span, &
                                    cutoff=cutilev, &
-                                   spherical=spherical, odd=odd, fft_usage=.TRUE., &
+                                   spherical=spherical, odd=odd, fft_compatible_grid=.TRUE., &
                                    ncommensurate=ncommensurate, icommensurate=igrid_level, &
                                    blocked=blocked_id, &
                                    rs_dims=distribution_layout, &
@@ -438,7 +438,7 @@ CONTAINS
          ELSE
             CALL pw_grid_create(pw_grid, para_env, my_cell%hmat, grid_span=grid_span, &
                                 cutoff=cutilev, &
-                                spherical=spherical, odd=odd, fft_usage=.TRUE., &
+                                spherical=spherical, odd=odd, fft_compatible_grid=.TRUE., &
                                 ncommensurate=ncommensurate, icommensurate=igrid_level, &
                                 blocked=do_pw_grid_blocked_false, &
                                 ref_grid=old_pw_grid, &
@@ -484,7 +484,7 @@ CONTAINS
          IF (iounit > 0) WRITE (iounit, "(/,T2,A)") "PW_GRID| Grid for non-local vdW functional"
          CALL pw_grid_create(vdw_grid, para_env, my_cell%hmat, grid_span=grid_span, &
                              cutoff=dispersion_env%pw_cutoff, &
-                             spherical=spherical, odd=odd, fft_usage=.TRUE., &
+                             spherical=spherical, odd=odd, fft_compatible_grid=.TRUE., &
                              ncommensurate=0, icommensurate=0, &
                              blocked=do_pw_grid_blocked_false, &
                              ref_grid=vdw_ref_grid, &
@@ -1007,7 +1007,7 @@ CONTAINS
          my_cutilev = fine_grid_factor*cutilev
          IF (mt_s_grid) my_cutilev = MAX(my_cutilev, cutilev*mt_rel_cutoff)
          CALL pw_grid_create(xc_super_ref_pw_grid, para_env, cell_ref%hmat, grid_span=grid_span, &
-                             cutoff=my_cutilev, spherical=spherical, odd=.FALSE., fft_usage=.TRUE., &
+                             cutoff=cutilev, spherical=spherical, odd=.FALSE., fft_compatible_grid=.TRUE., &
                              ncommensurate=my_ncommensurate, icommensurate=1, &
                              blocked=do_pw_grid_blocked_false, rs_dims=[para_env%num_pe, 1], &
                              iounit=iounit)
@@ -1018,9 +1018,9 @@ CONTAINS
          IF (ASSOCIATED(xc_super_ref_pw_grid)) my_cutilev = MAX(my_cutilev, fine_grid_factor*cutilev)
 
          no = pw_grid_init_setup(cell_ref%hmat, cutoff=cutilev, spherical=spherical, &
-                                 odd=.FALSE., fft_usage=.TRUE., ncommensurate=0, icommensurate=1)
+                                 odd=.FALSE., fft_compatible_grid=.TRUE., ncommensurate=0, icommensurate=1)
          nn = pw_grid_init_setup(cell_ref%hmat, cutoff=my_cutilev, spherical=spherical, &
-                                 odd=.FALSE., fft_usage=.TRUE., ncommensurate=0, icommensurate=1)
+                                 odd=.FALSE., fft_compatible_grid=.TRUE., ncommensurate=0, icommensurate=1)
 
          ! bug appears for nn==no, also in old versions
          CPASSERT(ALL(nn > no))
@@ -1028,9 +1028,18 @@ CONTAINS
             mt_super_ref_pw_grid => xc_super_ref_pw_grid
             CALL pw_grid_retain(mt_super_ref_pw_grid)
          ELSE
+            my_cutilev = cutilev*mt_rel_cutoff
+
+            no = pw_grid_init_setup(cell_ref%hmat, cutoff=cutilev, spherical=spherical, &
+                                    odd=.FALSE., fft_compatible_grid=.TRUE., ncommensurate=0, icommensurate=1)
+            nn = pw_grid_init_setup(cell_ref%hmat, cutoff=my_cutilev, spherical=spherical, &
+                                    odd=.FALSE., fft_compatible_grid=.TRUE., ncommensurate=0, icommensurate=1)
+
+            ! bug appears for nn==no, also in old versions
+            CPASSERT(ALL(nn > no))
             CALL pw_grid_create(mt_super_ref_pw_grid, para_env, cell_ref%hmat, &
-                                cutoff=my_cutilev, spherical=spherical, fft_usage=.TRUE., &
-                                blocked=do_pw_grid_blocked_false, rs_dims=[para_env%num_pe, 1], &
+                                cutoff=my_cutilev, spherical=spherical, fft_compatible_grid=.TRUE., &
+                                blocked=do_pw_grid_blocked_false, rs_dims=(/para_env%num_pe, 1/), &
                                 iounit=iounit)
             super_ref_pw_grid => mt_super_ref_pw_grid
          END IF
