@@ -62,8 +62,6 @@ void fft_library_finalize_F(const char *wisdom_file) {
   fft_finalize_lib(wisdom_file);
 }
 
-void fft_print_timing_report_F(const cp_mpi_comm_t comm) {
-  fft_print_timing_report(comm);
-}
+void fft_print_timing_report_F() { fft_print_timing_report(); }
 
 // EOF

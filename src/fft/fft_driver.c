@@ -536,7 +536,8 @@ void fft_3d_fw_ray_low(double complex *restrict grid_buffer_1,
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
                        const int *rays_per_process, const int (*ray_to_yz)[2],
-                       const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
+                       const cp_mpi_comm_t comm,
+                       const cp_mpi_comm_t sub_comm[2]) {
   const int my_process = cp_mpi_comm_rank(comm);
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
@@ -786,7 +787,8 @@ void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
                        const int *rays_per_process, const int (*ray_to_yz)[2],
-                       const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
+                       const cp_mpi_comm_t comm,
+                       const cp_mpi_comm_t sub_comm[2]) {
   const int my_process = cp_mpi_comm_rank(comm);
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)

@@ -82,7 +82,7 @@ cp_mpi_comm_t cp_mpi_get_comm_null(void) {
 #if defined(__parallel)
   return MPI_COMM_NULL;
 #else
-  return -1;
+  return 0;
 #endif
 }
 
@@ -94,7 +94,7 @@ cp_mpi_request_t cp_mpi_get_request_null(void) {
 #if defined(__parallel)
   return MPI_REQUEST_NULL;
 #else
-  return -1;
+  return 0;
 #endif
 }
 

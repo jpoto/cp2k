@@ -73,7 +73,8 @@ void fft_3d_fw_ray_low(double complex *restrict grid_buffer_1,
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
                        const int *rays_per_process, const int (*ray_to_yz)[2],
-                       const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]);
+                       const cp_mpi_comm_t comm,
+                       const cp_mpi_comm_t sub_comm[2]);
 
 /*******************************************************************************
  * \brief Performs a forward 3D-FFT using a ray distribution.
@@ -98,7 +99,8 @@ void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
                        const int *rays_per_process, const int (*ray_to_yz)[2],
-                       const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]);
+                       const cp_mpi_comm_t comm,
+                       const cp_mpi_comm_t sub_comm[2]);
 
 /*******************************************************************************
  * \brief Performs a backward 3D-FFT overwriting the buffers.

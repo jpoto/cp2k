@@ -25,8 +25,8 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
       {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
 
   fft_grid_layout *fft_grid_layout = NULL;
-  grid_create_fft_grid_layout(&fft_grid_layout, cp_mpi_get_comm_world(), fft_size,
-                              dh_inv, false);
+  grid_create_fft_grid_layout(&fft_grid_layout, cp_mpi_get_comm_world(),
+                              fft_size, dh_inv, false);
 
   fft_complex_rs_grid grid_rs;
   grid_create_complex_rs_grid(&grid_rs, fft_grid_layout);
@@ -96,8 +96,8 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
       {1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
 
   fft_grid_layout *fft_grid_layout = NULL;
-  grid_create_fft_grid_layout(&fft_grid_layout, cp_mpi_get_comm_world(), fft_size,
-                              dh_inv, use_halfspace);
+  grid_create_fft_grid_layout(&fft_grid_layout, cp_mpi_get_comm_world(),
+                              fft_size, dh_inv, use_halfspace);
 
   fft_real_rs_grid grid_rs;
   grid_create_real_rs_grid(&grid_rs, fft_grid_layout);
@@ -162,7 +162,8 @@ int main(int argc, char *argv[]) {
   cp_mpi_init(&argc, &argv);
 
   if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
-    printf("Number of processes: %i\n", cp_mpi_comm_size(cp_mpi_get_comm_world()));
+    printf("Number of processes: %i\n",
+           cp_mpi_comm_size(cp_mpi_get_comm_world()));
     printf("Number of threads per process: %i\n", omp_get_max_threads());
     fflush(stdout);
   }
@@ -210,7 +211,7 @@ int main(int argc, char *argv[]) {
   //   QS_low_scaling_GW
   run_test_r2c((const int[3]){600, 180, 120}, 10, true);
 
-  fft_print_timing_report(cp_mpi_get_comm_world());
+  fft_print_timing_report();
 
   // Test also the reference backend and without distributed FFTs from the
   // library
@@ -260,7 +261,7 @@ int main(int argc, char *argv[]) {
     //   QS_low_scaling_GW
     run_test_r2c((const int[3]){600, 180, 120}, 10, true);
 
-    fft_print_timing_report(cp_mpi_get_comm_world());
+    fft_print_timing_report();
   }
 
   fft_finalize_lib(NULL);

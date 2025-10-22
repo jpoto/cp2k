@@ -32,6 +32,11 @@ MODULE fft_tools
                                               C_PTR,&
                                               C_SIZE_T
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
+   USE fft_api,                         ONLY: FFT_LIBRARY_BACKEND_DEFAULT,&
+                                              FFT_LIBRARY_FFTW_MODE_ESTIMATE,&
+                                              fft_library_finalize,&
+                                              fft_library_init,&
+                                              fft_print_timing_report
    USE fft_lib_old,                     ONLY: &
         fft_1d, fft_3d, fft_alloc, fft_create_plan_1d, fft_create_plan_3d, fft_dealloc, &
         fft_destroy_plan, fft_do_cleanup, fft_do_init, fft_get_lengths, fft_library
@@ -199,6 +204,8 @@ CONTAINS
 
       IF (fft_type <= 0) CPABORT("Unknown FFT library: "//TRIM(fftlib))
 
+      CALL fft_library_init(FFT_LIBRARY_BACKEND_DEFAULT, FFT_LIBRARY_FFTW_MODE_ESTIMATE, .FALSE., wisdom_file)
+
       CALL fft_do_init(fft_type, wisdom_file)
 
       ! setup the FFT scratch pool, if one is associated, clear first
@@ -222,6 +229,10 @@ CONTAINS
       CALL release_fft_scratch_pool()
 
       ! finalize fft libs
+
+      CALL fft_print_timing_report()
+
+      CALL fft_library_finalize(wisdom_file)
 
       CALL fft_do_cleanup(fft_type, wisdom_file, para_env%is_source())
 

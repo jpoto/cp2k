@@ -16,7 +16,6 @@ MODULE fft_api
                                               C_LOC,&
                                               C_NULL_CHAR,&
                                               C_PTR
-   USE message_passing,                 ONLY: mp_comm_type
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -108,21 +107,17 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Print FFT library statistics
-!> \param mpi_comm ...
 !> \author Frederick Stein
 ! **************************************************************************************************
-   SUBROUTINE fft_print_timing_report(mpi_comm)
-      CLASS(mp_comm_type), INTENT(IN)                                 :: mpi_comm
+   SUBROUTINE fft_print_timing_report()
 
       INTERFACE
-         SUBROUTINE fft_print_timing_report_c(mpi_comm) &
+         SUBROUTINE fft_print_timing_report_c() &
             BIND(C, name="fft_print_timing_report_F")
-            IMPORT :: C_INT
-            INTEGER(KIND=C_INT), VALUE                :: mpi_comm
          END SUBROUTINE fft_print_timing_report_c
       END INTERFACE
 
-      CALL fft_print_timing_report_c(mpi_comm%get_handle())
+      CALL fft_print_timing_report_c()
 
    END SUBROUTINE fft_print_timing_report
 

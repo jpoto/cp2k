@@ -129,6 +129,39 @@ bool is_guru_interface_available() {
 }
 #endif
 
+#if defined(__USE_FFTW3_MPI)
+bool fft_fftw_test_mpi_backend() {
+  const int nthreads = omp_get_max_threads();
+  const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
+  const fft_size[3] = {2, 2, 2};
+  fftw_plan_with_nthreads(nthreads);
+  const int block_size_0 =
+      (fft_size[0] + cp_mpi_comm_size(comm) - 1) / cp_mpi_comm_size(comm);
+  const int block_size_1 =
+      (fft_size[1] + cp_mpi_comm_size(comm) - 1) / cp_mpi_comm_size(comm);
+  ptrdiff_t local_n0, local_0_start;
+  ptrdiff_t local_n1, local_1_start;
+  const ptrdiff_t n[3] = {fft_size[0], fft_size[1], fft_size[2]};
+  const int buffer_size = fftw_mpi_local_size_many_transposed(
+      3, n, 1, block_size_0, block_size_1, comm, &local_n0, &local_0_start,
+      &local_n1, &local_1_start);
+  double complex *buffer_1 = fftw_alloc_complex(buffer_size);
+  double complex *buffer_2 = fftw_alloc_complex(buffer_size);
+  plan = malloc(sizeof(fftw_plan));
+  *plan = fftw_mpi_plan_many_dft(3, n, 1, block_size_0, block_size_1, buffer_1,
+                                 buffer_2, comm, direction,
+                                 fftw_planning_mode + FFTW_MPI_TRANSPOSED_OUT);
+  fftw_free(buffer_1);
+  fftw_free(buffer_2);
+  if (plan != NULL) {
+    fftw_destroy_plan(plan);
+    return true;
+  } else {
+    return false;
+  }
+}
+#endif
+
 /*******************************************************************************
  * \brief Initialize the FFT library (if not done externally).
  * \author Frederick Stein, Ole Schuett
@@ -177,6 +210,11 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
 #if defined(__USE_FFTW3_MPI)
   use_fftw_mpi = use_fft_mpi;
   fftw_mpi_init();
+  if (use_fft_mpi) {
+    use_fft_mpi = fft_fftw_test_mpi_backend();
+    fprintf(stderr,
+            "Creation of a MPI plan failed! MPI features are turned off!");
+  }
 #else
   (void)use_fft_mpi;
   use_fftw_mpi = false;
@@ -1307,7 +1345,8 @@ int fft_fftw_3d_distributed_sizes_r2c(const int npts_global[3],
  ******************************************************************************/
 void fft_fftw_2d_fw_distributed(const int npts_global[2],
                                 const int number_of_ffts,
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out) {
 #if defined(__USE_FFTW3_MPI)
   assert(omp_get_num_threads() == 1);
@@ -1357,7 +1396,8 @@ void fft_fftw_2d_fw_distributed_r2c(const int npts_global[2],
  ******************************************************************************/
 void fft_fftw_2d_bw_distributed(const int npts_global[2],
                                 const int number_of_ffts,
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out) {
 #if defined(__USE_FFTW3_MPI)
   assert(omp_get_num_threads() == 1);
@@ -1407,7 +1447,8 @@ void fft_fftw_2d_bw_distributed_c2r(const int npts_global[2],
  * \author Frederick Stein
  ******************************************************************************/
 void fft_fftw_3d_fw_distributed(const int npts_global[3],
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out) {
 #if defined(__USE_FFTW3_MPI)
   assert(omp_get_num_threads() == 1);
@@ -1453,7 +1494,8 @@ void fft_fftw_3d_fw_distributed_r2c(const int npts_global[3],
  * \author Frederick Stein
  ******************************************************************************/
 void fft_fftw_3d_bw_distributed(const int npts_global[3],
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out) {
 #if defined(__USE_FFTW3_MPI)
   assert(omp_get_num_threads() == 1);

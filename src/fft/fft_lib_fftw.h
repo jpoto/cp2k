@@ -203,7 +203,8 @@ int fft_fftw_3d_distributed_sizes_r2c(const int npts_global[3],
  ******************************************************************************/
 void fft_fftw_2d_fw_distributed(const int npts_global[2],
                                 const int number_of_ffts,
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out);
 
 /*******************************************************************************
@@ -221,7 +222,8 @@ void fft_fftw_2d_fw_distributed_r2c(const int npts_global[2],
  ******************************************************************************/
 void fft_fftw_2d_bw_distributed(const int npts_global[2],
                                 const int number_of_ffts,
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out);
 
 /*******************************************************************************
@@ -238,7 +240,8 @@ void fft_fftw_2d_bw_distributed_c2r(const int npts_global[2],
  * \author Frederick Stein
  ******************************************************************************/
 void fft_fftw_3d_fw_distributed(const int npts_global[3],
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out);
 
 /*******************************************************************************
@@ -254,7 +257,8 @@ void fft_fftw_3d_fw_distributed_r2c(const int npts_global[3],
  * \author Frederick Stein
  ******************************************************************************/
 void fft_fftw_3d_bw_distributed(const int npts_global[3],
-                                const cp_mpi_comm_t comm, double complex *grid_in,
+                                const cp_mpi_comm_t comm,
+                                double complex *grid_in,
                                 double complex *grid_out);
 
 /*******************************************************************************

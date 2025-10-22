@@ -21,7 +21,7 @@ void fft_init_timer(const bool use_debug_mode);
  * \brief Prints the timing report.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_print_timing_report(const cp_mpi_comm_t comm);
+void fft_print_timing_report();
 
 /*******************************************************************************
  * \brief Finalizes the internal timer.

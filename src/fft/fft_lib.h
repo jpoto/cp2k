@@ -227,7 +227,8 @@ void fft_2d_fw_distributed(const int npts_global[2], const int number_of_ffts,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_2d_fw_distributed_r2c(const int npts_global[2],
-                               const int number_of_ffts, const cp_mpi_comm_t comm,
+                               const int number_of_ffts,
+                               const cp_mpi_comm_t comm,
                                double *restrict grid_in,
                                double complex *restrict grid_out);
 
@@ -245,7 +246,8 @@ void fft_2d_bw_distributed(const int npts_global[2], const int number_of_ffts,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_2d_bw_distributed_c2r(const int npts_global[2],
-                               const int number_of_ffts, const cp_mpi_comm_t comm,
+                               const int number_of_ffts,
+                               const cp_mpi_comm_t comm,
                                double complex *restrict grid_in,
                                double *restrict grid_out);
 
@@ -261,7 +263,8 @@ void fft_3d_fw_distributed(const int npts_global[3], const cp_mpi_comm_t comm,
  * \brief Performs a distributed 3D FFT.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_distributed_r2c(const int npts_global[3], const cp_mpi_comm_t comm,
+void fft_3d_fw_distributed_r2c(const int npts_global[3],
+                               const cp_mpi_comm_t comm,
                                double *restrict grid_in,
                                double complex *restrict grid_out);
 
@@ -277,7 +280,8 @@ void fft_3d_bw_distributed(const int npts_global[3], const cp_mpi_comm_t comm,
  * \brief Performs a distributed 3D FFT.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_distributed_c2r(const int npts_global[3], const cp_mpi_comm_t comm,
+void fft_3d_bw_distributed_c2r(const int npts_global[3],
+                               const cp_mpi_comm_t comm,
                                double complex *restrict grid_in,
                                double *restrict grid_out);
 
