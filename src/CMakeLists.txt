@@ -1229,7 +1229,7 @@ list(
   pw_env/pw_env_types.F
   pw_env/rs_pw_interface.F
   pw/fft/fft_kinds.F
-  pw/fft/fft_lib.F
+  pw/fft/fft_lib_old.F
   pw/fft/fft_plan.F
   pw/fft/fftsg_lib.F
   pw/fft/fftw3_lib.F

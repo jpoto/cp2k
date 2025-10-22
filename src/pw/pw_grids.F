@@ -114,7 +114,7 @@ CONTAINS
       pw_grid%para%mode = PW_MODE_LOCAL
       pw_grid%reference = 0
       pw_grid%ref_count = 1
-      pw_grid%fft_usable_grid = .FALSE.
+      pw_grid%fftable_grid = .FALSE.
       NULLIFY (pw_grid%g)
       NULLIFY (pw_grid%gsq)
       NULLIFY (pw_grid%g_hatmap)
@@ -279,13 +279,14 @@ CONTAINS
 !> \param ref_grid ...
 !> \param rs_dims ...
 !> \param iounit ...
+!> \param fftable_grid ...
 !> \author JGH (21-Dec-2007)
 !> \note
 !>      this is the function that should be used in the future
 ! **************************************************************************************************
    SUBROUTINE pw_grid_create_extended(pw_grid, mp_comm, cell_hmat, grid_span, cutoff, bounds, bounds_local, npts, &
                                       spherical, odd, fft_compatible_grid, ncommensurate, icommensurate, blocked, ref_grid, &
-                                      rs_dims, iounit)
+                                      rs_dims, iounit, fftable_grid)
 
       TYPE(pw_grid_type), POINTER                        :: pw_grid
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cell_hmat
@@ -300,6 +301,7 @@ CONTAINS
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
       INTEGER, DIMENSION(2), INTENT(in), OPTIONAL        :: rs_dims
       INTEGER, INTENT(in), OPTIONAL                      :: iounit
+      LOGICAL, INTENT(IN), OPTIONAL                      :: fftable_grid
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_grid_setup'
 
@@ -366,7 +368,12 @@ CONTAINS
       ELSE
          my_fft_compatible_grid = .FALSE.
       END IF
-      pw_grid%fft_usable_grid = .TRUE.
+
+      IF (PRESENT(fftable_grid)) THEN
+         pw_grid%fftable_grid = fftable_grid
+      ELSE
+         pw_grid%fftable_grid = .TRUE.
+      END IF
 
       IF (PRESENT(ncommensurate)) THEN
          my_ncommensurate = ncommensurate

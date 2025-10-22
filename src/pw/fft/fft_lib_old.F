@@ -4,7 +4,7 @@
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
-MODULE fft_lib
+MODULE fft_lib_old
 
    USE fft_kinds,                       ONLY: dp
    USE fft_plan,                        ONLY: fft_plan_type
@@ -22,10 +22,10 @@ MODULE fft_lib
    IMPLICIT NONE
    PRIVATE
 
-   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'fft_lib'
+   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'fft_lib_old'
 
    PUBLIC :: fft_do_cleanup, fft_do_init, fft_get_lengths, fft_create_plan_3d
-   PUBLIC :: fft_create_plan_1dm, fft_1dm, fft_library, fft_3d, fft_destroy_plan
+   PUBLIC :: fft_create_plan_1d, fft_1d, fft_library, fft_3d, fft_destroy_plan
    PUBLIC :: fft_alloc, fft_dealloc
 
 CONTAINS
@@ -208,7 +208,7 @@ CONTAINS
 !> \param zout ...
 !> \param plan_style ...
 ! **************************************************************************************************
-   SUBROUTINE fft_create_plan_1dm(plan, fft_type, fsign, trans, n, m, zin, zout, plan_style)
+   SUBROUTINE fft_create_plan_1d(plan, fft_type, fsign, trans, n, m, zin, zout, plan_style)
       TYPE(fft_plan_type), INTENT(INOUT)                 :: plan
       INTEGER, INTENT(IN)                                :: fft_type, fsign
       LOGICAL, INTENT(IN)                                :: trans
@@ -231,7 +231,7 @@ CONTAINS
          plan%valid = .FALSE.
       END IF
 
-   END SUBROUTINE fft_create_plan_1dm
+   END SUBROUTINE fft_create_plan_1d
 
 ! **************************************************************************************************
 !> \brief ...
@@ -257,7 +257,7 @@ CONTAINS
 !> \param scale ...
 !> \param stat ...
 ! **************************************************************************************************
-   SUBROUTINE fft_1dm(plan, zin, zout, scale, stat)
+   SUBROUTINE fft_1d(plan, zin, zout, scale, stat)
       TYPE(fft_plan_type), INTENT(IN)                    :: plan
       COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: zin, zout
       REAL(KIND=dp), INTENT(IN)                          :: scale
@@ -267,7 +267,7 @@ CONTAINS
       IF (plan%n*plan%m > 0) THEN
          SELECT CASE (plan%fft_type)
          CASE DEFAULT
-            CPABORT("fft_1dm")
+            CPABORT("fft_1d")
          CASE (1)
             CALL fftsg1dm(stat, plan%trans, plan%n, plan%m, zin, zout, scale)
          CASE (3)
@@ -281,6 +281,6 @@ CONTAINS
          stat = 0
       END IF
 
-   END SUBROUTINE fft_1dm
+   END SUBROUTINE fft_1d
 
 END MODULE fft_lib

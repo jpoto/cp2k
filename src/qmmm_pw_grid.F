@@ -174,6 +174,6 @@ CONTAINS
       pw_grid_out%spherical = .FALSE.
       pw_grid_out%para%ray_distribution = .FALSE.
       pw_grid_out%para%blocked = .FALSE.
-      pw_grid_out%fft_usable_grid = .FALSE.
+      pw_grid_out%fftable_grid = .FALSE.
    END SUBROUTINE pw_grid_create_copy_no_pbc
 END MODULE qmmm_pw_grid
