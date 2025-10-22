@@ -185,6 +185,7 @@ list(
   f77_interface.F
   farming_methods.F
   farming_types.F
+  fft/fft_api.F
   fist_efield_methods.F
   fist_efield_types.F
   fist_energy_types.F
@@ -1427,6 +1428,21 @@ set(CP2K_DBM_SRCS_C
     dbm/dbm_shard.c)
 
 set(CP2K_GRID_SRCS_C
+    fft_api_F.c
+    fft_driver.c
+    fft_grid.c
+    fft_grid_layout.c
+    fft_grid_test.c
+    fft_lib.c
+    fft_lib_fftw.c
+    fft_lib_ref.c
+    fft_lib_ref_low.c
+    fft_lib_test.c
+    fft_reorder.c
+    fft_reorder_test.c
+    fft_timer.c)
+
+set(CP2K_GRID_SRCS_C
     grid/common/grid_basis_set.c
     grid/common/grid_library.c
     grid/common/grid_sphere_cache.c
@@ -1514,7 +1530,7 @@ set(CP2K_DBM_SRCS_GPU_C dbm/dbm_multiply_opencl.c dbm/dbm_multiply_gpu.c)
 set(CP2K_PW_SRCS_GPU pw/gpu/pw_gpu_kernels.cu)
 
 set(CP2K_PROGS_C
-    grid/grid_miniapp.c;grid/grid_unittest.c;dbm/dbm_miniapp.c;start/libcp2k_unittest.c
+    grid/grid_miniapp.c;grid/grid_unittest.c;dbm/dbm_miniapp.c;fft/fft_unittest.c;fft_perftest.c;start/libcp2k_unittest.c
 )
 set(CP2K_PROGS_F
     dbt/dbt_unittest.F

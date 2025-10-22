@@ -63,6 +63,42 @@ cp_mpi_comm_t cp_mpi_get_comm_world(void) {
 }
 
 /*******************************************************************************
+ * \brief Returns MPI_COMM_SELF.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_comm_t cp_mpi_get_comm_self(void) {
+#if defined(__parallel)
+  return MPI_COMM_SELF;
+#else
+  return -1;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Returns MPI_COMM_NULL.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_comm_t cp_mpi_get_comm_null(void) {
+#if defined(__parallel)
+  return MPI_COMM_NULL;
+#else
+  return -1;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Returns MPI_REQUEST_NULL.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_request_t cp_mpi_get_request_null(void) {
+#if defined(__parallel)
+  return MPI_REQUEST_NULL;
+#else
+  return -1;
+#endif
+}
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Comm_f2c.
  * \author Ole Schuett
  ******************************************************************************/
@@ -194,6 +230,21 @@ int cp_mpi_cart_rank(const cp_mpi_comm_t comm, const int coords[]) {
 }
 
 /*******************************************************************************
+ * \brief Wrapper around MPI_Cart_coords.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_cart_coords(const cp_mpi_comm_t comm, const int rank,
+                        const int maxdims, int coords[]) {
+#if defined(__parallel)
+  CHECK(MPI_Cart_coords(comm, rank, maxdims, coords));
+#else
+  (void)comm; // mark used
+  (void)rank;
+  memset(coords, 0, maxdims * sizeof(int));
+#endif
+}
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Cart_sub.
  * \author Ole Schuett
  ******************************************************************************/
@@ -311,6 +362,31 @@ void cp_mpi_max_double(double *values, const int count,
 }
 
 /*******************************************************************************
+ * \brief Wrapper around MPI_Reduce for op MPI_MAX and datatype MPI_DOUBLE.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_max_root_double(double *values, const int count, const int root,
+                            const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  if (MPI_COMM_NULL != comm) { // !MPI_Comm_compare
+    double value = 0;
+    void *recvbuf =
+        (1 < count ? cp_mpi_alloc_mem(count * sizeof(double)) : &value);
+    CHECK(MPI_Reduce(values, recvbuf, count, MPI_DOUBLE, MPI_MAX, root, comm));
+    memcpy(values, recvbuf, count * sizeof(double));
+    if (1 < count) {
+      cp_mpi_free_mem(recvbuf);
+    }
+  }
+#else
+  (void)comm; // mark used
+  (void)values;
+  (void)count;
+  (void)root;
+#endif
+}
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Allreduce for op MPI_SUM and datatype MPI_INT.
  * \author Ole Schuett
  ******************************************************************************/
@@ -401,6 +477,82 @@ void cp_mpi_sum_double(double *values, const int count,
   (void)comm; // mark used
   (void)values;
   (void)count;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Reduce for op MPI_SUM and datatype MPI_DOUBLE.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_sum_root_double(double *values, const int count, const int root,
+                            const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  if (MPI_COMM_NULL != comm) { // !MPI_Comm_compare
+    double value = 0;
+    void *recvbuf =
+        (1 < count ? cp_mpi_alloc_mem(count * sizeof(double)) : &value);
+    CHECK(MPI_Reduce(values, recvbuf, count, MPI_DOUBLE, MPI_SUM, root, comm));
+    memcpy(values, recvbuf, count * sizeof(double));
+    if (1 < count) {
+      cp_mpi_free_mem(recvbuf);
+    }
+  }
+#else
+  (void)comm; // mark used
+  (void)values;
+  (void)count;
+  (void)root;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Isend for datatype MPI_DOUBLE_COMPLEX.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_request_t cp_mpi_isend_double_complex(const double complex *sendbuf,
+                                             const int sendcount,
+                                             const int dest, const int sendtag,
+                                             const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  cp_mpi_request_t sendreq = MPI_REQUEST_NULL;
+  CHECK(MPI_Isend(sendbuf, sendcount, MPI_DOUBLE_COMPLEX, dest, sendtag, comm,
+                  &sendreq));
+  return sendreq;
+#else
+  (void)sendbuf; // mark used
+  (void)sendcount;
+  (void)dest;
+  (void)sendtag;
+  (void)comm;
+  fprintf(stderr, "Error: cp_mpi_irecv_double not available without MPI\n");
+  abort();
+  return -1;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Irecv for datatype MPI_DOUBLE_COMPLEX.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_request_t cp_mpi_irecv_double_complex(double complex *recvbuf,
+                                             const int recvcount,
+                                             const int source,
+                                             const int recvtag,
+                                             const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  cp_mpi_request_t recvreq = MPI_REQUEST_NULL;
+  CHECK(MPI_Irecv(recvbuf, recvcount, MPI_DOUBLE_COMPLEX, source, recvtag, comm,
+                  &recvreq));
+  return recvreq;
+#else
+  (void)recvbuf; // mark used
+  (void)recvcount;
+  (void)source;
+  (void)recvtag;
+  (void)comm;
+  fprintf(stderr, "Error: cp_mpi_irecv_double not available without MPI\n");
+  abort();
+  return -1;
 #endif
 }
 
@@ -515,6 +667,99 @@ void cp_mpi_alltoallv_double(const double *sendbuf, const int *sendcounts,
   assert(sendcounts[0] == recvcounts[0]);
   assert(sdispls[0] == 0 && rdispls[0] == 0);
   memcpy(recvbuf, sendbuf, sendcounts[0] * sizeof(double));
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Alltoallv for datatype MPI_DOUBLE_COMPLEX.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_alltoallv_double_complex(const double complex *sendbuf,
+                                     const int *sendcounts, const int *sdispls,
+                                     double complex *recvbuf,
+                                     const int *recvcounts, const int *rdispls,
+                                     const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  CHECK(MPI_Alltoallv(sendbuf, sendcounts, sdispls, MPI_DOUBLE_COMPLEX, recvbuf,
+                      recvcounts, rdispls, MPI_DOUBLE_COMPLEX, comm));
+#else
+  (void)comm; // mark used
+  assert(sendcounts[0] == recvcounts[0]);
+  assert(sdispls[0] == 0 && rdispls[0] == 0);
+  memcpy(recvbuf, sendbuf, sendcounts[0] * sizeof(double));
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Alltoall for datatype MPI_INT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_allgather_int(const int *sendbuf, const int sendcount, int *recvbuf,
+                          const int recvcount, const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  CHECK(MPI_Allgather(sendbuf, sendcount, MPI_INT, recvbuf, recvcount, MPI_INT,
+                      comm));
+#else
+  (void)comm; // mark used
+  assert(sendcount == recvcount);
+  memcpy(recvbuf, sendbuf, sendcount * sizeof(int));
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Bcast for datatype MPI_INT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_bcast_int(int *buf, const int count, const int root,
+                      const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  CHECK(MPI_Bcast(buf, count, MPI_INT, root, comm));
+#else
+  (void)comm; // mark used
+  (void)count;
+  (void)root;
+  (void)buf;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Bcast for datatype MPI_CHAR.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_bcast_char(char *buf, const int count, const int root,
+                       const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  CHECK(MPI_Bcast(buf, count, MPI_CHAR, root, comm));
+#else
+  (void)comm; // mark used
+  (void)count;
+  (void)root;
+  (void)buf;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Bcast for datatype MPI_CHAR.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_barrier(const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  CHECK(MPI_Barrier(comm));
+#else
+  (void)comm; // mark used
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Wait.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_wait(cp_mpi_request_t *req) {
+#if defined(__parallel)
+  MPI_Status status;
+  CHECK(MPI_Wait(req, &status));
+#else
+  (void)req; // mark used
 #endif
 }
 

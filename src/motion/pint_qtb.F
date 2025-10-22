@@ -18,11 +18,11 @@ MODULE pint_qtb
                                               cp_logger_type
    USE cp_output_handling,              ONLY: debug_print_level,&
                                               silent_print_level
-   USE fft_tools,                         ONLY: fft_1d,&
-                                              fft_create_plan_1d,&
-                                              fft_destroy_plan
    USE fft_plan,                        ONLY: fft_plan_type
    USE fft_tools,                       ONLY: FWFFT,&
+                                              fft_1d,&
+                                              fft_create_plan_1d,&
+                                              fft_destroy_plan,&
                                               fft_plan_style,&
                                               fft_type
    USE input_constants,                 ONLY: propagator_rpmd

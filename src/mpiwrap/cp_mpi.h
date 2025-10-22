@@ -7,6 +7,7 @@
 #ifndef CP_MPI_H
 #define CP_MPI_H
 
+#include <complex.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -14,8 +15,10 @@
 #if defined(__parallel)
 #include <mpi.h>
 typedef MPI_Comm cp_mpi_comm_t;
+typedef MPI_Request cp_mpi_request_t;
 #else
 typedef int cp_mpi_comm_t;
+typedef int cp_mpi_request_t;
 #endif
 
 /*******************************************************************************
@@ -35,6 +38,24 @@ void cp_mpi_finalize(void);
  * \author Ole Schuett
  ******************************************************************************/
 cp_mpi_comm_t cp_mpi_get_comm_world(void);
+
+/*******************************************************************************
+ * \brief Returns MPI_COMM_SELF.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_comm_t cp_mpi_get_comm_self(void);
+
+/*******************************************************************************
+ * \brief Returns MPI_COMM_NULL.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_comm_t cp_mpi_get_comm_null(void);
+
+/*******************************************************************************
+ * \brief Returns MPI_REQUEST_NULL.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_request_t cp_mpi_get_request_null(void);
 
 /*******************************************************************************
  * \brief Wrapper around MPI_Comm_f2c.
@@ -88,6 +109,13 @@ void cp_mpi_cart_get(const cp_mpi_comm_t comm, int maxdims, int dims[],
 int cp_mpi_cart_rank(const cp_mpi_comm_t comm, const int coords[]);
 
 /*******************************************************************************
+ * \brief Wrapper around MPI_Cart_coords.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_cart_coords(const cp_mpi_comm_t comm, const int rank,
+                        const int maxdims, int coords[]);
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Cart_sub.
  * \author Ole Schuett
  ******************************************************************************/
@@ -128,6 +156,13 @@ void cp_mpi_max_double(double *values, const int count,
                        const cp_mpi_comm_t comm);
 
 /*******************************************************************************
+ * \brief Wrapper around MPI_Reduce for op MPI_MAX and datatype MPI_DOUBLE.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_max_root_double(double *values, const int count, const int root,
+                            const cp_mpi_comm_t comm);
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Allreduce for op MPI_SUM and datatype MPI_INT.
  * \author Ole Schuett
  ******************************************************************************/
@@ -152,6 +187,32 @@ void cp_mpi_sum_int64(int64_t *values, const int count,
  ******************************************************************************/
 void cp_mpi_sum_double(double *values, const int count,
                        const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Reduce for op MPI_SUM and datatype MPI_DOUBLE.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_sum_root_double(double *values, const int count, const int root,
+                            const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Isend for datatype MPI_DOUBLE_COMPLEX.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_request_t cp_mpi_isend_double_complex(const double complex *sendbuf,
+                                             const int sendcount,
+                                             const int dest, const int sendtag,
+                                             const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Irecv for datatype MPI_DOUBLE_COMPLEX.
+ * \author Frederick Stein
+ ******************************************************************************/
+cp_mpi_request_t cp_mpi_irecv_double_complex(double complex *recvbuf,
+                                             const int recvcount,
+                                             const int source,
+                                             const int recvtag,
+                                             const cp_mpi_comm_t comm);
 
 /*******************************************************************************
  * \brief Wrapper around MPI_Sendrecv for datatype MPI_BYTE.
@@ -195,6 +256,49 @@ void cp_mpi_alltoallv_double(const double *sendbuf, const int *sendcounts,
                              const int *sdispls, double *recvbuf,
                              const int *recvcounts, const int *rdispls,
                              const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Alltoallv for datatype MPI_DOUBLE_COMPLEX.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_alltoallv_double_complex(const double complex *sendbuf,
+                                     const int *sendcounts, const int *sdispls,
+                                     double complex *recvbuf,
+                                     const int *recvcounts, const int *rdispls,
+                                     const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Allgather for datatype MPI_INT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_allgather_int(const int *sendbuf, const int sendcount, int *recvbuf,
+                          const int recvcount, const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Bcast for datatype MPI_INT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_bcast_int(int *buf, const int count, const int root,
+                      const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Bcast for datatype MPI_CHAR.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_bcast_char(char *buf, const int count, const int root,
+                       const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Barrier.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_barrier(const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_Wait.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_wait(cp_mpi_request_t *req);
 
 /*******************************************************************************
  * \brief Wrapper around MPI_Alloc_mem.
