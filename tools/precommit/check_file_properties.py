@@ -62,6 +62,7 @@ FLAG_EXCEPTIONS = (
     r"__T_C_G0",
     r"__YUKAWA",
     r"__cplusplus",
+    r"__USE_FFTW3_MPI",
     r"HIP_VERSION",
     r"LIBXSMM_GEMM_PREFETCH_NONE",
     r"LIBXSMM_.*VERSION_MAJOR",
@@ -140,6 +141,7 @@ BSD_PATHS = (
     "src/offload/",
     "src/grid/",
     "src/dbm/",
+    "src/fft/",
 )
 MIT_PATHS = ("src/grpp/",)
 
