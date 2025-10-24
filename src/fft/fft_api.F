@@ -29,6 +29,11 @@ MODULE fft_api
    PUBLIC :: fft_library_init, fft_library_finalize
    PUBLIC :: fft_print_timing_report
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
+   PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
+   PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
+   PUBLIC :: fft_1d_fw_local_inplace, fft_1d_bw_local_inplace
+   PUBLIC :: fft_2d_fw_local_inplace, fft_2d_bw_local_inplace
+   PUBLIC :: fft_3d_fw_local_inplace, fft_3d_bw_local_inplace
 
    ! Keep it synchronized with fft_api_F.c
    INTEGER, PARAMETER, PUBLIC :: FFT_LIBRARY_BACKEND_DEFAULT = 1
@@ -185,5 +190,287 @@ CONTAINS
                              LOGICAL(transpose_gs, C_BOOL), grid_in, grid_out)
 
    END SUBROUTINE fft_1d_bw_local
+
+! **************************************************************************************************
+!> \brief Performs a complex-to-complex 2D forwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid_in ...
+!> \param grid_out ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_2d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out)
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: fft_size
+      INTEGER, INTENT(IN)                                :: number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid_in
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(OUT)        :: grid_out
+
+      INTERFACE
+         SUBROUTINE fft_2d_fw_local_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out) &
+            BIND(C, name="fft_2d_fw_local_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(2) :: fft_size
+            INTEGER(C_INT), VALUE :: number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid_in
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(OUT) :: grid_out
+         END SUBROUTINE fft_2d_fw_local_c
+      END INTERFACE
+
+      CALL fft_2d_fw_local_c([fft_size(2), fft_size(1)], number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                             LOGICAL(transpose_gs, C_BOOL), grid_in, grid_out)
+
+   END SUBROUTINE fft_2d_fw_local
+
+! **************************************************************************************************
+!> \brief Performs a complex-to-complex 2D backwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid_in ...
+!> \param grid_out ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_2d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out)
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: fft_size
+      INTEGER, INTENT(IN)                                :: number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*)                     :: grid_in, grid_out
+
+      INTERFACE
+         SUBROUTINE fft_2d_bw_local_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out) &
+            BIND(C, name="fft_2d_bw_local_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(2) :: fft_size
+            INTEGER(C_INT), VALUE :: number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*) :: grid_in, grid_out
+         END SUBROUTINE fft_2d_bw_local_c
+      END INTERFACE
+
+      CALL fft_2d_bw_local_c([fft_size(2), fft_size(1)], number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                             LOGICAL(transpose_gs, C_BOOL), grid_in, grid_out)
+
+   END SUBROUTINE fft_2d_bw_local
+
+! **************************************************************************************************
+!> \brief Performs a complex-to-complex 3D forwards FFT
+!> \param fft_size ...
+!> \param grid_in ...
+!> \param grid_out ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_3d_fw_local(fft_size, grid_in, grid_out)
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid_in
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(OUT)        :: grid_out
+
+      INTERFACE
+         SUBROUTINE fft_3d_fw_local_c(fft_size, grid_in, grid_out) &
+            BIND(C, name="fft_3d_fw_local_F")
+            IMPORT :: C_INT, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid_in
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(OUT) :: grid_out
+         END SUBROUTINE fft_3d_fw_local_c
+      END INTERFACE
+
+      CALL fft_3d_fw_local_c([fft_size(3), fft_size(2), fft_size(1)], grid_in, grid_out)
+
+   END SUBROUTINE fft_3d_fw_local
+
+! **************************************************************************************************
+!> \brief Performs a complex-to-complex 3D backwards FFT
+!> \param fft_size ...
+!> \param grid_in ...
+!> \param grid_out ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_3d_bw_local(fft_size, grid_in, grid_out)
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
+      COMPLEX(KIND=dp), DIMENSION(*)                     :: grid_in, grid_out
+
+      INTERFACE
+         SUBROUTINE fft_3d_bw_local_c(fft_size, grid_in, grid_out) &
+            BIND(C, name="fft_3d_bw_local_F")
+            IMPORT :: C_INT, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*) :: grid_in, grid_out
+         END SUBROUTINE fft_3d_bw_local_c
+      END INTERFACE
+
+      CALL fft_3d_bw_local_c([fft_size(3), fft_size(2), fft_size(1)], grid_in, grid_out)
+
+   END SUBROUTINE fft_3d_bw_local
+
+! **************************************************************************************************
+!> \brief Performs an in-place complex-to-complex 1D forwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_1d_fw_local_inplace(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid)
+      INTEGER, INTENT(IN)                                :: fft_size, number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid
+
+      INTERFACE
+         SUBROUTINE fft_1d_fw_local_inplace_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid) &
+            BIND(C, name="fft_1d_fw_local_inplace_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), VALUE :: fft_size, number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
+         END SUBROUTINE fft_1d_fw_local_inplace_c
+      END INTERFACE
+
+      CALL fft_1d_fw_local_inplace_c(fft_size, number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                                     LOGICAL(transpose_gs, C_BOOL), grid)
+
+   END SUBROUTINE fft_1d_fw_local_inplace
+
+! **************************************************************************************************
+!> \brief Performs an in-place complex-to-complex 1D backwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_1d_bw_local_inplace(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid)
+      INTEGER, INTENT(IN)                                :: fft_size, number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*)                     :: grid
+
+      INTERFACE
+         SUBROUTINE fft_1d_bw_local_inplace_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid) &
+            BIND(C, name="fft_1d_bw_local_inplace_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), VALUE :: fft_size, number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*) :: grid
+         END SUBROUTINE fft_1d_bw_local_inplace_c
+      END INTERFACE
+
+      CALL fft_1d_bw_local_inplace_c(fft_size, number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                                     LOGICAL(transpose_gs, C_BOOL), grid)
+
+   END SUBROUTINE fft_1d_bw_local_inplace
+
+! **************************************************************************************************
+!> \brief Performs an in-place complex-to-complex 2D forwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_2d_fw_local_inplace(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid)
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: fft_size
+      INTEGER, INTENT(IN)                                :: number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid
+
+      INTERFACE
+         SUBROUTINE fft_2d_fw_local_inplace_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid) &
+            BIND(C, name="fft_2d_fw_local_inplace_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(2) :: fft_size
+            INTEGER(C_INT), VALUE :: number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
+         END SUBROUTINE fft_2d_fw_local_inplace_c
+      END INTERFACE
+
+      CALL fft_2d_fw_local_inplace_c([fft_size(2), fft_size(1)], number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                                     LOGICAL(transpose_gs, C_BOOL), grid)
+
+   END SUBROUTINE fft_2d_fw_local_inplace
+
+! **************************************************************************************************
+!> \brief Performs an in-place complex-to-complex 2D backwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_2d_bw_local_inplace(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid)
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: fft_size
+      INTEGER, INTENT(IN)                                :: number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*)                     :: grid
+
+      INTERFACE
+         SUBROUTINE fft_2d_bw_local_inplace_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid) &
+            BIND(C, name="fft_2d_bw_local_inplace_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(2) :: fft_size
+            INTEGER(C_INT), VALUE :: number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
+         END SUBROUTINE fft_2d_bw_local_inplace_c
+      END INTERFACE
+
+      CALL fft_2d_bw_local_inplace_c([fft_size(2), fft_size(1)], number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                                     LOGICAL(transpose_gs, C_BOOL), grid)
+
+   END SUBROUTINE fft_2d_bw_local_inplace
+
+! **************************************************************************************************
+!> \brief Performs an in-place complex-to-complex 3D forwards FFT
+!> \param fft_size ...
+!> \param grid ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_3d_fw_local_inplace(fft_size, grid)
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid
+
+      INTERFACE
+         SUBROUTINE fft_3d_fw_local_inplace_c(fft_size, grid) &
+            BIND(C, name="fft_3d_fw_local_inplace_F")
+            IMPORT :: C_INT, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
+         END SUBROUTINE fft_3d_fw_local_inplace_c
+      END INTERFACE
+
+      CALL fft_3d_fw_local_inplace_c([fft_size(3), fft_size(2), fft_size(1)], grid)
+
+   END SUBROUTINE fft_3d_fw_local_inplace
+
+! **************************************************************************************************
+!> \brief Performs an in-place complex-to-complex 3D backwards FFT
+!> \param fft_size ...
+!> \param grid ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_3d_bw_local_inplace(fft_size, grid)
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid
+
+      INTERFACE
+         SUBROUTINE fft_3d_bw_local_inplace_c(fft_size, grid) &
+            BIND(C, name="fft_3d_bw_local_inplace_F")
+            IMPORT :: C_INT, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
+         END SUBROUTINE fft_3d_bw_local_inplace_c
+      END INTERFACE
+
+      CALL fft_3d_bw_local_inplace_c([fft_size(3), fft_size(2), fft_size(1)], grid)
+
+   END SUBROUTINE fft_3d_bw_local_inplace
 
 END MODULE fft_api

@@ -32,15 +32,14 @@ MODULE fft_tools
                                               C_PTR,&
                                               C_SIZE_T
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
-   USE fft_api,                         ONLY: FFT_LIBRARY_BACKEND_DEFAULT,&
-                                              FFT_LIBRARY_FFTW_MODE_ESTIMATE,&
-                                              fft_1d_bw_local,&
-                                              fft_1d_fw_local,&
-                                              fft_library_finalize,&
-                                              fft_library_init,&
-                                              fft_print_timing_report
+   USE fft_api,                         ONLY: &
+        FFT_LIBRARY_BACKEND_DEFAULT, FFT_LIBRARY_FFTW_MODE_ESTIMATE, fft_1d_bw_local, &
+        fft_1d_bw_local_inplace, fft_1d_fw_local, fft_1d_fw_local_inplace, fft_2d_bw_local, &
+        fft_2d_bw_local_inplace, fft_2d_fw_local, fft_2d_fw_local_inplace, fft_3d_bw_local, &
+        fft_3d_bw_local_inplace, fft_3d_fw_local, fft_3d_fw_local_inplace, fft_library_finalize, &
+        fft_library_init, fft_print_timing_report
    USE fft_lib_old,                     ONLY: &
-        fft_3d, fft_alloc, fft_create_plan_1d, fft_create_plan_3d, fft_dealloc, fft_destroy_plan, &
+        fft_alloc, fft_create_plan_1d, fft_create_plan_3d, fft_dealloc, fft_destroy_plan, &
         fft_do_cleanup, fft_do_init, fft_get_lengths, fft_library
    USE fft_plan,                        ONLY: fft_plan_type
    USE kinds,                           ONLY: dp,&
@@ -145,7 +144,13 @@ MODULE fft_tools
    PUBLIC :: init_fft, fft3d, finalize_fft
    PUBLIC :: fft_alloc, fft_dealloc
    PUBLIC :: init_fft_scratch_pool
-   PUBLIC :: fft_radix_operations, fft_1d_fw_local
+   PUBLIC :: fft_radix_operations
+   PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
+   PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
+   PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
+   PUBLIC :: fft_1d_fw_local_inplace, fft_1d_bw_local_inplace
+   PUBLIC :: fft_2d_fw_local_inplace, fft_2d_bw_local_inplace
+   PUBLIC :: fft_3d_fw_local_inplace, fft_3d_bw_local_inplace
    PUBLIC :: FWFFT, BWFFT
    PUBLIC :: FFT_RADIX_CLOSEST, FFT_RADIX_NEXT
    PUBLIC :: FFT_RADIX_NEXT_ODD
@@ -354,11 +359,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'fft3d_s'
 
-      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :, :), &
-         POINTER                                         :: zoptr
-      COMPLEX(KIND=dp), DIMENSION(1, 1, 1), TARGET       :: zdum
-      INTEGER                                            :: handle, ld(3), lo(3), output_unit, sign, &
-                                                            stat
+      INTEGER                                            :: handle, ld(3), lo(3), output_unit, stat
       LOGICAL                                            :: fft_in_place, test
       REAL(KIND=dp)                                      :: in_sum, norm, out_sum
       TYPE(fft_scratch_type), POINTER                    :: fft_scratch
@@ -398,26 +399,6 @@ CONTAINS
          CPABORT("Size and dimension (zin) have to be the same.")
       END IF
 
-      sign = fsign
-      CALL get_fft_scratch(fft_scratch, tf_type=400, n=n)
-
-      IF (fft_in_place) THEN
-         zoptr => zdum
-         IF (fsign == FWFFT) THEN
-            CALL fft_3d(fft_scratch%fft_plan(1), norm, zin, zoptr, stat)
-         ELSE
-            CALL fft_3d(fft_scratch%fft_plan(2), norm, zin, zoptr, stat)
-         END IF
-      ELSE
-         IF (fsign == FWFFT) THEN
-            CALL fft_3d(fft_scratch%fft_plan(3), norm, zin, zout, stat)
-         ELSE
-            CALL fft_3d(fft_scratch%fft_plan(4), norm, zin, zout, stat)
-         END IF
-      END IF
-
-      CALL release_fft_scratch(fft_scratch)
-
       IF (PRESENT(zout)) THEN
          lo(1) = SIZE(zout, 1)
          lo(2) = SIZE(zout, 2)
@@ -426,6 +407,27 @@ CONTAINS
             CPABORT("Size and dimension (zout) have to be the same.")
          END IF
       END IF
+
+      CALL get_fft_scratch(fft_scratch, tf_type=400, n=n)
+
+      IF (fft_in_place) THEN
+         IF (fsign == FWFFT) THEN
+            CALL fft_3d_fw_local_inplace(ld, zin)
+         ELSE
+            CALL fft_3d_bw_local_inplace(ld, zin)
+         END IF
+         IF (norm /= 1.0_dp) CALL zdscal(PRODUCT(ld), norm, zin, 1)
+      ELSE
+         IF (fsign == FWFFT) THEN
+            CALL fft_3d_fw_local(ld, zin, zout)
+         ELSE
+            CALL fft_3d_bw_local(ld, zin, zout)
+         END IF
+         IF (norm /= 1.0_dp) CALL zdscal(PRODUCT(ld), norm, zout, 1)
+      END IF
+      stat = 0
+
+      CALL release_fft_scratch(fft_scratch)
 
       IF (PRESENT(status)) THEN
          status = stat
