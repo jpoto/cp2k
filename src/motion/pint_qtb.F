@@ -18,13 +18,7 @@ MODULE pint_qtb
                                               cp_logger_type
    USE cp_output_handling,              ONLY: debug_print_level,&
                                               silent_print_level
-   USE fft_plan,                        ONLY: fft_plan_type
-   USE fft_tools,                       ONLY: FWFFT,&
-                                              fft_1d,&
-                                              fft_create_plan_1d,&
-                                              fft_destroy_plan,&
-                                              fft_plan_style,&
-                                              fft_type
+   USE fft_tools,                       ONLY: fft_1d_fw_local
    USE input_constants,                 ONLY: propagator_rpmd
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
@@ -270,13 +264,9 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: fp
       REAL(KIND=dp), DIMENSION(:), POINTER               :: fp1
       TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(fft_plan_type)                                :: plan
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
       CALL timeset(routineN, handle)
-
-      IF (fft_type /= 3) CALL cp_warn(__LOCATION__, "The FFT library in use cannot"// &
-                                      " handle transformation of an arbitrary length.")
 
       p = pint_env%p
       ndim = pint_env%ndim
@@ -364,7 +354,7 @@ CONTAINS
             END DO
 
             !compute the filter in time space - FFT
-            CALL pint_qtb_fft(filter, filter, plan, nf)
+            CALL fft_1d_fw_local(nf, 1, .FALSE., .FALSE., filter, filter)
             !reordering + normalisation
             !normalisation : 1/nf comes from the DFT, 1/sqrt(step) is to
             !take into account the effective timestep h = step*dt and
@@ -947,24 +937,4 @@ CONTAINS
 
    END SUBROUTINE pint_qtb_linreg
 
-! **************************************************************************************************
-!> \brief ...
-!> \param z_in ...
-!> \param z_out ...
-!> \param plan ...
-!> \param n ...
-! **************************************************************************************************
-   SUBROUTINE pint_qtb_fft(z_in, z_out, plan, n)
-
-      INTEGER                                            :: n
-      TYPE(fft_plan_type)                                :: plan
-      COMPLEX(KIND=dp), DIMENSION(n)                     :: z_out, z_in
-
-      INTEGER                                            :: stat
-
-      CALL fft_create_plan_1d(plan, fft_type, FWFFT, .FALSE., n, 1, z_in, z_out, fft_plan_style)
-      CALL fft_1d(plan, z_in, z_out, 1.d0, stat)
-      CALL fft_destroy_plan(plan)
-   END SUBROUTINE pint_qtb_fft
-
-END MODULE pint_qtb
+END MODULE

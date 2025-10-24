@@ -40,8 +40,8 @@ MODULE fft_tools
                                               fft_library_init,&
                                               fft_print_timing_report
    USE fft_lib_old,                     ONLY: &
-        fft_1d, fft_3d, fft_alloc, fft_create_plan_1d, fft_create_plan_3d, fft_dealloc, &
-        fft_destroy_plan, fft_do_cleanup, fft_do_init, fft_get_lengths, fft_library
+        fft_3d, fft_alloc, fft_create_plan_1d, fft_create_plan_3d, fft_dealloc, fft_destroy_plan, &
+        fft_do_cleanup, fft_do_init, fft_get_lengths, fft_library
    USE fft_plan,                        ONLY: fft_plan_type
    USE kinds,                           ONLY: dp,&
                                               dp_size,&
@@ -145,11 +145,10 @@ MODULE fft_tools
    PUBLIC :: init_fft, fft3d, finalize_fft
    PUBLIC :: fft_alloc, fft_dealloc
    PUBLIC :: init_fft_scratch_pool
-   PUBLIC :: fft_radix_operations, fft_fw1d
+   PUBLIC :: fft_radix_operations, fft_1d_fw_local
    PUBLIC :: FWFFT, BWFFT
    PUBLIC :: FFT_RADIX_CLOSEST, FFT_RADIX_NEXT
    PUBLIC :: FFT_RADIX_NEXT_ODD
-   PUBLIC :: fft_1d, fft_create_plan_1d, fft_destroy_plan
 
    INTEGER, PARAMETER :: FWFFT = +1, BWFFT = -1
    INTEGER, PARAMETER :: FFT_RADIX_CLOSEST = 493, FFT_RADIX_NEXT = 494
@@ -169,7 +168,6 @@ MODULE fft_tools
    PUBLIC :: cube_transpose_1, cube_transpose_2
    PUBLIC :: yz_to_x, x_to_yz, xz_to_yz, yz_to_xz
    PUBLIC :: fft_scratch_sizes, fft_scratch_type
-   PUBLIC :: fft_type, fft_plan_style
 
    INTERFACE fft3d
       MODULE PROCEDURE fft3d_s, fft3d_ps, fft3d_pb
@@ -330,43 +328,6 @@ CONTAINS
       DEALLOCATE (DATA)
 
    END SUBROUTINE fft_radix_operations
-
-! **************************************************************************************************
-!> \brief Performs m 1-D forward FFT-s of size n.
-!> \param n      size of the FFT
-!> \param m      number of FFT-s
-!> \param trans  shape of input and output arrays: [n x m] if it is FALSE, [m x n] if it is TRUE
-!> \param zin    input array
-!> \param zout   output array
-!> \param scale  scaling factor
-!> \param stat   status of the operation, non-zero code indicates an error
-! **************************************************************************************************
-   SUBROUTINE fft_fw1d(n, m, trans, zin, zout, scale, stat)
-      INTEGER, INTENT(in)                                :: n, m
-      LOGICAL, INTENT(in)                                :: trans
-      COMPLEX(kind=dp), DIMENSION(*), INTENT(inout)      :: zin, zout
-      REAL(kind=dp), INTENT(in)                          :: scale
-      INTEGER, INTENT(out)                               :: stat
-
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'fft_fw1d'
-
-      INTEGER                                            :: handle
-      TYPE(fft_plan_type)                                :: fft_plan
-
-      CALL timeset(routineN, handle)
-
-      IF (fft_type == 3) THEN
-         CALL fft_create_plan_1d(fft_plan, fft_type, FWFFT, trans, n, m, zin, zout, fft_plan_style)
-         CALL fft_1d(fft_plan, zin, zout, scale, stat)
-         CALL fft_destroy_plan(fft_plan)
-      ELSE
-         CALL cp_warn(__LOCATION__, &
-                      "FFT library in use cannot handle transformation of an arbitrary length.")
-         stat = 1
-      END IF
-
-      CALL timestop(handle)
-   END SUBROUTINE fft_fw1d
 
 ! **************************************************************************************************
 !> \brief Calls the 3D-FFT function from the initialized library
@@ -1111,7 +1072,10 @@ CONTAINS
             END IF
 
             ! FFT along z
-            CALL fft_1d(fft_scratch%fft_plan(1), zin, bbuf, norm, stat)
+            CALL fft_1d_fw_local(fft_scratch%fft_plan(1)%n, fft_scratch%fft_plan(1)%m, fft_scratch%fft_plan(1)%trans, &
+                                 .FALSE., zin, bbuf)
+            IF (norm /= 1.0_dp) CALL zdscal(fft_scratch%fft_plan(1)%n*fft_scratch%fft_plan(1)%m, norm, bbuf, 1)
+            stat = 0
 
             abuf => fft_scratch%a3buf
 
@@ -1137,7 +1101,9 @@ CONTAINS
             END IF
 
             ! FFT along y
-            CALL fft_1d(fft_scratch%fft_plan(2), abuf, bbuf, 1.0_dp, stat)
+            CALL fft_1d_fw_local(fft_scratch%fft_plan(2)%n, fft_scratch%fft_plan(2)%m, fft_scratch%fft_plan(2)%trans, &
+                                 .FALSE., abuf, bbuf)
+            stat = 0
 
             abuf => fft_scratch%a5buf
 
@@ -1161,7 +1127,9 @@ CONTAINS
             END IF
 
             ! FFT along x
-            CALL fft_1d(fft_scratch%fft_plan(3), abuf, gin, 1.0_dp, stat)
+            CALL fft_1d_fw_local(fft_scratch%fft_plan(3)%n, fft_scratch%fft_plan(3)%m, fft_scratch%fft_plan(3)%trans, &
+                                 .FALSE., abuf, gin)
+            stat = 0
 
             IF (test) THEN
                sum_data = ABS(SUM(gin))
@@ -1187,7 +1155,9 @@ CONTAINS
             END IF
 
             ! FFT along x
-            CALL fft_1d(fft_scratch%fft_plan(4), gin, bbuf, 1.0_dp, stat)
+            CALL fft_1d_bw_local(fft_scratch%fft_plan(4)%n, fft_scratch%fft_plan(4)%m, fft_scratch%fft_plan(4)%trans, &
+                                 .FALSE., gin, bbuf)
+            stat = 0
 
             abuf => fft_scratch%a4buf
 
@@ -1213,7 +1183,9 @@ CONTAINS
             END IF
 
             ! FFT along y
-            CALL fft_1d(fft_scratch%fft_plan(5), abuf, bbuf, 1.0_dp, stat)
+            CALL fft_1d_bw_local(fft_scratch%fft_plan(5)%n, fft_scratch%fft_plan(5)%m, fft_scratch%fft_plan(5)%trans, &
+                                 .FALSE., abuf, bbuf)
+            stat = 0
 
             abuf => fft_scratch%a2buf
 
@@ -1237,7 +1209,10 @@ CONTAINS
             END IF
 
             ! FFT along z
-            CALL fft_1d(fft_scratch%fft_plan(6), abuf, zin, norm, stat)
+            CALL fft_1d_bw_local(fft_scratch%fft_plan(6)%n, fft_scratch%fft_plan(6)%m, fft_scratch%fft_plan(6)%trans, &
+                                 .FALSE., abuf, zin)
+            IF (norm /= 1.0_dp) CALL zdscal(fft_scratch%fft_plan(6)%n*fft_scratch%fft_plan(6)%m, norm, zin, 1)
+            stat = 0
 
             IF (test) THEN
                sum_data = ABS(SUM(zin))
@@ -1278,8 +1253,11 @@ CONTAINS
             abuf => fft_scratch%a3buf
             bbuf => fft_scratch%a4buf
             ! FFT along z and y
-            CALL fft_1d(fft_scratch%fft_plan(1), zin, abuf, norm, stat)
-            CALL fft_1d(fft_scratch%fft_plan(2), abuf, bbuf, 1.0_dp, stat)
+            CALL fft_1d_fw_local(fft_scratch%fft_plan(1)%n, fft_scratch%fft_plan(1)%m, fft_scratch%fft_plan(1)%trans, &
+                                 .FALSE., zin, abuf)
+            IF (norm /= 1.0_dp) CALL zdscal(fft_scratch%fft_plan(1)%n*fft_scratch%fft_plan(1)%m, norm, abuf, 1)
+            CALL fft_1d_fw_local(fft_scratch%fft_plan(2)%n, fft_scratch%fft_plan(2)%m, fft_scratch%fft_plan(2)%trans, &
+                                 .FALSE., abuf, bbuf)
 
             abuf => fft_scratch%a5buf
 
@@ -1303,7 +1281,9 @@ CONTAINS
             END IF
 
             ! FFT along x
-            CALL fft_1d(fft_scratch%fft_plan(3), abuf, gin, 1.0_dp, stat)
+            CALL fft_1d_fw_local(fft_scratch%fft_plan(3)%n, fft_scratch%fft_plan(3)%m, fft_scratch%fft_plan(3)%trans, &
+                                 .FALSE., abuf, gin)
+            stat = 0
 
             IF (test) THEN
                sum_data = ABS(SUM(gin))
@@ -1329,7 +1309,9 @@ CONTAINS
             bbuf => fft_scratch%a5buf
 
             ! FFT along x
-            CALL fft_1d(fft_scratch%fft_plan(4), gin, bbuf, 1.0_dp, stat)
+            CALL fft_1d_bw_local(fft_scratch%fft_plan(4)%n, fft_scratch%fft_plan(4)%m, fft_scratch%fft_plan(4)%trans, &
+                                 .FALSE., gin, bbuf)
+            stat = 0
 
             abuf => fft_scratch%a4buf
 
@@ -1356,10 +1338,15 @@ CONTAINS
             END IF
 
             ! FFT along y
-            CALL fft_1d(fft_scratch%fft_plan(5), abuf, bbuf, 1.0_dp, stat)
+            CALL fft_1d_bw_local(fft_scratch%fft_plan(5)%n, fft_scratch%fft_plan(5)%m, fft_scratch%fft_plan(5)%trans, &
+                                 .FALSE., abuf, bbuf)
+            stat = 0
 
             ! FFT along z
-            CALL fft_1d(fft_scratch%fft_plan(6), bbuf, zin, norm, stat)
+            CALL fft_1d_bw_local(fft_scratch%fft_plan(6)%n, fft_scratch%fft_plan(6)%m, fft_scratch%fft_plan(6)%trans, &
+                                 .FALSE., bbuf, zin)
+            IF (norm /= 1.0_dp) CALL zdscal(fft_scratch%fft_plan(6)%n*fft_scratch%fft_plan(6)%m, norm, zin, 1)
+            stat = 0
 
             IF (test) THEN
                sum_data = ABS(SUM(zin))

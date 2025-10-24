@@ -8,15 +8,14 @@ MODULE fft_lib_old
 
    USE fft_kinds,                       ONLY: dp
    USE fft_plan,                        ONLY: fft_plan_type
-   USE fftsg_lib,                       ONLY: fftsg1dm,&
-                                              fftsg3d,&
+   USE fftsg_lib,                       ONLY: fftsg3d,&
                                               fftsg_do_cleanup,&
                                               fftsg_do_init,&
                                               fftsg_get_lengths
    USE fftw3_lib,                       ONLY: &
-        fft_alloc => fftw_alloc, fft_dealloc => fftw_dealloc, fftw31dm, fftw33d, &
-        fftw3_create_plan_1dm, fftw3_create_plan_3d, fftw3_destroy_plan, fftw3_do_cleanup, &
-        fftw3_do_init, fftw3_get_lengths
+        fft_alloc => fftw_alloc, fft_dealloc => fftw_dealloc, fftw33d, fftw3_create_plan_1dm, &
+        fftw3_create_plan_3d, fftw3_destroy_plan, fftw3_do_cleanup, fftw3_do_init, &
+        fftw3_get_lengths
 #include "../../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -25,7 +24,7 @@ MODULE fft_lib_old
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'fft_lib_old'
 
    PUBLIC :: fft_do_cleanup, fft_do_init, fft_get_lengths, fft_create_plan_3d
-   PUBLIC :: fft_create_plan_1d, fft_1d, fft_library, fft_3d, fft_destroy_plan
+   PUBLIC :: fft_create_plan_1d, fft_library, fft_3d, fft_destroy_plan
    PUBLIC :: fft_alloc, fft_dealloc
 
 CONTAINS
@@ -248,39 +247,4 @@ CONTAINS
       END IF
 
    END SUBROUTINE fft_destroy_plan
-
-! **************************************************************************************************
-!> \brief ...
-!> \param plan ...
-!> \param zin ...
-!> \param zout ...
-!> \param scale ...
-!> \param stat ...
-! **************************************************************************************************
-   SUBROUTINE fft_1d(plan, zin, zout, scale, stat)
-      TYPE(fft_plan_type), INTENT(IN)                    :: plan
-      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: zin, zout
-      REAL(KIND=dp), INTENT(IN)                          :: scale
-      INTEGER, INTENT(OUT)                               :: stat
-
-      stat = plan%fsign
-      IF (plan%n*plan%m > 0) THEN
-         SELECT CASE (plan%fft_type)
-         CASE DEFAULT
-            CPABORT("fft_1d")
-         CASE (1)
-            CALL fftsg1dm(stat, plan%trans, plan%n, plan%m, zin, zout, scale)
-         CASE (3)
-            CALL fftw31dm(plan, zin, zout, scale, stat)
-         END SELECT
-      END IF
-      ! stat is set to zero on error, -1,+1 are OK
-      IF (stat == 0) THEN
-         stat = 1
-      ELSE
-         stat = 0
-      END IF
-
-   END SUBROUTINE fft_1d
-
-END MODULE fft_lib
+END MODULE

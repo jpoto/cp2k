@@ -70,8 +70,7 @@ void fft_free_complex(double complex *buffer);
  ******************************************************************************/
 void fft_1d_fw_local(const int fft_size, const int number_of_ffts,
                      const bool transpose_rs, const bool transpose_gs,
-                     double complex *restrict grid_in,
-                     double complex *restrict grid_out);
+                     double complex *grid_in, double complex *grid_out);
 
 /*******************************************************************************
  * \brief 1D Forward FFT from transposed format.
@@ -79,8 +78,7 @@ void fft_1d_fw_local(const int fft_size, const int number_of_ffts,
  ******************************************************************************/
 void fft_1d_fw_local_r2c(const int fft_size, const int number_of_ffts,
                          const bool transpose_rs, const bool transpose_gs,
-                         double *restrict grid_in,
-                         double complex *restrict grid_out);
+                         double *grid_in, double complex *grid_out);
 
 /*******************************************************************************
  * \brief 1D Backward FFT to transposed format.
@@ -88,8 +86,7 @@ void fft_1d_fw_local_r2c(const int fft_size, const int number_of_ffts,
  ******************************************************************************/
 void fft_1d_bw_local(const int fft_size, const int number_of_ffts,
                      const bool transpose_rs, const bool transpose_gs,
-                     double complex *restrict grid_in,
-                     double complex *restrict grid_out);
+                     double complex *grid_in, double complex *grid_out);
 
 /*******************************************************************************
  * \brief 1D Backward FFT to transposed format.
@@ -97,8 +94,7 @@ void fft_1d_bw_local(const int fft_size, const int number_of_ffts,
  ******************************************************************************/
 void fft_1d_bw_local_c2r(const int fft_size, const int number_of_ffts,
                          const bool transpose_rs, const bool transpose_gs,
-                         double complex *restrict grid_in,
-                         double *restrict grid_out);
+                         double complex *grid_in, double *grid_out);
 
 /*******************************************************************************
  * \brief Naive implementation of 2D FFT (transposed format, no normalization).
@@ -106,8 +102,7 @@ void fft_1d_bw_local_c2r(const int fft_size, const int number_of_ffts,
  ******************************************************************************/
 void fft_2d_fw_local(const int fft_size[2], const int number_of_ffts,
                      const bool transpose_rs, const bool transpose_gs,
-                     double complex *restrict grid_in,
-                     double complex *restrict grid_out);
+                     double complex *grid_in, double complex *grid_out);
 
 /*******************************************************************************
  * \brief Naive implementation of 2D FFT (transposed format, no normalization).
@@ -115,8 +110,7 @@ void fft_2d_fw_local(const int fft_size[2], const int number_of_ffts,
  ******************************************************************************/
 void fft_2d_fw_local_r2c(const int fft_size[2], const int number_of_ffts,
                          const bool transpose_rs, const bool transpose_gs,
-                         double *restrict grid_in,
-                         double complex *restrict grid_out);
+                         double *grid_in, double complex *grid_out);
 
 /*******************************************************************************
  * \brief Performs local 2D FFT (reverse to fw routine, no normalization).
@@ -126,8 +120,7 @@ void fft_2d_fw_local_r2c(const int fft_size[2], const int number_of_ffts,
  ******************************************************************************/
 void fft_2d_bw_local(const int fft_size[2], const int number_of_ffts,
                      const bool transpose_rs, const bool transpose_gs,
-                     double complex *restrict grid_in,
-                     double complex *restrict grid_out);
+                     double complex *grid_in, double complex *grid_out);
 
 /*******************************************************************************
  * \brief Performs local 2D FFT (reverse to fw routine, no normalization).
@@ -137,8 +130,7 @@ void fft_2d_bw_local(const int fft_size[2], const int number_of_ffts,
  ******************************************************************************/
 void fft_2d_bw_local_c2r(const int fft_size[2], const int number_of_ffts,
                          const bool transpose_rs, const bool transpose_gs,
-                         double complex *restrict grid_in,
-                         double *restrict grid_out);
+                         double complex *grid_in, double *grid_out);
 
 /*******************************************************************************
  * \brief Performs local 3D FFT (no normalization).
@@ -146,8 +138,8 @@ void fft_2d_bw_local_c2r(const int fft_size[2], const int number_of_ffts,
  * fft_3d_rw_local(grid_rs, grid_gs, n) (ignoring normalization).
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_local(const int fft_size[3], double complex *restrict grid_in,
-                     double complex *restrict grid_out);
+void fft_3d_fw_local(const int fft_size[3], double complex *grid_in,
+                     double complex *grid_out);
 
 /*******************************************************************************
  * \brief Performs local 3D FFT (no normalization).
@@ -155,8 +147,8 @@ void fft_3d_fw_local(const int fft_size[3], double complex *restrict grid_in,
  * fft_3d_rw_local(grid_rs, grid_gs, n) (ignoring normalization).
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_local_r2c(const int fft_size[3], double *restrict grid_in,
-                         double complex *restrict grid_out);
+void fft_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
+                         double complex *grid_out);
 
 /*******************************************************************************
  * \brief Performs local 3D FFT (reverse to fw routine, no normalization).
@@ -164,8 +156,8 @@ void fft_3d_fw_local_r2c(const int fft_size[3], double *restrict grid_in,
  * fft_3d_rw_local(grid_rs, grid_gs, n) (ignoring normalization).
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_local(const int fft_size[3], double complex *restrict grid_in,
-                     double complex *restrict grid_out);
+void fft_3d_bw_local(const int fft_size[3], double complex *grid_in,
+                     double complex *grid_out);
 
 /*******************************************************************************
  * \brief Performs local 3D FFT (reverse to fw routine, no normalization).
@@ -173,9 +165,8 @@ void fft_3d_bw_local(const int fft_size[3], double complex *restrict grid_in,
  * fft_3d_rw_local(grid_rs, grid_gs, n) (ignoring normalization).
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_local_c2r(const int fft_size[3],
-                         double complex *restrict grid_in,
-                         double *restrict grid_out);
+void fft_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
+                         double *grid_out);
 
 /*******************************************************************************
  * \brief Return buffer size and local sizes and start for distributed 2D FFTs.
