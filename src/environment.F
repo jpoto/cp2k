@@ -54,9 +54,7 @@ MODULE environment
                                               low_print_level,&
                                               medium_print_level,&
                                               silent_print_level
-   USE fft_tools,                       ONLY: FWFFT,&
-                                              fft3d,&
-                                              finalize_fft,&
+   USE fft_tools,                       ONLY: finalize_fft,&
                                               init_fft
    USE force_env_types,                 ONLY: multiple_fe_list
    USE gamma,                           ONLY: deallocate_md_ftable
@@ -1063,6 +1061,8 @@ CONTAINS
          try_fftw = .TRUE.
       END IF
 
+      stat = 0
+
       ! Initialize FFT library with the user's preferred FFT library
       CALL init_fft(fftlib=TRIM(globenv%default_fft_library), &
                     alltoall=section_get_lval(global_section, "ALLTOALL_SGL"), &
@@ -1071,8 +1071,6 @@ CONTAINS
                     wisdom_file=globenv%fftw_wisdom_file_name, &
                     plan_style=globenv%fftw_plan_type)
 
-      ! Check for FFT library
-      CALL fft3d(FWFFT, n, zz, status=stat)
       IF (stat /= 0) THEN
          IF (try_fftw) THEN
             message = "FFT library "//TRIM(globenv%default_fft_library)// &
@@ -1086,7 +1084,6 @@ CONTAINS
                           wisdom_file=globenv%fftw_wisdom_file_name, &
                           plan_style=globenv%fftw_plan_type)
 
-            CALL fft3d(FWFFT, n, zz, status=stat)
          END IF
          IF (stat /= 0) THEN
             message = "FFT library "//TRIM(globenv%default_fft_library)// &
@@ -1100,7 +1097,6 @@ CONTAINS
                           wisdom_file=globenv%fftw_wisdom_file_name, &
                           plan_style=globenv%fftw_plan_type)
 
-            CALL fft3d(FWFFT, n, zz, status=stat)
             IF (stat /= 0) THEN
                CPABORT("FFT library FFTSG does not work. No FFT library available.")
             END IF

@@ -567,7 +567,7 @@ CONTAINS
       INTEGER, PARAMETER                                 :: ndate(3) = [12, 48, 96]
 
       INTEGER                                            :: iall, ierr, it, j, len, n(3), ntim, &
-                                                            radix_in, radix_out, siz, stat
+                                                            radix_in, radix_out, siz
       COMPLEX(KIND=dp), DIMENSION(4, 4, 4)               :: zz
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: ca, cb, cc
       CHARACTER(LEN=7)                                   :: method
@@ -597,88 +597,86 @@ CONTAINS
          END SELECT
          n = 4
          zz = 0.0_dp
-         CALL fft3d(FWFFT, n, zz, status=stat)
-         IF (stat == 0) THEN
-            DO it = 1, 3
-               radix_in = ndate(it)
-               CALL fft_radix_operations(radix_in, radix_out, FFT_RADIX_CLOSEST)
-               len = radix_out
-               n = len
-               IF (16.0_dp*REAL(len*len*len, KIND=dp) > max_memory*0.5_dp) EXIT
-               ALLOCATE (ra(len, len, len), STAT=ierr)
-               ALLOCATE (ca(len, len, len), STAT=ierr)
-               CALL RANDOM_NUMBER(ra)
-               ca(:, :, :) = ra
-               CALL RANDOM_NUMBER(ra)
-               ca(:, :, :) = ca + gaussi*ra
-               flops = REAL(len**3, KIND=dp)*15.0_dp*LOG(REAL(len, KIND=dp))
-               ntim = NINT(siz*1.e7_dp/flops)
-               ntim = MAX(ntim, 1)
-               ntim = MIN(ntim, 200)
-               scale = 1.0_dp/REAL(len**3, KIND=dp)
-               tstart = m_walltime()
-               DO j = 1, ntim
-                  CALL fft3d(FWFFT, n, ca)
-                  CALL fft3d(BWFFT, n, ca)
-               END DO
-               tend = m_walltime()
-               t = tend - tstart + threshold
-               IF (t > 0.0_dp) THEN
-                  perf = REAL(ntim, KIND=dp)*2.0_dp*flops*1.e-6_dp/t
-               ELSE
-                  perf = 0.0_dp
-               END IF
-
-               IF (para_env%is_source()) THEN
-                  WRITE (iw, '(T2,A,A,i6,T59,F14.4,A)') &
-                     ADJUSTR(method), " test (in-place)    Size = ", len, perf, " Mflop/s"
-               END IF
-               DEALLOCATE (ca)
-               DEALLOCATE (ra)
-            END DO
-            IF (para_env%is_source()) WRITE (iw, *)
-            ! test if input data is preserved
-            len = 24
+         CALL fft3d(FWFFT, n, zz)
+         DO it = 1, 3
+            radix_in = ndate(it)
+            CALL fft_radix_operations(radix_in, radix_out, FFT_RADIX_CLOSEST)
+            len = radix_out
             n = len
-            ALLOCATE (ra(len, len, len))
-            ALLOCATE (ca(len, len, len))
-            ALLOCATE (cb(len, len, len))
-            ALLOCATE (cc(len, len, len))
+            IF (16.0_dp*REAL(len*len*len, KIND=dp) > max_memory*0.5_dp) EXIT
+            ALLOCATE (ra(len, len, len), STAT=ierr)
+            ALLOCATE (ca(len, len, len), STAT=ierr)
             CALL RANDOM_NUMBER(ra)
             ca(:, :, :) = ra
             CALL RANDOM_NUMBER(ra)
             ca(:, :, :) = ca + gaussi*ra
-            cc(:, :, :) = ca
-            CALL fft3d(FWFFT, n, ca, cb)
-            tdiff = MAXVAL(ABS(ca - cc))
-            IF (tdiff > 1.0E-12_dp) THEN
-               IF (para_env%is_source()) &
-                  WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         FWFFT ", &
-                  "             Input array is changed in out-of-place FFT !"
+            flops = REAL(len**3, KIND=dp)*15.0_dp*LOG(REAL(len, KIND=dp))
+            ntim = NINT(siz*1.e7_dp/flops)
+            ntim = MAX(ntim, 1)
+            ntim = MIN(ntim, 200)
+            scale = 1.0_dp/REAL(len**3, KIND=dp)
+            tstart = m_walltime()
+            DO j = 1, ntim
+               CALL fft3d(FWFFT, n, ca)
+               CALL fft3d(BWFFT, n, ca)
+            END DO
+            tend = m_walltime()
+            t = tend - tstart + threshold
+            IF (t > 0.0_dp) THEN
+               perf = REAL(ntim, KIND=dp)*2.0_dp*flops*1.e-6_dp/t
             ELSE
-               IF (para_env%is_source()) &
-                  WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         FWFFT ", &
-                  "         Input array is not changed in out-of-place FFT !"
+               perf = 0.0_dp
             END IF
-            ca(:, :, :) = cc
-            CALL fft3d(BWFFT, n, ca, cb)
-            tdiff = MAXVAL(ABS(ca - cc))
-            IF (tdiff > 1.0E-12_dp) THEN
-               IF (para_env%is_source()) &
-                  WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         BWFFT ", &
-                  "             Input array is changed in out-of-place FFT !"
-            ELSE
-               IF (para_env%is_source()) &
-                  WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         BWFFT ", &
-                  "         Input array is not changed in out-of-place FFT !"
-            END IF
-            IF (para_env%is_source()) WRITE (iw, *)
 
-            DEALLOCATE (ra)
+            IF (para_env%is_source()) THEN
+               WRITE (iw, '(T2,A,A,i6,T59,F14.4,A)') &
+                  ADJUSTR(method), " test (in-place)    Size = ", len, perf, " Mflop/s"
+            END IF
             DEALLOCATE (ca)
-            DEALLOCATE (cb)
-            DEALLOCATE (cc)
+            DEALLOCATE (ra)
+         END DO
+         IF (para_env%is_source()) WRITE (iw, *)
+         ! test if input data is preserved
+         len = 24
+         n = len
+         ALLOCATE (ra(len, len, len))
+         ALLOCATE (ca(len, len, len))
+         ALLOCATE (cb(len, len, len))
+         ALLOCATE (cc(len, len, len))
+         CALL RANDOM_NUMBER(ra)
+         ca(:, :, :) = ra
+         CALL RANDOM_NUMBER(ra)
+         ca(:, :, :) = ca + gaussi*ra
+         cc(:, :, :) = ca
+         CALL fft3d(FWFFT, n, ca, cb)
+         tdiff = MAXVAL(ABS(ca - cc))
+         IF (tdiff > 1.0E-12_dp) THEN
+            IF (para_env%is_source()) &
+               WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         FWFFT ", &
+               "             Input array is changed in out-of-place FFT !"
+         ELSE
+            IF (para_env%is_source()) &
+               WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         FWFFT ", &
+               "         Input array is not changed in out-of-place FFT !"
          END IF
+         ca(:, :, :) = cc
+         CALL fft3d(BWFFT, n, ca, cb)
+         tdiff = MAXVAL(ABS(ca - cc))
+         IF (tdiff > 1.0E-12_dp) THEN
+            IF (para_env%is_source()) &
+               WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         BWFFT ", &
+               "             Input array is changed in out-of-place FFT !"
+         ELSE
+            IF (para_env%is_source()) &
+               WRITE (iw, '(T2,A,A,A)') ADJUSTR(method), "         BWFFT ", &
+               "         Input array is not changed in out-of-place FFT !"
+         END IF
+         IF (para_env%is_source()) WRITE (iw, *)
+
+         DEALLOCATE (ra)
+         DEALLOCATE (ca)
+         DEALLOCATE (cb)
+         DEALLOCATE (cc)
          CALL finalize_fft(para_env, wisdom_file=wisdom_file)
       END DO
 
