@@ -64,4 +64,20 @@ void fft_library_finalize_F(const char *wisdom_file) {
 
 void fft_print_timing_report_F() { fft_print_timing_report(); }
 
+void fft_1d_fw_local_F(const int fft_size, const int number_of_ffts,
+                       const bool transpose_rs, const bool transpose_gs,
+                       double complex *restrict grid_in,
+                       double complex *restrict grid_out) {
+  fft_1d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in,
+                  grid_out);
+}
+
+void fft_1d_bw_local_F(const int fft_size, const int number_of_ffts,
+                       const bool transpose_rs, const bool transpose_gs,
+                       double complex *restrict grid_in,
+                       double complex *restrict grid_out) {
+  fft_1d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in,
+                  grid_out);
+}
+
 // EOF

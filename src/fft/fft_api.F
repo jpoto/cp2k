@@ -12,10 +12,12 @@
 MODULE fft_api
    USE ISO_C_BINDING,                   ONLY: C_BOOL,&
                                               C_CHAR,&
+                                              C_DOUBLE_COMPLEX,&
                                               C_INT,&
                                               C_LOC,&
                                               C_NULL_CHAR,&
                                               C_PTR
+   USE kinds,                           ONLY: dp
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -26,6 +28,7 @@ MODULE fft_api
 
    PUBLIC :: fft_library_init, fft_library_finalize
    PUBLIC :: fft_print_timing_report
+   PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
 
    ! Keep it synchronized with fft_api_F.c
    INTEGER, PARAMETER, PUBLIC :: FFT_LIBRARY_BACKEND_DEFAULT = 1
@@ -120,5 +123,67 @@ CONTAINS
       CALL fft_print_timing_report_c()
 
    END SUBROUTINE fft_print_timing_report
+
+! **************************************************************************************************
+!> \brief Performs a complex-to-complex 1D forwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid_in ...
+!> \param grid_out ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_1d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out)
+      INTEGER, INTENT(IN)                                :: fft_size, number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(INOUT)      :: grid_in
+      COMPLEX(KIND=dp), DIMENSION(*), INTENT(OUT)        :: grid_out
+
+      INTERFACE
+         SUBROUTINE fft_1d_fw_local_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out) &
+            BIND(C, name="fft_1d_fw_local_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), VALUE :: fft_size, number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid_in
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(OUT) :: grid_out
+         END SUBROUTINE fft_1d_fw_local_c
+      END INTERFACE
+
+      CALL fft_1d_fw_local_c(fft_size, number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                             LOGICAL(transpose_gs, C_BOOL), grid_in, grid_out)
+
+   END SUBROUTINE fft_1d_fw_local
+
+! **************************************************************************************************
+!> \brief Performs a complex-to-complex 1D backwards FFT
+!> \param fft_size ...
+!> \param number_of_ffts ...
+!> \param transpose_rs ...
+!> \param transpose_gs ...
+!> \param grid_in ...
+!> \param grid_out ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_1d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out)
+      INTEGER, INTENT(IN)                                :: fft_size, number_of_ffts
+      LOGICAL, INTENT(IN)                                :: transpose_rs, transpose_gs
+      COMPLEX(KIND=dp), DIMENSION(*)                     :: grid_in, grid_out
+
+      INTERFACE
+         SUBROUTINE fft_1d_bw_local_c(fft_size, number_of_ffts, transpose_rs, transpose_gs, grid_in, grid_out) &
+            BIND(C, name="fft_1d_bw_local_F")
+            IMPORT :: C_INT, C_BOOL, C_DOUBLE_COMPLEX
+            INTEGER(C_INT), VALUE :: fft_size, number_of_ffts
+            LOGICAL(C_BOOL), VALUE :: transpose_rs, transpose_gs
+            COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*) :: grid_in, grid_out
+         END SUBROUTINE fft_1d_bw_local_c
+      END INTERFACE
+
+      CALL fft_1d_bw_local_c(fft_size, number_of_ffts, LOGICAL(transpose_rs, C_BOOL), &
+                             LOGICAL(transpose_gs, C_BOOL), grid_in, grid_out)
+
+   END SUBROUTINE fft_1d_bw_local
 
 END MODULE fft_api
