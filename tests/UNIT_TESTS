@@ -3,6 +3,7 @@
 
 dbt_tas_unittest
 dbt_unittest
+fft_unittest
 grid_unittest
 libcp2k_unittest
 gemm_square_unittest
