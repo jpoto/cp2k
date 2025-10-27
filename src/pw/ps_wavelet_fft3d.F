@@ -235,29 +235,29 @@ CONTAINS
          trig(2, 1) = 0._dp
          trig(1, nh + 1) = -1._dp
          trig(2, nh + 1) = 0._dp
-         DO 40, i = 1, nh - 1
+         DO i = 1, nh - 1
             trigc = COS(i*angle)
             trigs = SIN(i*angle)
             trig(1, i + 1) = trigc
             trig(2, i + 1) = trigs
             trig(1, n - i + 1) = trigc
             trig(2, n - i + 1) = -trigs
-40          CONTINUE
-            ELSE
-            nh = (n - 1)/2
-            trig(1, 1) = 1._dp
-            trig(2, 1) = 0._dp
-            DO 20, i = 1, nh
-               trigc = COS(i*angle)
-               trigs = SIN(i*angle)
-               trig(1, i + 1) = trigc
-               trig(2, i + 1) = trigs
-               trig(1, n - i + 1) = trigc
-               trig(2, n - i + 1) = -trigs
-20             CONTINUE
-               END IF
+         END DO
+      ELSE
+         nh = (n - 1)/2
+         trig(1, 1) = 1._dp
+         trig(2, 1) = 0._dp
+         DO i = 1, nh
+            trigc = COS(i*angle)
+            trigs = SIN(i*angle)
+            trig(1, i + 1) = trigc
+            trig(2, i + 1) = trigs
+            trig(1, n - i + 1) = trigc
+            trig(2, n - i + 1) = -trigs
+         END DO
+      END IF
 
-               END SUBROUTINE ctrig
+   END SUBROUTINE ctrig
 
 !ccccccccccccccccccccccccccccccccccccccccccccccc
 
@@ -276,7 +276,7 @@ CONTAINS
 !> \param before ...
 !> \param isign ...
 ! **************************************************************************************************
-               SUBROUTINE fftstp(mm, nfft, m, nn, n, zin, zout, trig, after, now, before, isign)
+   SUBROUTINE fftstp(mm, nfft, m, nn, n, zin, zout, trig, after, now, before, isign)
 !  Copyright (C) Stefan Goedecker, Cornell University, Ithaca, USA, 1994
 !  Copyright (C) Stefan Goedecker, MPI Stuttgart, Germany, 1995, 1999
 !  This file is distributed under the terms of the
@@ -295,9 +295,9 @@ CONTAINS
          rt2i, s, s1, s2, s25, s3, s34, s4, s5, s6, s7, s8, sin2, sin4, ui1, ui2, ui3, ur1, ur2, &
          ur3, vi1, vi2, vi3, vr1, vr2, vr3
 
-                  DIMENSION trig(2, ctrig_length), zin(2, mm, m), zout(2, nn, n)
-                  atn = after*now
-                  atb = after*before
+      DIMENSION trig(2, ctrig_length), zin(2, mm, m), zout(2, nn, n)
+      atn = after*now
+      atb = after*before
 
 !         sqrt(.5_dp)
                   rt2i = 0.7071067811865475_dp
@@ -970,226 +970,228 @@ CONTAINS
                                           END DO; END DO
 8000                                   CONTINUE
 
-                                       ELSE
-                                       ia = 1
-                                       nin1 = ia - after
-                                       nout1 = ia - atn
-                                       DO ib = 1, before
-                                          nin1 = nin1 + after
-                                          nin2 = nin1 + atb
-                                          nin3 = nin2 + atb
-                                          nin4 = nin3 + atb
-                                          nin5 = nin4 + atb
-                                          nin6 = nin5 + atb
-                                          nin7 = nin6 + atb
-                                          nin8 = nin7 + atb
-                                          nout1 = nout1 + atn
-                                          nout2 = nout1 + after
-                                          nout3 = nout2 + after
-                                          nout4 = nout3 + after
-                                          nout5 = nout4 + after
-                                          nout6 = nout5 + after
-                                          nout7 = nout6 + after
-                                          nout8 = nout7 + after
-                                          DO j = 1, nfft
-                                             r1 = zin(1, j, nin1)
-                                             s1 = zin(2, j, nin1)
-                                             r2 = zin(1, j, nin2)
-                                             s2 = zin(2, j, nin2)
-                                             r3 = zin(1, j, nin3)
-                                             s3 = zin(2, j, nin3)
-                                             r4 = zin(1, j, nin4)
-                                             s4 = zin(2, j, nin4)
-                                             r5 = zin(1, j, nin5)
-                                             s5 = zin(2, j, nin5)
-                                             r6 = zin(1, j, nin6)
-                                             s6 = zin(2, j, nin6)
-                                             r7 = zin(1, j, nin7)
-                                             s7 = zin(2, j, nin7)
-                                             r8 = zin(1, j, nin8)
-                                             s8 = zin(2, j, nin8)
-                                             r = r1 + r5
-                                             s = r3 + r7
-                                             ap = r + s
-                                             am = r - s
-                                             r = r2 + r6
-                                             s = r4 + r8
-                                             bp = r + s
-                                             bm = r - s
-                                             r = s1 + s5
-                                             s = s3 + s7
-                                             cp = r + s
-                                             cm = r - s
-                                             r = s2 + s6
-                                             s = s4 + s8
-                                             dpp = r + s
-                                             dm = r - s
-                                             zout(1, j, nout1) = ap + bp
-                                             zout(2, j, nout1) = cp + dpp
-                                             zout(1, j, nout5) = ap - bp
-                                             zout(2, j, nout5) = cp - dpp
-                                             zout(1, j, nout3) = am - dm
-                                             zout(2, j, nout3) = cm + bm
-                                             zout(1, j, nout7) = am + dm
-                                             zout(2, j, nout7) = cm - bm
-                                             r = r1 - r5
-                                             s = -s3 + s7
-                                             ap = r + s
-                                             am = r - s
-                                             r = s1 - s5
-                                             s = r7 - r3
-                                             bp = r + s
-                                             bm = r - s
-                                             r = -s4 + s8
-                                             s = r2 - r6
-                                             cp = r + s
-                                             cm = r - s
-                                             r = -s2 + s6
-                                             s = r4 - r8
-                                             dpp = r + s
-                                             dm = r - s
-                                             r = (cp + dm)*rt2i
-                                             s = (cp - dm)*rt2i
-                                             cp = (cm + dpp)*rt2i
-                                             dpp = (dpp - cm)*rt2i
-                                             zout(1, j, nout2) = ap + r
-                                             zout(2, j, nout2) = bm + s
-                                             zout(1, j, nout6) = ap - r
-                                             zout(2, j, nout6) = bm - s
-                                             zout(1, j, nout4) = am + cp
-                                             zout(2, j, nout4) = bp + dpp
-                                             zout(1, j, nout8) = am - cp
-                                             zout(2, j, nout8) = bp - dpp
-                                          END DO; END DO
+         ELSE
+            ia = 1
+            nin1 = ia - after
+            nout1 = ia - atn
+            DO ib = 1, before
+               nin1 = nin1 + after
+               nin2 = nin1 + atb
+               nin3 = nin2 + atb
+               nin4 = nin3 + atb
+               nin5 = nin4 + atb
+               nin6 = nin5 + atb
+               nin7 = nin6 + atb
+               nin8 = nin7 + atb
+               nout1 = nout1 + atn
+               nout2 = nout1 + after
+               nout3 = nout2 + after
+               nout4 = nout3 + after
+               nout5 = nout4 + after
+               nout6 = nout5 + after
+               nout7 = nout6 + after
+               nout8 = nout7 + after
+               DO j = 1, nfft
+                  r1 = zin(1, j, nin1)
+                  s1 = zin(2, j, nin1)
+                  r2 = zin(1, j, nin2)
+                  s2 = zin(2, j, nin2)
+                  r3 = zin(1, j, nin3)
+                  s3 = zin(2, j, nin3)
+                  r4 = zin(1, j, nin4)
+                  s4 = zin(2, j, nin4)
+                  r5 = zin(1, j, nin5)
+                  s5 = zin(2, j, nin5)
+                  r6 = zin(1, j, nin6)
+                  s6 = zin(2, j, nin6)
+                  r7 = zin(1, j, nin7)
+                  s7 = zin(2, j, nin7)
+                  r8 = zin(1, j, nin8)
+                  s8 = zin(2, j, nin8)
+                  r = r1 + r5
+                  s = r3 + r7
+                  ap = r + s
+                  am = r - s
+                  r = r2 + r6
+                  s = r4 + r8
+                  bp = r + s
+                  bm = r - s
+                  r = s1 + s5
+                  s = s3 + s7
+                  cp = r + s
+                  cm = r - s
+                  r = s2 + s6
+                  s = s4 + s8
+                  dpp = r + s
+                  dm = r - s
+                  zout(1, j, nout1) = ap + bp
+                  zout(2, j, nout1) = cp + dpp
+                  zout(1, j, nout5) = ap - bp
+                  zout(2, j, nout5) = cp - dpp
+                  zout(1, j, nout3) = am - dm
+                  zout(2, j, nout3) = cm + bm
+                  zout(1, j, nout7) = am + dm
+                  zout(2, j, nout7) = cm - bm
+                  r = r1 - r5
+                  s = -s3 + s7
+                  ap = r + s
+                  am = r - s
+                  r = s1 - s5
+                  s = r7 - r3
+                  bp = r + s
+                  bm = r - s
+                  r = -s4 + s8
+                  s = r2 - r6
+                  cp = r + s
+                  cm = r - s
+                  r = -s2 + s6
+                  s = r4 - r8
+                  dpp = r + s
+                  dm = r - s
+                  r = (cp + dm)*rt2i
+                  s = (cp - dm)*rt2i
+                  cp = (cm + dpp)*rt2i
+                  dpp = (dpp - cm)*rt2i
+                  zout(1, j, nout2) = ap + r
+                  zout(2, j, nout2) = bm + s
+                  zout(1, j, nout6) = ap - r
+                  zout(2, j, nout6) = bm - s
+                  zout(1, j, nout4) = am + cp
+                  zout(2, j, nout4) = bp + dpp
+                  zout(1, j, nout8) = am - cp
+                  zout(2, j, nout8) = bp - dpp
+               END DO
+            END DO
 
-                                       DO 8001, ia = 2, after
-                                          ias = ia - 1
-                                          itt = ias*before
-                                          itrig = itt + 1
-                                          cr2 = trig(1, itrig)
-                                          ci2 = trig(2, itrig)
-                                          itrig = itrig + itt
-                                          cr3 = trig(1, itrig)
-                                          ci3 = trig(2, itrig)
-                                          itrig = itrig + itt
-                                          cr4 = trig(1, itrig)
-                                          ci4 = trig(2, itrig)
-                                          itrig = itrig + itt
-                                          cr5 = trig(1, itrig)
-                                          ci5 = trig(2, itrig)
-                                          itrig = itrig + itt
-                                          cr6 = trig(1, itrig)
-                                          ci6 = trig(2, itrig)
-                                          itrig = itrig + itt
-                                          cr7 = trig(1, itrig)
-                                          ci7 = trig(2, itrig)
-                                          itrig = itrig + itt
-                                          cr8 = trig(1, itrig)
-                                          ci8 = trig(2, itrig)
-                                          nin1 = ia - after
-                                          nout1 = ia - atn
-                                          DO ib = 1, before
-                                             nin1 = nin1 + after
-                                             nin2 = nin1 + atb
-                                             nin3 = nin2 + atb
-                                             nin4 = nin3 + atb
-                                             nin5 = nin4 + atb
-                                             nin6 = nin5 + atb
-                                             nin7 = nin6 + atb
-                                             nin8 = nin7 + atb
-                                             nout1 = nout1 + atn
-                                             nout2 = nout1 + after
-                                             nout3 = nout2 + after
-                                             nout4 = nout3 + after
-                                             nout5 = nout4 + after
-                                             nout6 = nout5 + after
-                                             nout7 = nout6 + after
-                                             nout8 = nout7 + after
-                                             DO j = 1, nfft
-                                                r1 = zin(1, j, nin1)
-                                                s1 = zin(2, j, nin1)
-                                                r = zin(1, j, nin2)
-                                                s = zin(2, j, nin2)
-                                                r2 = r*cr2 - s*ci2
-                                                s2 = r*ci2 + s*cr2
-                                                r = zin(1, j, nin3)
-                                                s = zin(2, j, nin3)
-                                                r3 = r*cr3 - s*ci3
-                                                s3 = r*ci3 + s*cr3
-                                                r = zin(1, j, nin4)
-                                                s = zin(2, j, nin4)
-                                                r4 = r*cr4 - s*ci4
-                                                s4 = r*ci4 + s*cr4
-                                                r = zin(1, j, nin5)
-                                                s = zin(2, j, nin5)
-                                                r5 = r*cr5 - s*ci5
-                                                s5 = r*ci5 + s*cr5
-                                                r = zin(1, j, nin6)
-                                                s = zin(2, j, nin6)
-                                                r6 = r*cr6 - s*ci6
-                                                s6 = r*ci6 + s*cr6
-                                                r = zin(1, j, nin7)
-                                                s = zin(2, j, nin7)
-                                                r7 = r*cr7 - s*ci7
-                                                s7 = r*ci7 + s*cr7
-                                                r = zin(1, j, nin8)
-                                                s = zin(2, j, nin8)
-                                                r8 = r*cr8 - s*ci8
-                                                s8 = r*ci8 + s*cr8
-                                                r = r1 + r5
-                                                s = r3 + r7
-                                                ap = r + s
-                                                am = r - s
-                                                r = r2 + r6
-                                                s = r4 + r8
-                                                bp = r + s
-                                                bm = r - s
-                                                r = s1 + s5
-                                                s = s3 + s7
-                                                cp = r + s
-                                                cm = r - s
-                                                r = s2 + s6
-                                                s = s4 + s8
-                                                dpp = r + s
-                                                dm = r - s
-                                                zout(1, j, nout1) = ap + bp
-                                                zout(2, j, nout1) = cp + dpp
-                                                zout(1, j, nout5) = ap - bp
-                                                zout(2, j, nout5) = cp - dpp
-                                                zout(1, j, nout3) = am - dm
-                                                zout(2, j, nout3) = cm + bm
-                                                zout(1, j, nout7) = am + dm
-                                                zout(2, j, nout7) = cm - bm
-                                                r = r1 - r5
-                                                s = -s3 + s7
-                                                ap = r + s
-                                                am = r - s
-                                                r = s1 - s5
-                                                s = r7 - r3
-                                                bp = r + s
-                                                bm = r - s
-                                                r = -s4 + s8
-                                                s = r2 - r6
-                                                cp = r + s
-                                                cm = r - s
-                                                r = -s2 + s6
-                                                s = r4 - r8
-                                                dpp = r + s
-                                                dm = r - s
-                                                r = (cp + dm)*rt2i
-                                                s = (cp - dm)*rt2i
-                                                cp = (cm + dpp)*rt2i
-                                                dpp = (dpp - cm)*rt2i
-                                                zout(1, j, nout2) = ap + r
-                                                zout(2, j, nout2) = bm + s
-                                                zout(1, j, nout6) = ap - r
-                                                zout(2, j, nout6) = bm - s
-                                                zout(1, j, nout4) = am + cp
-                                                zout(2, j, nout4) = bp + dpp
-                                                zout(1, j, nout8) = am - cp
-                                                zout(2, j, nout8) = bp - dpp
-                                             END DO; END DO
-8001                                      CONTINUE
+            DO ia = 2, after
+               ias = ia - 1
+               itt = ias*before
+               itrig = itt + 1
+               cr2 = trig(1, itrig)
+               ci2 = trig(2, itrig)
+               itrig = itrig + itt
+               cr3 = trig(1, itrig)
+               ci3 = trig(2, itrig)
+               itrig = itrig + itt
+               cr4 = trig(1, itrig)
+               ci4 = trig(2, itrig)
+               itrig = itrig + itt
+               cr5 = trig(1, itrig)
+               ci5 = trig(2, itrig)
+               itrig = itrig + itt
+               cr6 = trig(1, itrig)
+               ci6 = trig(2, itrig)
+               itrig = itrig + itt
+               cr7 = trig(1, itrig)
+               ci7 = trig(2, itrig)
+               itrig = itrig + itt
+               cr8 = trig(1, itrig)
+               ci8 = trig(2, itrig)
+               nin1 = ia - after
+               nout1 = ia - atn
+               DO ib = 1, before
+                  nin1 = nin1 + after
+                  nin2 = nin1 + atb
+                  nin3 = nin2 + atb
+                  nin4 = nin3 + atb
+                  nin5 = nin4 + atb
+                  nin6 = nin5 + atb
+                  nin7 = nin6 + atb
+                  nin8 = nin7 + atb
+                  nout1 = nout1 + atn
+                  nout2 = nout1 + after
+                  nout3 = nout2 + after
+                  nout4 = nout3 + after
+                  nout5 = nout4 + after
+                  nout6 = nout5 + after
+                  nout7 = nout6 + after
+                  nout8 = nout7 + after
+                  DO j = 1, nfft
+                     r1 = zin(1, j, nin1)
+                     s1 = zin(2, j, nin1)
+                     r = zin(1, j, nin2)
+                     s = zin(2, j, nin2)
+                     r2 = r*cr2 - s*ci2
+                     s2 = r*ci2 + s*cr2
+                     r = zin(1, j, nin3)
+                     s = zin(2, j, nin3)
+                     r3 = r*cr3 - s*ci3
+                     s3 = r*ci3 + s*cr3
+                     r = zin(1, j, nin4)
+                     s = zin(2, j, nin4)
+                     r4 = r*cr4 - s*ci4
+                     s4 = r*ci4 + s*cr4
+                     r = zin(1, j, nin5)
+                     s = zin(2, j, nin5)
+                     r5 = r*cr5 - s*ci5
+                     s5 = r*ci5 + s*cr5
+                     r = zin(1, j, nin6)
+                     s = zin(2, j, nin6)
+                     r6 = r*cr6 - s*ci6
+                     s6 = r*ci6 + s*cr6
+                     r = zin(1, j, nin7)
+                     s = zin(2, j, nin7)
+                     r7 = r*cr7 - s*ci7
+                     s7 = r*ci7 + s*cr7
+                     r = zin(1, j, nin8)
+                     s = zin(2, j, nin8)
+                     r8 = r*cr8 - s*ci8
+                     s8 = r*ci8 + s*cr8
+                     r = r1 + r5
+                     s = r3 + r7
+                     ap = r + s
+                     am = r - s
+                     r = r2 + r6
+                     s = r4 + r8
+                     bp = r + s
+                     bm = r - s
+                     r = s1 + s5
+                     s = s3 + s7
+                     cp = r + s
+                     cm = r - s
+                     r = s2 + s6
+                     s = s4 + s8
+                     dpp = r + s
+                     dm = r - s
+                     zout(1, j, nout1) = ap + bp
+                     zout(2, j, nout1) = cp + dpp
+                     zout(1, j, nout5) = ap - bp
+                     zout(2, j, nout5) = cp - dpp
+                     zout(1, j, nout3) = am - dm
+                     zout(2, j, nout3) = cm + bm
+                     zout(1, j, nout7) = am + dm
+                     zout(2, j, nout7) = cm - bm
+                     r = r1 - r5
+                     s = -s3 + s7
+                     ap = r + s
+                     am = r - s
+                     r = s1 - s5
+                     s = r7 - r3
+                     bp = r + s
+                     bm = r - s
+                     r = -s4 + s8
+                     s = r2 - r6
+                     cp = r + s
+                     cm = r - s
+                     r = -s2 + s6
+                     s = r4 - r8
+                     dpp = r + s
+                     dm = r - s
+                     r = (cp + dm)*rt2i
+                     s = (cp - dm)*rt2i
+                     cp = (cm + dpp)*rt2i
+                     dpp = (dpp - cm)*rt2i
+                     zout(1, j, nout2) = ap + r
+                     zout(2, j, nout2) = bm + s
+                     zout(1, j, nout6) = ap - r
+                     zout(2, j, nout6) = bm - s
+                     zout(1, j, nout4) = am + cp
+                     zout(2, j, nout4) = bp + dpp
+                     zout(1, j, nout8) = am - cp
+                     zout(2, j, nout8) = bp - dpp
+                  END DO
+               END DO
+            END DO
 
                                           END IF
                                           ELSE IF (now == 3) THEN
@@ -1400,11 +1402,11 @@ CONTAINS
 3000                                         CONTINUE
                                              ELSE IF (now == 5) THEN
 !         cos(2._dp*pi/5._dp)
-                                             cos2 = 0.3090169943749474_dp
+         cos2 = 0.3090169943749474_dp
 !         cos(4._dp*pi/5._dp)
-                                             cos4 = -0.8090169943749474_dp
+         cos4 = -0.8090169943749474_dp
 !        sin(2._dp*pi/5._dp)
-                                             sin2 = isign*0.9510565162951536_dp
+         sin2 = isign*0.9510565162951536_dp
 !         sin(4._dp*pi/5._dp)
                                              sin4 = isign*0.5877852522924731_dp
                                              ia = 1
@@ -1653,80 +1655,81 @@ CONTAINS
 5000                                            CONTINUE
                                                 ELSE IF (now == 6) THEN
 !         .5_dp*sqrt(3._dp)
-                                                bb = isign*0.8660254037844387_dp
+         bb = isign*0.8660254037844387_dp
 
-                                                ia = 1
-                                                nin1 = ia - after
-                                                nout1 = ia - atn
-                                                DO ib = 1, before
-                                                   nin1 = nin1 + after
-                                                   nin2 = nin1 + atb
-                                                   nin3 = nin2 + atb
-                                                   nin4 = nin3 + atb
-                                                   nin5 = nin4 + atb
-                                                   nin6 = nin5 + atb
-                                                   nout1 = nout1 + atn
-                                                   nout2 = nout1 + after
-                                                   nout3 = nout2 + after
-                                                   nout4 = nout3 + after
-                                                   nout5 = nout4 + after
-                                                   nout6 = nout5 + after
-                                                   DO j = 1, nfft
-                                                      r2 = zin(1, j, nin3)
-                                                      s2 = zin(2, j, nin3)
-                                                      r3 = zin(1, j, nin5)
-                                                      s3 = zin(2, j, nin5)
-                                                      r = r2 + r3
-                                                      s = s2 + s3
-                                                      r1 = zin(1, j, nin1)
-                                                      s1 = zin(2, j, nin1)
-                                                      ur1 = r + r1
-                                                      ui1 = s + s1
-                                                      r1 = r1 - .5_dp*r
-                                                      s1 = s1 - .5_dp*s
-                                                      r = r2 - r3
-                                                      s = s2 - s3
-                                                      ur2 = r1 - s*bb
-                                                      ui2 = s1 + r*bb
-                                                      ur3 = r1 + s*bb
-                                                      ui3 = s1 - r*bb
+         ia = 1
+         nin1 = ia - after
+         nout1 = ia - atn
+         DO ib = 1, before
+            nin1 = nin1 + after
+            nin2 = nin1 + atb
+            nin3 = nin2 + atb
+            nin4 = nin3 + atb
+            nin5 = nin4 + atb
+            nin6 = nin5 + atb
+            nout1 = nout1 + atn
+            nout2 = nout1 + after
+            nout3 = nout2 + after
+            nout4 = nout3 + after
+            nout5 = nout4 + after
+            nout6 = nout5 + after
+            DO j = 1, nfft
+               r2 = zin(1, j, nin3)
+               s2 = zin(2, j, nin3)
+               r3 = zin(1, j, nin5)
+               s3 = zin(2, j, nin5)
+               r = r2 + r3
+               s = s2 + s3
+               r1 = zin(1, j, nin1)
+               s1 = zin(2, j, nin1)
+               ur1 = r + r1
+               ui1 = s + s1
+               r1 = r1 - .5_dp*r
+               s1 = s1 - .5_dp*s
+               r = r2 - r3
+               s = s2 - s3
+               ur2 = r1 - s*bb
+               ui2 = s1 + r*bb
+               ur3 = r1 + s*bb
+               ui3 = s1 - r*bb
 
-                                                      r2 = zin(1, j, nin6)
-                                                      s2 = zin(2, j, nin6)
-                                                      r3 = zin(1, j, nin2)
-                                                      s3 = zin(2, j, nin2)
-                                                      r = r2 + r3
-                                                      s = s2 + s3
-                                                      r1 = zin(1, j, nin4)
-                                                      s1 = zin(2, j, nin4)
-                                                      vr1 = r + r1
-                                                      vi1 = s + s1
-                                                      r1 = r1 - .5_dp*r
-                                                      s1 = s1 - .5_dp*s
-                                                      r = r2 - r3
-                                                      s = s2 - s3
-                                                      vr2 = r1 - s*bb
-                                                      vi2 = s1 + r*bb
-                                                      vr3 = r1 + s*bb
-                                                      vi3 = s1 - r*bb
+               r2 = zin(1, j, nin6)
+               s2 = zin(2, j, nin6)
+               r3 = zin(1, j, nin2)
+               s3 = zin(2, j, nin2)
+               r = r2 + r3
+               s = s2 + s3
+               r1 = zin(1, j, nin4)
+               s1 = zin(2, j, nin4)
+               vr1 = r + r1
+               vi1 = s + s1
+               r1 = r1 - .5_dp*r
+               s1 = s1 - .5_dp*s
+               r = r2 - r3
+               s = s2 - s3
+               vr2 = r1 - s*bb
+               vi2 = s1 + r*bb
+               vr3 = r1 + s*bb
+               vi3 = s1 - r*bb
 
-                                                      zout(1, j, nout1) = ur1 + vr1
-                                                      zout(2, j, nout1) = ui1 + vi1
-                                                      zout(1, j, nout5) = ur2 + vr2
-                                                      zout(2, j, nout5) = ui2 + vi2
-                                                      zout(1, j, nout3) = ur3 + vr3
-                                                      zout(2, j, nout3) = ui3 + vi3
-                                                      zout(1, j, nout4) = ur1 - vr1
-                                                      zout(2, j, nout4) = ui1 - vi1
-                                                      zout(1, j, nout2) = ur2 - vr2
-                                                      zout(2, j, nout2) = ui2 - vi2
-                                                      zout(1, j, nout6) = ur3 - vr3
-                                                      zout(2, j, nout6) = ui3 - vi3
-                                                   END DO; END DO
-                                                ELSE
-                                                CPABORT("error fftstp")
-                                                END IF
+               zout(1, j, nout1) = ur1 + vr1
+               zout(2, j, nout1) = ui1 + vi1
+               zout(1, j, nout5) = ur2 + vr2
+               zout(2, j, nout5) = ui2 + vi2
+               zout(1, j, nout3) = ur3 + vr3
+               zout(2, j, nout3) = ui3 + vi3
+               zout(1, j, nout4) = ur1 - vr1
+               zout(2, j, nout4) = ui1 - vi1
+               zout(1, j, nout2) = ur2 - vr2
+               zout(2, j, nout2) = ui2 - vi2
+               zout(1, j, nout6) = ur3 - vr3
+               zout(2, j, nout6) = ui3 - vi3
+            END DO
+         END DO
+      ELSE
+         CPABORT("error fftstp")
+      END IF
 
-                                                END SUBROUTINE fftstp
+   END SUBROUTINE fftstp
 
-                                                END MODULE ps_wavelet_fft3d
+END MODULE ps_wavelet_fft3d
