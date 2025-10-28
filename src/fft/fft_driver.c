@@ -59,7 +59,7 @@ void fft_3d_fw_blocked_low(double complex *restrict grid_buffer_1,
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
     // Perform the first FFT
     if (fft_lib_use_mpi()) {
-      // Perform the first two FFTs in y- and z-direction
+      // Perform the first two FFTs in x- and y-direction
       // transpose the last two indices (is cheaper)
       // (z_d,y,x_d) -> (y_d,z,x_d)
       transpose_local_complex(
