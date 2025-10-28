@@ -78,7 +78,7 @@ int fft_test_transpose_blocked(const int npts_global[3],
            my_number_of_elements_gs * sizeof(double complex));
 
     // Check the reverse direction
-    collect_x_and_distribute_y_blocked_transpose(
+    collect_z_and_distribute_y_blocked_transpose(
         fft_grid_layout->buffer_2, fft_grid_layout->buffer_1,
         fft_grid_layout->npts_global_gspace, fft_grid_layout->proc2local_ms,
         fft_grid_layout->proc2local_gs, fft_grid_layout->comm,
@@ -486,7 +486,7 @@ int fft_test_transpose_ray(const int npts_global[3],
         fft_grid_ray_layout->buffer_1, fft_grid_ray_layout->buffer_2,
         fft_grid_ray_layout->npts_global_gspace,
         fft_grid_ray_layout->proc2local_ms,
-        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_yz,
+        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_xy,
         fft_grid_ray_layout->comm);
 
     max_error = 0.0;
@@ -502,9 +502,9 @@ int fft_test_transpose_ray(const int npts_global[3],
            yz_ray < fft_grid_ray_layout->rays_per_process[my_process];
            yz_ray++) {
         const int index_y =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][0];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][0];
         const int index_z =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][1];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][1];
         const double complex my_value =
             fft_grid_ray_layout->buffer_2
                 [index_x * fft_grid_ray_layout->rays_per_process[my_process] +
@@ -549,9 +549,9 @@ int fft_test_transpose_ray(const int npts_global[3],
            yz_ray < fft_grid_ray_layout->rays_per_process[my_process];
            yz_ray++) {
         const int index_y =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][0];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][0];
         const int index_z =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][1];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][1];
         fft_grid_ray_layout
             ->buffer_1[index_x *
                            fft_grid_ray_layout->rays_per_process[my_process] +
@@ -564,7 +564,7 @@ int fft_test_transpose_ray(const int npts_global[3],
         fft_grid_ray_layout->buffer_1, fft_grid_ray_layout->buffer_2,
         fft_grid_ray_layout->npts_global_gspace,
         fft_grid_ray_layout->proc2local_ms,
-        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_yz,
+        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_xy,
         fft_grid_ray_layout->comm);
 
     max_error = 0.0;
@@ -575,7 +575,7 @@ int fft_test_transpose_ray(const int npts_global[3],
       for (int index_y = 0; index_y < my_sizes_ms_ray[1]; index_y++) {
         // Check whether there is a ray with the given index pair
         if (fft_grid_ray_layout
-                ->yz_to_process[(index_z + my_bounds_ms_ray[2][0]) *
+                ->xy_to_process[(index_z + my_bounds_ms_ray[2][0]) *
                                     fft_grid_ray_layout->npts_global_gspace[1] +
                                 (index_y + my_bounds_ms_ray[1][0])] >= 0) {
           for (int index_x = 0; index_x < my_sizes_ms_ray[0]; index_x++) {
@@ -655,7 +655,7 @@ int fft_test_transpose_ray(const int npts_global[3],
         fft_grid_ray_layout->buffer_1, fft_grid_ray_layout->buffer_2,
         fft_grid_ray_layout->npts_global_gspace,
         fft_grid_ray_layout->proc2local_ms,
-        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_yz,
+        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_xy,
         fft_grid_ray_layout->comm);
 
     max_error = 0.0;
@@ -671,9 +671,9 @@ int fft_test_transpose_ray(const int npts_global[3],
            yz_ray < fft_grid_ray_layout->rays_per_process[my_process];
            yz_ray++) {
         const int index_y =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][0];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][0];
         const int index_z =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][1];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][1];
         const double complex my_value =
             fft_grid_ray_layout->buffer_2
                 [index_x * fft_grid_ray_layout->rays_per_process[my_process] +
@@ -717,9 +717,9 @@ int fft_test_transpose_ray(const int npts_global[3],
            yz_ray < fft_grid_ray_layout->rays_per_process[my_process];
            yz_ray++) {
         const int index_y =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][0];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][0];
         const int index_z =
-            fft_grid_ray_layout->ray_to_yz[ray_index_offset + yz_ray][1];
+            fft_grid_ray_layout->ray_to_xy[ray_index_offset + yz_ray][1];
         fft_grid_ray_layout
             ->buffer_1[index_x *
                            fft_grid_ray_layout->rays_per_process[my_process] +
@@ -732,7 +732,7 @@ int fft_test_transpose_ray(const int npts_global[3],
         fft_grid_ray_layout->buffer_1, fft_grid_ray_layout->buffer_2,
         fft_grid_ray_layout->npts_global_gspace,
         fft_grid_ray_layout->proc2local_ms,
-        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_yz,
+        fft_grid_ray_layout->rays_per_process, fft_grid_ray_layout->ray_to_xy,
         fft_grid_ray_layout->comm);
 
     max_error = 0.0;
@@ -743,7 +743,7 @@ int fft_test_transpose_ray(const int npts_global[3],
       for (int index_y = 0; index_y < my_sizes_ms_ray[1]; index_y++) {
         // Check whether there is a ray with the given index pair
         if (fft_grid_ray_layout
-                ->yz_to_process[(index_z + my_bounds_ms_ray[2][0]) *
+                ->xy_to_process[(index_z + my_bounds_ms_ray[2][0]) *
                                     fft_grid_ray_layout->npts_global[1] +
                                 (index_y + my_bounds_ms_ray[1][0])] >= 0) {
           for (int index_x = 0; index_x < my_sizes_ms_ray[0]; index_x++) {

@@ -72,7 +72,7 @@ void fft_3d_fw_ray_low(double complex *restrict grid_buffer_1,
                        const int npts_global[3],
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
-                       const int *rays_per_process, const int (*ray_to_yz)[2],
+                       const int *rays_per_process, const int (*ray_to_xy)[2],
                        const cp_mpi_comm_t comm,
                        const cp_mpi_comm_t sub_comm[2]);
 
@@ -86,7 +86,7 @@ void fft_3d_fw_r2c_ray_low(double complex *restrict grid_buffer_1,
                            const int (*proc2local_rs)[3][2],
                            const int (*proc2local_ms)[3][2],
                            const int *rays_per_process,
-                           const int (*ray_to_yz)[2], const cp_mpi_comm_t comm,
+                           const int (*ray_to_xy)[2], const cp_mpi_comm_t comm,
                            const cp_mpi_comm_t sub_comm[2]);
 
 /*******************************************************************************
@@ -98,7 +98,7 @@ void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
                        const int npts_global[3],
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
-                       const int *rays_per_process, const int (*ray_to_yz)[2],
+                       const int *rays_per_process, const int (*ray_to_xy)[2],
                        const cp_mpi_comm_t comm,
                        const cp_mpi_comm_t sub_comm[2]);
 
@@ -112,7 +112,7 @@ void fft_3d_bw_c2r_ray_low(double complex *restrict grid_buffer_1,
                            const int (*proc2local_rs)[3][2],
                            const int (*proc2local_ms)[3][2],
                            const int *rays_per_process,
-                           const int (*ray_to_yz)[2], const cp_mpi_comm_t comm,
+                           const int (*ray_to_xy)[2], const cp_mpi_comm_t comm,
                            const cp_mpi_comm_t sub_comm[2]);
 #endif
 

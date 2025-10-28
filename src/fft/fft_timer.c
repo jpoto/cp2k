@@ -220,24 +220,18 @@ void fft_print_timing_report() {
   assert(omp_get_num_threads() == 1);
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
   if (timers_initialized) {
-    fprintf(stderr, "Collect timing data %i %i\n", cp_mpi_comm_rank(comm),
-            cp_mpi_comm_size(comm));
     // We restrict ourselves to the routines from rank 0
     if (cp_mpi_comm_rank(comm) == 0) {
       fft_timing_statistics *timing_statistics =
           calloc(number_of_timed_routines, sizeof(fft_timing_statistics));
       int size_of_timing_statistics = 0;
       // Broadcast the number of routines to consider
-      fprintf(stderr, "Broadcast the number of routines: %i\n",
-              number_of_timed_routines);
       cp_mpi_bcast_int(&number_of_timed_routines, 1, 0, comm);
       for (int routine = 0; routine < number_of_timed_routines; routine++) {
         // Exchange the length of the routine name
         int length = strlen(timed_routines[routine].routine_name) + 1;
-        fprintf(stderr, "Broadcast length of routine name %i\n", routine);
         cp_mpi_bcast_int(&length, 1, 0, comm);
         // Exchange the actual routine name
-        fprintf(stderr, "Broadcast routine name %i\n", routine);
         cp_mpi_bcast_char(timed_routines[routine].routine_name, length, 0,
                           comm);
         // Fetch the times and counts ...
@@ -249,8 +243,6 @@ void fft_print_timing_report() {
         summed_info[0] = total_time;
         summed_info[1] = self_time;
         // ... and exchange them
-        fprintf(stderr, "Sum routine name %i: %s\n", routine,
-                timed_routines[routine].routine_name);
         cp_mpi_sum_root_double(summed_info, 2, 0, comm);
         double max_info[2];
         max_info[0] = total_time;
@@ -272,7 +264,6 @@ void fft_print_timing_report() {
         size_of_timing_statistics++;
       }
       // Sort the statistics
-      fprintf(stderr, "Sort timings\n");
       qsort(timing_statistics, size_of_timing_statistics,
             sizeof(fft_timing_statistics), compare_fft_timing_statistics);
       // Print the statistics
@@ -341,8 +332,8 @@ void fft_print_timing_report() {
     cp_mpi_barrier(comm);
   } else {
     if (cp_mpi_comm_rank(comm) == 0)
-      printf("Timing module is not initialized. Timing report is not "
-             "available!\n");
+      fprintf(stdout, "Timing module is not initialized. Timing report is not "
+                      "available!\n");
   }
 }
 
@@ -394,8 +385,8 @@ void fft_stop_timer(const int handle) {
       // Merge with the list of routines
       const int my_rank = cp_mpi_comm_rank(cp_mpi_get_comm_world());
       if (debug_mode && my_rank == 0) {
-        printf("FFT_PROFILE (%i) %s %f %f\n", my_rank,
-               get_routine_name(stack_handle), total_time, self_time);
+        fprintf(stdout, "FFT_PROFILE (%i) %s %f %f\n", my_rank,
+                get_routine_name(stack_handle), total_time, self_time);
         fflush(stdout);
       }
       update_routine(handle, total_time, self_time);

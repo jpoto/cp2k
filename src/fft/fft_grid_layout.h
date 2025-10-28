@@ -35,8 +35,8 @@ typedef struct {
   // Number of local points in g-space (relevant with ray-distribution)
   int npts_gs_local;
   bool ray_distribution;
-  int (*ray_to_yz)[2];
-  int *yz_to_process;
+  int (*ray_to_xy)[2];
+  int *xy_to_process;
   int *rays_per_process;
   int my_number_of_rays;
   // maps of index in g-space to g-space vectors

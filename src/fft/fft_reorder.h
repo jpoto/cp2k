@@ -23,7 +23,7 @@ void collect_z_and_distribute_y_blocked(
     const int (*proc2local)[3][2], const int (*proc2local_transposed)[3][2],
     const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]);
 
-void collect_x_and_distribute_y_blocked_transpose(
+void collect_z_and_distribute_y_blocked_transpose(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local)[3][2],
     const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
@@ -52,7 +52,7 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
                                      const int npts_global[3],
                                      const int (*proc2local)[3][2],
                                      const int *number_of_rays,
-                                     const int (*ray_to_yz)[2],
+                                     const int (*ray_to_xy)[2],
                                      const cp_mpi_comm_t comm);
 
 void collect_yz_and_distribute_x_ray(double complex *restrict grid,
@@ -60,19 +60,19 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
                                      const int npts_global[3],
                                      const int (*proc2local_transposed)[3][2],
                                      const int *number_of_rays,
-                                     const int (*ray_to_yz)[2],
+                                     const int (*ray_to_xy)[2],
                                      const cp_mpi_comm_t comm);
 
 void collect_x_and_distribute_yz_ray_transpose(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local)[3][2],
-    const int *number_of_rays, const int (*ray_to_yz)[2],
+    const int *number_of_rays, const int (*ray_to_xy)[2],
     const cp_mpi_comm_t comm);
 
 void collect_yz_and_distribute_x_ray_transpose(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local_transposed)[3][2],
-    const int *number_of_rays, const int (*ray_to_yz)[2],
+    const int *number_of_rays, const int (*ray_to_xy)[2],
     const cp_mpi_comm_t comm);
 
 #endif /* FFT_REORDER_H */

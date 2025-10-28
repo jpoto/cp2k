@@ -1075,8 +1075,8 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
         continue;
       }
       number_of_tests++;
-      const int ny = fft_grid_layout->ray_to_yz[nyz][0];
-      const int nz = fft_grid_layout->ray_to_yz[nyz][1];
+      const int ny = fft_grid_layout->ray_to_xy[nyz][0];
+      const int nz = fft_grid_layout->ray_to_xy[nyz][1];
 
       memset(buffer_2, 0,
              fft_grid_layout->npts_gs_local * sizeof(double complex));
@@ -1256,8 +1256,8 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
         continue;
       }
       number_of_tests++;
-      const int ny = fft_grid_layout->ray_to_yz[nyz][0];
-      const int nz = fft_grid_layout->ray_to_yz[nyz][1];
+      const int ny = fft_grid_layout->ray_to_xy[nyz][0];
+      const int nz = fft_grid_layout->ray_to_xy[nyz][1];
 
       memset(buffer_2, 0,
              fft_grid_layout->npts_gs_local * sizeof(double complex));
