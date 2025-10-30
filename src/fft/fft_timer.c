@@ -283,8 +283,7 @@ void fft_print_timing_report() {
                       "----------------------"
                       "------------------------\n");
       fprintf(stdout, " ROUTINE                                       CALLS    "
-                      "AVG TOTAL    MAX TOTAL "
-                      "   AVG SELF    MAX SELF \n");
+                      "AVG SELF    MAX SELF    AVG TOTAL    MAX TOTAL \n");
       fprintf(stdout,
               "                                                          "
               " TIME         TIME   "
@@ -295,10 +294,10 @@ void fft_print_timing_report() {
                   " %-43s %7i      %7.3f      %7.3f     %7.3f     %7.3f\n",
                   timing_statistics[routine].routine_name,
                   timing_statistics[routine].number_of_calls,
-                  timing_statistics[routine].avg_total_time,
-                  timing_statistics[routine].max_total_time,
                   timing_statistics[routine].avg_self_time,
-                  timing_statistics[routine].max_self_time);
+                  timing_statistics[routine].max_self_time,
+                  timing_statistics[routine].avg_total_time,
+                  timing_statistics[routine].max_total_time);
         free(timing_statistics[routine].routine_name);
       }
       fprintf(stdout, " -------------------------------------------------------"
