@@ -373,7 +373,6 @@ void setup_proc2local(fft_grid_layout *my_fft_grid) {
       }
     }
   } else {
-    fprintf(stdout, "Without MPI\n");
     // Right now, we cannot make use of the Guru interface. So, the data
     // distribution is different in real space here, distribute in y, and z
     // directions (x,y_d,z_d) (->rs) In mixed space I, distribute in x and z
@@ -501,12 +500,12 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->ray_distribution = false;
 
   // Split the last dimension in real-space
-  if (npts_global[0] < number_of_processes) {
+  if (npts_global[2] < number_of_processes) {
     // We only distribute in two directions if necessary to reduce communication
     cp_mpi_dims_create(number_of_processes, 2, my_fft_grid->proc_grid);
     // Swap dimension if the large process dimension is not on the large global
     // dimension
-    if ((npts_global[0] - npts_global[1]) *
+    if ((npts_global[2] - npts_global[1]) *
             (my_fft_grid->proc_grid[0] - my_fft_grid->proc_grid[1]) <
         0) {
       const int proc_grid_0 = my_fft_grid->proc_grid[0];
@@ -624,12 +623,12 @@ void grid_create_fft_grid_layout_from_reference(
 
   my_fft_grid->ray_distribution = true;
 
-  if (npts_global[0] < number_of_processes) {
+  if (npts_global[2] < number_of_processes) {
     // We only distribute in two directions if necessary to reduce communication
     cp_mpi_dims_create(number_of_processes, 2, my_fft_grid->proc_grid);
     // Swap dimension if the large process dimension is not on the large global
     // dimension
-    if ((npts_global[1] - npts_global[2]) *
+    if ((npts_global[2] - npts_global[1]) *
             (my_fft_grid->proc_grid[0] - my_fft_grid->proc_grid[1]) <
         0) {
       const int proc_grid_0 = my_fft_grid->proc_grid[0];
@@ -721,7 +720,7 @@ void grid_create_fft_grid_layout_from_reference(
       }
     }
   }
-  my_fft_grid->npts_gs_local = my_fft_grid->npts_global_gspace[0] *
+  my_fft_grid->npts_gs_local = my_fft_grid->npts_global_gspace[2] *
                                my_fft_grid->rays_per_process[my_process];
   my_fft_grid->buffer_size =
       imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
@@ -940,11 +939,11 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
     shared(grid_layout, my_ray_to_xy, grid_gs, my_number_of_rays)
     for (int index = 0; index < grid_layout->npts_gs_local; index++) {
       const int *index_g = grid_layout->index_to_g[index];
-      for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-        if (my_ray_to_xy[yz_ray][0] == index_g[1] &&
-            my_ray_to_xy[yz_ray][1] == index_g[2]) {
+      for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+        if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
+            my_ray_to_xy[xy_ray][1] == index_g[2]) {
           grid_gs[index] =
-              grid_layout->buffer_2[index_g[0] * my_number_of_rays + yz_ray];
+              grid_layout->buffer_2[index_g[0] * my_number_of_rays + xy_ray];
           break;
         }
       }
@@ -1094,11 +1093,11 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
     shared(grid_layout, my_ray_to_xy, grid_gs, my_number_of_rays)
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         const int *index_g = grid_layout->index_to_g[index];
-        for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-          if (my_ray_to_xy[yz_ray][0] == index_g[1] &&
-              my_ray_to_xy[yz_ray][1] == index_g[2]) {
+        for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
+              my_ray_to_xy[xy_ray][1] == index_g[2]) {
             grid_gs[index] =
-                grid_layout->buffer_2[index_g[0] * my_number_of_rays + yz_ray];
+                grid_layout->buffer_2[index_g[0] * my_number_of_rays + xy_ray];
             break;
           }
         }
@@ -1147,11 +1146,11 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
     shared(grid_layout, my_ray_to_xy, grid_gs, my_number_of_rays)
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         const int *index_g = grid_layout->index_to_g[index];
-        for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-          if (my_ray_to_xy[yz_ray][0] == index_g[1] &&
-              my_ray_to_xy[yz_ray][1] == index_g[2]) {
+        for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
+              my_ray_to_xy[xy_ray][1] == index_g[2]) {
             grid_gs[index] =
-                grid_layout->buffer_2[index_g[0] * my_number_of_rays + yz_ray];
+                grid_layout->buffer_2[index_g[0] * my_number_of_rays + xy_ray];
             break;
           }
         }
@@ -1216,10 +1215,10 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
     shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
     for (int index = 0; index < grid_layout->npts_gs_local; index++) {
       int *index_g = grid_layout->index_to_g[index];
-      for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-        if (my_ray_to_xy[yz_ray][0] == index_g[1] &&
-            my_ray_to_xy[yz_ray][1] == index_g[2]) {
-          grid_layout->buffer_1[index_g[0] * my_number_of_rays + yz_ray] =
+      for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+        if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
+            my_ray_to_xy[xy_ray][1] == index_g[2]) {
+          grid_layout->buffer_1[index_g[0] * my_number_of_rays + xy_ray] =
               grid_gs[index];
           break;
         }
@@ -1328,10 +1327,10 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
     shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         int *index_g = grid_layout->index_to_g[index];
-        for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-          if (my_ray_to_xy[yz_ray][0] == index_g[1] &&
-              my_ray_to_xy[yz_ray][1] == index_g[2]) {
-            grid_layout->buffer_1[index_g[0] * my_number_of_rays + yz_ray] =
+        for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
+              my_ray_to_xy[xy_ray][1] == index_g[2]) {
+            grid_layout->buffer_1[index_g[0] * my_number_of_rays + xy_ray] =
                 grid_gs[index];
             break;
           }
@@ -1384,10 +1383,10 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
     shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         int *index_g = grid_layout->index_to_g[index];
-        for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-          if (my_ray_to_xy[yz_ray][0] == index_g[1] &&
-              my_ray_to_xy[yz_ray][1] == index_g[2]) {
-            grid_layout->buffer_1[index_g[0] * my_number_of_rays + yz_ray] =
+        for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
+              my_ray_to_xy[xy_ray][1] == index_g[2]) {
+            grid_layout->buffer_1[index_g[0] * my_number_of_rays + xy_ray] =
                 grid_gs[index];
             break;
           }

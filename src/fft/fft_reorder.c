@@ -454,8 +454,7 @@ void collect_z_and_distribute_y_blocked(
         current_recv_size_2 * my_sizes_transposed[0] * my_sizes_transposed[1];
     recv_counts[process] = current_recv_count;
     recv_offset += current_recv_count;
-    double complex *grid_ptr =
-        grid + my_sizes[0] * proc2local_transposed[rank][1][0] * my_sizes[2];
+    double complex *grid_ptr = grid + proc2local_transposed[rank][1][0];
     double complex *send_buffer = transposed + send_displacements[process];
     for (int index_xz = 0; index_xz < my_sizes[0] * my_sizes[2]; index_xz++) {
       memcpy(send_buffer + index_xz * current_send_size_1,
@@ -555,15 +554,13 @@ void collect_y_and_distribute_z_blocked(
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
     const int recv_size_1 = proc2local[rank][1][1] - proc2local[rank][1][0] + 1;
-    double complex *transp = transposed + proc2local[rank][1][0] *
-                                              my_sizes_transposed[2] *
-                                              my_sizes_transposed[0];
+    double complex *transp = transposed + proc2local[rank][1][0];
     double complex *received_data = grid + recv_displacements[process];
     for (int index_xz = 0;
          index_xz < my_sizes_transposed[2] * my_sizes_transposed[0];
          index_xz++) {
-      memcpy(received_data + index_xz * recv_size_1,
-             transp + index_xz * my_sizes_transposed[1],
+      memcpy(transp + index_xz * my_sizes_transposed[1],
+             received_data + index_xz * recv_size_1,
              recv_size_1 * sizeof(double complex));
     }
   }
@@ -576,10 +573,10 @@ void collect_y_and_distribute_z_blocked(
 }
 
 /*******************************************************************************
- * \brief Performs a redistribution (x_D, z_D, y) -> (x, yz_D).
+ * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_x_and_distribute_yz_ray(double complex *restrict grid,
+void collect_z_and_distribute_xy_ray(double complex *restrict grid,
                                      double complex *restrict transposed,
                                      const int npts_global[3],
                                      const int (*proc2local)[3][2],
@@ -588,7 +585,7 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
                                      const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_yz_r_%i_%i_%i_%i",
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r_%i_%i_%i_%i",
            npts_global[0], npts_global[1], npts_global[2],
            cp_mpi_comm_size(comm));
   const int handle = fft_start_timer(routine_name);
@@ -606,7 +603,7 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
   assert(my_sizes[1] == npts_global[1]);
 
   double complex *recv_buffer =
-      malloc(my_number_of_rays * npts_global[0] * sizeof(double complex));
+      malloc(my_number_of_rays * npts_global[2] * sizeof(double complex));
   double complex *send_buffer =
       malloc(product3(my_sizes) * sizeof(double complex));
   cp_mpi_request_t recv_request = cp_mpi_get_request_null(),
@@ -616,7 +613,7 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
     my_rays += number_of_rays[process];
 
   memset(transposed, 0,
-         my_number_of_rays * npts_global[0] * sizeof(double complex));
+         my_number_of_rays * npts_global[2] * sizeof(double complex));
 
   int number_of_received_elements = 0;
   // Copy and transpose the local data
@@ -624,11 +621,11 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
 #pragma omp parallel for default(none)                                         \
     shared(my_bounds, my_number_of_rays, my_rays)                              \
     reduction(+ : number_of_local_rays_to_recv)
-  for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-    const int index_z = my_rays[yz_ray][1];
+  for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+    const int index_x = my_rays[xy_ray][0];
 
     // Check whether we carry that ray before the transposition
-    if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
+    if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
       number_of_local_rays_to_recv++;
     }
   }
@@ -636,26 +633,27 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
 #pragma omp parallel for default(none)                                         \
     shared(my_sizes, my_bounds, my_number_of_rays, grid, my_rays, transposed,  \
                number_of_local_rays_to_recv)
-  for (int index_x = my_bounds[0][0]; index_x <= my_bounds[0][1]; index_x++) {
+  for (int index_z = my_bounds[2][0]; index_z <= my_bounds[2][1]; index_z++) {
     int number_of_copied_rays = 0;
-    for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-      const int index_y = my_rays[yz_ray][0];
-      const int index_z = my_rays[yz_ray][1];
+    for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+      const int index_x = my_rays[xy_ray][0];
+      const int index_y = my_rays[xy_ray][1];
 
       // Check whether we carry that ray before the transposition
-      if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
+      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
         // Copy the data
-        transposed[index_x * my_number_of_rays + yz_ray] =
-            grid[(index_y - my_bounds[1][0]) * my_sizes[0] * my_sizes[2] +
-                 (index_z - my_bounds[2][0]) * my_sizes[0] + index_x -
-                 my_bounds[0][0]];
+        transposed[index_z * my_number_of_rays + xy_ray] =
+            grid[((index_z - my_bounds[2][0]) * my_sizes[0] +
+                  (index_x - my_bounds[0][0])) *
+                     my_sizes[1] +
+                 index_y - my_bounds[1][0]];
         number_of_copied_rays++;
       }
     }
     assert(number_of_local_rays_to_recv == number_of_copied_rays);
   }
   number_of_received_elements +=
-      (my_bounds[0][1] - my_bounds[0][0] + 1) * number_of_local_rays_to_recv;
+      (my_bounds[2][1] - my_bounds[2][0] + 1) * number_of_local_rays_to_recv;
 
   for (int process_shift = 1; process_shift < number_of_processes;
        process_shift++) {
@@ -672,15 +670,15 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
     shared(my_number_of_rays, my_rays, proc2local_recv)                        \
     reduction(+ : number_of_rays_to_recv)
     for (int ray = 0; ray < my_number_of_rays; ray++) {
-      const int index_z = my_rays[ray][1];
-      if (index_z >= proc2local_recv[2][0] &&
-          index_z <= proc2local_recv[2][1]) {
+      const int index_x = my_rays[ray][0];
+      if (index_x >= proc2local_recv[0][0] &&
+          index_x <= proc2local_recv[0][1]) {
         number_of_rays_to_recv++;
       }
     }
     const int number_of_elements_to_recv =
         number_of_rays_to_recv *
-        (proc2local_recv[0][1] - proc2local_recv[0][0] + 1);
+        (proc2local_recv[2][1] - proc2local_recv[2][0] + 1);
     memset(recv_buffer, 0, number_of_elements_to_recv * sizeof(double complex));
 
     // Post receive request
@@ -694,26 +692,27 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
       send_rays += number_of_rays[process];
     int number_of_rays_to_send = 0;
     for (int ray = 0; ray < number_of_rays_send; ray++) {
-      const int index_z = send_rays[ray][1];
-      if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
+      const int index_x = send_rays[ray][0];
+      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
         number_of_rays_to_send++;
       }
     }
-    const int number_of_elements_to_send = number_of_rays_to_send * my_sizes[0];
+    const int number_of_elements_to_send = number_of_rays_to_send * my_sizes[2];
     // Pack the send buffer
     memset(send_buffer, 0, number_of_elements_to_send * sizeof(double complex));
 #pragma omp parallel for default(none)                                         \
     shared(my_sizes, my_bounds, number_of_rays_to_send, send_buffer, grid,     \
                send_rays, number_of_rays_send)
-    for (int index_x = 0; index_x < my_sizes[0]; index_x++) {
+    for (int index_z = 0; index_z < my_sizes[2]; index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < number_of_rays_send; ray++) {
-        const int index_y = send_rays[ray][0];
-        const int index_z = send_rays[ray][1];
-        if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
-          send_buffer[index_x * number_of_rays_to_send + ray_position] =
-              grid[index_y * my_sizes[0] * my_sizes[2] +
-                   (index_z - my_bounds[2][0]) * my_sizes[0] + index_x];
+        const int index_x = send_rays[ray][0];
+        const int index_y = send_rays[ray][1];
+        if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+          send_buffer[index_z * number_of_rays_to_send + ray_position] =
+              grid[(index_z * my_sizes[0] + (index_x - my_bounds[0][0])) *
+                       my_sizes[1] +
+                   index_y];
           ray_position++;
         }
       }
@@ -731,33 +730,33 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
 #pragma omp parallel for default(none)                                         \
     shared(my_number_of_rays, recv_buffer, transposed, proc2local_recv,        \
                number_of_rays_to_recv, my_rays)
-    for (int index_x = 0;
-         index_x < proc2local_recv[0][1] - proc2local_recv[0][0] + 1;
-         index_x++) {
+    for (int index_z = 0;
+         index_z < proc2local_recv[2][1] - proc2local_recv[2][0] + 1;
+         index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < my_number_of_rays; ray++) {
-        const int index_z = my_rays[ray][1];
-        if (index_z >= proc2local_recv[2][0] &&
-            index_z <= proc2local_recv[2][1]) {
-          transposed[(index_x + proc2local_recv[0][0]) * my_number_of_rays +
+        const int index_x = my_rays[ray][0];
+        if (index_x >= proc2local_recv[0][0] &&
+            index_x <= proc2local_recv[0][1]) {
+          transposed[(index_z + proc2local_recv[2][0]) * my_number_of_rays +
                      ray] =
-              recv_buffer[index_x * number_of_rays_to_recv + ray_position];
+              recv_buffer[index_z * number_of_rays_to_recv + ray_position];
           ray_position++;
         }
       }
       assert(ray_position == number_of_rays_to_recv);
     }
     assert(number_of_elements_to_recv ==
-           (proc2local_recv[0][1] - proc2local_recv[0][0] + 1) *
+           (proc2local_recv[2][1] - proc2local_recv[2][0] + 1) *
                number_of_rays_to_recv);
     number_of_received_elements +=
-        (proc2local_recv[0][1] - proc2local_recv[0][0] + 1) *
+        (proc2local_recv[2][1] - proc2local_recv[2][0] + 1) *
         number_of_rays_to_recv;
 
     // Wait for the send request
     cp_mpi_wait(&send_request);
   }
-  assert(number_of_received_elements == npts_global[0] * my_number_of_rays);
+  assert(number_of_received_elements == npts_global[2] * my_number_of_rays);
 
   free(recv_buffer);
   free(send_buffer);
@@ -765,10 +764,10 @@ void collect_x_and_distribute_yz_ray(double complex *restrict grid,
 }
 
 /*******************************************************************************
- * \brief Performs a transposition of (x, zy_D) -> (x_D, z_D, y).
+ * \brief Performs a transposition of (z, xy_D) -> (z_D, x_D, y).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_yz_and_distribute_x_ray(double complex *restrict grid,
+void collect_xy_and_distribute_z_ray(double complex *restrict grid,
                                      double complex *restrict transposed,
                                      const int npts_global[3],
                                      const int (*proc2local_transposed)[3][2],
@@ -777,7 +776,7 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
                                      const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_yz_dist_x_r_%i_%i_%i_%i",
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_%i_%i_%i_%i",
            npts_global[0], npts_global[1], npts_global[2],
            cp_mpi_comm_size(comm));
   const int handle = fft_start_timer(routine_name);
@@ -794,7 +793,7 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
     my_transposed_sizes[dir] = my_bounds[dir][1] - my_bounds[dir][0] + 1;
   assert(my_transposed_sizes[1] == npts_global[1]);
   const int max_number_of_elements =
-      imax(max_number_of_rays * npts_global[0], product3(my_transposed_sizes));
+      imax(max_number_of_rays * npts_global[2], product3(my_transposed_sizes));
   const int my_number_of_rays = number_of_rays[my_process];
 
   double complex *recv_buffer =
@@ -814,21 +813,21 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
 #pragma omp parallel for default(none)                                         \
     shared(my_transposed_sizes, my_bounds, my_rays, my_number_of_rays, grid,   \
                transposed, npts_global) reduction(+ : number_of_received_rays)
-  for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-    const int index_y = my_rays[yz_ray][0];
-    const int index_z = my_rays[yz_ray][1];
+  for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+    const int index_x = my_rays[xy_ray][0];
+    const int index_y = my_rays[xy_ray][1];
 
     // Check whether we carry that ray after the transposition
-    if (index_z < my_bounds[2][0] || index_z > my_bounds[2][1])
+    if (index_x < my_bounds[0][0] || index_x > my_bounds[0][1])
       continue;
 
     // Copy the data
-    for (int index_x = my_bounds[0][0]; index_x <= my_bounds[0][1]; index_x++) {
-      transposed[(index_y - my_bounds[1][0]) * my_transposed_sizes[0] *
-                     my_transposed_sizes[2] +
-                 (index_z - my_bounds[2][0]) * my_transposed_sizes[0] +
-                 (index_x - my_bounds[0][0])] =
-          grid[index_x * my_number_of_rays + yz_ray];
+    for (int index_z = my_bounds[2][0]; index_z <= my_bounds[2][1]; index_z++) {
+      transposed[((index_z - my_bounds[2][0]) * my_transposed_sizes[0] +
+                  (index_x - my_bounds[0][0])) *
+                     my_transposed_sizes[1] +
+                 (index_y - my_bounds[1][0])] =
+          grid[index_z * my_number_of_rays + xy_ray];
     }
     number_of_received_rays++;
   }
@@ -849,8 +848,8 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
     shared(number_of_rays_recv, recv_rays, proc2local_transposed, my_bounds)   \
     reduction(+ : number_of_rays_to_recv)
     for (int ray = 0; ray < number_of_rays_recv; ray++) {
-      const int index_z = recv_rays[ray][1];
-      if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
+      const int index_x = recv_rays[ray][0];
+      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
         number_of_rays_to_recv++;
       }
     }
@@ -858,7 +857,7 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
 
     // Post receive request
     recv_request = cp_mpi_irecv_double_complex(
-        recv_buffer, my_transposed_sizes[0] * number_of_rays_to_recv,
+        recv_buffer, my_transposed_sizes[2] * number_of_rays_to_recv,
         recv_process, 1, comm);
 
     memset(send_buffer, 0, max_number_of_elements * sizeof(double complex));
@@ -868,25 +867,25 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
     shared(my_number_of_rays, my_rays, proc2local_send)                        \
     reduction(+ : number_of_rays_to_send)
     for (int ray = 0; ray < my_number_of_rays; ray++) {
-      const int index_z = my_rays[ray][1];
-      if (index_z >= proc2local_send[2][0] &&
-          index_z <= proc2local_send[2][1]) {
+      const int index_x = my_rays[ray][0];
+      if (index_x >= proc2local_send[0][0] &&
+          index_x <= proc2local_send[0][1]) {
         number_of_rays_to_send++;
       }
     }
 #pragma omp parallel for default(none)                                         \
     shared(npts_global, number_of_rays_to_send, send_buffer, grid, my_rays,    \
                proc2local_send, my_number_of_rays)
-    for (int index_x = proc2local_send[0][0]; index_x <= proc2local_send[0][1];
-         index_x++) {
+    for (int index_z = proc2local_send[2][0]; index_z <= proc2local_send[2][1];
+         index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < my_number_of_rays; ray++) {
-        const int index_z = my_rays[ray][1];
-        if (index_z >= proc2local_send[2][0] &&
-            index_z <= proc2local_send[2][1]) {
-          send_buffer[(index_x - proc2local_send[0][0]) *
+        const int index_x = my_rays[ray][0];
+        if (index_x >= proc2local_send[0][0] &&
+            index_x <= proc2local_send[0][1]) {
+          send_buffer[(index_z - proc2local_send[2][0]) *
                           number_of_rays_to_send +
-                      ray_position] = grid[index_x * my_number_of_rays + ray];
+                      ray_position] = grid[index_z * my_number_of_rays + ray];
           ray_position++;
         }
       }
@@ -897,7 +896,7 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
     send_request = cp_mpi_isend_double_complex(
         send_buffer,
         number_of_rays_to_send *
-            (proc2local_send[0][1] - proc2local_send[0][0] + 1),
+            (proc2local_send[2][1] - proc2local_send[2][0] + 1),
         send_process, 1, comm);
 
     // Wait for the receive process and copy the data
@@ -906,16 +905,17 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
 #pragma omp parallel for default(none) shared(                                 \
         my_transposed_sizes, my_bounds, number_of_rays_to_recv, recv_buffer,   \
             transposed, number_of_rays_recv, recv_rays, number_of_rays)
-    for (int index_x = 0; index_x < my_transposed_sizes[0]; index_x++) {
+    for (int index_z = 0; index_z < my_transposed_sizes[2]; index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < number_of_rays_recv; ray++) {
-        const int index_y = recv_rays[ray][0];
-        const int index_z = recv_rays[ray][1];
-        if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
-          transposed[index_y * my_transposed_sizes[0] * my_transposed_sizes[2] +
-                     (index_z - my_bounds[2][0]) * my_transposed_sizes[0] +
-                     index_x] =
-              recv_buffer[index_x * number_of_rays_to_recv + ray_position];
+        const int index_x = recv_rays[ray][0];
+        const int index_y = recv_rays[ray][1];
+        if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+          transposed[(index_z * my_transposed_sizes[0] +
+                      (index_x - my_bounds[0][0])) *
+                         my_transposed_sizes[1] +
+                     index_y] =
+              recv_buffer[index_z * number_of_rays_to_recv + ray_position];
           ray_position++;
         }
       }
@@ -935,7 +935,7 @@ void collect_yz_and_distribute_x_ray(double complex *restrict grid,
  * \brief Performs a redistribution (x_D, z_D, y) -> (y_D, z, x_D).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_x_and_distribute_yz_ray_transpose(
+void collect_z_and_distribute_xy_ray_transpose(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local)[3][2],
     const int *number_of_rays, const int (*ray_to_xy)[2],
@@ -974,14 +974,14 @@ void collect_x_and_distribute_yz_ray_transpose(
     shared(my_sizes, my_bounds, my_number_of_rays, grid, ray_to_xy,            \
                transposed, my_ray_offset, npts_global) collapse(2)
   for (int index_x = my_bounds[0][0]; index_x <= my_bounds[0][1]; index_x++) {
-    for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-      const int index_y = ray_to_xy[my_ray_offset + yz_ray][0];
-      const int index_z = ray_to_xy[my_ray_offset + yz_ray][1];
+    for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+      const int index_y = ray_to_xy[my_ray_offset + xy_ray][0];
+      const int index_z = ray_to_xy[my_ray_offset + xy_ray][1];
 
       // Check whether we carry that ray after the transposition
       if (index_z >= my_bounds[2][0] && index_z <= my_bounds[2][1]) {
         // Copy the data
-        transposed[index_x * my_number_of_rays + yz_ray] =
+        transposed[index_x * my_number_of_rays + xy_ray] =
             grid[(index_z - my_bounds[2][0]) * my_sizes[0] * my_sizes[1] +
                  (index_y - my_bounds[1][0]) * my_sizes[0] + index_x -
                  my_bounds[0][0]];
@@ -1091,7 +1091,7 @@ void collect_x_and_distribute_yz_ray_transpose(
  * \brief Performs a transposition of (x, zy_D) -> (x_D, z_D, y).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_yz_and_distribute_x_ray_transpose(
+void collect_xy_and_distribute_z_ray_transpose(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local_transposed)[3][2],
     const int *number_of_rays, const int (*ray_to_xy)[2],
@@ -1135,9 +1135,9 @@ void collect_yz_and_distribute_x_ray_transpose(
 #pragma omp parallel for default(none)                                         \
     shared(my_transposed_sizes, my_bounds, my_rays, my_number_of_rays, grid,   \
                transposed, npts_global) reduction(+ : number_of_received_rays)
-  for (int yz_ray = 0; yz_ray < my_number_of_rays; yz_ray++) {
-    const int index_y = my_rays[yz_ray][0];
-    const int index_z = my_rays[yz_ray][1];
+  for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+    const int index_y = my_rays[xy_ray][0];
+    const int index_z = my_rays[xy_ray][1];
 
     // Check whether we carry that ray after the transposition
     if (index_z < my_bounds[2][0] || index_z > my_bounds[2][1])
@@ -1149,7 +1149,7 @@ void collect_yz_and_distribute_x_ray_transpose(
                      my_transposed_sizes[1] +
                  (index_y - my_bounds[1][0]) * my_transposed_sizes[0] +
                  (index_x - my_bounds[0][0])] =
-          grid[index_x * my_number_of_rays + yz_ray];
+          grid[index_x * my_number_of_rays + xy_ray];
     }
     number_of_received_rays++;
   }
