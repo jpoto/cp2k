@@ -686,7 +686,7 @@ void cp_mpi_alltoallv_double_complex(const double complex *sendbuf,
   (void)comm; // mark used
   assert(sendcounts[0] == recvcounts[0]);
   assert(sdispls[0] == 0 && rdispls[0] == 0);
-  memcpy(recvbuf, sendbuf, sendcounts[0] * sizeof(double));
+  memcpy(recvbuf, sendbuf, sendcounts[0] * sizeof(double complex));
 #endif
 }
 

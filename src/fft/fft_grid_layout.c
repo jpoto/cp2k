@@ -373,6 +373,7 @@ void setup_proc2local(fft_grid_layout *my_fft_grid) {
       }
     }
   } else {
+    fprintf(stdout, "Without MPI\n");
     // Right now, we cannot make use of the Guru interface. So, the data
     // distribution is different in real space here, distribute in y, and z
     // directions (x,y_d,z_d) (->rs) In mixed space I, distribute in x and z
@@ -383,10 +384,10 @@ void setup_proc2local(fft_grid_layout *my_fft_grid) {
     // 1D data distribution, the last two directions are locally available to
     // enable 2D FFT plans
     const int block_size_y_rs =
-        (my_fft_grid->npts_global[1] + my_fft_grid->proc_grid[1] - 1) /
+        (my_fft_grid->npts_global_gspace[1] + my_fft_grid->proc_grid[1] - 1) /
         my_fft_grid->proc_grid[1];
     const int block_size_z_rs =
-        (my_fft_grid->npts_global[2] + my_fft_grid->proc_grid[0] - 1) /
+        (my_fft_grid->npts_global_gspace[2] + my_fft_grid->proc_grid[0] - 1) /
         my_fft_grid->proc_grid[0];
     const int block_size_x_gs =
         (my_fft_grid->npts_global_gspace[0] + my_fft_grid->proc_grid[1] - 1) /
@@ -674,7 +675,7 @@ void grid_create_fft_grid_layout_from_reference(
 
   setup_proc2local(my_fft_grid);
 
-  // Assign the (yz)-rays of the reference grid which are also on the current
+  // Assign the (xy)-rays of the reference grid which are also on the current
   // grid to each process
   my_fft_grid->xy_to_process =
       malloc(my_fft_grid->npts_global_gspace[0] *
@@ -711,10 +712,10 @@ void grid_create_fft_grid_layout_from_reference(
           continue;
         const int index_y_new =
             convert_shifted_index_to_c_index(index_y_shifted, npts_global[1]);
-        const int yz_index =
+        const int xy_index =
             index_x_new * my_fft_grid->npts_global_gspace[1] + index_y_new;
-        assert(my_fft_grid->xy_to_process[yz_index] < 0);
-        my_fft_grid->xy_to_process[yz_index] = process;
+        assert(my_fft_grid->xy_to_process[xy_index] < 0);
+        my_fft_grid->xy_to_process[xy_index] = process;
         my_fft_grid->rays_per_process[process]++;
         total_number_of_rays++;
       }
@@ -1031,8 +1032,9 @@ void fft_3d_fw_r2c_with_layout_to_cart(const double *restrict grid_rs,
            product3(local_sizes_rs) * sizeof(double));
     fft_3d_fw_r2c_blocked_low(
         grid_layout->buffer_1, grid_layout->buffer_2, grid_layout->npts_global,
-        grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-        grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+        grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+        grid_layout->comm, grid_layout->sub_comm);
   } else {
 #pragma omp parallel for default(none)                                         \
     shared(grid_layout, local_sizes_rs, grid_rs)
@@ -1079,9 +1081,10 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
     if (grid_layout->ray_distribution) {
       fft_3d_fw_r2c_ray_low(
           grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->rays_per_process,
-          grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->rays_per_process, grid_layout->ray_to_xy,
+          grid_layout->comm, grid_layout->sub_comm);
       const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
       for (int process = 0; process < my_process; process++) {
         my_ray_to_xy += grid_layout->rays_per_process[process];
@@ -1103,9 +1106,9 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
     } else {
       fft_3d_fw_r2c_blocked_low(
           grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-          grid_layout->comm, grid_layout->sub_comm);
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
       int local_sizes_gs[3];
       for (int dir = 0; dir < 3; dir++) {
         local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
@@ -1336,9 +1339,10 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
       }
       fft_3d_bw_c2r_ray_low(
           grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->rays_per_process,
-          grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->rays_per_process, grid_layout->ray_to_xy,
+          grid_layout->comm, grid_layout->sub_comm);
     } else {
       int local_sizes_gs[3];
       for (int dir = 0; dir < 3; dir++) {
@@ -1361,9 +1365,9 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
       }
       fft_3d_bw_c2r_blocked_low(
           grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-          grid_layout->comm, grid_layout->sub_comm);
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
     }
     memcpy(grid_rs, (double *)grid_layout->buffer_2,
            product3(local_sizes_rs) * sizeof(double));
@@ -1454,8 +1458,9 @@ void fft_3d_bw_c2r_with_layout_from_cart(const double complex *restrict grid_gs,
            product3(local_sizes_gs) * sizeof(double complex));
     fft_3d_bw_c2r_blocked_low(
         grid_layout->buffer_1, grid_layout->buffer_2, grid_layout->npts_global,
-        grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-        grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+        grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+        grid_layout->comm, grid_layout->sub_comm);
     int local_sizes_rs[3];
     for (int dir = 0; dir < 3; dir++) {
       local_sizes_rs[dir] = grid_layout->proc2local_rs[my_process][dir][1] -

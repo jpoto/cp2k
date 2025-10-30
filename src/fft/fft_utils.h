@@ -92,12 +92,11 @@ static inline void transpose_local_complex(
  * \brief Local transposition.
  * \author Frederick Stein
  ******************************************************************************/
-static inline void
-transpose_local_double(double *restrict grid, double *restrict grid_transposed,
-                       const int number_of_columns_grid,
-                       const int number_of_rows_grid,
-                       const int total_number_of_columns_grid,
-                       const int total_number_of_columns_transposed) {
+static inline void transpose_local_double(
+    const double *restrict grid, double *restrict grid_transposed,
+    const int number_of_columns_grid, const int number_of_rows_grid,
+    const int total_number_of_columns_grid,
+    const int total_number_of_columns_transposed) {
 
   const int number_of_doubles_per_cache_line = 8;
 
@@ -135,7 +134,10 @@ transpose_local_double(double *restrict grid, double *restrict grid_transposed,
 static inline void transpose_local_complex_block(
     double complex *restrict grid, double complex *restrict grid_transposed,
     const int number_of_columns_grid, const int number_of_rows_grid,
-    const int block_size) {
+    const int block_size, const int total_number_of_columns_grid,
+    const int total_block_size_grid,
+    const int total_number_of_columns_transposed,
+    const int total_block_size_transp) {
   if (block_size == 1) {
     transpose_local_complex(grid, grid_transposed, number_of_columns_grid,
                             number_of_rows_grid, number_of_columns_grid,
@@ -143,46 +145,101 @@ static inline void transpose_local_complex_block(
   } else {
 #pragma omp parallel for default(none)                                         \
     shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
-               block_size) collapse(2)
+               block_size, total_block_size_grid,                              \
+               total_number_of_columns_transposed,                             \
+               total_number_of_columns_grid, total_block_size_transp)          \
+    collapse(2)
     for (int column_index = 0; column_index < number_of_columns_grid;
          column_index++) {
       for (int row_index = 0; row_index < number_of_rows_grid; row_index++) {
-        memcpy(
-            &grid_transposed[(column_index * number_of_rows_grid + row_index) *
-                             block_size],
-            &grid[(row_index * number_of_columns_grid + column_index) *
-                  block_size],
-            block_size * sizeof(double complex));
+        memcpy(&grid_transposed[(column_index *
+                                     total_number_of_columns_transposed +
+                                 row_index) *
+                                total_block_size_grid],
+               &grid[(row_index * total_number_of_columns_grid + column_index) *
+                     total_block_size_transp],
+               block_size * sizeof(double complex));
       }
     }
   }
 }
 
 /*******************************************************************************
- * \brief Local transposition of blocks.
+ * \brief Local transposition of blocks. (x,y,z) -> (y,z,x)
  * \author Frederick Stein
  ******************************************************************************/
 static inline void transpose_local_double_block(
-    double *restrict grid, double *restrict grid_transposed,
+    const double *restrict grid, double *restrict grid_transposed,
     const int number_of_columns_grid, const int number_of_rows_grid,
-    const int block_size) {
+    const int block_size, const int total_number_of_columns_grid,
+    const int total_block_size_grid,
+    const int total_number_of_columns_transposed,
+    const int total_block_size_transposed) {
   if (block_size == 1) {
-    transpose_local_double(grid, grid_transposed, number_of_columns_grid,
-                           number_of_rows_grid, number_of_columns_grid,
-                           number_of_rows_grid);
+    transpose_local_double(
+        grid, grid_transposed, number_of_columns_grid, number_of_rows_grid,
+        total_number_of_columns_grid * total_block_size_grid,
+        total_number_of_columns_transposed * total_block_size_transposed);
   } else {
 #pragma omp parallel for default(none)                                         \
     shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
-               block_size) collapse(2)
+               block_size, total_number_of_columns_transposed,                 \
+               total_number_of_columns_grid, total_block_size_transposed,      \
+               total_block_size_grid) collapse(2)
     for (int column_index = 0; column_index < number_of_columns_grid;
          column_index++) {
       for (int row_index = 0; row_index < number_of_rows_grid; row_index++) {
-        memcpy(
-            &grid_transposed[(column_index * number_of_rows_grid + row_index) *
-                             block_size],
-            &grid[(row_index * number_of_columns_grid + column_index) *
-                  block_size],
-            block_size * sizeof(double));
+        memcpy(&grid_transposed[(column_index *
+                                     total_number_of_columns_transposed +
+                                 row_index) *
+                                total_block_size_transposed],
+               &grid[(row_index * total_number_of_columns_grid + column_index) *
+                     total_block_size_grid],
+               block_size * sizeof(double));
+      }
+    }
+  }
+}
+
+/*******************************************************************************
+ * \brief Local transposition of blocks. (x,y,z) -> (z,y,x)
+ * \author Frederick Stein
+ ******************************************************************************/
+static inline void transpose_xyz2zyx(const double complex *restrict grid,
+                                     double complex *restrict grid_transposed,
+                                     const int npts_0, const int npts_1,
+                                     const int npts_2, const int local_dim_1,
+                                     const int local_dim_2,
+                                     const int local_dim_transposed_0,
+                                     const int local_dim_transposed_2) {
+  for (int index_x = 0; index_x < npts_0; index_x++) {
+    for (int index_y = 0; index_y < npts_1; index_y++) {
+      for (int index_z = 0; index_z < npts_2; index_z++) {
+        grid_transposed[(index_z * local_dim_transposed_0 + index_y) *
+                            local_dim_transposed_2 +
+                        index_x] =
+            grid[(index_x * local_dim_1 + index_y) * local_dim_2 + index_z];
+      }
+    }
+  }
+}
+
+/*******************************************************************************
+ * \brief Local transposition of blocks. (x,y,z) -> (z,y,x)
+ * \author Frederick Stein
+ ******************************************************************************/
+static inline void transpose_xyz2zyx_double(
+    const double *restrict grid, double *restrict grid_transposed,
+    const int npts_0, const int npts_1, const int npts_2, const int local_dim_1,
+    const int local_dim_2, const int local_dim_transposed_0,
+    const int local_dim_transposed_2) {
+  for (int index_x = 0; index_x < npts_0; index_x++) {
+    for (int index_y = 0; index_y < npts_1; index_y++) {
+      for (int index_z = 0; index_z < npts_2; index_z++) {
+        grid_transposed[(index_z * local_dim_transposed_0 + index_y) *
+                            local_dim_transposed_2 +
+                        index_x] =
+            grid[(index_x * local_dim_1 + index_y) * local_dim_2 + index_z];
       }
     }
   }

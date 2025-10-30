@@ -11,25 +11,7 @@
 
 #include <complex.h>
 
-void collect_y_and_distribute_z_blocked(
-    double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int npts_global_gspace_2,
-    const int (*proc2local)[3][2], const int (*proc2local_transposed)[3][2],
-    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]);
-
-void collect_z_and_distribute_y_blocked(
-    double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int npts_global_gspace_2,
-    const int (*proc2local)[3][2], const int (*proc2local_transposed)[3][2],
-    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]);
-
-void collect_z_and_distribute_y_blocked_transpose(
-    double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int (*proc2local)[3][2],
-    const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
-    const cp_mpi_comm_t sub_comm[2]);
-
-void collect_y_and_distribute_x_blocked_transpose(
+void collect_y_and_distribute_x_blocked(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local)[3][2],
     const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
@@ -41,7 +23,25 @@ void collect_x_and_distribute_y_blocked(
     const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
     const cp_mpi_comm_t sub_comm[2]);
 
-void collect_y_and_distribute_x_blocked(
+void collect_z_and_distribute_y_blocked_transpose(
+    double complex *restrict grid, double complex *restrict transposed,
+    const int npts_global[3], const int (*proc2local)[3][2],
+    const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
+    const cp_mpi_comm_t sub_comm[2]);
+
+void collect_y_and_distribute_z_blocked_transpose(
+    double complex *restrict grid, double complex *restrict transposed,
+    const int npts_global[3], const int (*proc2local)[3][2],
+    const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
+    const cp_mpi_comm_t sub_comm[2]);
+
+void collect_z_and_distribute_y_blocked(
+    double complex *restrict grid, double complex *restrict transposed,
+    const int npts_global[3], const int (*proc2local)[3][2],
+    const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
+    const cp_mpi_comm_t sub_comm[2]);
+
+void collect_y_and_distribute_z_blocked(
     double complex *restrict grid, double complex *restrict transposed,
     const int npts_global[3], const int (*proc2local)[3][2],
     const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,

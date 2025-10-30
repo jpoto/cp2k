@@ -211,11 +211,17 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
 
 #if defined(__USE_FFTW3_MPI)
   use_fftw_mpi = use_fft_mpi;
-  fftw_mpi_init();
   if (use_fft_mpi) {
+    fftw_mpi_init();
     use_fft_mpi = fft_fftw_test_mpi_backend();
-    fprintf(stderr,
-            "Creation of a MPI plan failed! MPI features are turned off!");
+    if (!use_fft_mpi) {
+      fprintf(stderr,
+              "Creation of a MPI plan failed! FFTW-MPI will not be used!\n");
+    } else {
+      fprintf(stdout, "Use FFTW-MPI!\n");
+    }
+  } else {
+    fprintf(stdout, "Do not use FFTW-MPI!\n");
   }
 #else
   (void)use_fft_mpi;
