@@ -203,7 +203,7 @@ void fft_1d_bw_local(const int fft_size, const int number_of_ffts,
                      double complex *grid_in, double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_1d_bw_c2c_loca");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_1d_bw_c2c_local");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_1d_bw_c2c_local_%i_%i",
