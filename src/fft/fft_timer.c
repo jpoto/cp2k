@@ -363,6 +363,11 @@ int fft_start_timer(const char *routine_name) {
   if (omp_get_thread_num() == 0) {
     const int handle = get_routine_handle(routine_name);
     push_on_stack(handle);
+    const int my_rank = cp_mpi_comm_rank(cp_mpi_get_comm_world());
+    if (debug_mode && my_rank == 0) {
+      fprintf(stdout, "FFT_PROFILE Start (%i) %s\n", my_rank, routine_name);
+      fflush(stdout);
+    }
     return handle;
   }
   return -1;
@@ -384,7 +389,7 @@ void fft_stop_timer(const int handle) {
       // Merge with the list of routines
       const int my_rank = cp_mpi_comm_rank(cp_mpi_get_comm_world());
       if (debug_mode && my_rank == 0) {
-        fprintf(stdout, "FFT_PROFILE (%i) %s %f %f\n", my_rank,
+        fprintf(stdout, "FFT_PROFILE Stop (%i) %s %f %f\n", my_rank,
                 get_routine_name(stack_handle), total_time, self_time);
         fflush(stdout);
       }

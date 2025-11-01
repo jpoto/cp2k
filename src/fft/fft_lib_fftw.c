@@ -135,7 +135,7 @@ bool is_guru_interface_available() {
 bool fft_fftw_test_mpi_backend() {
   const int nthreads = omp_get_max_threads();
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
-  const fft_size[3] = {2, 2, 2};
+  const int fft_size[3] = {2, 2, 2};
   fftw_plan_with_nthreads(nthreads);
   const int block_size_0 =
       (fft_size[0] + cp_mpi_comm_size(comm) - 1) / cp_mpi_comm_size(comm);
@@ -149,14 +149,14 @@ bool fft_fftw_test_mpi_backend() {
       &local_n1, &local_1_start);
   double complex *buffer_1 = fftw_alloc_complex(buffer_size);
   double complex *buffer_2 = fftw_alloc_complex(buffer_size);
-  plan = malloc(sizeof(fftw_plan));
+  fftw_plan *plan = malloc(sizeof(fftw_plan));
   *plan = fftw_mpi_plan_many_dft(3, n, 1, block_size_0, block_size_1, buffer_1,
-                                 buffer_2, comm, direction,
+                                 buffer_2, comm, FFTW_FORWARD,
                                  fftw_planning_mode + FFTW_MPI_TRANSPOSED_OUT);
   fftw_free(buffer_1);
   fftw_free(buffer_2);
   if (plan != NULL) {
-    fftw_destroy_plan(plan);
+    fftw_destroy_plan(*plan);
     return true;
   } else {
     return false;
@@ -211,10 +211,10 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
 
 #if defined(__USE_FFTW3_MPI)
   use_fftw_mpi = use_fft_mpi;
-  if (use_fft_mpi) {
+  if (use_fftw_mpi) {
     fftw_mpi_init();
-    use_fft_mpi = fft_fftw_test_mpi_backend();
-    if (!use_fft_mpi) {
+    use_fftw_mpi = fft_fftw_test_mpi_backend();
+    if (!use_fftw_mpi) {
       fprintf(stderr,
               "Creation of a MPI plan failed! FFTW-MPI will not be used!\n");
     } else {
@@ -363,9 +363,13 @@ fftw_plan *fft_fftw_create_1d_plan(const int direction, const int fft_size,
                                    const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_1d_%cw_c2c_Plocal",
+           direction == FFTW_FORWARD ? 'f' : 'b');
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_1d_%cw_c2c_Plocal_%i_%i",
            direction == FFTW_FORWARD ? 'f' : 'b', fft_size, number_of_ffts);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {1 + FFTW_TRANSPOSE_RS * transpose_rs +
                           FFTW_TRANSPOSE_GS * transpose_gs +
                           FFTW_INPLACE * inplace,
@@ -403,6 +407,7 @@ fftw_plan *fft_fftw_create_1d_plan(const int direction, const int fft_size,
     add_plan_to_cache(key, plan);
     fftw_free(buffer_1);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -422,6 +427,10 @@ fftw_plan *fft_fftw_create_1d_plan_r2c(const int direction, const int fft_size,
            direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r", fft_size,
            number_of_ffts);
   const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_1d_%s_Plocal",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {1 + FFTW_TRANSPOSE_RS * transpose_rs +
                           FFTW_TRANSPOSE_GS * transpose_gs + FFTW_R2C +
                           FFTW_INPLACE * inplace,
@@ -459,6 +468,7 @@ fftw_plan *fft_fftw_create_1d_plan_r2c(const int direction, const int fft_size,
     add_plan_to_cache(key, plan);
     fftw_free(buffer_1);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -475,11 +485,15 @@ fftw_plan *fft_fftw_create_2d_plan(const int direction, const int fft_size[2],
                                    const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_2d_%cw_c2c_Plocal",
+           direction == FFTW_FORWARD ? 'f' : 'b');
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH,
            "fft_2d_%cw_c2c_Plocal_%i_%i_%i",
            direction == FFTW_FORWARD ? 'f' : 'b', fft_size[0], fft_size[1],
            number_of_ffts);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {2 + FFTW_TRANSPOSE_RS * transpose_rs +
                           FFTW_TRANSPOSE_GS * transpose_gs +
                           FFTW_INPLACE * inplace,
@@ -518,6 +532,7 @@ fftw_plan *fft_fftw_create_2d_plan(const int direction, const int fft_size[2],
     add_plan_to_cache(key, plan);
     fftw_free(buffer_1);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -533,10 +548,14 @@ fft_fftw_create_2d_plan_r2c(const int direction, const int fft_size[2],
                             const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_2d_%s_Plocal",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_2d_%s_Plocal_%i_%i_%i",
            direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r", fft_size[0],
            fft_size[1], number_of_ffts);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {2 + FFTW_TRANSPOSE_RS * transpose_rs +
                           FFTW_TRANSPOSE_GS * transpose_gs + FFTW_R2C +
                           FFTW_INPLACE * inplace,
@@ -578,6 +597,7 @@ fft_fftw_create_2d_plan_r2c(const int direction, const int fft_size[2],
     add_plan_to_cache(key, plan);
     fftw_free(double_buffer);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -591,11 +611,15 @@ fftw_plan *fft_fftw_create_3d_plan(const int direction, const int fft_size[3],
                                    const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%cw_c2c_Plocal",
+           direction == FFTW_FORWARD ? 'f' : 'b');
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH,
            "fft_3d_%cw_c2c_Plocal_%i_%i_%i",
            direction == FFTW_FORWARD ? 'f' : 'b', fft_size[0], fft_size[1],
            fft_size[2]);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {3 + FFTW_INPLACE * inplace,
                       direction,
                       cp_mpi_comm_c2f(cp_mpi_get_comm_self()),
@@ -616,6 +640,7 @@ fftw_plan *fft_fftw_create_3d_plan(const int direction, const int fft_size[3],
     assert(plan != NULL);
     fftw_free(buffer_1);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -630,10 +655,14 @@ fftw_plan *fft_fftw_create_3d_plan_r2c(const int direction,
                                        const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%s_Plocal",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%s_Plocal_%i_%i_%i",
            direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r", fft_size[0],
            fft_size[1], fft_size[2]);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {3 + FFTW_R2C + FFTW_INPLACE * inplace,
                       cp_mpi_comm_c2f(cp_mpi_get_comm_self()),
                       direction,
@@ -662,6 +691,7 @@ fftw_plan *fft_fftw_create_3d_plan_r2c(const int direction,
     assert(plan != NULL);
     fftw_free(double_buffer);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -678,11 +708,15 @@ fftw_plan *fft_fftw_create_distributed_2d_plan(const int direction,
                                                double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_2d_%cw_c2c_Pdistr",
+           direction == FFTW_FORWARD ? 'f' : 'b');
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH,
            "fft_2d_%cw_c2c_Pdistr_%i_%i_%i_%i",
            direction == FFTW_FORWARD ? 'f' : 'b', cp_mpi_comm_size(comm),
            fft_size[0], fft_size[1], number_of_ffts);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {2,           cp_mpi_comm_c2f(comm), direction,
                       fft_size[0], fft_size[1],           number_of_ffts};
   fftw_plan *plan = lookup_plan_from_cache(key);
@@ -719,6 +753,7 @@ fftw_plan *fft_fftw_create_distributed_2d_plan(const int direction,
     fftw_free(buffer_1);
     add_plan_to_cache(key, plan);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -733,10 +768,13 @@ fftw_plan *fft_fftw_create_distributed_2d_plan_r2c(const int direction,
                                                    double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_2d_%s_Pdistr",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle = fft_start_timer(routine_name);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_2d_%s_Pdistr_%i_%i_%i_%i",
            direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r",
            cp_mpi_comm_size(comm), fft_size[0], fft_size[1], number_of_ffts);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {2 + FFTW_R2C, cp_mpi_comm_c2f(comm), direction,
                       fft_size[0],  fft_size[1],           number_of_ffts};
   fftw_plan *plan = lookup_plan_from_cache(key);
@@ -774,6 +812,7 @@ fftw_plan *fft_fftw_create_distributed_2d_plan_r2c(const int direction,
     fftw_free(real_buffer);
     add_plan_to_cache(key, plan);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -788,10 +827,14 @@ fftw_plan *fft_fftw_create_distributed_3d_plan(const int direction,
                                                double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%s_Pdistr",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%s_Pdistr_%i_%i_%i_%i",
            direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r",
            cp_mpi_comm_size(comm), fft_size[0], fft_size[1], fft_size[2]);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {3,           cp_mpi_comm_c2f(comm), direction,
                       fft_size[0], fft_size[1],           fft_size[2]};
   fftw_plan *plan = lookup_plan_from_cache(key);
@@ -824,6 +867,7 @@ fftw_plan *fft_fftw_create_distributed_3d_plan(const int direction,
     add_plan_to_cache(key, plan);
     fftw_free(buffer_1);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }
@@ -838,10 +882,14 @@ fftw_plan *fft_fftw_create_distributed_3d_plan_r2c(const int direction,
                                                    double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%s_Pdistr",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle = fft_start_timer(routine_name);
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_%s_Pdistr_%i_%i_%i_%i",
            direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r",
            cp_mpi_comm_size(comm), fft_size[0], fft_size[1], fft_size[2]);
-  const int handle = fft_start_timer(routine_name);
+  const int handle2 = fft_start_timer(routine_name);
   const int key[6] = {3 + FFTW_R2C, cp_mpi_comm_c2f(comm), direction,
                       fft_size[2],  fft_size[1],           fft_size[0]};
   fftw_plan *plan = lookup_plan_from_cache(key);
@@ -875,6 +923,7 @@ fftw_plan *fft_fftw_create_distributed_3d_plan_r2c(const int direction,
     add_plan_to_cache(key, plan);
     fftw_free(buffer_1);
   }
+  fft_stop_timer(handle2);
   fft_stop_timer(handle);
   return plan;
 }

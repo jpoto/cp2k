@@ -74,12 +74,13 @@ void fft_3d_fw_blocked_low(double complex *restrict grid_buffer_1,
       // Copy back (we do not have in-place transposition implemented)
       memcpy(grid_buffer_1, grid_buffer_2,
              product3(fft_sizes_rs) * sizeof(double complex));
+      // 2D FFT (y_d,x,z_d) -> (x_d,y,z_d)
       fft_2d_fw_distributed((const int[2]){npts_global[1], npts_global[0]},
                             fft_sizes_rs[2], sub_comm[1], grid_buffer_1,
                             grid_buffer_2);
 
       // Perform second redistribution and transpose
-      // (x,y_d,z_d) -> (z,x_d,y_d)
+      // (x_d,y,z_d) -> (z,x_d,y_d)
       collect_z_and_distribute_y_blocked_transpose(
           grid_buffer_2, grid_buffer_1, npts_global, proc2local_ms,
           proc2local_gs, comm, sub_comm);
@@ -325,7 +326,7 @@ void fft_3d_bw_blocked_low(double complex *restrict grid_buffer_1,
                       false, grid_buffer_1, grid_buffer_2);
 
       // Perform second redistribution and transpose
-      // (z,x_d,y_d) -> (y,x_d,z_d)
+      // (z,x_d,y_d) -> (x_d,y,z_d)
       collect_y_and_distribute_z_blocked_transpose(
           grid_buffer_2, grid_buffer_1, npts_global, proc2local_gs,
           proc2local_ms, comm, sub_comm);
