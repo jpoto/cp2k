@@ -40,7 +40,10 @@ int fft_test_transpose_blocked(const int npts_global[3],
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
     my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
-  const int my_number_of_elements_rs = product3(my_sizes_rs);
+  // For redistribution, the first size is local entirely and taken from g-space
+  // as the bounds used here are for the real space before any partial FFT
+  const int my_number_of_elements_rs =
+      fft_grid_layout->npts_global_gspace[0] * my_sizes_rs[1] * my_sizes_rs[2];
 
   const int(*my_bounds_ms)[2] = fft_grid_layout->proc2local_ms[my_process];
   int my_sizes_ms[3];
@@ -274,9 +277,9 @@ int fft_test_transpose_blocked(const int npts_global[3],
 #pragma omp parallel for default(none)                                         \
     shared(fft_grid_layout, my_sizes_rs, my_bounds_rs, npts_global,            \
                use_halfspace) collapse(3) reduction(max : max_error)
-  for (int nx = 0; nx < fft_grid_layout->npts_global_gspace[0]; nx++) {
+  for (int ny = 0; ny < my_sizes_rs[1]; ny++) {
     for (int nz = 0; nz < my_sizes_rs[2]; nz++) {
-      for (int ny = 0; ny < my_sizes_rs[1]; ny++) {
+      for (int nx = 0; nx < fft_grid_layout->npts_global_gspace[0]; nx++) {
         const double complex my_value =
             fft_grid_layout
                 ->buffer_1[(ny * my_sizes_rs[2] + nz) *

@@ -179,10 +179,12 @@ void collect_x_and_distribute_y_blocked(
   assert(send_offset == product3(my_sizes));
   assert(recv_offset == npts_global[0] * number_of_yz_pairs);
 
+  printf("%i Start communication\n", my_process);
   // Use collective MPI communication
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[1]);
+  printf("%i Done communication\n", my_process);
   memcpy(grid, transposed,
          npts_global[0] * my_sizes_transposed[1] * my_sizes_transposed[2] *
              sizeof(double complex));
