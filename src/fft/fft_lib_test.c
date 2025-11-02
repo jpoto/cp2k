@@ -1668,8 +1668,8 @@ int fft_test_3d_distributed_r2c_low(const int fft_size[3],
         for (int nx = 0; nx < fft_size[0]; nx++) {
           for (int ny = 0; ny < local_n1; ny++) {
             for (int nz = 0; nz < fft_size[2] / 2 + 1; nz++) {
-              complex_buffer[ny * fft_size[0] * (fft_size[2] / 2 + 1) +
-                             nx * (fft_size[2] / 2 + 1) + nz] =
+              complex_buffer[(ny * fft_size[0] + nx) * (fft_size[2] / 2 + 1) +
+                             nz] =
                   cexp(-2.0 * I * pi *
                        (((double)mx) * nx / fft_size[0] +
                         ((double)my) * (ny + local_n1_start) / fft_size[1] +
