@@ -114,132 +114,130 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
     errors++;
   }
 
-  if (false) {
-    // Check forward 3D FFTs
-    max_error = 0.0;
-    number_of_tests = 0;
-    for (int nx = 0; nx < npts_global[0]; nx++) {
-      for (int ny = 0; ny < npts_global[1]; ny++) {
-        for (int nz = 0; nz < npts_global[2]; nz++) {
-          if (test_every > 0 && number_of_tests % test_every != 0) {
-            number_of_tests++;
-            continue;
-          }
+  // Check forward 3D FFTs
+  max_error = 0.0;
+  number_of_tests = 0;
+  for (int nx = 0; nx < npts_global[0]; nx++) {
+    for (int ny = 0; ny < npts_global[1]; ny++) {
+      for (int nz = 0; nz < npts_global[2]; nz++) {
+        if (test_every > 0 && number_of_tests % test_every != 0) {
           number_of_tests++;
+          continue;
+        }
+        number_of_tests++;
 
-          memset(grid_rs.data, 0,
-                 my_number_of_elements_rs * sizeof(double complex));
+        memset(grid_rs.data, 0,
+               my_number_of_elements_rs * sizeof(double complex));
 
-          if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-              ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-              nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
-            grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
-                          my_bounds_rs[1][0]) *
-                             my_sizes_rs[2] +
-                         nz - my_bounds_rs[2][0]] = 1.0;
+        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
+            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
+            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+          grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
+                        my_bounds_rs[1][0]) *
+                           my_sizes_rs[2] +
+                       nz - my_bounds_rs[2][0]] = 1.0;
 
-          fft_fw(&grid_rs, &grid_gs);
+        fft_fw(&grid_rs, &grid_gs);
 
 #pragma omp parallel for default(none)                                         \
     shared(fft_grid_layout, my_bounds_gs, my_sizes_gs, grid_gs,                \
                my_number_of_elements_gs, nx, ny, nz, scale, my_process,        \
                npts_global) reduction(max : max_error)
-          for (int index = 0; index < my_number_of_elements_gs; index++) {
-            const int mx = fft_grid_layout->index_to_g[index][0];
-            const int my = fft_grid_layout->index_to_g[index][1];
-            const int mz = fft_grid_layout->index_to_g[index][2];
-            const double complex my_value = grid_gs.data[index];
-            const double complex ref_value =
-                scale * cexp(-2.0 * I * pi *
-                             (((double)mx) * nx / npts_global[0] +
-                              ((double)my) * ny / npts_global[1] +
-                              ((double)mz) * nz / npts_global[2]));
-            double current_error = cabs(my_value - ref_value);
-            if (current_error > 1e-12)
-              printf("ERROR %i %i %i/%i %i %i: (%f %f) (%f %f)\n", mx, my, mz,
-                     nx, ny, nz, creal(my_value), cimag(my_value),
-                     creal(ref_value), cimag(ref_value));
-            max_error = fmax(max_error, current_error);
-          }
+        for (int index = 0; index < my_number_of_elements_gs; index++) {
+          const int mx = fft_grid_layout->index_to_g[index][0];
+          const int my = fft_grid_layout->index_to_g[index][1];
+          const int mz = fft_grid_layout->index_to_g[index][2];
+          const double complex my_value = grid_gs.data[index];
+          const double complex ref_value =
+              scale * cexp(-2.0 * I * pi *
+                           (((double)mx) * nx / npts_global[0] +
+                            ((double)my) * ny / npts_global[1] +
+                            ((double)mz) * nz / npts_global[2]));
+          double current_error = cabs(my_value - ref_value);
+          if (current_error > 1e-12)
+            printf("ERROR %i %i %i/%i %i %i: (%f %f) (%f %f)\n", mx, my, mz, nx,
+                   ny, nz, creal(my_value), cimag(my_value), creal(ref_value),
+                   cimag(ref_value));
+          max_error = fmax(max_error, current_error);
         }
       }
     }
-    fflush(stdout);
-    cp_mpi_max_double(&max_error, 1, comm);
+  }
+  fflush(stdout);
+  cp_mpi_max_double(&max_error, 1, comm);
 
-    if (max_error > 1e-12) {
-      if (my_process == 0)
-        printf("The fw 3D FFT (blocked) to ordered layout does not work "
-               "correctly (%i %i %i): %f!\n",
-               npts_global[0], npts_global[1], npts_global[2], max_error);
-      errors++;
-    }
+  if (max_error > 1e-12) {
+    if (my_process == 0)
+      printf("The fw 3D FFT (blocked) to ordered layout does not work "
+             "correctly (%i %i %i): %f!\n",
+             npts_global[0], npts_global[1], npts_global[2], max_error);
+    errors++;
+  }
 
-    // Check backwards 3D FFTs
-    max_error = 0.0;
-    number_of_tests = 0;
-    for (int nx = 0; nx < npts_global[0]; nx++) {
-      for (int ny = 0; ny < npts_global[1]; ny++) {
-        for (int nz = 0; nz < npts_global[2]; nz++) {
-          if (test_every > 0 && number_of_tests % test_every != 0) {
-            number_of_tests++;
-            continue;
-          }
+  // Check backwards 3D FFTs
+  max_error = 0.0;
+  number_of_tests = 0;
+  for (int nx = 0; nx < npts_global[0]; nx++) {
+    for (int ny = 0; ny < npts_global[1]; ny++) {
+      for (int nz = 0; nz < npts_global[2]; nz++) {
+        if (test_every > 0 && number_of_tests % test_every != 0) {
           number_of_tests++;
-          memset(grid_gs.data, 0,
-                 my_number_of_elements_gs * sizeof(double complex));
+          continue;
+        }
+        number_of_tests++;
+        memset(grid_gs.data, 0,
+               my_number_of_elements_gs * sizeof(double complex));
 
-          for (int index = 0; index < my_number_of_elements_gs; index++) {
-            const int mx = fft_grid_layout->index_to_g[index][0];
-            const int my = fft_grid_layout->index_to_g[index][1];
-            const int mz = fft_grid_layout->index_to_g[index][2];
-            grid_gs.data[index] = cexp(-2.0 * I * pi *
-                                       (((double)mx) * nx / npts_global[0] +
-                                        ((double)my) * ny / npts_global[1] +
-                                        ((double)mz) * nz / npts_global[2]));
-          }
+        for (int index = 0; index < my_number_of_elements_gs; index++) {
+          const int mx = fft_grid_layout->index_to_g[index][0];
+          const int my = fft_grid_layout->index_to_g[index][1];
+          const int mz = fft_grid_layout->index_to_g[index][2];
+          grid_gs.data[index] = cexp(-2.0 * I * pi *
+                                     (((double)mx) * nx / npts_global[0] +
+                                      ((double)my) * ny / npts_global[1] +
+                                      ((double)mz) * nz / npts_global[2]));
+        }
 
-          fft_bw(&grid_gs, &grid_rs);
+        fft_bw(&grid_gs, &grid_rs);
 
 #pragma omp parallel for default(none)                                         \
     shared(grid_rs, my_bounds_rs, my_sizes_rs, nx, ny, nz, npts_global)        \
     collapse(3) reduction(max : max_error)
-          for (int mx = 0; mx < my_sizes_rs[0]; mx++) {
-            for (int my = 0; my < my_sizes_rs[1]; my++) {
-              for (int mz = 0; mz < my_sizes_rs[2]; mz++) {
-                const double complex my_value =
-                    grid_rs
-                        .data[(mx * my_sizes_rs[1] + my) * my_sizes_rs[2] + mz];
-                const double complex ref_value =
-                    (mx + my_bounds_rs[0][0] == nx &&
-                     my + my_bounds_rs[1][0] == ny &&
-                     mz + my_bounds_rs[2][0] == nz)
-                        ? (double)product3(npts_global)
-                        : 0.0;
-                double current_error = cabs(my_value - ref_value);
-                if (current_error > 1e-12) {
-                  printf("ERROR %i %i %i/%i %i %i: (%f %f) (%f %f)\n",
-                         mx + my_bounds_rs[0][0], my + my_bounds_rs[1][0],
-                         mz + my_bounds_rs[2][0], nx, ny, nz, creal(my_value),
-                         cimag(my_value), creal(ref_value), cimag(ref_value));
-                }
-                max_error = fmax(max_error, current_error);
+        for (int mx = 0; mx < my_sizes_rs[0]; mx++) {
+          for (int my = 0; my < my_sizes_rs[1]; my++) {
+            for (int mz = 0; mz < my_sizes_rs[2]; mz++) {
+              const double complex my_value =
+                  grid_rs
+                      .data[(mx * my_sizes_rs[1] + my) * my_sizes_rs[2] + mz];
+              const double complex ref_value =
+                  (mx + my_bounds_rs[0][0] == nx &&
+                   my + my_bounds_rs[1][0] == ny &&
+                   mz + my_bounds_rs[2][0] == nz)
+                      ? (double)product3(npts_global)
+                      : 0.0;
+              double current_error = cabs(my_value - ref_value);
+              if (current_error > 1e-12) {
+                printf("ERROR %i %i %i/%i %i %i: (%f %f) (%f %f)\n",
+                       mx + my_bounds_rs[0][0], my + my_bounds_rs[1][0],
+                       mz + my_bounds_rs[2][0], nx, ny, nz, creal(my_value),
+                       cimag(my_value), creal(ref_value), cimag(ref_value));
               }
+              max_error = fmax(max_error, current_error);
             }
           }
         }
       }
     }
-    fflush(stdout);
-    cp_mpi_max_double(&max_error, 1, comm);
+  }
+  fflush(stdout);
+  cp_mpi_max_double(&max_error, 1, comm);
 
-    if (max_error > 1e-12) {
-      if (my_process == 0)
-        printf("The bw 3D FFT (blocked) to ordered layout does not work "
-               "correctly (%i %i %i): %f!\n",
-               npts_global[0], npts_global[1], npts_global[2], max_error);
-      errors++;
-    }
+  if (max_error > 1e-12) {
+    if (my_process == 0)
+      printf("The bw 3D FFT (blocked) to ordered layout does not work "
+             "correctly (%i %i %i): %f!\n",
+             npts_global[0], npts_global[1], npts_global[2], max_error);
+    errors++;
   }
 
   grid_free_complex_rs_grid(&grid_rs);

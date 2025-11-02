@@ -377,16 +377,18 @@ void fft_3d_bw_blocked_low(double complex *restrict grid_buffer_1,
     }
   } else if (proc_grid[0] > 1) {
     if (fft_lib_use_mpi()) {
-      // Exchange the first two dimensions (x,y_D,z) -> (y_D,x,z)
-      transpose_xyz2zyx(grid_buffer_1, grid_buffer_2, fft_sizes_gs[0],
-                        fft_sizes_gs[1], fft_sizes_gs[2], fft_sizes_gs[1],
-                        fft_sizes_gs[2], fft_sizes_gs[1], fft_sizes_gs[0]);
+      // Exchange the first two dimensions (x,y_D,z) -> (y_D,z,x)
+      transpose_local_complex(
+          grid_buffer_1, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
+          fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
+      // 3D FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed(
-          (const int[3]){npts_global[1], npts_global[2], npts_global[0]}, comm,
+          (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, comm,
           grid_buffer_2, grid_buffer_1);
+      // Transpose back (z_d,y,x) -> (x,y,z_d)
       transpose_xyz2zyx(grid_buffer_1, grid_buffer_2, fft_sizes_rs[2],
                         fft_sizes_rs[1], fft_sizes_rs[0], fft_sizes_rs[1],
-                        fft_sizes_rs[2], fft_sizes_rs[1], fft_sizes_gs[0]);
+                        fft_sizes_rs[0], fft_sizes_rs[1], fft_sizes_rs[2]);
     } else {
       // Perform the first FFT and one transposition (x,y_d,z)->(z,x,y_d)
       fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,

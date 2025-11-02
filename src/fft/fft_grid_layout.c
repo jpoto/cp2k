@@ -1216,11 +1216,6 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
   assert(grid_layout->ref_counter > 0);
 
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
-  int local_sizes_rs[3];
-  for (int dir = 0; dir < 3; dir++) {
-    local_sizes_rs[dir] = grid_layout->proc2local_rs[my_process][dir][1] -
-                          grid_layout->proc2local_rs[my_process][dir][0] + 1;
-  }
   if (grid_layout->ray_distribution) {
     const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
     for (int process = 0; process < my_process; process++) {
@@ -1260,9 +1255,9 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
     for (int index = 0; index < grid_layout->npts_gs_local; index++) {
       int *index_g = grid_layout->index_to_g[index];
       grid_layout->buffer_1
-          [(index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
-               local_sizes_gs[1] * local_sizes_gs[2] +
-           (index_g[1] - grid_layout->proc2local_gs[my_process][1][0]) *
+          [((index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
+                local_sizes_gs[1] +
+            (index_g[1] - grid_layout->proc2local_gs[my_process][1][0])) *
                local_sizes_gs[2] +
            (index_g[2] - grid_layout->proc2local_gs[my_process][2][0])] =
           grid_gs[index];
@@ -1271,6 +1266,11 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
         grid_layout->buffer_1, grid_layout->buffer_2, grid_layout->npts_global,
         grid_layout->proc2local_rs, grid_layout->proc2local_ms,
         grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+  }
+  int local_sizes_rs[3];
+  for (int dir = 0; dir < 3; dir++) {
+    local_sizes_rs[dir] = grid_layout->proc2local_rs[my_process][dir][1] -
+                          grid_layout->proc2local_rs[my_process][dir][0] + 1;
   }
   memcpy(grid_rs, grid_layout->buffer_2,
          product3(local_sizes_rs) * sizeof(double complex));
