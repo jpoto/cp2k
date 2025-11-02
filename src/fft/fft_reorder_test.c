@@ -279,7 +279,9 @@ int fft_test_transpose_blocked(const int npts_global[3],
       for (int ny = 0; ny < my_sizes_rs[1]; ny++) {
         const double complex my_value =
             fft_grid_layout
-                ->buffer_1[(ny * my_sizes_rs[2] + nz) * my_sizes_rs[0] + nx];
+                ->buffer_1[(ny * my_sizes_rs[2] + nz) *
+                               fft_grid_layout->npts_global_gspace[0] +
+                           nx];
         const double complex ref_value =
             ((nx + my_bounds_rs[0][0]) * npts_global[1] +
              (ny + my_bounds_rs[1][0])) +

@@ -184,7 +184,8 @@ void collect_x_and_distribute_y_blocked(
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[1]);
   memcpy(grid, transposed,
-         product3(my_sizes_transposed) * sizeof(double complex));
+         npts_global[0] * my_sizes_transposed[1] * my_sizes_transposed[2] *
+             sizeof(double complex));
 
   for (int process = 0; process < dims[1]; process++) {
     const int proc_coords[] = {proc_coord[0], process};
@@ -194,7 +195,7 @@ void collect_x_and_distribute_y_blocked(
     double complex *transposed_ptr = transposed + proc2local[rank][0][0];
     double complex *recv_buffer = grid + recv_displacements[process];
     for (int index_yz = 0; index_yz < number_of_yz_pairs; index_yz++) {
-      memcpy(transposed_ptr + index_yz * my_sizes_transposed[0],
+      memcpy(transposed_ptr + index_yz * npts_global[0],
              recv_buffer + index_yz * current_recv_size_0,
              current_recv_size_0 * sizeof(double complex));
     }
@@ -273,6 +274,8 @@ void collect_z_and_distribute_y_blocked_transpose(
     recv_counts[process] = current_recv_count;
     send_offset += current_send_count;
     recv_offset += current_recv_count;
+    printf("%i sending %i elements to %i (summed: %i)\n", my_process,
+           current_send_count, rank, send_offset);
     double complex *send_buffer = transposed + send_displacements[process];
     double complex *grid_ptr =
         grid + proc2local_transposed[rank][1][0] * my_sizes[2];
@@ -285,6 +288,7 @@ void collect_z_and_distribute_y_blocked_transpose(
                               send_size_1 * my_sizes[0]);
     }
   }
+  printf("send offset %i/%i\n", send_offset, product3(my_sizes));
   assert(send_offset == product3(my_sizes));
   assert(recv_offset == product3(my_sizes_transposed));
 

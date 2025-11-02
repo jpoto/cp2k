@@ -194,8 +194,8 @@ void setup_proc2local(fft_grid_layout *my_fft_grid) {
           my_fft_grid->proc_grid[0];
       // In the last step, y is distributed in the second direction
       const int block_size_y_gs =
-          (my_fft_grid->npts_global_gspace[1] + my_fft_grid->proc_grid[1] - 1) /
-          my_fft_grid->proc_grid[1];
+          (my_fft_grid->npts_global_gspace[1] + my_fft_grid->proc_grid[0] - 1) /
+          my_fft_grid->proc_grid[0];
       // Determine a maximum buffer size
       // With half-space, we need different routines
       if (my_fft_grid->use_halfspace) {
@@ -574,7 +574,6 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
        my_fft_grid->proc2local_gs[my_process][1][0] + 1) *
       (my_fft_grid->proc2local_gs[my_process][2][1] -
        my_fft_grid->proc2local_gs[my_process][2][0] + 1);
-  printf("%i npts_gs_local = %i\n", my_process, my_fft_grid->npts_gs_local);
 
   allocate_fft_buffers(my_fft_grid);
 
@@ -960,10 +959,10 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
     for (int index = 0; index < grid_layout->npts_gs_local; index++) {
       const int *index_g = grid_layout->index_to_g[index];
       for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-        if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
-            my_ray_to_xy[xy_ray][1] == index_g[2]) {
+        if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+            my_ray_to_xy[xy_ray][1] == index_g[1]) {
           grid_gs[index] =
-              grid_layout->buffer_2[index_g[0] * my_number_of_rays + xy_ray];
+              grid_layout->buffer_2[index_g[2] * my_number_of_rays + xy_ray];
           break;
         }
       }
@@ -982,9 +981,9 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
       int *index_g = grid_layout->index_to_g[index];
       grid_gs[index] =
           grid_layout->buffer_2
-              [(index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
-                   (local_sizes_gs[1] * local_sizes_gs[2]) +
-               (index_g[1] - grid_layout->proc2local_gs[my_process][1][0]) *
+              [((index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
+                    local_sizes_gs[1] +
+                (index_g[1] - grid_layout->proc2local_gs[my_process][1][0])) *
                    local_sizes_gs[2] +
                (index_g[2] - grid_layout->proc2local_gs[my_process][2][0])];
     }
@@ -1114,10 +1113,10 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         const int *index_g = grid_layout->index_to_g[index];
         for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
-              my_ray_to_xy[xy_ray][1] == index_g[2]) {
+          if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+              my_ray_to_xy[xy_ray][1] == index_g[1]) {
             grid_gs[index] =
-                grid_layout->buffer_2[index_g[0] * my_number_of_rays + xy_ray];
+                grid_layout->buffer_2[index_g[2] * my_number_of_rays + xy_ray];
             break;
           }
         }
@@ -1167,10 +1166,10 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         const int *index_g = grid_layout->index_to_g[index];
         for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
-              my_ray_to_xy[xy_ray][1] == index_g[2]) {
+          if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+              my_ray_to_xy[xy_ray][1] == index_g[1]) {
             grid_gs[index] =
-                grid_layout->buffer_2[index_g[0] * my_number_of_rays + xy_ray];
+                grid_layout->buffer_2[index_g[2] * my_number_of_rays + xy_ray];
             break;
           }
         }
@@ -1229,16 +1228,16 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
     }
     const int my_number_of_rays = grid_layout->rays_per_process[my_process];
     memset(grid_layout->buffer_1, 0,
-           my_number_of_rays * grid_layout->npts_global_gspace[0] *
+           my_number_of_rays * grid_layout->npts_global_gspace[2] *
                sizeof(double complex));
 #pragma omp parallel for default(none)                                         \
     shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
     for (int index = 0; index < grid_layout->npts_gs_local; index++) {
       int *index_g = grid_layout->index_to_g[index];
       for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-        if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
-            my_ray_to_xy[xy_ray][1] == index_g[2]) {
-          grid_layout->buffer_1[index_g[0] * my_number_of_rays + xy_ray] =
+        if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+            my_ray_to_xy[xy_ray][1] == index_g[1]) {
+          grid_layout->buffer_1[index_g[2] * my_number_of_rays + xy_ray] =
               grid_gs[index];
           break;
         }
@@ -1348,9 +1347,9 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         int *index_g = grid_layout->index_to_g[index];
         for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
-              my_ray_to_xy[xy_ray][1] == index_g[2]) {
-            grid_layout->buffer_1[index_g[0] * my_number_of_rays + xy_ray] =
+          if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+              my_ray_to_xy[xy_ray][1] == index_g[1]) {
+            grid_layout->buffer_1[index_g[2] * my_number_of_rays + xy_ray] =
                 grid_gs[index];
             break;
           }
@@ -1404,9 +1403,9 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
         int *index_g = grid_layout->index_to_g[index];
         for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-          if (my_ray_to_xy[xy_ray][0] == index_g[1] &&
-              my_ray_to_xy[xy_ray][1] == index_g[2]) {
-            grid_layout->buffer_1[index_g[0] * my_number_of_rays + xy_ray] =
+          if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+              my_ray_to_xy[xy_ray][1] == index_g[1]) {
+            grid_layout->buffer_1[index_g[2] * my_number_of_rays + xy_ray] =
                 grid_gs[index];
             break;
           }

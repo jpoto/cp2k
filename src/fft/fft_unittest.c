@@ -30,8 +30,8 @@ int main(int argc, char *argv[]) {
   errors += fft_test_distributed();
   errors += fft_test_transpose();
   errors += fft_test_transpose_parallel();
-  // errors += fft_test_3d();
-  // errors += fft_test_add_copy();
+  errors += fft_test_3d();
+  //  errors += fft_test_add_copy();
   fft_print_timing_report();
 
   // Test also the reference backend and without distributed FFTs from the
@@ -39,14 +39,18 @@ int main(int argc, char *argv[]) {
   if (fft_lib_use_mpi()) {
     fft_finalize_timer();
     fft_finalize_lib(NULL);
+
+    fflush(stdout);
+    cp_mpi_barrier(cp_mpi_get_comm_world());
+
     fft_init_timer(true);
     fft_init_lib(FFT_LIB_FFTW, FFT_MEASURE, false, NULL);
     errors += fft_test_local();
     errors += fft_test_distributed();
     errors += fft_test_transpose();
     errors += fft_test_transpose_parallel();
-    // errors += fft_test_3d();
-    // errors += fft_test_add_copy();
+    errors += fft_test_3d();
+    //  errors += fft_test_add_copy();
     fft_print_timing_report();
   }
 
