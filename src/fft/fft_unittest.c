@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
   cp_mpi_init(&argc, &argv);
 
   offload_set_chosen_device(0);
-  fft_init_timer(true);
+  fft_init_timer(false);
   fft_init_lib(FFT_LIB_FFTW, FFT_MEASURE, true, NULL);
 
   int errors = 0;
@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
     fflush(stdout);
     cp_mpi_barrier(cp_mpi_get_comm_world());
 
-    fft_init_timer(true);
+    fft_init_timer(false);
     fft_init_lib(FFT_LIB_FFTW, FFT_MEASURE, false, NULL);
     errors += fft_test_local();
     errors += fft_test_distributed();

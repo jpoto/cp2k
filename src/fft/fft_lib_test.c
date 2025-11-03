@@ -1733,8 +1733,11 @@ int fft_test_3d_distributed_r2c_low(const int fft_size[3],
 int fft_test_distributed() {
   int errors = 0;
 
+  const bool do_print = cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0;
+
   if (!fft_lib_use_mpi()) {
-    printf("Skipped testing the distributed FFT backend!\n");
+    if (do_print)
+      printf("Skipped testing the distributed FFT backend!\n");
     return 0;
   }
 
@@ -1751,7 +1754,7 @@ int fft_test_distributed() {
   errors += fft_test_3d_distributed_r2c_low((const int[3]){8, 8, 8}, 19);
   errors += fft_test_3d_distributed_r2c_low((const int[3]){7, 5, 3}, 11);
   clock_t end = clock();
-  if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0)
+  if (do_print)
     printf("Time to test distributed FFTs with planning: %f\n",
            (double)(end - begin) / CLOCKS_PER_SEC);
 
@@ -1768,7 +1771,7 @@ int fft_test_distributed() {
   errors += fft_test_3d_distributed_r2c_low((const int[3]){8, 8, 8}, 19);
   errors += fft_test_3d_distributed_r2c_low((const int[3]){7, 5, 3}, 11);
   end = clock();
-  if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0)
+  if (do_print)
     printf("Time to test distributed FFTs without planning: %f\n",
            (double)(end - begin) / CLOCKS_PER_SEC);
 

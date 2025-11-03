@@ -798,12 +798,6 @@ int fft_test_transpose_ray(const int npts_global[3],
              npts_global[0], npts_global[1], npts_global[2], npts_global_ref[0],
              npts_global_ref[1], npts_global_ref[2], use_halfspace, max_error);
     errors++;
-  } else {
-    if (my_process == 0)
-      printf("The transpose z_to_xy_ray works correctly (%i %i %i/%i "
-             "%i %i, HS: %i): %f!\n",
-             npts_global[0], npts_global[1], npts_global[2], npts_global_ref[0],
-             npts_global_ref[1], npts_global_ref[2], use_halfspace, max_error);
   }
 
   grid_free_fft_grid_layout(fft_grid_ray_layout);

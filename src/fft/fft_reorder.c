@@ -179,12 +179,10 @@ void collect_x_and_distribute_y_blocked(
   assert(send_offset == product3(my_sizes));
   assert(recv_offset == npts_global[0] * number_of_yz_pairs);
 
-  printf("%i Start communication\n", my_process);
   // Use collective MPI communication
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[1]);
-  printf("%i Done communication\n", my_process);
   memcpy(grid, transposed,
          npts_global[0] * my_sizes_transposed[1] * my_sizes_transposed[2] *
              sizeof(double complex));
@@ -276,8 +274,6 @@ void collect_z_and_distribute_y_blocked_transpose(
     recv_counts[process] = current_recv_count;
     send_offset += current_send_count;
     recv_offset += current_recv_count;
-    printf("%i sending %i elements to %i (summed: %i)\n", my_process,
-           current_send_count, rank, send_offset);
     double complex *send_buffer = transposed + send_displacements[process];
     double complex *grid_ptr =
         grid + proc2local_transposed[rank][1][0] * my_sizes[2];
@@ -290,7 +286,6 @@ void collect_z_and_distribute_y_blocked_transpose(
                               send_size_1 * my_sizes[0]);
     }
   }
-  printf("send offset %i/%i\n", send_offset, product3(my_sizes));
   assert(send_offset == product3(my_sizes));
   assert(recv_offset == product3(my_sizes_transposed));
 

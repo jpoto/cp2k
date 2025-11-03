@@ -214,13 +214,15 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
   if (use_fftw_mpi) {
     fftw_mpi_init();
     use_fftw_mpi = fft_fftw_test_mpi_backend();
-    if (!use_fftw_mpi) {
-      fprintf(stderr,
-              "Creation of a MPI plan failed! FFTW-MPI will not be used!\n");
-    } else {
-      fprintf(stdout, "Use FFTW-MPI!\n");
+    if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
+      if (!use_fftw_mpi) {
+        fprintf(stderr,
+                "Creation of a MPI plan failed! FFTW-MPI will not be used!\n");
+      } else {
+        fprintf(stdout, "Use FFTW-MPI!\n");
+      }
     }
-  } else {
+  } else if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
     fprintf(stdout, "Do not use FFTW-MPI!\n");
   }
 #else
@@ -231,7 +233,7 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
   // etc.
   if (wisdom_file != NULL) {
     const int error = fftw_import_wisdom_from_filename(wisdom_file);
-    if (error != 0 && cp_mpi_comm_rank(cp_mpi_get_comm_world()))
+    if (error != 0 && cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0)
       fprintf(stderr,
               "Importing wisdom failed! Maybe the file does not exist.");
   }
