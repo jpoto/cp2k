@@ -579,7 +579,7 @@ void fft_3d_fw_ray_low(double complex *restrict grid_buffer_1,
       // transpose the last two indices (is cheaper)
       // (x,y_d,z_d) -> (y_d,x,z_d)
       transpose_local_complex_block(
-          grid_buffer_1, grid_buffer_2, fft_sizes_rs[0], fft_sizes_rs[1],
+          grid_buffer_1, grid_buffer_2, fft_sizes_rs[1], fft_sizes_rs[0],
           fft_sizes_rs[2], fft_sizes_rs[1], fft_sizes_rs[2], fft_sizes_rs[0],
           fft_sizes_rs[2]);
       memcpy(grid_buffer_1, grid_buffer_2,
@@ -703,7 +703,8 @@ void fft_3d_fw_r2c_ray_low(double complex *restrict grid_buffer_1,
           npts_global[0], fft_sizes_rs[2], fft_sizes_rs[1], fft_sizes_rs[2],
           2 * npts_global_gspace[0], fft_sizes_rs[2]);
       memcpy((double *)grid_buffer_1, (double *)grid_buffer_2,
-             2 * product3(fft_sizes_rs) * sizeof(double));
+             2 * npts_global_gspace[0] * fft_sizes_rs[1] * fft_sizes_rs[2] *
+                 sizeof(double));
       // FFT (y_d,x,z_d) -> (x_d,y,z_d)
       fft_2d_fw_distributed_r2c((const int[2]){npts_global[1], npts_global[0]},
                                 fft_sizes_rs[2], sub_comm[1],
@@ -842,8 +843,8 @@ void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
       // Perform the first two FFTs in x- and y-direction
       // transpose the last two indices (is cheaper)
       // (x_d,y,z_d) -> (y_d,x,z_d)
-      fft_2d_bw_distributed((const int[2]){npts_global[1], npts_global[2]},
-                            fft_sizes_rs[0], sub_comm[1], grid_buffer_1,
+      fft_2d_bw_distributed((const int[2]){npts_global[1], npts_global[0]},
+                            fft_sizes_rs[2], sub_comm[1], grid_buffer_1,
                             grid_buffer_2);
       transpose_local_complex_block(
           grid_buffer_2, grid_buffer_1, fft_sizes_rs[0], fft_sizes_rs[1],
@@ -893,6 +894,7 @@ void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
     // Copy to the new format
     // Maybe, the order 1D FFT, redistribution to blocks and 2D FFT is
     // faster
+    memset(grid_buffer_1, 0, product3(npts_global) * sizeof(double complex));
 #pragma omp parallel for default(none)                                         \
     shared(npts_global, number_of_local_xy_rays, grid_buffer_2, ray_to_xy,     \
                grid_buffer_1) collapse(2)
@@ -972,7 +974,7 @@ void fft_3d_bw_c2r_ray_low(double complex *restrict grid_buffer_1,
                                    2 * npts_global_gspace[0], fft_sizes_rs[2],
                                    fft_sizes_rs[1], fft_sizes_rs[2]);
       memcpy((double *)grid_buffer_2, (double *)grid_buffer_1,
-             npts_global[0] * fft_sizes_rs[1] * npts_global[2] *
+             npts_global[0] * fft_sizes_rs[1] * fft_sizes_rs[2] *
                  sizeof(double));
     } else {
       // Perform the first FFT (xy_d,z) -> (z,xy_d)
@@ -1012,36 +1014,39 @@ void fft_3d_bw_c2r_ray_low(double complex *restrict grid_buffer_1,
                     true, false, grid_buffer_1, grid_buffer_2);
     // third FFT (y,z_d,x) -> (x,y,z_d)
     fft_1d_bw_local_c2r(npts_global[0], npts_global[1] * fft_sizes_ms[2], true,
-                        false, grid_buffer_1, (double *)grid_buffer_2);
+                        false, grid_buffer_2, (double *)grid_buffer_1);
+    memcpy((double *)grid_buffer_2, (double *)grid_buffer_1,
+           product3(fft_sizes_rs) * sizeof(double));
   } else {
-    fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
+    fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
                     grid_buffer_1, grid_buffer_2);
-    memset(grid_buffer_1, 0,
-           npts_global_gspace[0] * fft_sizes_ms[1] * fft_sizes_ms[2] *
-               sizeof(double complex));
-    // Copy to the new format
+    memset(grid_buffer_1, 0, product3(fft_sizes_ms) * sizeof(double complex));
+    // Copy to the cartesian format
     // Maybe, the order 1D FFT, redistribution to blocks and 2D FFT is
     // faster
 #pragma omp parallel for default(none)                                         \
     shared(npts_global, number_of_local_xy_rays, grid_buffer_2, ray_to_xy,     \
                grid_buffer_1, npts_global_gspace) collapse(2)
-    for (int index_z = 0; index_z < npts_global[2]; index_z++) {
+    for (int index_z = 0; index_z < npts_global_gspace[2]; index_z++) {
       for (int xy_ray = 0; xy_ray < number_of_local_xy_rays; xy_ray++) {
         const int index_x = ray_to_xy[xy_ray][0];
         const int index_y = ray_to_xy[xy_ray][1];
 
-        grid_buffer_1[(index_y * npts_global_gspace[0] + index_x) *
-                          npts_global[2] +
-                      index_z] =
-            grid_buffer_2[xy_ray * npts_global[2] + index_z];
+        grid_buffer_1[(index_z * npts_global_gspace[0] + index_x) *
+                          npts_global_gspace[1] +
+                      index_y] =
+            grid_buffer_2[index_z * number_of_local_xy_rays + xy_ray];
       }
     }
     // second FFT (z_d,x,y) -> (y,z_d,x)
-    fft_1d_bw_local(npts_global[1], npts_global_gspace[0] * fft_sizes_ms[2],
-                    true, false, grid_buffer_1, grid_buffer_2);
+    fft_1d_bw_local(npts_global_gspace[1],
+                    npts_global_gspace[0] * npts_global_gspace[2], true, false,
+                    grid_buffer_1, grid_buffer_2);
     // third FFT (y,z_d,x) -> (x,y,z_d)
-    fft_1d_bw_local_c2r(npts_global[0], npts_global[1] * fft_sizes_ms[2], true,
-                        false, grid_buffer_1, (double *)grid_buffer_2);
+    fft_1d_bw_local_c2r(npts_global[0], npts_global[1] * npts_global[2], true,
+                        false, grid_buffer_2, (double *)grid_buffer_1);
+    memcpy((double *)grid_buffer_2, (double *)grid_buffer_1,
+           product3(npts_global) * sizeof(double));
   }
 }
 

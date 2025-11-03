@@ -963,7 +963,9 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
         if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
             my_ray_to_xy[xy_ray][1] == index_g[1]) {
           grid_gs[index] =
-              grid_layout->buffer_2[index_g[2] * my_number_of_rays + xy_ray];
+              grid_layout
+                  ->buffer_2[xy_ray * grid_layout->npts_global_gspace[2] +
+                             index_g[2]];
           break;
         }
       }
@@ -1117,7 +1119,9 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
           if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
               my_ray_to_xy[xy_ray][1] == index_g[1]) {
             grid_gs[index] =
-                grid_layout->buffer_2[index_g[2] * my_number_of_rays + xy_ray];
+                grid_layout
+                    ->buffer_2[xy_ray * grid_layout->npts_global_gspace[2] +
+                               index_g[2]];
             break;
           }
         }
@@ -1170,7 +1174,9 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
           if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
               my_ray_to_xy[xy_ray][1] == index_g[1]) {
             grid_gs[index] =
-                grid_layout->buffer_2[index_g[2] * my_number_of_rays + xy_ray];
+                grid_layout
+                    ->buffer_2[xy_ray * grid_layout->npts_global_gspace[2] +
+                               index_g[2]];
             break;
           }
         }
@@ -1233,8 +1239,8 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
       for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
         if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
             my_ray_to_xy[xy_ray][1] == index_g[1]) {
-          grid_layout->buffer_1[index_g[2] * my_number_of_rays + xy_ray] =
-              grid_gs[index];
+          grid_layout->buffer_1[xy_ray * grid_layout->npts_global_gspace[2] +
+                                index_g[2]] = grid_gs[index];
           break;
         }
       }
@@ -1350,8 +1356,8 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
         for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
           if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
               my_ray_to_xy[xy_ray][1] == index_g[1]) {
-            grid_layout->buffer_1[index_g[2] * my_number_of_rays + xy_ray] =
-                grid_gs[index];
+            grid_layout->buffer_1[xy_ray * grid_layout->npts_global_gspace[2] +
+                                  index_g[2]] = grid_gs[index];
             break;
           }
         }
@@ -1407,8 +1413,8 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
         for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
           if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
               my_ray_to_xy[xy_ray][1] == index_g[1]) {
-            grid_layout->buffer_1[index_g[2] * my_number_of_rays + xy_ray] =
-                grid_gs[index];
+            grid_layout->buffer_1[xy_ray * grid_layout->npts_global_gspace[2] +
+                                  index_g[2]] = grid_gs[index];
             break;
           }
         }
