@@ -1342,7 +1342,7 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
       }
       const int my_number_of_rays = grid_layout->rays_per_process[my_process];
       memset(grid_layout->buffer_1, 0,
-             grid_layout->npts_global_gspace[0] * my_number_of_rays);
+             grid_layout->npts_global_gspace[2] * my_number_of_rays);
 #pragma omp parallel for default(none)                                         \
     shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {
@@ -1389,7 +1389,8 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
           grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
     }
     memcpy(grid_rs, (double *)grid_layout->buffer_2,
-           product3(local_sizes_rs) * sizeof(double));
+           grid_layout->npts_global[0] * local_sizes_rs[1] * local_sizes_rs[2] *
+               sizeof(double));
   } else {
     if (grid_layout->ray_distribution) {
       const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
@@ -1398,7 +1399,7 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
       }
       const int my_number_of_rays = grid_layout->rays_per_process[my_process];
       memset(grid_layout->buffer_1, 0,
-             grid_layout->npts_global_gspace[0] * my_number_of_rays);
+             grid_layout->npts_global_gspace[2] * my_number_of_rays);
 #pragma omp parallel for default(none)                                         \
     shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
       for (int index = 0; index < grid_layout->npts_gs_local; index++) {

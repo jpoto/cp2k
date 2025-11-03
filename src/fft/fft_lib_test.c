@@ -1519,8 +1519,9 @@ int fft_test_3d_distributed_low(const int fft_size[3], const int test_every) {
         number_of_tests++;
         memset(output_array, 0, buffer_size * sizeof(double complex));
         if (my >= local_n1_start && my < local_n1_start + local_n1)
-          output_array[(my - local_n1_start) * fft_size[0] * fft_size[2] +
-                       mz * fft_size[0] + mx] = 1.0;
+          output_array[((my - local_n1_start) * fft_size[2] + mz) *
+                           fft_size[0] +
+                       mx] = 1.0;
 
         fft_3d_bw_distributed(
             (const int[3]){fft_size[2], fft_size[1], fft_size[0]}, comm,
@@ -1533,8 +1534,7 @@ int fft_test_3d_distributed_low(const int fft_size[3], const int test_every) {
           for (int ny = 0; ny < fft_size[1]; ny++) {
             for (int nz = 0; nz < local_n2; nz++) {
               const double complex my_value =
-                  input_array[nz * fft_size[0] * fft_size[1] +
-                              ny * fft_size[0] + nx];
+                  input_array[(nz * fft_size[1] + ny) * fft_size[0] + nx];
               const double complex ref_value =
                   cexp(2.0 * I * pi *
                        (((double)mx) * nx / fft_size[0] +
