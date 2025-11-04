@@ -219,7 +219,7 @@ int main(int argc, char *argv[]) {
     fft_finalize_timer();
     fft_finalize_lib(NULL);
     fft_init_timer(false);
-    fft_init_lib(FFT_LIB_DEFAULT, FFT_PATIENT, false, NULL);
+    fft_init_lib(FFT_LIB_DEFAULT, FFT_ESTIMATE, false, NULL);
 
     // These are approximate grid sizes of the finest grid level for the
     // standard benchmark systems in benchmarks/QS
