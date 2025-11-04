@@ -41,6 +41,24 @@ void fft_finalize_lib(const char *wisdom_file);
 bool fft_lib_use_mpi();
 
 /*******************************************************************************
+ * \brief Ensure that buffers have a required size (in units of complex numbers)
+ * \author Frederick Stein
+ ******************************************************************************/
+void ensure_buffer_size(const int size);
+
+/*******************************************************************************
+ * \brief Get the first internal buffer
+ * \author Frederick Stein
+ ******************************************************************************/
+double complex *get_buffer_1();
+
+/*******************************************************************************
+ * \brief Get the second internal buffer
+ * \author Frederick Stein
+ ******************************************************************************/
+double complex *get_buffer_2();
+
+/*******************************************************************************
  * \brief Allocate buffer of type double.
  * \author Frederick Stein
  ******************************************************************************/

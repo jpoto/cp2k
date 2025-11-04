@@ -401,7 +401,7 @@ void fft_stop_timer(const int handle) {
       if (stack == NULL) {
         const char routine_name[] = "fft_library";
         const int global_handle = get_routine_handle(routine_name);
-        update_routine(global_handle, total_time, self_time);
+        update_routine(global_handle, total_time, 0.0);
       }
     }
   }

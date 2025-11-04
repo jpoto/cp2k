@@ -25,6 +25,10 @@ fft_lib fft_lib_choice = FFT_LIB_REF;
 #endif
 bool fft_lib_initialized = false;
 
+double complex *buffer_1 = NULL;
+double complex *buffer_2 = NULL;
+int buffer_size = -1;
+
 /*******************************************************************************
  * \brief Initialize the FFT library (if not done externally).
  * \author Frederick Stein
@@ -48,6 +52,9 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
   default:
     assert(0 && "Unknown FFT library.");
   }
+  fft_allocate_complex(1, &buffer_1);
+  fft_allocate_complex(1, &buffer_2);
+  buffer_size = 1;
 }
 
 /*******************************************************************************
@@ -57,6 +64,13 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
 void fft_finalize_lib(const char *wisdom_file) {
   fft_ref_finalize_lib();
   fft_fftw_finalize_lib(wisdom_file);
+  if (buffer_1 != NULL)
+    fft_free_complex(buffer_1);
+  if (buffer_2 != NULL)
+    fft_free_complex(buffer_2);
+  buffer_1 = NULL;
+  buffer_2 = NULL;
+  buffer_size = -1;
   fft_lib_initialized = false;
 }
 
@@ -75,6 +89,32 @@ bool fft_lib_use_mpi() {
     return false;
   }
 }
+
+/*******************************************************************************
+ * \brief Ensure that buffers have a required size (in units of complex numbers)
+ * \author Frederick Stein
+ ******************************************************************************/
+void ensure_buffer_size(const int size) {
+  if (buffer_size < size) {
+    fft_free_complex(buffer_1);
+    fft_free_complex(buffer_2);
+    fft_allocate_complex(size, &buffer_1);
+    fft_allocate_complex(size, &buffer_2);
+    buffer_size = size;
+  }
+}
+
+/*******************************************************************************
+ * \brief Get the first internal buffer
+ * \author Frederick Stein
+ ******************************************************************************/
+double complex *get_buffer_1() { return buffer_1; }
+
+/*******************************************************************************
+ * \brief Get the second internal buffer
+ * \author Frederick Stein
+ ******************************************************************************/
+double complex *get_buffer_2() { return buffer_2; }
 
 /*******************************************************************************
  * \brief Allocate buffer of type double.

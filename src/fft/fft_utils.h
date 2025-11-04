@@ -57,9 +57,9 @@ static inline int product3(const int array3[3]) {
  * \author Frederick Stein
  ******************************************************************************/
 static inline void transpose_local_complex(
-    double complex *restrict grid, double complex *restrict grid_transposed,
-    const int number_of_columns_grid, const int number_of_rows_grid,
-    const int total_number_of_columns_grid,
+    const double complex *restrict grid,
+    double complex *restrict grid_transposed, const int number_of_columns_grid,
+    const int number_of_rows_grid, const int total_number_of_columns_grid,
     const int total_number_of_columns_transposed) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
@@ -115,10 +115,10 @@ static inline void transpose_local_double(
  * \author Frederick Stein
  ******************************************************************************/
 static inline void transpose_local_complex_block(
-    double complex *restrict grid, double complex *restrict grid_transposed,
-    const int number_of_columns_grid, const int number_of_rows_grid,
-    const int block_size, const int total_number_of_columns_grid,
-    const int total_block_size_grid,
+    const double complex *restrict grid,
+    double complex *restrict grid_transposed, const int number_of_columns_grid,
+    const int number_of_rows_grid, const int block_size,
+    const int total_number_of_columns_grid, const int total_block_size_grid,
     const int total_number_of_columns_transposed,
     const int total_block_size_transp) {
   if (block_size == 1) {
@@ -212,15 +212,11 @@ static inline void transpose_xyz2zyx(const double complex *restrict grid,
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_xyz2zyx");
   const int handle = fft_start_timer(routine_name);
 
-  for (int index_x = 0; index_x < npts_0; index_x++) {
-    for (int index_y = 0; index_y < npts_1; index_y++) {
-      for (int index_z = 0; index_z < npts_2; index_z++) {
-        grid_transposed[(index_z * local_dim_transposed_0 + index_y) *
-                            local_dim_transposed_2 +
-                        index_x] =
-            grid[(index_x * local_dim_1 + index_y) * local_dim_2 + index_z];
-      }
-    }
+  for (int index_y = 0; index_y < npts_1; index_y++) {
+    transpose_local_complex(grid + index_y * local_dim_2,
+                            grid_transposed + index_y * local_dim_transposed_2,
+                            npts_2, npts_0, local_dim_1 * local_dim_2,
+                            local_dim_transposed_0 * local_dim_transposed_2);
   }
   fft_stop_timer(handle);
 }
@@ -239,15 +235,11 @@ static inline void transpose_xyz2zyx_double(
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_xyz2zyx_double");
   const int handle = fft_start_timer(routine_name);
 
-  for (int index_x = 0; index_x < npts_0; index_x++) {
-    for (int index_y = 0; index_y < npts_1; index_y++) {
-      for (int index_z = 0; index_z < npts_2; index_z++) {
-        grid_transposed[(index_z * local_dim_transposed_0 + index_y) *
-                            local_dim_transposed_2 +
-                        index_x] =
-            grid[(index_x * local_dim_1 + index_y) * local_dim_2 + index_z];
-      }
-    }
+  for (int index_y = 0; index_y < npts_1; index_y++) {
+    transpose_local_double(grid + index_y * local_dim_2,
+                           grid_transposed + index_y * local_dim_transposed_2,
+                           npts_2, npts_0, local_dim_1 * local_dim_2,
+                           local_dim_transposed_0 * local_dim_transposed_2);
   }
   fft_stop_timer(handle);
 }
