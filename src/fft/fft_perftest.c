@@ -168,7 +168,7 @@ int main(int argc, char *argv[]) {
     fflush(stdout);
   }
 
-  fft_init_timer(true);
+  fft_init_timer(false);
   fft_init_lib(FFT_LIB_FFTW, FFT_ESTIMATE, true, NULL);
 
   // These are approximate grid sizes of the finest grid level for the standard
@@ -211,14 +211,14 @@ int main(int argc, char *argv[]) {
   //   QS_low_scaling_GW
   run_test_r2c((const int[3]){600, 180, 120}, 10, true);
 
-  fft_print_timing_report();
+  fft_print_timing_report(0.01);
 
   // Test also the reference backend and without distributed FFTs from the
   // library
   if (fft_lib_use_mpi()) {
     fft_finalize_timer();
     fft_finalize_lib(NULL);
-    fft_init_timer(true);
+    fft_init_timer(false);
     fft_init_lib(FFT_LIB_DEFAULT, FFT_PATIENT, false, NULL);
 
     // These are approximate grid sizes of the finest grid level for the
@@ -261,7 +261,7 @@ int main(int argc, char *argv[]) {
     //   QS_low_scaling_GW
     run_test_r2c((const int[3]){600, 180, 120}, 10, true);
 
-    fft_print_timing_report();
+    fft_print_timing_report(0.01);
   }
 
   fft_finalize_lib(NULL);

@@ -62,7 +62,9 @@ void fft_library_finalize_F(const char *wisdom_file) {
   fft_finalize_lib(wisdom_file);
 }
 
-void fft_print_timing_report_F() { fft_print_timing_report(); }
+void fft_print_timing_report_F(const double threshold) {
+  fft_print_timing_report(threshold);
+}
 
 void fft_1d_fw_local_F(const int fft_size, const int number_of_ffts,
                        const bool transpose_rs, const bool transpose_gs,

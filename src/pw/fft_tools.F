@@ -235,7 +235,7 @@ CONTAINS
 
       ! finalize fft libs
 
-      CALL fft_print_timing_report()
+      CALL fft_print_timing_report(0.01_dp)
 
       CALL fft_library_finalize(wisdom_file)
 

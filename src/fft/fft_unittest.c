@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
   errors += fft_test_transpose_parallel();
   errors += fft_test_3d();
   //   errors += fft_test_add_copy();
-  fft_print_timing_report();
+  fft_print_timing_report(0.01);
 
   // Test also the reference backend and without distributed FFTs from the
   // library
@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
     errors += fft_test_transpose_parallel();
     errors += fft_test_3d();
     //   errors += fft_test_add_copy();
-    fft_print_timing_report();
+    fft_print_timing_report(0.01);
   }
 
   fft_finalize_lib(NULL);

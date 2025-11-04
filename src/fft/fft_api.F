@@ -12,6 +12,7 @@
 MODULE fft_api
    USE ISO_C_BINDING,                   ONLY: C_BOOL,&
                                               C_CHAR,&
+                                              C_DOUBLE,&
                                               C_DOUBLE_COMPLEX,&
                                               C_INT,&
                                               C_LOC,&
@@ -115,17 +116,21 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Print FFT library statistics
+!> \param threshold ...
 !> \author Frederick Stein
 ! **************************************************************************************************
-   SUBROUTINE fft_print_timing_report()
+   SUBROUTINE fft_print_timing_report(threshold)
+      REAL(KIND=dp), INTENT(IN)                          :: threshold
 
       INTERFACE
-         SUBROUTINE fft_print_timing_report_c() &
+         SUBROUTINE fft_print_timing_report_c(threshold) &
             BIND(C, name="fft_print_timing_report_F")
+            IMPORT :: C_DOUBLE
+            REAL(C_DOUBLE), VALUE :: threshold
          END SUBROUTINE fft_print_timing_report_c
       END INTERFACE
 
-      CALL fft_print_timing_report_c()
+      CALL fft_print_timing_report_c(threshold)
 
    END SUBROUTINE fft_print_timing_report
 

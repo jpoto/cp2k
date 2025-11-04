@@ -46,7 +46,7 @@ int buffer_size_timed_routines = 0;
 bool debug_mode = false;
 
 /*******************************************************************************
- * \brief Tring duplication. Can be removed with migration to C23.
+ * \brief String duplication. Can be removed with migration to C23.
  * \param handle Handle of the pushed function
  * \author Frederick Stein
  ******************************************************************************/
@@ -216,7 +216,7 @@ void fft_init_timer(const bool use_debug_mode) {
  * \note To be called by all MPI ranks
  * \author Frederick Stein
  ******************************************************************************/
-void fft_print_timing_report() {
+void fft_print_timing_report(const double threshold) {
   assert(omp_get_num_threads() == 1);
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
   if (timers_initialized) {
@@ -289,15 +289,19 @@ void fft_print_timing_report() {
               " TIME         TIME   "
               "      TIME        TIME   \n");
       for (int routine = 0; routine < size_of_timing_statistics; routine++) {
-        if (timing_statistics[routine].number_of_calls > 0)
-          fprintf(stdout,
-                  " %-43s %7i      %7.3f      %7.3f     %7.3f     %7.3f\n",
-                  timing_statistics[routine].routine_name,
-                  timing_statistics[routine].number_of_calls,
-                  timing_statistics[routine].avg_self_time,
-                  timing_statistics[routine].max_self_time,
-                  timing_statistics[routine].avg_total_time,
-                  timing_statistics[routine].max_total_time);
+        if (threshold <= 0.0 ||
+            timing_statistics[routine].max_total_time >=
+                threshold * timing_statistics[0].max_total_time) {
+          if (timing_statistics[routine].number_of_calls > 0)
+            fprintf(stdout,
+                    " %-43s %7i      %7.3f      %7.3f     %7.3f     %7.3f\n",
+                    timing_statistics[routine].routine_name,
+                    timing_statistics[routine].number_of_calls,
+                    timing_statistics[routine].avg_self_time,
+                    timing_statistics[routine].max_self_time,
+                    timing_statistics[routine].avg_total_time,
+                    timing_statistics[routine].max_total_time);
+        }
         free(timing_statistics[routine].routine_name);
       }
       fprintf(stdout, " -------------------------------------------------------"
@@ -394,6 +398,11 @@ void fft_stop_timer(const int handle) {
         fflush(stdout);
       }
       update_routine(handle, total_time, self_time);
+      if (stack == NULL) {
+        const char routine_name[] = "fft_library";
+        const int global_handle = get_routine_handle(routine_name);
+        update_routine(global_handle, total_time, self_time);
+      }
     }
   }
 }

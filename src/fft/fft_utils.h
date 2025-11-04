@@ -7,7 +7,10 @@
 #ifndef FFT_UTILS_H
 #define FFT_UTILS_H
 
+#include "fft_timer.h"
+
 #include <complex.h>
+#include <stdio.h>
 #include <string.h>
 
 /*******************************************************************************
@@ -58,34 +61,24 @@ static inline void transpose_local_complex(
     const int number_of_columns_grid, const int number_of_rows_grid,
     const int total_number_of_columns_grid,
     const int total_number_of_columns_transposed) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_local_complex");
+  const int handle = fft_start_timer(routine_name);
 
-  const int number_of_double_complex_per_cache_line = 4;
-
-#pragma omp parallel for default(none) shared(                                 \
-        grid, grid_transposed, number_of_columns_grid, number_of_rows_grid,    \
-            total_number_of_columns_grid, total_number_of_columns_transposed,  \
-            number_of_double_complex_per_cache_line) collapse(2)
-  for (int column_index_start = 0; column_index_start < number_of_columns_grid;
-       column_index_start += number_of_double_complex_per_cache_line) {
-    for (int row_index_start = 0; row_index_start < number_of_rows_grid;
-         row_index_start += number_of_double_complex_per_cache_line) {
-      for (int column_index = column_index_start;
-           column_index <
-           imin(column_index_start + number_of_double_complex_per_cache_line,
-                number_of_columns_grid);
-           column_index++) {
-        for (int row_index = row_index_start;
-             row_index <
-             imin(row_index_start + number_of_double_complex_per_cache_line,
-                  number_of_rows_grid);
-             row_index++) {
-          grid_transposed[column_index * total_number_of_columns_transposed +
-                          row_index] =
-              grid[row_index * total_number_of_columns_grid + column_index];
-        }
-      }
+#pragma omp parallel for default(none)                                         \
+    shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
+               total_number_of_columns_grid,                                   \
+               total_number_of_columns_transposed) collapse(2)
+  for (int column_index = 0; column_index < number_of_columns_grid;
+       column_index++) {
+    for (int row_index = 0; row_index < number_of_rows_grid; row_index++) {
+      grid_transposed[column_index * total_number_of_columns_transposed +
+                      row_index] =
+          grid[row_index * total_number_of_columns_grid + column_index];
     }
   }
+  fft_stop_timer(handle);
 }
 
 /*******************************************************************************
@@ -97,34 +90,24 @@ static inline void transpose_local_double(
     const int number_of_columns_grid, const int number_of_rows_grid,
     const int total_number_of_columns_grid,
     const int total_number_of_columns_transposed) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_local_double");
+  const int handle = fft_start_timer(routine_name);
 
-  const int number_of_doubles_per_cache_line = 8;
-
-#pragma omp parallel for default(none) shared(                                 \
-        grid, grid_transposed, number_of_columns_grid, number_of_rows_grid,    \
-            total_number_of_columns_grid, total_number_of_columns_transposed,  \
-            number_of_doubles_per_cache_line) collapse(2)
-  for (int column_index_start = 0; column_index_start < number_of_columns_grid;
-       column_index_start += number_of_doubles_per_cache_line) {
-    for (int row_index_start = 0; row_index_start < number_of_rows_grid;
-         row_index_start += number_of_doubles_per_cache_line) {
-      for (int column_index = column_index_start;
-           column_index <
-           imin(column_index_start + number_of_doubles_per_cache_line,
-                number_of_columns_grid);
-           column_index++) {
-        for (int row_index = row_index_start;
-             row_index <
-             imin(row_index_start + number_of_doubles_per_cache_line,
-                  number_of_rows_grid);
-             row_index++) {
-          grid_transposed[column_index * total_number_of_columns_transposed +
-                          row_index] =
-              grid[row_index * total_number_of_columns_grid + column_index];
-        }
-      }
+#pragma omp parallel for default(none)                                         \
+    shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
+               total_number_of_columns_grid,                                   \
+               total_number_of_columns_transposed) collapse(2)
+  for (int column_index = 0; column_index < number_of_columns_grid;
+       column_index++) {
+    for (int row_index = 0; row_index < number_of_rows_grid; row_index++) {
+      grid_transposed[column_index * total_number_of_columns_transposed +
+                      row_index] =
+          grid[row_index * total_number_of_columns_grid + column_index];
     }
   }
+  fft_stop_timer(handle);
 }
 
 /*******************************************************************************
@@ -143,6 +126,11 @@ static inline void transpose_local_complex_block(
                             number_of_rows_grid, number_of_columns_grid,
                             number_of_rows_grid);
   } else {
+    char routine_name[FFT_MAX_STRING_LENGTH + 1];
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH,
+             "transpose_local_complex_block");
+    const int handle = fft_start_timer(routine_name);
 #pragma omp parallel for default(none)                                         \
     shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
                block_size, total_block_size_grid,                              \
@@ -161,6 +149,7 @@ static inline void transpose_local_complex_block(
                block_size * sizeof(double complex));
       }
     }
+    fft_stop_timer(handle);
   }
 }
 
@@ -181,6 +170,11 @@ static inline void transpose_local_double_block(
         total_number_of_columns_grid * total_block_size_grid,
         total_number_of_columns_transposed * total_block_size_transposed);
   } else {
+    char routine_name[FFT_MAX_STRING_LENGTH + 1];
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH,
+             "transpose_local_double_block");
+    const int handle = fft_start_timer(routine_name);
 #pragma omp parallel for default(none)                                         \
     shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
                block_size, total_number_of_columns_transposed,                 \
@@ -198,6 +192,7 @@ static inline void transpose_local_double_block(
                block_size * sizeof(double));
       }
     }
+    fft_stop_timer(handle);
   }
 }
 
@@ -212,6 +207,11 @@ static inline void transpose_xyz2zyx(const double complex *restrict grid,
                                      const int local_dim_2,
                                      const int local_dim_transposed_0,
                                      const int local_dim_transposed_2) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_xyz2zyx");
+  const int handle = fft_start_timer(routine_name);
+
   for (int index_x = 0; index_x < npts_0; index_x++) {
     for (int index_y = 0; index_y < npts_1; index_y++) {
       for (int index_z = 0; index_z < npts_2; index_z++) {
@@ -222,6 +222,7 @@ static inline void transpose_xyz2zyx(const double complex *restrict grid,
       }
     }
   }
+  fft_stop_timer(handle);
 }
 
 /*******************************************************************************
@@ -233,6 +234,11 @@ static inline void transpose_xyz2zyx_double(
     const int npts_0, const int npts_1, const int npts_2, const int local_dim_1,
     const int local_dim_2, const int local_dim_transposed_0,
     const int local_dim_transposed_2) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_xyz2zyx_double");
+  const int handle = fft_start_timer(routine_name);
+
   for (int index_x = 0; index_x < npts_0; index_x++) {
     for (int index_y = 0; index_y < npts_1; index_y++) {
       for (int index_z = 0; index_z < npts_2; index_z++) {
@@ -243,6 +249,7 @@ static inline void transpose_xyz2zyx_double(
       }
     }
   }
+  fft_stop_timer(handle);
 }
 
 void dscal_(const int *n, const double *da, double *dx, const int *incx);
