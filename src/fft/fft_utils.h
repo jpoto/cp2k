@@ -10,6 +10,7 @@
 #include "fft_timer.h"
 
 #include <complex.h>
+#include <omp.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -69,7 +70,8 @@ static inline void transpose_local_complex(
 #pragma omp parallel for default(none)                                         \
     shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
                total_number_of_columns_grid,                                   \
-               total_number_of_columns_transposed) collapse(2)
+               total_number_of_columns_transposed)                             \
+    collapse(2) if (omp_get_num_threads() == 1)
   for (int column_index = 0; column_index < number_of_columns_grid;
        column_index++) {
     for (int row_index = 0; row_index < number_of_rows_grid; row_index++) {
@@ -98,7 +100,8 @@ static inline void transpose_local_double(
 #pragma omp parallel for default(none)                                         \
     shared(grid, grid_transposed, number_of_columns_grid, number_of_rows_grid, \
                total_number_of_columns_grid,                                   \
-               total_number_of_columns_transposed) collapse(2)
+               total_number_of_columns_transposed)                             \
+    collapse(2) if (omp_get_num_threads() == 1)
   for (int column_index = 0; column_index < number_of_columns_grid;
        column_index++) {
     for (int row_index = 0; row_index < number_of_rows_grid; row_index++) {
@@ -212,6 +215,9 @@ static inline void transpose_xyz2zyx(const double complex *restrict grid,
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_xyz2zyx");
   const int handle = fft_start_timer(routine_name);
 
+#pragma omp parallel for default(none)                                         \
+    shared(grid, grid_transposed, npts_0, npts_1, npts_2, local_dim_1,         \
+               local_dim_2, local_dim_transposed_0, local_dim_transposed_2)
   for (int index_y = 0; index_y < npts_1; index_y++) {
     transpose_local_complex(grid + index_y * local_dim_2,
                             grid_transposed + index_y * local_dim_transposed_2,
@@ -235,6 +241,9 @@ static inline void transpose_xyz2zyx_double(
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "transpose_xyz2zyx_double");
   const int handle = fft_start_timer(routine_name);
 
+#pragma omp parallel for default(none)                                         \
+    shared(grid, grid_transposed, npts_0, npts_1, npts_2, local_dim_1,         \
+               local_dim_2, local_dim_transposed_0, local_dim_transposed_2)
   for (int index_y = 0; index_y < npts_1; index_y++) {
     transpose_local_double(grid + index_y * local_dim_2,
                            grid_transposed + index_y * local_dim_transposed_2,

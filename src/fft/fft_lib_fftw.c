@@ -1134,6 +1134,7 @@ void fft_fftw_3d_fw_local(const int fft_size[3], double complex *grid_in,
                           double complex *grid_out) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
+#if 0
   if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
        omp_get_max_threads() > 1) &&
 #if defined(__FFTW3_UNALIGNED)
@@ -1142,17 +1143,20 @@ void fft_fftw_3d_fw_local(const int fft_size[3], double complex *grid_in,
       (fftw_planning_mode == FFTW_ESTIMATE)
 #endif
   ) {
-    fft_fftw_1d_fw_local(fft_size[2], fft_size[0] * fft_size[1], false, true,
-                         grid_in, grid_out);
-    fft_fftw_1d_fw_local(fft_size[1], fft_size[0] * fft_size[2], false, true,
-                         grid_out, grid_in);
-    fft_fftw_1d_fw_local(fft_size[0], fft_size[1] * fft_size[2], false, true,
-                         grid_in, grid_out);
+  fft_fftw_1d_fw_local(fft_size[2], fft_size[0] * fft_size[1], false, true,
+                       grid_in, grid_out);
+  fft_fftw_1d_fw_local(fft_size[1], fft_size[0] * fft_size[2], false, true,
+                       grid_out, grid_in);
+  fft_fftw_1d_fw_local(fft_size[0], fft_size[1] * fft_size[2], false, true,
+                       grid_in, grid_out);
   } else {
-    fftw_plan *plan = fft_fftw_create_3d_plan(FFTW_FORWARD, fft_size, grid_out,
-                                              grid_in == grid_out);
-    fftw_execute_dft(*plan, grid_in, grid_out);
+#endif
+  fftw_plan *plan = fft_fftw_create_3d_plan(FFTW_FORWARD, fft_size, grid_out,
+                                            grid_in == grid_out);
+  fftw_execute_dft(*plan, grid_in, grid_out);
+#if 0
   }
+#endif
 #else
   (void)fft_size;
   (void)grid_in;
@@ -1169,9 +1173,29 @@ void fft_fftw_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
                               double complex *grid_out) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
+#if 0
+  if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
+       omp_get_max_threads() > 1) &&
+#if defined(__FFTW3_UNALIGNED)
+      (fftw_planning_mode == FFTW_ESTIMATE + FFTW_UNALIGNED)
+#else
+      (fftw_planning_mode == FFTW_ESTIMATE)
+#endif
+  ) {
+  fft_fftw_1d_fw_local_r2c(fft_size[2], fft_size[0] * fft_size[1], false, true,
+                           grid_in, grid_out);
+  fft_fftw_1d_fw_local(fft_size[1], fft_size[0] * (fft_size[2] / 2 + 1), false,
+                       true, grid_out, (double complex *)grid_in);
+  fft_fftw_1d_fw_local(fft_size[0], fft_size[1] * (fft_size[2] / 2 + 1), false,
+                       true, (double complex *)grid_in, grid_out);
+  } else {
+#endif
   fftw_plan *plan = fft_fftw_create_3d_plan_r2c(
       FFTW_FORWARD, fft_size, grid_out, (double complex *)grid_in == grid_out);
   fftw_execute_dft_r2c(*plan, grid_in, grid_out);
+#if 0
+  }
+#endif
 #else
   (void)fft_size;
   (void)number_of_ffts;
@@ -1191,18 +1215,29 @@ void fft_fftw_3d_bw_local(const int fft_size[3], double complex *grid_in,
                           double complex *grid_out) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
-  if (false && has_guru_interface) {
-    fft_fftw_1d_bw_local(fft_size[0], fft_size[1] * fft_size[2], false, true,
-                         grid_in, grid_out);
-    fft_fftw_1d_bw_local(fft_size[1], fft_size[0] * fft_size[2], false, true,
-                         grid_out, grid_in);
-    fft_fftw_1d_bw_local(fft_size[2], fft_size[0] * fft_size[1], false, true,
-                         grid_in, grid_out);
+#if 0
+  if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
+       omp_get_max_threads() > 1) &&
+#if defined(__FFTW3_UNALIGNED)
+      (fftw_planning_mode == FFTW_ESTIMATE + FFTW_UNALIGNED)
+#else
+      (fftw_planning_mode == FFTW_ESTIMATE)
+#endif
+  ) {
+  fft_fftw_1d_bw_local(fft_size[0], fft_size[1] * fft_size[2], false, true,
+                       grid_in, grid_out);
+  fft_fftw_1d_bw_local(fft_size[1], fft_size[0] * fft_size[2], false, true,
+                       grid_out, grid_in);
+  fft_fftw_1d_bw_local(fft_size[2], fft_size[0] * fft_size[1], false, true,
+                       grid_in, grid_out);
   } else {
-    fftw_plan *plan = fft_fftw_create_3d_plan(FFTW_BACKWARD, fft_size, grid_out,
-                                              grid_in == grid_out);
-    fftw_execute_dft(*plan, grid_in, grid_out);
+#endif
+  fftw_plan *plan = fft_fftw_create_3d_plan(FFTW_BACKWARD, fft_size, grid_out,
+                                            grid_in == grid_out);
+  fftw_execute_dft(*plan, grid_in, grid_out);
+#if 0
   }
+#endif
 #else
   (void)fft_size;
   (void)grid_in;
@@ -1219,10 +1254,30 @@ void fft_fftw_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
                               double *grid_out) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
+#if 0
+  if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
+       omp_get_max_threads() > 1) &&
+#if defined(__FFTW3_UNALIGNED)
+      (fftw_planning_mode == FFTW_ESTIMATE + FFTW_UNALIGNED)
+#else
+      (fftw_planning_mode == FFTW_ESTIMATE)
+#endif
+  ) {
+  fft_fftw_1d_bw_local(fft_size[0], fft_size[1] * (fft_size[2] / 2 + 1), false,
+                       true, grid_in, (double complex *)grid_out);
+  fft_fftw_1d_bw_local(fft_size[1], fft_size[0] * (fft_size[2] / 2 + 1), false,
+                       true, (double complex *)grid_out, grid_in);
+  fft_fftw_1d_bw_local_c2r(fft_size[2], fft_size[0] * fft_size[1], false, true,
+                           grid_in, grid_out);
+  } else {
+#endif
   fftw_plan *plan = fft_fftw_create_3d_plan_r2c(
       FFTW_BACKWARD, fft_size, (double complex *)grid_out,
       grid_in == (double complex *)grid_out);
   fftw_execute_dft_c2r(*plan, grid_in, grid_out);
+#if 0
+  }
+#endif
 #else
   (void)fft_size;
   (void)number_of_ffts;
