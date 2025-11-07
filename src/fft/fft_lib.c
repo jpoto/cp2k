@@ -567,6 +567,102 @@ void fft_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
 }
 
 /*******************************************************************************
+ * \brief Performs a local C2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fw_guru(int rank, const fft_iodim *dims, int howmany_rank,
+                 const fft_iodim *howmany_dims, const int number_of_threads,
+                 double complex *grid_in, double complex *grid_out) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_c2c_local");
+  const int handle = fft_start_timer(routine_name);
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
+    assert(0 && "Guru interface not implemented with the reference backend");
+  case FFT_LIB_FFTW:
+    fft_fftw_fw_guru(rank, dims, howmany_rank, howmany_dims, number_of_threads,
+                     grid_in, grid_out);
+    break;
+  default:
+    assert(0 && "Unknown FFT library.");
+  }
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs a local forward R2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fw_guru_r2c(int rank, const fft_iodim *dims, int howmany_rank,
+                     const fft_iodim *howmany_dims, const int number_of_threads,
+                     double *grid_in, double complex *grid_out) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_local");
+  const int handle = fft_start_timer(routine_name);
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
+    assert(0 && "Guru interface not implemented with the reference backend");
+  case FFT_LIB_FFTW:
+    fft_fftw_fw_guru_r2c(rank, dims, howmany_rank, howmany_dims,
+                         number_of_threads, grid_in, grid_out);
+    break;
+  default:
+    assert(0 && "Unknown FFT library.");
+  }
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs a local backwards C2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_bw_guru(int rank, const fft_iodim *dims, int howmany_rank,
+                 const fft_iodim *howmany_dims, const int number_of_threads,
+                 double complex *grid_in, double complex *grid_out) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2c_local");
+  const int handle = fft_start_timer(routine_name);
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
+    assert(0 && "Guru interface not implemented with the reference backend");
+  case FFT_LIB_FFTW:
+    fft_fftw_bw_guru(rank, dims, howmany_rank, howmany_dims, number_of_threads,
+                     grid_in, grid_out);
+    break;
+  default:
+    assert(0 && "Unknown FFT library.");
+  }
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs a local backwards R2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_bw_guru_c2r(int rank, const fft_iodim *dims, int howmany_rank,
+                     const fft_iodim *howmany_dims, const int number_of_threads,
+                     double complex *grid_in, double *grid_out) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_local");
+  const int handle = fft_start_timer(routine_name);
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
+    assert(0 && "Guru interface not implemented with the reference backend");
+  case FFT_LIB_FFTW:
+    fft_fftw_bw_guru_c2r(rank, dims, howmany_rank, howmany_dims,
+                         number_of_threads, grid_in, grid_out);
+    break;
+  default:
+    assert(0 && "Unknown FFT library.");
+  }
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
  * \brief Return buffer size and local sizes and start for distributed 2D FFTs.
  * \author Frederick Stein
  ******************************************************************************/

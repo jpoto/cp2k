@@ -199,6 +199,38 @@ void fft_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
                          double *grid_out);
 
 /*******************************************************************************
+ * \brief Performs a local C2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fw_guru(int rank, const fft_iodim *dims, int howmany_rank,
+                 const fft_iodim *howmany_dims, const int number_of_threads,
+                 double complex *grid_in, double complex *grid_out);
+
+/*******************************************************************************
+ * \brief Performs a local forward R2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fw_guru_r2c(int rank, const fft_iodim *dims, int howmany_rank,
+                     const fft_iodim *howmany_dims, const int number_of_threads,
+                     double *grid_in, double complex *grid_out);
+
+/*******************************************************************************
+ * \brief Performs a local backwards C2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_bw_guru(int rank, const fft_iodim *dims, int howmany_rank,
+                 const fft_iodim *howmany_dims, const int number_of_threads,
+                 double complex *grid_in, double complex *grid_out);
+
+/*******************************************************************************
+ * \brief Performs a local backwards R2C FFT using the Guru interface.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_bw_guru_c2r(int rank, const fft_iodim *dims, int howmany_rank,
+                     const fft_iodim *howmany_dims, const int number_of_threads,
+                     double complex *grid_in, double *grid_out);
+
+/*******************************************************************************
  * \brief Return buffer size and local sizes and start for distributed 2D FFTs.
  * \author Frederick Stein
  ******************************************************************************/

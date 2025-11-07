@@ -739,6 +739,134 @@ fftw_plan *fft_fftw_create_3d_plan_r2c(const int direction,
   return plan;
 }
 
+/*******************************************************************************
+ * \brief Create plan of a local C2C 3D FFT.
+ * \author Frederick Stein
+ ******************************************************************************/
+fftw_plan *fft_fftw_create_guru_plan(const int direction, int rank,
+                                     const fft_iodim *dims, int howmany_rank,
+                                     const fft_iodim *howmany_dims,
+                                     const int number_of_threads,
+                                     double complex *grid_out,
+                                     const bool inplace) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_%cw_c2c_Plocal",
+           direction == FFTW_FORWARD ? 'f' : 'b');
+  const int handle = fft_start_timer(routine_name);
+
+  assert(rank + howmany_rank <= 3 &&
+         "Larger combined ranks than 3 are not implemented\n");
+
+  const int key[KEY_SIZE] = {
+      3 + FFTW_INPLACE * inplace, cp_mpi_comm_c2f(cp_mpi_get_comm_self()),
+      number_of_threads, direction,
+      // First, check whether we have enough ranks, then sum of ranks and pick
+      // the appropriate dimension (or 0)
+      rank > 0 ? dims[0].n : (rank + howmany_rank > 0 ? howmany_dims[0].n : 0),
+      rank > 1 ? dims[1].n
+               : (rank + howmany_rank > 1 ? howmany_dims[1 - rank].n : 0),
+      rank > 2 ? dims[2].n
+               : (rank + howmany_rank > 2 ? howmany_dims[2 - rank].n : 0),
+      rank > 0 ? dims[0].is
+               : (rank + howmany_rank > 0 ? howmany_dims[0].is : 0),
+      rank > 1 ? dims[1].is
+               : (rank + howmany_rank > 1 ? howmany_dims[1 - rank].is : 0),
+      rank > 2 ? dims[2].is
+               : (rank + howmany_rank > 2 ? howmany_dims[2 - rank].is : 0),
+      rank > 0 ? dims[0].os
+               : (rank + howmany_rank > 0 ? howmany_dims[0].os : 0),
+      rank > 1 ? dims[1].os
+               : (rank + howmany_rank > 1 ? howmany_dims[1 - rank].os : 0),
+      rank > 2 ? dims[2].os
+               : (rank + howmany_rank > 2 ? howmany_dims[2 - rank].os : 0)};
+  fftw_plan *plan = lookup_plan_from_cache(key);
+  if (plan == NULL) {
+    fftw_plan_with_nthreads(number_of_threads);
+    // Let's get an upper bound for the number elements per buffer
+    int max_number_of_elements_in = 0;
+    for (int r = 0; r < rank; r++)
+      max_number_of_elements_in += dims[r].n * dims[r].is;
+    for (int r = 0; r < howmany_rank; r++)
+      max_number_of_elements_in += howmany_dims[r].n * howmany_dims[r].is;
+    double complex *buffer_1 = fftw_alloc_complex(max_number_of_elements_in);
+    double complex *buffer_2 = inplace ? buffer_1 : grid_out;
+    plan = malloc(sizeof(fftw_plan));
+    *plan = fftw_plan_guru_dft(rank, dims, howmany_rank, howmany_dims, buffer_1,
+                               buffer_2, direction, fftw_planning_mode);
+    add_plan_to_cache(key, plan);
+    assert(plan != NULL);
+    fftw_free(buffer_1);
+  }
+  fft_stop_timer(handle);
+  return plan;
+}
+
+/*******************************************************************************
+ * \brief Create plan of a local R2C/C2R 3D FFT.
+ * \author Frederick Stein
+ ******************************************************************************/
+fftw_plan *fft_fftw_create_guru_plan_r2c(
+    const int direction, int rank, const fft_iodim *dims, int howmany_rank,
+    const fft_iodim *howmany_dims, const int number_of_threads,
+    double complex *grid_out, const bool inplace) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_%s_Plocal",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  const int handle = fft_start_timer(routine_name);
+
+  const int key[KEY_SIZE] = {
+      3 + FFTW_R2C + FFTW_INPLACE * inplace,
+      cp_mpi_comm_c2f(cp_mpi_get_comm_self()), number_of_threads, direction,
+      // First, check whether we have enough ranks, then sum of ranks and pick
+      // the appropriate dimension (or 0)
+      rank > 0 ? dims[0].n : (rank + howmany_rank > 0 ? howmany_dims[0].n : 0),
+      rank > 1 ? dims[1].n
+               : (rank + howmany_rank > 1 ? howmany_dims[1 - rank].n : 0),
+      rank > 2 ? dims[2].n
+               : (rank + howmany_rank > 2 ? howmany_dims[2 - rank].n : 0),
+      rank > 0 ? dims[0].is
+               : (rank + howmany_rank > 0 ? howmany_dims[0].is : 0),
+      rank > 1 ? dims[1].is
+               : (rank + howmany_rank > 1 ? howmany_dims[1 - rank].is : 0),
+      rank > 2 ? dims[2].is
+               : (rank + howmany_rank > 2 ? howmany_dims[2 - rank].is : 0),
+      rank > 0 ? dims[0].os
+               : (rank + howmany_rank > 0 ? howmany_dims[0].os : 0),
+      rank > 1 ? dims[1].os
+               : (rank + howmany_rank > 1 ? howmany_dims[1 - rank].os : 0),
+      rank > 2 ? dims[2].os
+               : (rank + howmany_rank > 2 ? howmany_dims[2 - rank].os : 0)};
+  fftw_plan *plan = lookup_plan_from_cache(key);
+  if (plan == NULL) {
+    fftw_plan_with_nthreads(number_of_threads);
+    int max_number_of_elements_in = 0;
+    for (int r = 0; r < rank; r++)
+      max_number_of_elements_in += dims[r].n * dims[r].is;
+    for (int r = 0; r < howmany_rank; r++)
+      max_number_of_elements_in += howmany_dims[r].n * howmany_dims[r].is;
+    double *double_buffer = fftw_alloc_real(max_number_of_elements_in);
+    double complex *complex_buffer =
+        inplace ? (double complex *)double_buffer : grid_out;
+    plan = malloc(sizeof(fftw_plan));
+    if (direction == FFTW_FORWARD) {
+      *plan = fftw_plan_guru_dft_r2c(rank, dims, howmany_rank, howmany_dims,
+                                     double_buffer, complex_buffer,
+                                     fftw_planning_mode);
+    } else {
+      *plan = fftw_plan_guru_dft_c2r(rank, dims, howmany_rank, howmany_dims,
+                                     complex_buffer, double_buffer,
+                                     fftw_planning_mode);
+    }
+    add_plan_to_cache(key, plan);
+    assert(plan != NULL);
+    fftw_free(double_buffer);
+  }
+  fft_stop_timer(handle);
+  return plan;
+}
+
 #if defined(__USE_FFTW3_MPI)
 /*******************************************************************************
  * \brief Create plan of a distributed C2C 2D FFT.
@@ -1208,6 +1336,110 @@ void fft_fftw_2d_bw_local_c2r(const int fft_size[2], const int number_of_ffts,
   (void)grid_out;
   (void)transpose_rs;
   (void)transpose_gs;
+  assert(0 && "The grid library was not compiled with FFTW support.");
+#endif
+}
+
+/*******************************************************************************
+ * \brief Performs a local C2C 3D FFT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fftw_fw_guru(int rank, const fft_iodim *dims, int howmany_rank,
+                      const fft_iodim *howmany_dims,
+                      const int number_of_threads, double complex *grid_in,
+                      double complex *grid_out) {
+#if defined(__FFTW3)
+  assert(has_guru_interface);
+  fftw_plan *plan = fft_fftw_create_guru_plan(
+      FFTW_FORWARD, rank, dims, howmany_rank, howmany_dims, number_of_threads,
+      grid_out, grid_in == grid_out);
+  fftw_execute_dft(*plan, grid_in, grid_out);
+#else
+  (void)rank;
+  (void)dims;
+  (void)howmany_rank;
+  (void)howmany_dims;
+  (void)number_of_threads;
+  (void)grid_in;
+  (void)grid_out;
+  assert(0 && "The grid library was not compiled with FFTW support.");
+#endif
+}
+
+/*******************************************************************************
+ * \brief Performs a local forward R2C 3D FFT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fftw_fw_guru_r2c(int rank, const fft_iodim *dims, int howmany_rank,
+                          const fft_iodim *howmany_dims,
+                          const int number_of_threads, double *grid_in,
+                          double complex *grid_out) {
+#if defined(__FFTW3)
+  assert(has_guru_interface);
+  fftw_plan *plan = fft_fftw_create_guru_plan_r2c(
+      FFTW_FORWARD, rank, dims, howmany_rank, howmany_dims, number_of_threads,
+      grid_out, grid_in == (double *)grid_out);
+  fftw_execute_dft_r2c(*plan, grid_in, grid_out);
+#else
+  (void)rank;
+  (void)dims;
+  (void)howmany_rank;
+  (void)howmany_dims;
+  (void)number_of_threads;
+  (void)grid_in;
+  (void)grid_out;
+  assert(0 && "The grid library was not compiled with FFTW support.");
+#endif
+}
+
+/*******************************************************************************
+ * \brief Performs a local backwards C2C 3D FFT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fftw_bw_guru(int rank, const fft_iodim *dims, int howmany_rank,
+                      const fft_iodim *howmany_dims,
+                      const int number_of_threads, double complex *grid_in,
+                      double complex *grid_out) {
+#if defined(__FFTW3)
+  assert(has_guru_interface);
+  fftw_plan *plan = fft_fftw_create_guru_plan(
+      FFTW_BACKWARD, rank, dims, howmany_rank, howmany_dims, number_of_threads,
+      grid_out, grid_in == grid_out);
+  fftw_execute_dft(*plan, grid_in, grid_out);
+#else
+  (void)rank;
+  (void)dims;
+  (void)howmany_rank;
+  (void)howmany_dims;
+  (void)number_of_threads;
+  (void)grid_in;
+  (void)grid_out;
+  assert(0 && "The grid library was not compiled with FFTW support.");
+#endif
+}
+
+/*******************************************************************************
+ * \brief Performs a local backwards R2C 3D FFT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_fftw_bw_guru_c2r(int rank, const fft_iodim *dims, int howmany_rank,
+                          const fft_iodim *howmany_dims,
+                          const int number_of_threads, double complex *grid_in,
+                          double *grid_out) {
+#if defined(__FFTW3)
+  assert(has_guru_interface);
+  fftw_plan *plan = fft_fftw_create_guru_plan_r2c(
+      FFTW_BACKWARD, rank, dims, howmany_rank, howmany_dims, number_of_threads,
+      (double complex *)grid_out, (double *)grid_in == grid_out);
+  fftw_execute_dft_c2r(*plan, grid_in, grid_out);
+#else
+  (void)rank;
+  (void)dims;
+  (void)howmany_rank;
+  (void)howmany_dims;
+  (void)number_of_threads;
+  (void)grid_in;
+  (void)grid_out;
   assert(0 && "The grid library was not compiled with FFTW support.");
 #endif
 }
