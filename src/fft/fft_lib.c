@@ -575,7 +575,8 @@ void fft_fw_guru(int rank, const fft_iodim *dims, int howmany_rank,
                  double complex *grid_in, double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_c2c_local");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_fw_c2c_%i_%i", rank,
+           howmany_rank);
   const int handle = fft_start_timer(routine_name);
   switch (fft_lib_choice) {
   case FFT_LIB_REF:
@@ -599,7 +600,8 @@ void fft_fw_guru_r2c(int rank, const fft_iodim *dims, int howmany_rank,
                      double *grid_in, double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_local");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_fw_r2c_%i_%i", rank,
+           howmany_rank);
   const int handle = fft_start_timer(routine_name);
   switch (fft_lib_choice) {
   case FFT_LIB_REF:
@@ -623,7 +625,8 @@ void fft_bw_guru(int rank, const fft_iodim *dims, int howmany_rank,
                  double complex *grid_in, double complex *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2c_local");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_bw_c2c_%i_%i", rank,
+           howmany_rank);
   const int handle = fft_start_timer(routine_name);
   switch (fft_lib_choice) {
   case FFT_LIB_REF:
@@ -647,7 +650,8 @@ void fft_bw_guru_c2r(int rank, const fft_iodim *dims, int howmany_rank,
                      double complex *grid_in, double *grid_out) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_local");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_bw_c2r_%i_%i", rank,
+           howmany_rank);
   const int handle = fft_start_timer(routine_name);
   switch (fft_lib_choice) {
   case FFT_LIB_REF:

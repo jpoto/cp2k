@@ -751,8 +751,8 @@ fftw_plan *fft_fftw_create_guru_plan(const int direction, int rank,
                                      const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_%cw_c2c_Plocal",
-           direction == FFTW_FORWARD ? 'f' : 'b');
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_%cw_c2c_Plocal_%i_%i",
+           direction == FFTW_FORWARD ? 'f' : 'b', rank, howmany_rank);
   const int handle = fft_start_timer(routine_name);
 
   assert(rank + howmany_rank <= 3 &&
@@ -812,8 +812,8 @@ fftw_plan *fft_fftw_create_guru_plan_r2c(
     double complex *grid_out, const bool inplace) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_%s_Plocal",
-           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_guru_%s_Plocal_%i_%i",
+           direction == FFTW_FORWARD ? "fw_r2c" : "bw_c2r", rank, howmany_rank);
   const int handle = fft_start_timer(routine_name);
 
   const int key[KEY_SIZE] = {
