@@ -49,6 +49,8 @@ FLAG_EXCEPTIONS = (
     r"__COMPILE_REVISION",
     r"__CRAY_PM_FAKE_ENERGY",
     r"__DATA_DIR",
+    r"__FFTW3_UNALIGNED",
+    r"KEY_SIZE",
     r"__FORCE_USE_FAST_MATH",
     r"__INTEL_LLVM_COMPILER",
     r"__INTEL_COMPILER",
