@@ -29,6 +29,7 @@ MODULE fft_api
 
    PUBLIC :: fft_library_init, fft_library_finalize
    PUBLIC :: fft_print_timing_report
+   PUBLIC :: fft_backend_in_use, fft_use_mpi, fft_has_guru_interface
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -133,6 +134,60 @@ CONTAINS
       CALL fft_print_timing_report_c(threshold)
 
    END SUBROUTINE fft_print_timing_report
+
+! **************************************************************************************************
+!> \brief Inquire the library backend in use
+!> \return ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   INTEGER FUNCTION fft_backend_in_use()
+
+      INTERFACE
+         INTEGER(C_INT) FUNCTION fft_backend_in_use_c() &
+            BIND(C, name="fft_backend_in_use_F")
+            IMPORT :: C_INT
+         END FUNCTION fft_backend_in_use_c
+      END INTERFACE
+
+      fft_backend_in_use = fft_backend_in_use_c()
+
+   END FUNCTION fft_backend_in_use
+
+! **************************************************************************************************
+!> \brief Inquire whether the library backend supports MPI
+!> \return ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   LOGICAL FUNCTION fft_use_mpi()
+
+      INTERFACE
+         LOGICAL(C_BOOL) FUNCTION fft_use_mpi_c() &
+            BIND(C, name="fft_use_mpi_F")
+            IMPORT :: C_BOOL
+         END FUNCTION fft_use_mpi_c
+      END INTERFACE
+
+      fft_use_mpi = fft_use_mpi_c()
+
+   END FUNCTION fft_use_mpi
+
+! **************************************************************************************************
+!> \brief Inquire whether a guru interface is available
+!> \return ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   LOGICAL FUNCTION fft_has_guru_interface()
+
+      INTERFACE
+         LOGICAL(C_BOOL) FUNCTION fft_has_guru_interface_c() &
+            BIND(C, name="fft_has_guru_interface_F")
+            IMPORT :: C_BOOL
+         END FUNCTION fft_has_guru_interface_c
+      END INTERFACE
+
+      fft_has_guru_interface = fft_has_guru_interface_c()
+
+   END FUNCTION fft_has_guru_interface
 
 ! **************************************************************************************************
 !> \brief Performs a complex-to-complex 1D forwards FFT

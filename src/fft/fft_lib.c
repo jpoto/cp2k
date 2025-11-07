@@ -78,12 +78,34 @@ void fft_finalize_lib(const char *wisdom_file) {
  * \brief Whether a compound MPI implementation is available.
  * \author Frederick Stein
  ******************************************************************************/
+int fft_lib_backend_in_use() { return fft_lib_choice; }
+
+/*******************************************************************************
+ * \brief Whether a compound MPI implementation is available.
+ * \author Frederick Stein
+ ******************************************************************************/
 bool fft_lib_use_mpi() {
   switch (fft_lib_choice) {
   case FFT_LIB_REF:
     return fft_ref_lib_use_mpi();
   case FFT_LIB_FFTW:
     return fft_fftw_lib_use_mpi();
+  default:
+    assert(0 && "Unknown FFT library.");
+    return false;
+  }
+}
+
+/*******************************************************************************
+ * \brief Whether a compound MPI implementation is available.
+ * \author Frederick Stein
+ ******************************************************************************/
+bool fft_lib_has_guru_interface() {
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
+    return false;
+  case FFT_LIB_FFTW:
+    return fft_fftw_lib_has_guru_interface();
   default:
     assert(0 && "Unknown FFT library.");
     return false;

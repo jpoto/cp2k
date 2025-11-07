@@ -35,10 +35,22 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
 void fft_finalize_lib(const char *wisdom_file);
 
 /*******************************************************************************
+ * \brief Inquire the library backend in use.
+ * \author Frederick Stein
+ ******************************************************************************/
+int fft_lib_backend_in_use();
+
+/*******************************************************************************
  * \brief Whether compound MPI implementations are available.
  * \author Frederick Stein
  ******************************************************************************/
 bool fft_lib_use_mpi();
+
+/*******************************************************************************
+ * \brief Whether compound MPI implementations are available.
+ * \author Frederick Stein
+ ******************************************************************************/
+bool fft_lib_has_guru_interface();
 
 /*******************************************************************************
  * \brief Ensure that buffers have a required size (in units of complex numbers)

@@ -175,6 +175,7 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
   if (is_initialized) {
     return;
   }
+  const bool is_print_rank = cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0;
   memset(cache, 0, sizeof(cache_entry) * FFTW_CACHE_SIZE);
   cache_oldest_entry = 0;
 
@@ -208,13 +209,20 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
 #endif
 
       has_guru_interface = is_guru_interface_available();
+  if (is_print_rank) {
+    if (has_guru_interface) {
+      fprintf(stdout, "Guru interface is available!\n");
+    } else {
+      fprintf(stdout, "Guru interface is not available!\n");
+    }
+  }
 
 #if defined(__USE_FFTW3_MPI)
   use_fftw_mpi = use_fft_mpi;
   if (use_fftw_mpi) {
     fftw_mpi_init();
     use_fftw_mpi = fft_fftw_test_mpi_backend();
-    if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
+    if (is_print_rank) {
       if (!use_fftw_mpi) {
         fprintf(stderr,
                 "Creation of a MPI plan failed! FFTW-MPI will not be used!\n");
@@ -222,7 +230,7 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
         fprintf(stdout, "Use FFTW-MPI!\n");
       }
     }
-  } else if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
+  } else if (is_print_rank) {
     fprintf(stdout, "Do not use FFTW-MPI!\n");
   }
 #else
@@ -233,7 +241,7 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
   // etc.
   if (wisdom_file != NULL) {
     const int error = fftw_import_wisdom_from_filename(wisdom_file);
-    if (error != 0 && cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0)
+    if (error != 0 && is_print_rank)
       fprintf(stderr,
               "Importing wisdom failed! Maybe the file does not exist.");
   }
@@ -293,6 +301,12 @@ bool fft_fftw_lib_use_mpi() {
   return false;
 #endif
 }
+
+/*******************************************************************************
+ * \brief Whether a distributed FFT implementation is available.
+ * \author Frederick Stein
+ ******************************************************************************/
+bool fft_fftw_lib_has_guru_interface() { return has_guru_interface; }
 
 /*******************************************************************************
  * \brief Allocate buffer of type double.

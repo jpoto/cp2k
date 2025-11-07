@@ -44,6 +44,12 @@ void fft_fftw_finalize_lib(const char *wisdom_file);
 bool fft_fftw_lib_use_mpi();
 
 /*******************************************************************************
+ * \brief Whether the guru interface is available.
+ * \author Frederick Stein
+ ******************************************************************************/
+bool fft_fftw_lib_has_guru_interface();
+
+/*******************************************************************************
  * \brief Allocate buffer of type double.
  * \author Frederick Stein
  ******************************************************************************/

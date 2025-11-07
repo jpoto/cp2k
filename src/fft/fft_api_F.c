@@ -66,6 +66,12 @@ void fft_print_timing_report_F(const double threshold) {
   fft_print_timing_report(threshold);
 }
 
+int fft_backend_in_use_F() { return fft_lib_backend_in_use(); }
+
+bool fft_use_mpi_F() { return fft_lib_use_mpi(); }
+
+bool fft_has_guru_interface_F() { return fft_lib_has_guru_interface(); }
+
 void fft_1d_fw_local_F(const int fft_size, const int number_of_ffts,
                        const bool transpose_rs, const bool transpose_gs,
                        double complex *grid_in, double complex *grid_out) {
