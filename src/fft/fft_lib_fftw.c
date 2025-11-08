@@ -164,7 +164,8 @@ bool fft_fftw_test_mpi_backend() {
  * \author Frederick Stein, Ole Schuett
  ******************************************************************************/
 void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
-                       const bool use_fft_mpi, const char *wisdom_file) {
+                       const bool use_fft_mpi, const bool use_guru_interface,
+                       const char *wisdom_file) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
   if (is_initialized) {
@@ -203,12 +204,19 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
   fftw_planning_mode += FFTW_UNALIGNED
 #endif
 
-      has_guru_interface = is_guru_interface_available();
-  if (is_print_rank) {
-    if (has_guru_interface) {
-      fprintf(stdout, "Guru interface is available!\n");
-    } else {
-      fprintf(stdout, "Guru interface is not available!\n");
+      has_guru_interface = use_guru_interface;
+  if (has_guru_interface) {
+    has_guru_interface = is_guru_interface_available();
+    if (is_print_rank) {
+      if (has_guru_interface) {
+        fprintf(stdout, "Guru interface is available!\n");
+      } else {
+        fprintf(stdout, "Guru interface is not available!\n");
+      }
+    }
+  } else {
+    if (is_print_rank) {
+      fprintf(stdout, "Guru interface not in use!\n");
     }
   }
 

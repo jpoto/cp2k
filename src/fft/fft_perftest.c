@@ -158,31 +158,26 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
   }
 }
 
-int main(int argc, char *argv[]) {
-  cp_mpi_init(&argc, &argv);
+void run_tests(const bool debug, const int backend, const int planning_mode,
+               const bool use_mpi, const bool use_guru,
+               const double threshold) {
+  fft_finalize_timer();
+  fft_finalize_lib(NULL);
+  fft_init_timer(debug);
+  fft_init_lib(backend, planning_mode, use_mpi, use_guru, NULL);
 
-  if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
-    printf("Number of processes: %i\n",
-           cp_mpi_comm_size(cp_mpi_get_comm_world()));
-    printf("Number of threads per process: %i\n", omp_get_max_threads());
-    fflush(stdout);
-  }
-
-  fft_init_timer(false);
-  fft_init_lib(FFT_LIB_FFTW, FFT_ESTIMATE, true, NULL);
-
-  // These are approximate grid sizes of the finest grid level for the standard
-  // benchmark systems in benchmarks/QS
+  // These are approximate grid sizes of the finest grid level for the
+  // standard benchmark systems in benchmarks/QS
   run_test_c2c((const int[3]){100, 100, 100}, 10);
   run_test_c2c((const int[3]){125, 125, 125}, 10);
   run_test_c2c((const int[3]){160, 160, 160}, 10);
   run_test_c2c((const int[3]){200, 200, 200}, 10);
-  run_test_c2c((const int[3]){250, 250, 250}, 10);
+  run_test_c2c((const int[3]){256, 256, 256}, 10);
   // run_test_c2c((const int[3]){315, 315, 315}, 10);
   // run_test_c2c((const int[3]){400, 400, 400}, 10);
-  //  run_test_c2c((const int[3]){500, 500, 500}, 10);
-  //  run_test_c2c((const int[3]){630, 630, 630}, 10);
-  //   QS_low_scaling_GW
+  // run_test_c2c((const int[3]){500, 500, 500}, 10);
+  // run_test_c2c((const int[3]){630, 630, 630}, 10);
+  //  QS_low_scaling_GW
   run_test_c2c((const int[3]){600, 180, 120}, 10);
 
   // Repeat using the half-space formalism (R2C/C2R FFTs)
@@ -211,57 +206,35 @@ int main(int argc, char *argv[]) {
   //   QS_low_scaling_GW
   run_test_r2c((const int[3]){600, 180, 120}, 10, true);
 
-  fft_print_timing_report(0.01);
+  fft_print_timing_report(threshold);
+}
+
+int main(int argc, char *argv[]) {
+  cp_mpi_init(&argc, &argv);
+
+  if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
+    printf("Number of processes: %i\n",
+           cp_mpi_comm_size(cp_mpi_get_comm_world()));
+    printf("Number of threads per process: %i\n", omp_get_max_threads());
+    fflush(stdout);
+  }
+
+  run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, true, true, 0.01);
 
   // Test also the reference backend and without distributed FFTs from the
   // library
   if (fft_lib_use_mpi()) {
-    fft_finalize_timer();
-    fft_finalize_lib(NULL);
-    fft_init_timer(false);
-    fft_init_lib(FFT_LIB_DEFAULT, FFT_ESTIMATE, false, NULL);
+    run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, false, true, 0.01);
+  }
 
-    // These are approximate grid sizes of the finest grid level for the
-    // standard benchmark systems in benchmarks/QS
-    run_test_c2c((const int[3]){100, 100, 100}, 10);
-    run_test_c2c((const int[3]){125, 125, 125}, 10);
-    run_test_c2c((const int[3]){160, 160, 160}, 10);
-    run_test_c2c((const int[3]){200, 200, 200}, 10);
-    run_test_c2c((const int[3]){256, 256, 256}, 10);
-    // run_test_c2c((const int[3]){315, 315, 315}, 10);
-    // run_test_c2c((const int[3]){400, 400, 400}, 10);
-    // run_test_c2c((const int[3]){500, 500, 500}, 10);
-    // run_test_c2c((const int[3]){630, 630, 630}, 10);
-    //  QS_low_scaling_GW
-    run_test_c2c((const int[3]){600, 180, 120}, 10);
+  if (fft_lib_has_guru_interface()) {
+    run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, true, false, 0.01);
 
-    // Repeat using the half-space formalism (R2C/C2R FFTs)
-    run_test_r2c((const int[3]){100, 100, 100}, 10, false);
-    run_test_r2c((const int[3]){125, 125, 125}, 10, false);
-    run_test_r2c((const int[3]){160, 160, 160}, 10, false);
-    run_test_r2c((const int[3]){200, 200, 200}, 10, false);
-    run_test_r2c((const int[3]){256, 256, 256}, 10, false);
-    // run_test_r2c((const int[3]){315, 315, 315}, 10, false);
-    // run_test_r2c((const int[3]){400, 400, 400}, 10, false);
-    //  run_test_r2c((const int[3]){500, 500, 500}, 10, false);
-    //  run_test_r2c((const int[3]){630, 630, 630}, 10, false);
-    //   QS_low_scaling_GW
-    run_test_r2c((const int[3]){600, 180, 120}, 10, false);
-
-    // Repeat using the half-space formalism (R2C/C2R FFTs)
-    run_test_r2c((const int[3]){100, 100, 100}, 10, true);
-    run_test_r2c((const int[3]){125, 125, 125}, 10, true);
-    run_test_r2c((const int[3]){160, 160, 160}, 10, true);
-    run_test_r2c((const int[3]){200, 200, 200}, 10, true);
-    run_test_r2c((const int[3]){256, 256, 256}, 10, true);
-    // run_test_r2c((const int[3]){315, 315, 315}, 10, true);
-    // run_test_r2c((const int[3]){400, 400, 400}, 10, true);
-    //  run_test_r2c((const int[3]){500, 500, 500}, 10, true);
-    //  run_test_r2c((const int[3]){630, 630, 630}, 10, true);
-    //   QS_low_scaling_GW
-    run_test_r2c((const int[3]){600, 180, 120}, 10, true);
-
-    fft_print_timing_report(0.01);
+    // Test also the reference backend and without distributed FFTs from the
+    // library
+    if (fft_lib_use_mpi()) {
+      run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, false, false, 0.01);
+    }
   }
 
   fft_finalize_lib(NULL);

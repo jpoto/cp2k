@@ -209,7 +209,7 @@ CONTAINS
 
       IF (fft_type <= 0) CPABORT("Unknown FFT library: "//TRIM(fftlib))
 
-      CALL fft_library_init(FFT_LIBRARY_BACKEND_DEFAULT, FFT_LIBRARY_FFTW_MODE_ESTIMATE, .FALSE., wisdom_file)
+      CALL fft_library_init(FFT_LIBRARY_BACKEND_DEFAULT, FFT_LIBRARY_FFTW_MODE_ESTIMATE, .TRUE., .TRUE., wisdom_file)
 
       CALL fft_do_init(fft_type, wisdom_file)
 

@@ -26,7 +26,8 @@ static const fft_lib FFT_LIB_DEFAULT = FFT_LIB_REF;
  * \author Frederick Stein
  ******************************************************************************/
 void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
-                  const bool use_fft_mpi, const char *wisdom_file);
+                  const bool use_fft_mpi, const bool use_guru_interface,
+                  const char *wisdom_file);
 
 /*******************************************************************************
  * \brief Finalize the FFT library (if not done externally).

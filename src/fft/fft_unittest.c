@@ -17,14 +17,17 @@
 #include "fft_reorder_test.h"
 #include "fft_timer.h"
 
-int main(int argc, char *argv[]) {
-  cp_mpi_init(&argc, &argv);
-
-  offload_set_chosen_device(0);
-  fft_init_timer(false);
-  fft_init_lib(FFT_LIB_FFTW, FFT_MEASURE, true, NULL);
-
+int run_tests(const bool debug, const int backend, const int planning_mode,
+              const bool use_mpi, const bool use_guru, const double threshold) {
   int errors = 0;
+  fft_finalize_timer();
+  fft_finalize_lib(NULL);
+
+  fflush(stdout);
+  cp_mpi_barrier(cp_mpi_get_comm_world());
+
+  fft_init_timer(debug);
+  fft_init_lib(backend, planning_mode, use_mpi, use_guru, NULL);
 
   errors += fft_test_local();
   errors += fft_test_distributed();
@@ -32,26 +35,33 @@ int main(int argc, char *argv[]) {
   errors += fft_test_transpose_parallel();
   errors += fft_test_3d();
   //   errors += fft_test_add_copy();
-  fft_print_timing_report(0.01);
+  fft_print_timing_report(threshold);
+
+  return errors;
+}
+
+int main(int argc, char *argv[]) {
+  cp_mpi_init(&argc, &argv);
+
+  offload_set_chosen_device(0);
+
+  int errors = run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, true, true, 0.01);
 
   // Test also the reference backend and without distributed FFTs from the
   // library
   if (fft_lib_use_mpi()) {
-    fft_finalize_timer();
-    fft_finalize_lib(NULL);
+    errors += run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, false, true, 0.01);
+  }
 
-    fflush(stdout);
-    cp_mpi_barrier(cp_mpi_get_comm_world());
+  if (fft_lib_has_guru_interface()) {
 
-    fft_init_timer(false);
-    fft_init_lib(FFT_LIB_FFTW, FFT_MEASURE, false, NULL);
-    errors += fft_test_local();
-    errors += fft_test_distributed();
-    errors += fft_test_transpose();
-    errors += fft_test_transpose_parallel();
-    errors += fft_test_3d();
-    //   errors += fft_test_add_copy();
-    fft_print_timing_report(0.01);
+    int errors = run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, true, false, 0.01);
+
+    // Test also the reference backend and without distributed FFTs from the
+    // library
+    if (fft_lib_use_mpi()) {
+      errors += run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, false, false, 0.01);
+    }
   }
 
   fft_finalize_lib(NULL);

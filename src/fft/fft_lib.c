@@ -34,14 +34,16 @@ int buffer_size = -1;
  * \author Frederick Stein
  ******************************************************************************/
 void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
-                  const bool use_fft_mpi, const char *wisdom_file) {
+                  const bool use_fft_mpi, const bool use_guru_interface,
+                  const char *wisdom_file) {
   if (fft_lib_initialized) {
     return;
   }
   fft_lib_initialized = true;
   fft_lib_choice = lib;
   fft_ref_init_lib();
-  fft_fftw_init_lib(fftw_planning_flag, use_fft_mpi, wisdom_file);
+  fft_fftw_init_lib(fftw_planning_flag, use_fft_mpi, use_guru_interface,
+                    wisdom_file);
   switch (fft_lib_choice) {
   case FFT_LIB_REF:
     printf("Using reference FFT library.\n");

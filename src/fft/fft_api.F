@@ -53,22 +53,24 @@ CONTAINS
 !> \param backend ...
 !> \param planning_mode ...
 !> \param use_fftw_mpi ...
+!> \param use_guru_interface ...
 !> \param wisdom_file ...
 !> \author Frederick Stein
 ! **************************************************************************************************
-   SUBROUTINE fft_library_init(backend, planning_mode, use_fftw_mpi, wisdom_file)
+   SUBROUTINE fft_library_init(backend, planning_mode, use_fftw_mpi, use_guru_interface, wisdom_file)
       INTEGER, INTENT(IN)                                :: backend, planning_mode
-      LOGICAL, INTENT(IN)                                :: use_fftw_mpi
+      LOGICAL, INTENT(IN)                                :: use_fftw_mpi, use_guru_interface
       CHARACTER(LEN=*), INTENT(IN)                       :: wisdom_file
 
       CHARACTER(KIND=C_CHAR, LEN=1), ALLOCATABLE, &
          DIMENSION(:), TARGET                            :: wisdom_file_c
       INTEGER                                            :: i
       INTERFACE
-         SUBROUTINE fft_library_init_c(backend, planning_mode, use_fftw_mpi, wisdom_file) BIND(C, name="fft_library_init_F")
+         SUBROUTINE fft_library_init_c(backend, planning_mode, use_fftw_mpi, use_guru_interface, &
+                                       wisdom_file) BIND(C, name="fft_library_init_F")
             IMPORT :: C_INT, C_BOOL, C_PTR
             INTEGER(C_INT), VALUE :: backend, planning_mode
-            LOGICAL(C_BOOL), VALUE :: use_fftw_mpi
+            LOGICAL(C_BOOL), VALUE :: use_fftw_mpi, use_guru_interface
             TYPE(C_PTR), VALUE :: wisdom_file
          END SUBROUTINE fft_library_init_c
       END INTERFACE
@@ -79,7 +81,8 @@ CONTAINS
       END DO
       wisdom_file_c(LEN_TRIM(wisdom_file) + 1) = C_NULL_CHAR
 
-      CALL fft_library_init_c(backend, planning_mode, LOGICAL(use_fftw_mpi, C_BOOL), C_LOC(wisdom_file_c))
+      CALL fft_library_init_c(backend, planning_mode, LOGICAL(use_fftw_mpi, C_BOOL), &
+                              LOGICAL(use_guru_interface, C_BOOL), C_LOC(wisdom_file_c))
 
       DEALLOCATE (wisdom_file_c)
 

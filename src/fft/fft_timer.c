@@ -289,8 +289,7 @@ void fft_print_timing_report(const double threshold) {
               " TIME         TIME   "
               "      TIME        TIME   \n");
       for (int routine = 0; routine < size_of_timing_statistics; routine++) {
-        if (threshold <= 0.0 ||
-            timing_statistics[routine].max_total_time >=
+        if (timing_statistics[routine].max_total_time >=
                 threshold * timing_statistics[0].max_total_time) {
           if (timing_statistics[routine].number_of_calls > 0)
             fprintf(stdout,
