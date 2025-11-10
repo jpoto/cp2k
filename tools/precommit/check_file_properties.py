@@ -139,6 +139,7 @@ C_EXTENSIONS = (".c", ".cu", ".cpp", ".cc", ".h", ".hpp")
 # Non-GPL licenses (directory, file, basename, or generally "startswith")
 BSD_PATHS = (
     "src/base/openmp_trace.c",
+    "src/common/cp_data_dir.h",
     "src/mpiwrap/cp_mpi.",
     "src/offload/",
     "src/grid/",

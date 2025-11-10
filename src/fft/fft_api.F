@@ -28,6 +28,7 @@ MODULE fft_api
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'fft_api'
 
    PUBLIC :: fft_library_init, fft_library_finalize
+   PUBLIC :: fft_library_acc_init, fft_library_acc_finalize
    PUBLIC :: fft_print_timing_report
    PUBLIC :: fft_backend_in_use, fft_use_mpi, fft_has_guru_interface
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
@@ -89,6 +90,20 @@ CONTAINS
    END SUBROUTINE fft_library_init
 
 ! **************************************************************************************************
+!> \brief Initialize FFT library
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_library_acc_init()
+      INTERFACE
+         SUBROUTINE fft_init_acc_lib_c() BIND(C, name="fft_init_acc_lib")
+         END SUBROUTINE fft_init_acc_lib_c
+      END INTERFACE
+
+      CALL fft_init_acc_lib_c()
+
+   END SUBROUTINE fft_library_acc_init
+
+! **************************************************************************************************
 !> \brief Finalize FFT library
 !> \param wisdom_file ...
 !> \author Frederick Stein
@@ -117,6 +132,20 @@ CONTAINS
       DEALLOCATE (wisdom_file_c)
 
    END SUBROUTINE fft_library_finalize
+
+! **************************************************************************************************
+!> \brief Finalize FFT library
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_library_acc_finalize()
+      INTERFACE
+         SUBROUTINE fft_library_acc_finalize_c() BIND(C, name="fft_finalize_acc_lib")
+         END SUBROUTINE fft_library_acc_finalize_c
+      END INTERFACE
+
+      CALL fft_library_acc_finalize_c()
+
+   END SUBROUTINE fft_library_acc_finalize
 
 ! **************************************************************************************************
 !> \brief Print FFT library statistics

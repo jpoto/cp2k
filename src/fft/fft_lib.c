@@ -6,9 +6,11 @@
 /*----------------------------------------------------------------------------*/
 
 #include "fft_lib.h"
+#include "../common/cp_data_dir.h"
 #include "fft_lib_fftw.h"
 #include "fft_lib_ref.h"
 #include "fft_timer.h"
+#include "fpga/fft_fpga.h"
 
 #include <assert.h>
 #include <math.h>
@@ -60,6 +62,23 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
 }
 
 /*******************************************************************************
+ * \brief Initialize the accelerated FFT library (FPGA+GPU).
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_init_acc_lib() {
+#if defined(__FFT_FPGA)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#error                                                                         \
+    "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_PW."
+  CPABORT("OFFLOAD and FPGA cannot be configured concurrently! Recompile with "
+          "-D__NO_OFFLOAD_PW.")
+#endif
+  const int stat = fft_fpga_initialize()
+      assert(stat == 0 && "Initialization of FPGA failed!");
+#endif
+}
+
+/*******************************************************************************
  * \brief Finalize the FFT library (if not done externally).
  * \author Frederick Stein
  ******************************************************************************/
@@ -74,6 +93,22 @@ void fft_finalize_lib(const char *wisdom_file) {
   buffer_2 = NULL;
   buffer_size = -1;
   fft_lib_initialized = false;
+}
+
+/*******************************************************************************
+ * \brief Finalize the accelerated FFT library.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_finalize_acc_lib() {
+#if defined(__FFT_FPGA)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#error                                                                         \
+    "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_PW."
+  CPABORT("OFFLOAD and FPGA cannot be configured concurrently! Recompile with "
+          "-D__NO_OFFLOAD_PW.")
+#endif
+  fft_fpga_final_();
+#endif
 }
 
 /*******************************************************************************
@@ -464,16 +499,35 @@ void fft_3d_fw_local(const int fft_size[3], double complex *grid_in,
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_c2c_local_%i_%i_%i",
            fft_size[0], fft_size[1], fft_size[2]);
   const int handle2 = fft_start_timer(routine_name);
-  switch (fft_lib_choice) {
-  case FFT_LIB_REF:
-    fft_ref_3d_fw_local(grid_in, grid_out, fft_size);
-    break;
-  case FFT_LIB_FFTW:
-    fft_fftw_3d_fw_local(fft_size, grid_in, grid_out);
-    break;
-  default:
-    assert(0 && "Unknown FFT library.");
+#if defined(__FFT_FPGA)
+  if (fft_fpga_check_bitstream_(get_data_dir(), fft_size)) {
+    const int number_of_elements = product3(fft_size);
+#if (__FFT_FPGA_SP && __FFT_FPGA)
+    float complex *grid_sp = calloc(number_of_elements, sizeof(float complex));
+    for (int i = 0; i < number_of_elements; i++)
+      grid_sp[i] = (float complex)grid_in[i];
+    fft_fpga_fft3d_sp_(1, fft_size, grid_sp);
+    for (int i = 0; i < number_of_elements; i++)
+      grid_out[i] = (double complex)grid_sp[i];
+#else
+    memcpy(grid_out, grid_in, number_of_elements * sizeof(double complex));
+    fft_fpga_fft3d_dp_(1, fft_size, grid_out);
+#endif
+  } else {
+#endif
+    switch (fft_lib_choice) {
+    case FFT_LIB_REF:
+      fft_ref_3d_fw_local(grid_in, grid_out, fft_size);
+      break;
+    case FFT_LIB_FFTW:
+      fft_fftw_3d_fw_local(fft_size, grid_in, grid_out);
+      break;
+    default:
+      assert(0 && "Unknown FFT library.");
+    }
+#if defined(__FFT_FPGA)
   }
+#endif
   fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
@@ -494,16 +548,36 @@ void fft_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_local_%i_%i_%i",
            fft_size[0], fft_size[1], fft_size[2]);
   const int handle2 = fft_start_timer(routine_name);
-  switch (fft_lib_choice) {
-  case FFT_LIB_REF:
-    fft_ref_3d_fw_local_r2c(grid_in, grid_out, fft_size);
-    break;
-  case FFT_LIB_FFTW:
-    fft_fftw_3d_fw_local_r2c(fft_size, grid_in, grid_out);
-    break;
-  default:
-    assert(0 && "Unknown FFT library.");
+#if defined(__FFT_FPGA)
+  if (fft_fpga_check_bitstream_(get_data_dir(), fft_size)) {
+    const int number_of_elements = product3(fft_size);
+#if (__FFT_FPGA_SP && __FFT_FPGA)
+    float complex *grid_sp = calloc(number_of_elements, sizeof(float complex));
+    for (int i = 0; i < number_of_elements; i++)
+      grid_sp[i] = CMPLXF((float)grid_in[i], 0.0f);
+    fft_fpga_fft3d_sp_(1, fft_size, grid_sp);
+    for (int i = 0; i < number_of_elements; i++)
+      grid_out[i] = (double complex)grid_sp[i];
+#else
+    for (int i = 0; i < number_of_elements; i++)
+      grid_out[i] = CMPLX(grid_in[i], 0.0);
+    fft_fpga_fft3d_dp_(1, fft_size, grid_out);
+#endif
+  } else {
+#endif
+    switch (fft_lib_choice) {
+    case FFT_LIB_REF:
+      fft_ref_3d_fw_local_r2c(grid_in, grid_out, fft_size);
+      break;
+    case FFT_LIB_FFTW:
+      fft_fftw_3d_fw_local_r2c(fft_size, grid_in, grid_out);
+      break;
+    default:
+      assert(0 && "Unknown FFT library.");
+    }
+#if defined(__FFT_FPGA)
   }
+#endif
   fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
@@ -524,16 +598,35 @@ void fft_3d_bw_local(const int fft_size[3], double complex *grid_in,
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2c_local_%i_%i_%i",
            fft_size[0], fft_size[1], fft_size[2]);
   const int handle2 = fft_start_timer(routine_name);
-  switch (fft_lib_choice) {
-  case FFT_LIB_REF:
-    fft_ref_3d_bw_local(grid_in, grid_out, fft_size);
-    break;
-  case FFT_LIB_FFTW:
-    fft_fftw_3d_bw_local(fft_size, grid_in, grid_out);
-    break;
-  default:
-    assert(0 && "Unknown FFT library.");
+#if defined(__FFT_FPGA)
+  if (fft_fpga_check_bitstream_(get_data_dir(), fft_size)) {
+    const int number_of_elements = product3(fft_size);
+#if (__FFT_FPGA_SP && __FFT_FPGA)
+    float complex *grid_sp = calloc(number_of_elements, sizeof(float complex));
+    for (int i = 0; i < number_of_elements; i++)
+      grid_sp[i] = (float complex)grid_in[i];
+    fft_fpga_fft3d_sp_(-1, fft_size, grid_sp);
+    for (int i = 0; i < number_of_elements; i++)
+      grid_out[i] = (double complex)grid_sp[i];
+#else
+    memcpy(grid_out, grid_in, number_of_elements * sizeof(double complex));
+    fft_fpga_fft3d_dp_(-1, fft_size, grid_out);
+#endif
+  } else {
+#endif
+    switch (fft_lib_choice) {
+    case FFT_LIB_REF:
+      fft_ref_3d_bw_local(grid_in, grid_out, fft_size);
+      break;
+    case FFT_LIB_FFTW:
+      fft_fftw_3d_bw_local(fft_size, grid_in, grid_out);
+      break;
+    default:
+      assert(0 && "Unknown FFT library.");
+    }
+#if defined(__FFT_FPGA)
   }
+#endif
   fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
@@ -554,16 +647,37 @@ void fft_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_local_%i_%i_%i",
            fft_size[0], fft_size[1], fft_size[2]);
   const int handle2 = fft_start_timer(routine_name);
-  switch (fft_lib_choice) {
-  case FFT_LIB_REF:
-    fft_ref_3d_bw_local_c2r(grid_in, grid_out, fft_size);
-    break;
-  case FFT_LIB_FFTW:
-    fft_fftw_3d_bw_local_c2r(fft_size, grid_in, grid_out);
-    break;
-  default:
-    assert(0 && "Unknown FFT library.");
+#if defined(__FFT_FPGA)
+  if (fft_fpga_check_bitstream_(get_data_dir(), fft_size)) {
+    const int number_of_elements =
+        (fft_size[0] / 2 + 1) * fft_size[1] * fft_size[2];
+#if (__FFT_FPGA_SP && __FFT_FPGA)
+    float complex *grid_sp = calloc(number_of_elements, sizeof(float complex));
+    for (int i = 0; i < number_of_elements; i++)
+      grid_sp[i] = (float complex)grid_in[i];
+    fft_fpga_fft3d_sp_(-1, fft_size, grid_sp);
+    for (int i = 0; i < number_of_elements; i++)
+      grid_out[i] = (double)crealf(grid_sp[i]);
+#else
+    memcpy((double complex *)grid_out, grid_in,
+           number_of_elements * sizeof(double));
+    fft_fpga_fft3d_dp_(-1, fft_size, grid_out);
+#endif
+  } else {
+#endif
+    switch (fft_lib_choice) {
+    case FFT_LIB_REF:
+      fft_ref_3d_bw_local_c2r(grid_in, grid_out, fft_size);
+      break;
+    case FFT_LIB_FFTW:
+      fft_fftw_3d_bw_local_c2r(fft_size, grid_in, grid_out);
+      break;
+    default:
+      assert(0 && "Unknown FFT library.");
+    }
+#if defined(__FFT_FPGA)
   }
+#endif
   fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }

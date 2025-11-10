@@ -1249,7 +1249,6 @@ list(
   pw/ps_wavelet_types.F
   pw/ps_wavelet_util.F
   pw/pw_copy_all.F
-  pw/pw_fpga.F
   pw/pw_grid_info.F
   pw/pw_grids.F
   pw/pw_gpu.F
@@ -1508,7 +1507,7 @@ list(
 
 list(APPEND CP2K_SRCS_F grpp/libgrpp.F)
 
-set(CP2K_FPGA_SRC_C pw/fpga/fft_fpga.c pw/fpga/opencl_utils.c)
+set(CP2K_FPGA_SRC_C fft/fpga/fft_fpga.c fft/fpga/opencl_utils.c)
 set(CP2K_PW_SRCS_C pw/gpu/pw_gpu_internal.c)
 set(CP2K_SRCS_CPP torch_c_api.cpp ace_c_api.cpp)
 

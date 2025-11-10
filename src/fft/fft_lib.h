@@ -30,10 +30,22 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
                   const char *wisdom_file);
 
 /*******************************************************************************
+ * \brief Initialize the FFT library (if not done externally).
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_init_acc_lib();
+
+/*******************************************************************************
  * \brief Finalize the FFT library (if not done externally).
  * \author Frederick Stein
  ******************************************************************************/
 void fft_finalize_lib(const char *wisdom_file);
+
+/*******************************************************************************
+ * \brief Finalize the FFT library (if not done externally).
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_finalize_acc_lib();
 
 /*******************************************************************************
  * \brief Inquire the library backend in use.

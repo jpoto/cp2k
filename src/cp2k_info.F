@@ -160,11 +160,11 @@ CONTAINS
 #if defined(__DEEPMD)
       flags = TRIM(flags)//" deepmd"
 #endif
-#if defined(__PW_FPGA)
-      flags = TRIM(flags)//" pw_fpga"
+#if defined(__FFT_FPGA)
+      flags = TRIM(flags)//" fft_fpga"
 #endif
-#if defined(__PW_FPGA_SP)
-      flags = TRIM(flags)//" pw_fpga_sp"
+#if defined(__FFT_FPGA_SP)
+      flags = TRIM(flags)//" fft_fpga_sp"
 #endif
 #if defined(__LIBXSMM)
       flags = TRIM(flags)//" xsmm"
