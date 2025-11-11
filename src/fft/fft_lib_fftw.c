@@ -1621,7 +1621,7 @@ void fft_fftw_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
       (fftw_planning_mode == FFTW_ESTIMATE)
 #endif
   ) {
-//#endif
+#endif
   // The 3D FFT is not efficient with threading and estimate planning mode
   // So, we decompose it in a sequence of 1D FFTs
   int number_of_threads = 1;
@@ -1751,14 +1751,14 @@ void fft_fftw_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
                        grid_out + block_sizes[0] * thread_id);
     }
   }
-//#if 0
+#if 0
   } else {
-#endif
   fftw_plan *plan = fft_fftw_create_3d_plan_r2c(
       FFTW_FORWARD, fft_size, grid_out, omp_get_max_threads(),
       (double complex *)grid_in == grid_out);
   fftw_execute_dft_r2c(*plan, grid_in, grid_out);
-  //}
+  }
+#endif
 #else
   (void)fft_size;
   (void)number_of_ffts;
