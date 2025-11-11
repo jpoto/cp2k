@@ -18,11 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// TODOs
-// - Guru vs sequence of 1D FFTs for R2C/C2R
-// - FFTW transpose plans
-// - FFTW Alltoall plan
-
 /*******************************************************************************
  * \brief Performs a forward 3D-FFT using a blocked distribution.
  * \author Frederick Stein
