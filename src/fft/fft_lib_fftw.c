@@ -1159,10 +1159,49 @@ void fft_fftw_1d_fw_local(const int fft_size, const int number_of_ffts,
                           double complex *grid_in, double complex *grid_out) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
-  fftw_plan *plan = fft_fftw_create_1d_plan(
-      FFTW_FORWARD, fft_size, number_of_ffts, number_of_ffts, transpose_rs,
-      transpose_gs, grid_out, omp_get_max_threads(), grid_in == grid_out);
-  fftw_execute_dft(*plan, grid_in, grid_out);
+  int number_of_threads = 1;
+#pragma omp parallel default(none) shared(number_of_threads)
+  {
+#pragma omp single
+    { number_of_threads = omp_get_num_threads(); }
+  }
+  if (fftw_planning_mode == FFTW_ESTIMATE) {
+    fftw_plan *plan = NULL, *plan_last_thread = NULL;
+    bool has_plan_for_last_thread = false;
+    const int block_size =
+        (number_of_ffts + number_of_threads - 1) / number_of_threads;
+    plan = fft_fftw_create_1d_plan(FFTW_FORWARD, fft_size, block_size,
+                                   number_of_ffts, transpose_rs, transpose_gs,
+                                   grid_out, 1, grid_in == grid_out);
+    if (block_size * number_of_threads != number_of_ffts) {
+      const int block_size_last_thread =
+          number_of_ffts - (number_of_threads - 1) * block_size;
+      plan_last_thread = fft_fftw_create_1d_plan(
+          FFTW_FORWARD, fft_size, block_size_last_thread, number_of_ffts,
+          transpose_rs, transpose_gs, grid_out, 1, grid_in == grid_out);
+      has_plan_for_last_thread = true;
+    }
+    const int offset_in = transpose_rs ? block_size : block_size * fft_size;
+    const int offset_out = transpose_gs ? block_size : block_size * fft_size;
+#pragma omp parallel default(none)                                             \
+    shared(grid_in, grid_out, plan, plan_last_thread, number_of_threads,       \
+               offset_in, offset_out, has_plan_for_last_thread)
+    {
+      const int thread_id = omp_get_thread_num();
+      if (thread_id + 1 < number_of_threads || !has_plan_for_last_thread) {
+        fftw_execute_dft(*plan, grid_in + thread_id * offset_in,
+                         grid_out + thread_id * offset_out);
+      } else {
+        fftw_execute_dft(*plan_last_thread, grid_in + thread_id * offset_in,
+                         grid_out + thread_id * offset_out);
+      }
+    }
+  } else {
+    fftw_plan *plan = fft_fftw_create_1d_plan(
+        FFTW_FORWARD, fft_size, number_of_ffts, number_of_ffts, transpose_rs,
+        transpose_gs, grid_out, number_of_threads, grid_in == grid_out);
+    fftw_execute_dft(*plan, grid_in, grid_out);
+  }
 #else
   (void)fft_size;
   (void)number_of_ffts;
@@ -1208,10 +1247,49 @@ void fft_fftw_1d_bw_local(const int fft_size, const int number_of_ffts,
                           double complex *grid_in, double complex *grid_out) {
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
-  fftw_plan *plan = fft_fftw_create_1d_plan(
-      FFTW_BACKWARD, fft_size, number_of_ffts, number_of_ffts, transpose_rs,
-      transpose_gs, grid_out, omp_get_max_threads(), grid_in == grid_out);
-  fftw_execute_dft(*plan, grid_in, grid_out);
+  int number_of_threads = 1;
+#pragma omp parallel default(none) shared(number_of_threads)
+  {
+#pragma omp single
+    { number_of_threads = omp_get_num_threads(); }
+  }
+  if (fftw_planning_mode == FFTW_ESTIMATE) {
+    fftw_plan *plan = NULL, *plan_last_thread = NULL;
+    bool has_plan_for_last_thread = false;
+    const int block_size =
+        (number_of_ffts + number_of_threads - 1) / number_of_threads;
+    plan = fft_fftw_create_1d_plan(FFTW_BACKWARD, fft_size, block_size,
+                                   number_of_ffts, transpose_rs, transpose_gs,
+                                   grid_out, 1, grid_in == grid_out);
+    if (block_size * number_of_threads != number_of_ffts) {
+      const int block_size_last_thread =
+          number_of_ffts - (number_of_threads - 1) * block_size;
+      plan_last_thread = fft_fftw_create_1d_plan(
+          FFTW_BACKWARD, fft_size, block_size_last_thread, number_of_ffts,
+          transpose_rs, transpose_gs, grid_out, 1, grid_in == grid_out);
+      has_plan_for_last_thread = true;
+    }
+    const int offset_in = transpose_gs ? block_size : block_size * fft_size;
+    const int offset_out = transpose_rs ? block_size : block_size * fft_size;
+#pragma omp parallel default(none)                                             \
+    shared(grid_in, grid_out, plan, plan_last_thread, number_of_threads,       \
+               offset_in, offset_out, has_plan_for_last_thread)
+    {
+      const int thread_id = omp_get_thread_num();
+      if (thread_id + 1 < number_of_threads || !has_plan_for_last_thread) {
+        fftw_execute_dft(*plan, grid_in + thread_id * offset_in,
+                         grid_out + thread_id * offset_out);
+      } else {
+        fftw_execute_dft(*plan_last_thread, grid_in + thread_id * offset_in,
+                         grid_out + thread_id * offset_out);
+      }
+    }
+  } else {
+    fftw_plan *plan = fft_fftw_create_1d_plan(
+        FFTW_BACKWARD, fft_size, number_of_ffts, number_of_ffts, transpose_rs,
+        transpose_gs, grid_out, number_of_threads, grid_in == grid_out);
+    fftw_execute_dft(*plan, grid_in, grid_out);
+  }
 #else
   (void)fft_size;
   (void)number_of_ffts;
