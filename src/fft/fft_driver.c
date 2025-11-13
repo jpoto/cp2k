@@ -159,11 +159,11 @@ void fft_3d_fw_blocked_low(double complex *restrict grid_buffer_1,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_fw_r2c_blocked_low(
-    double complex *restrict grid_buffer_1,
-    double complex *restrict grid_buffer_2, const int npts_global[3],
-    const int npts_global_gspace[3], const int (*proc2local_rs)[3][2],
-    const int (*proc2local_ms)[3][2], const int (*proc2local_gs)[3][2],
-    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
+    const double *restrict grid_rs, double complex *restrict grid_buffer_2,
+    const int npts_global[3], const int npts_global_gspace[3],
+    const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
+    const int (*proc2local_gs)[3][2], const cp_mpi_comm_t comm,
+    const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_ray_low");
@@ -175,6 +175,8 @@ void fft_3d_fw_r2c_blocked_low(
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
+
+  double complex *grid_buffer_1 = get_buffer_1();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
   int fft_sizes_rs[3] = {
@@ -194,6 +196,9 @@ void fft_3d_fw_r2c_blocked_low(
   int periods[2];
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
+
+  memcpy((double *)grid_buffer_1, grid_rs,
+         product3(fft_sizes_rs) * sizeof(double));
 
   // We use different data distribution schemes depending on the availability of
   // a distributed FFT library because FFTW requires the data to the different
@@ -470,11 +475,11 @@ void fft_3d_bw_blocked_low(double complex *restrict grid_buffer_1,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_c2r_blocked_low(
-    double complex *restrict grid_buffer_1,
-    double complex *restrict grid_buffer_2, const int npts_global[3],
-    const int npts_global_gspace[3], const int (*proc2local_rs)[3][2],
-    const int (*proc2local_ms)[3][2], const int (*proc2local_gs)[3][2],
-    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
+    double complex *restrict grid_buffer_1, double *restrict grid_rs,
+    const int npts_global[3], const int npts_global_gspace[3],
+    const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
+    const int (*proc2local_gs)[3][2], const cp_mpi_comm_t comm,
+    const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_blocked_low");
@@ -486,6 +491,8 @@ void fft_3d_bw_c2r_blocked_low(
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
+
+  double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
   int fft_sizes_rs[3] = {
@@ -634,6 +641,10 @@ void fft_3d_bw_c2r_blocked_low(
              product3(npts_global) * sizeof(double));
     }
   }
+
+  memcpy(grid_rs, (double *)grid_buffer_2,
+         product3(fft_sizes_rs) * sizeof(double));
+
   fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
@@ -774,15 +785,12 @@ void fft_3d_fw_ray_low(double complex *restrict grid_buffer_1,
  * \brief Performs a forward 3D-FFT using a ray distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_r2c_ray_low(double complex *restrict grid_buffer_1,
-                           double complex *restrict grid_buffer_2,
-                           const int npts_global[3],
-                           const int npts_global_gspace[3],
-                           const int (*proc2local_rs)[3][2],
-                           const int (*proc2local_ms)[3][2],
-                           const int *rays_per_process,
-                           const int (*ray_to_xy)[2], const cp_mpi_comm_t comm,
-                           const cp_mpi_comm_t sub_comm[2]) {
+void fft_3d_fw_r2c_ray_low(
+    const double *restrict grid_rs, double complex *restrict grid_buffer_2,
+    const int npts_global[3], const int npts_global_gspace[3],
+    const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
+    const int *rays_per_process, const int (*ray_to_xy)[2],
+    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_ray_low");
@@ -794,6 +802,8 @@ void fft_3d_fw_r2c_ray_low(double complex *restrict grid_buffer_1,
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
+
+  double complex *grid_buffer_1 = get_buffer_1();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
   int fft_sizes_rs[3] = {
@@ -810,6 +820,9 @@ void fft_3d_fw_r2c_ray_low(double complex *restrict grid_buffer_1,
   int periods[2];
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
+
+  memcpy((double *)grid_buffer_1, grid_rs,
+         product3(fft_sizes_rs) * sizeof(double));
 
   // We use different data distribution schemes depending on the
   // availability of a distributed FFT library because FFTW requires the
@@ -1087,8 +1100,7 @@ void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_c2r_ray_low(double complex *restrict grid_buffer_1,
-                           double complex *restrict grid_buffer_2,
-                           const int npts_global[3],
+                           double *restrict grid_rs, const int npts_global[3],
                            const int npts_global_gspace[3],
                            const int (*proc2local_rs)[3][2],
                            const int (*proc2local_ms)[3][2],
@@ -1106,6 +1118,8 @@ void fft_3d_bw_c2r_ray_low(double complex *restrict grid_buffer_1,
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
+
+  double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
   int fft_sizes_rs[3] = {
@@ -1256,6 +1270,10 @@ void fft_3d_bw_c2r_ray_low(double complex *restrict grid_buffer_1,
              product3(npts_global) * sizeof(double));
     }
   }
+
+  memcpy(grid_rs, (double *)grid_buffer_2,
+         product3(fft_sizes_rs) * sizeof(double));
+
   fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }

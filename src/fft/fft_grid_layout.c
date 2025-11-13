@@ -8,6 +8,7 @@
 #include "fft_grid_layout.h"
 #include "fft_driver.h"
 #include "fft_grid.h"
+#include "fft_lib.h"
 #include "fft_utils.h"
 
 #include <assert.h>
@@ -931,6 +932,8 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   int local_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++) {
@@ -1002,6 +1005,8 @@ void fft_3d_fw_with_layout_to_cart(const double complex *restrict grid_rs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   int local_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++) {
@@ -1037,6 +1042,8 @@ void fft_3d_fw_r2c_with_layout_to_cart(const double *restrict grid_rs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   int local_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++) {
@@ -1044,10 +1051,8 @@ void fft_3d_fw_r2c_with_layout_to_cart(const double *restrict grid_rs,
                           grid_layout->proc2local_rs[my_process][dir][0] + 1;
   }
   if (grid_layout->use_halfspace) {
-    memcpy((double *)grid_layout->buffer_1, grid_rs,
-           product3(local_sizes_rs) * sizeof(double));
     fft_3d_fw_r2c_blocked_low(
-        grid_layout->buffer_1, grid_layout->buffer_2, grid_layout->npts_global,
+        grid_rs, grid_layout->buffer_2, grid_layout->npts_global,
         grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->comm, grid_layout->sub_comm);
@@ -1085,6 +1090,8 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   int local_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++) {
@@ -1092,15 +1099,12 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
                           grid_layout->proc2local_rs[my_process][dir][0] + 1;
   }
   if (grid_layout->use_halfspace) {
-    memcpy((double *)grid_layout->buffer_1, grid_rs,
-           product3(local_sizes_rs) * sizeof(double));
     if (grid_layout->ray_distribution) {
       fft_3d_fw_r2c_ray_low(
-          grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->npts_global_gspace,
-          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-          grid_layout->rays_per_process, grid_layout->ray_to_xy,
-          grid_layout->comm, grid_layout->sub_comm);
+          grid_rs, grid_layout->buffer_2, grid_layout->npts_global,
+          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+          grid_layout->proc2local_ms, grid_layout->rays_per_process,
+          grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
       const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
       for (int process = 0; process < my_process; process++) {
         my_ray_to_xy += grid_layout->rays_per_process[process];
@@ -1123,10 +1127,10 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
       }
     } else {
       fft_3d_fw_r2c_blocked_low(
-          grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->npts_global_gspace,
-          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-          grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+          grid_rs, grid_layout->buffer_2, grid_layout->npts_global,
+          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+          grid_layout->comm, grid_layout->sub_comm);
       int local_sizes_gs[3];
       for (int dir = 0; dir < 3; dir++) {
         local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
@@ -1217,6 +1221,8 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   if (grid_layout->ray_distribution) {
     const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
@@ -1293,6 +1299,8 @@ void fft_3d_bw_with_layout_from_cart(const double complex *restrict grid_gs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   int local_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++) {
@@ -1329,6 +1337,8 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   int local_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++) {
@@ -1358,11 +1368,10 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
         }
       }
       fft_3d_bw_c2r_ray_low(
-          grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->npts_global_gspace,
-          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-          grid_layout->rays_per_process, grid_layout->ray_to_xy,
-          grid_layout->comm, grid_layout->sub_comm);
+          grid_layout->buffer_1, grid_rs, grid_layout->npts_global,
+          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+          grid_layout->proc2local_ms, grid_layout->rays_per_process,
+          grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
     } else {
       int local_sizes_gs[3];
       for (int dir = 0; dir < 3; dir++) {
@@ -1384,14 +1393,11 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
             grid_gs[index];
       }
       fft_3d_bw_c2r_blocked_low(
-          grid_layout->buffer_1, grid_layout->buffer_2,
-          grid_layout->npts_global, grid_layout->npts_global_gspace,
-          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-          grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+          grid_layout->buffer_1, grid_rs, grid_layout->npts_global,
+          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+          grid_layout->comm, grid_layout->sub_comm);
     }
-    memcpy(grid_rs, (double *)grid_layout->buffer_2,
-           grid_layout->npts_global[0] * local_sizes_rs[1] * local_sizes_rs[2] *
-               sizeof(double));
   } else {
     if (grid_layout->ray_distribution) {
       const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
@@ -1468,6 +1474,8 @@ void fft_3d_bw_c2r_with_layout_from_cart(const double complex *restrict grid_gs,
   assert(grid_layout != NULL);
   assert(grid_layout->ref_counter > 0);
 
+  ensure_buffer_size(grid_layout->buffer_size);
+
   const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   if (grid_layout->use_halfspace) {
     int local_sizes_gs[3];
@@ -1478,17 +1486,10 @@ void fft_3d_bw_c2r_with_layout_from_cart(const double complex *restrict grid_gs,
     memcpy(grid_layout->buffer_1, grid_gs,
            product3(local_sizes_gs) * sizeof(double complex));
     fft_3d_bw_c2r_blocked_low(
-        grid_layout->buffer_1, grid_layout->buffer_2, grid_layout->npts_global,
+        grid_layout->buffer_1, grid_rs, grid_layout->npts_global,
         grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->comm, grid_layout->sub_comm);
-    int local_sizes_rs[3];
-    for (int dir = 0; dir < 3; dir++) {
-      local_sizes_rs[dir] = grid_layout->proc2local_rs[my_process][dir][1] -
-                            grid_layout->proc2local_rs[my_process][dir][0] + 1;
-    }
-    memcpy(grid_rs, (double *)grid_layout->buffer_2,
-           product3(local_sizes_rs) * sizeof(double));
   } else {
     int local_sizes_gs[3];
     for (int dir = 0; dir < 3; dir++) {

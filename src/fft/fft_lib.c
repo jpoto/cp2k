@@ -168,6 +168,8 @@ void ensure_buffer_size(const int size) {
   if (buffer_size < size) {
     fft_free_complex(buffer_1);
     fft_free_complex(buffer_2);
+    buffer_1 = NULL;
+    buffer_2 = NULL;
     fft_allocate_complex(size, &buffer_1);
     fft_allocate_complex(size, &buffer_2);
     buffer_size = size;
