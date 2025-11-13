@@ -10,14 +10,9 @@
 !> \author Ole Schuett
 ! **************************************************************************************************
 MODULE fft_api
-   USE ISO_C_BINDING,                   ONLY: C_BOOL,&
-                                              C_CHAR,&
-                                              C_DOUBLE,&
-                                              C_DOUBLE_COMPLEX,&
-                                              C_INT,&
-                                              C_LOC,&
-                                              C_NULL_CHAR,&
-                                              C_PTR
+   USE ISO_C_BINDING,                   ONLY: &
+        C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, C_NULL_CHAR, &
+        C_NULL_PTR, C_PTR
    USE kinds,                           ONLY: dp
 #include "../base/base_uses.f90"
 
@@ -31,6 +26,7 @@ MODULE fft_api
    PUBLIC :: fft_library_acc_init, fft_library_acc_finalize
    PUBLIC :: fft_print_timing_report
    PUBLIC :: fft_backend_in_use, fft_use_mpi, fft_has_guru_interface
+   PUBLIC :: fft_allocate, fft_free
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -46,6 +42,54 @@ MODULE fft_api
    INTEGER, PARAMETER, PUBLIC :: FFT_LIBRARY_FFTW_MODE_MEASURE = 12
    INTEGER, PARAMETER, PUBLIC :: FFT_LIBRARY_FFTW_MODE_PATIENT = 13
    INTEGER, PARAMETER, PUBLIC :: FFT_LIBRARY_FFTW_MODE_EXHAUSTIVE = 14
+
+   INTERFACE fft_allocate
+      MODULE PROCEDURE :: fft_allocate_real_1
+      MODULE PROCEDURE :: fft_allocate_real_2
+      MODULE PROCEDURE :: fft_allocate_real_3
+      MODULE PROCEDURE :: fft_allocate_complex_1
+      MODULE PROCEDURE :: fft_allocate_complex_2
+      MODULE PROCEDURE :: fft_allocate_complex_3
+   END INTERFACE fft_allocate
+
+   INTERFACE fft_free
+      MODULE PROCEDURE :: fft_free_real_1
+      MODULE PROCEDURE :: fft_free_real_2
+      MODULE PROCEDURE :: fft_free_real_3
+      MODULE PROCEDURE :: fft_free_complex_1
+      MODULE PROCEDURE :: fft_free_complex_2
+      MODULE PROCEDURE :: fft_free_complex_3
+   END INTERFACE fft_free
+
+   INTERFACE
+      SUBROUTINE fft_allocate_double_c(length, buffer) BIND(C, name="fft_allocate_double")
+         IMPORT :: C_PTR, C_INT
+         INTEGER(C_INT), VALUE :: length
+         TYPE(C_PTR) :: buffer
+      END SUBROUTINE fft_allocate_double_c
+   END INTERFACE
+
+   INTERFACE
+      SUBROUTINE fft_allocate_complex_c(length, buffer) BIND(C, name="fft_allocate_complex")
+         IMPORT :: C_PTR, C_INT
+         INTEGER(C_INT), VALUE :: length
+         TYPE(C_PTR) :: buffer
+      END SUBROUTINE fft_allocate_complex_c
+   END INTERFACE
+
+   INTERFACE
+      SUBROUTINE fft_free_double_c(buffer) BIND(C, name="fft_free_double")
+         IMPORT :: C_PTR
+         TYPE(C_PTR), VALUE :: buffer
+      END SUBROUTINE fft_free_double_c
+   END INTERFACE
+
+   INTERFACE
+      SUBROUTINE fft_free_complex_c(buffer) BIND(C, name="fft_free_complex")
+         IMPORT :: C_PTR
+         TYPE(C_PTR), VALUE :: buffer
+      END SUBROUTINE fft_free_complex_c
+   END INTERFACE
 
 CONTAINS
 
@@ -220,6 +264,224 @@ CONTAINS
       fft_has_guru_interface = fft_has_guru_interface_c()
 
    END FUNCTION fft_has_guru_interface
+
+! **************************************************************************************************
+!> \brief Allocate a complex array for use with the FFT library
+!> \param buffer ...
+!> \param length ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_allocate_complex_1(buffer, length)
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:), &
+         POINTER                                         :: buffer
+      INTEGER, INTENT(IN)                                :: length
+
+      TYPE(C_PTR)                                        :: buffer_c
+
+      buffer_c = C_NULL_PTR
+
+      CALL fft_allocate_complex_c(INT(length, C_INT), buffer_c)
+
+      CALL C_F_POINTER(buffer_c, buffer, [length])
+
+   END SUBROUTINE fft_allocate_complex_1
+
+! **************************************************************************************************
+!> \brief Allocate a complex array for use with the FFT library
+!> \param buffer ...
+!> \param length ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_allocate_complex_2(buffer, length)
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: buffer
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: length
+
+      TYPE(C_PTR)                                        :: buffer_c
+
+      buffer_c = C_NULL_PTR
+
+      CALL fft_allocate_complex_c(INT(PRODUCT(length), C_INT), buffer_c)
+
+      CALL C_F_POINTER(buffer_c, buffer, length)
+
+   END SUBROUTINE fft_allocate_complex_2
+
+! **************************************************************************************************
+!> \brief Allocate a complex array for use with the FFT library
+!> \param buffer ...
+!> \param length ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_allocate_complex_3(buffer, length)
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :, :), &
+         POINTER                                         :: buffer
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: length
+
+      TYPE(C_PTR)                                        :: buffer_c
+
+      buffer_c = C_NULL_PTR
+
+      CALL fft_allocate_complex_c(INT(PRODUCT(length), C_INT), buffer_c)
+
+      CALL C_F_POINTER(buffer_c, buffer, length)
+
+   END SUBROUTINE fft_allocate_complex_3
+
+! **************************************************************************************************
+!> \brief Allocate a double array for use with the FFT library
+!> \param buffer ...
+!> \param length ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_allocate_real_1(buffer, length)
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:), POINTER   :: buffer
+      INTEGER, INTENT(IN)                                :: length
+
+      TYPE(C_PTR)                                        :: buffer_c
+
+      buffer_c = C_NULL_PTR
+
+      CALL fft_allocate_double_c(INT(length, C_INT), buffer_c)
+
+      CALL C_F_POINTER(buffer_c, buffer, [length])
+
+   END SUBROUTINE fft_allocate_real_1
+
+! **************************************************************************************************
+!> \brief Allocate a double array for use with the FFT library
+!> \param buffer ...
+!> \param length ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_allocate_real_2(buffer, length)
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: buffer
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: length
+
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:), POINTER   :: buffer_1d
+      TYPE(C_PTR)                                        :: buffer_c
+
+      buffer_c = C_NULL_PTR
+
+      CALL fft_allocate_double_c(INT(PRODUCT(length), C_INT), buffer_c)
+
+      CALL C_F_POINTER(buffer_c, buffer_1d, [PRODUCT(length)])
+
+      buffer(1:length(1), 1:length(2)) => buffer_1d
+
+   END SUBROUTINE fft_allocate_real_2
+
+! **************************************************************************************************
+!> \brief Allocate a double array for use with the FFT library
+!> \param buffer ...
+!> \param length ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_allocate_real_3(buffer, length)
+
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :, :), &
+         POINTER                                         :: buffer
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: length
+
+      TYPE(C_PTR)                                        :: buffer_c
+
+      buffer_c = C_NULL_PTR
+
+      CALL fft_allocate_double_c(INT(PRODUCT(length), C_INT), buffer_c)
+
+      CALL C_F_POINTER(buffer_c, buffer, length)
+
+   END SUBROUTINE fft_allocate_real_3
+
+! **************************************************************************************************
+!> \brief Free a complex array allocated with fft_allocate_complex
+!> \param buffer ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_free_complex_1(buffer)
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:), &
+         POINTER                                         :: buffer
+
+      CALL fft_free_complex_c(C_LOC(buffer))
+
+      NULLIFY (buffer)
+
+   END SUBROUTINE fft_free_complex_1
+
+! **************************************************************************************************
+!> \brief Free a complex array allocated with fft_allocate_complex
+!> \param buffer ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_free_complex_2(buffer)
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: buffer
+
+      CALL fft_free_complex_c(C_LOC(buffer))
+
+      NULLIFY (buffer)
+
+   END SUBROUTINE fft_free_complex_2
+
+! **************************************************************************************************
+!> \brief Free a complex array allocated with fft_allocate_complex
+!> \param buffer ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_free_complex_3(buffer)
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :, :), &
+         POINTER                                         :: buffer
+
+      CALL fft_free_complex_c(C_LOC(buffer))
+
+      NULLIFY (buffer)
+
+   END SUBROUTINE fft_free_complex_3
+
+! **************************************************************************************************
+!> \brief Free a double array allocated with fft_allocate_double
+!> \param buffer ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_free_real_1(buffer)
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:), POINTER   :: buffer
+
+      CALL fft_free_double_c(C_LOC(buffer))
+
+      NULLIFY (buffer)
+
+   END SUBROUTINE fft_free_real_1
+
+! **************************************************************************************************
+!> \brief Free a double array allocated with fft_allocate_double
+!> \param buffer ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_free_real_2(buffer)
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
+         POINTER                                         :: buffer
+
+      CALL fft_free_double_c(C_LOC(buffer))
+
+      NULLIFY (buffer)
+
+   END SUBROUTINE fft_free_real_2
+
+! **************************************************************************************************
+!> \brief Free a double array allocated with fft_allocate_double
+!> \param buffer ...
+!> \author Frederick Stein
+! **************************************************************************************************
+   SUBROUTINE fft_free_real_3(buffer)
+      REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :, :), &
+         POINTER                                         :: buffer
+
+      CALL fft_free_double_c(C_LOC(buffer))
+
+      NULLIFY (buffer)
+
+   END SUBROUTINE fft_free_real_3
 
 ! **************************************************************************************************
 !> \brief Performs a complex-to-complex 1D forwards FFT

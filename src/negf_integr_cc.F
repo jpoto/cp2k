@@ -25,9 +25,9 @@ MODULE negf_integr_cc
                                               cp_fm_get_info,&
                                               cp_fm_release,&
                                               cp_fm_type
-   USE fft_tools,                       ONLY: fft_1d_fw_local,&
-                                              fft_alloc,&
-                                              fft_dealloc
+   USE fft_api,                         ONLY: fft_1d_fw_local,&
+                                              fft_allocate,&
+                                              fft_free
    USE kahan_sum,                       ONLY: accurate_sum
    USE kinds,                           ONLY: dp,&
                                               int_8
@@ -488,8 +488,8 @@ CONTAINS
       ! 1.0 / nintervals
       rscale = 1.0_dp/rscale
 
-      CALL fft_alloc(ztmp, [nintervals, nrows_local, ncols_local])
-      CALL fft_alloc(ztmp_dct, [nintervals, nrows_local, ncols_local])
+      CALL fft_allocate(ztmp, [nintervals, nrows_local, ncols_local])
+      CALL fft_allocate(ztmp_dct, [nintervals, nrows_local, ncols_local])
 
 !$OMP PARALLEL DO DEFAULT(NONE), PRIVATE(icol, ipoint, irow), &
 !$OMP             SHARED(cc_env, ncols_local, nintervals_half, nintervals_half_plus_1, nintervals_half_plus_2, nrows_local, ztmp)
@@ -526,8 +526,8 @@ CONTAINS
       END DO
 !$OMP END PARALLEL DO
 
-      CALL fft_dealloc(ztmp)
-      CALL fft_dealloc(ztmp_dct)
+      CALL fft_free(ztmp)
+      CALL fft_free(ztmp_dct)
 
       CALL cp_fm_trace(cc_env%error_fm, cc_env%weights, cc_env%error)
 

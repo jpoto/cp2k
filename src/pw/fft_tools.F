@@ -32,11 +32,15 @@ MODULE fft_tools
         FFT_LIBRARY_BACKEND_DEFAULT, FFT_LIBRARY_FFTW_MODE_ESTIMATE, fft_1d_bw_local, &
         fft_1d_bw_local_inplace, fft_1d_fw_local, fft_1d_fw_local_inplace, fft_2d_bw_local, &
         fft_2d_bw_local_inplace, fft_2d_fw_local, fft_2d_fw_local_inplace, fft_3d_bw_local, &
-        fft_3d_bw_local_inplace, fft_3d_fw_local, fft_3d_fw_local_inplace, fft_library_finalize, &
-        fft_library_init, fft_print_timing_report
-   USE fft_lib_old,                     ONLY: &
-        fft_alloc, fft_create_plan_1d, fft_create_plan_3d, fft_dealloc, fft_destroy_plan, &
-        fft_do_cleanup, fft_do_init, fft_get_lengths, fft_library
+        fft_3d_bw_local_inplace, fft_3d_fw_local, fft_3d_fw_local_inplace, fft_allocate, fft_free, &
+        fft_library_finalize, fft_library_init, fft_print_timing_report
+   USE fft_lib_old,                     ONLY: fft_create_plan_1d,&
+                                              fft_create_plan_3d,&
+                                              fft_destroy_plan,&
+                                              fft_do_cleanup,&
+                                              fft_do_init,&
+                                              fft_get_lengths,&
+                                              fft_library
    USE fft_plan,                        ONLY: fft_plan_type
    USE kinds,                           ONLY: dp,&
                                               sp
@@ -135,7 +139,7 @@ MODULE fft_tools
 
    PRIVATE
    PUBLIC :: init_fft, fft3d, finalize_fft
-   PUBLIC :: fft_alloc, fft_dealloc
+   PUBLIC :: fft_allocate, fft_free
    PUBLIC :: init_fft_scratch_pool
    PUBLIC :: fft_radix_operations
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
@@ -2570,58 +2574,58 @@ CONTAINS
 
       ! deallocate structures
       IF (ASSOCIATED(fft_scratch%ziptr)) THEN
-         CALL fft_dealloc(fft_scratch%ziptr)
+         CALL fft_free(fft_scratch%ziptr)
       END IF
       IF (ASSOCIATED(fft_scratch%zoptr)) THEN
-         CALL fft_dealloc(fft_scratch%zoptr)
+         CALL fft_free(fft_scratch%zoptr)
       END IF
       IF (ASSOCIATED(fft_scratch%p1buf)) THEN
-         CALL fft_dealloc(fft_scratch%p1buf)
+         CALL fft_free(fft_scratch%p1buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p2buf)) THEN
-         CALL fft_dealloc(fft_scratch%p2buf)
+         CALL fft_free(fft_scratch%p2buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p3buf)) THEN
-         CALL fft_dealloc(fft_scratch%p3buf)
+         CALL fft_free(fft_scratch%p3buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p4buf)) THEN
-         CALL fft_dealloc(fft_scratch%p4buf)
+         CALL fft_free(fft_scratch%p4buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p5buf)) THEN
-         CALL fft_dealloc(fft_scratch%p5buf)
+         CALL fft_free(fft_scratch%p5buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p6buf)) THEN
-         CALL fft_dealloc(fft_scratch%p6buf)
+         CALL fft_free(fft_scratch%p6buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p7buf)) THEN
-         CALL fft_dealloc(fft_scratch%p7buf)
+         CALL fft_free(fft_scratch%p7buf)
       END IF
       IF (ASSOCIATED(fft_scratch%r1buf)) THEN
-         CALL fft_dealloc(fft_scratch%r1buf)
+         CALL fft_free(fft_scratch%r1buf)
       END IF
       IF (ASSOCIATED(fft_scratch%r2buf)) THEN
-         CALL fft_dealloc(fft_scratch%r2buf)
+         CALL fft_free(fft_scratch%r2buf)
       END IF
       IF (ASSOCIATED(fft_scratch%tbuf)) THEN
-         CALL fft_dealloc(fft_scratch%tbuf)
+         CALL fft_free(fft_scratch%tbuf)
       END IF
       IF (ASSOCIATED(fft_scratch%a1buf)) THEN
-         CALL fft_dealloc(fft_scratch%a1buf)
+         CALL fft_free(fft_scratch%a1buf)
       END IF
       IF (ASSOCIATED(fft_scratch%a2buf)) THEN
-         CALL fft_dealloc(fft_scratch%a2buf)
+         CALL fft_free(fft_scratch%a2buf)
       END IF
       IF (ASSOCIATED(fft_scratch%a3buf)) THEN
-         CALL fft_dealloc(fft_scratch%a3buf)
+         CALL fft_free(fft_scratch%a3buf)
       END IF
       IF (ASSOCIATED(fft_scratch%a4buf)) THEN
-         CALL fft_dealloc(fft_scratch%a4buf)
+         CALL fft_free(fft_scratch%a4buf)
       END IF
       IF (ASSOCIATED(fft_scratch%a5buf)) THEN
-         CALL fft_dealloc(fft_scratch%a5buf)
+         CALL fft_free(fft_scratch%a5buf)
       END IF
       IF (ASSOCIATED(fft_scratch%a6buf)) THEN
-         CALL fft_dealloc(fft_scratch%a6buf)
+         CALL fft_free(fft_scratch%a6buf)
       END IF
       IF (ASSOCIATED(fft_scratch%scount)) THEN
          DEALLOCATE (fft_scratch%scount, fft_scratch%rcount, &
@@ -2887,12 +2891,12 @@ CONTAINS
                mz2 = fft_sizes%mz2
                my3 = fft_sizes%my3
                mz3 = fft_sizes%mz3
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a1buf, [mx1*my1, n(3)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a2buf, [n(3), mx1*my1])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a3buf, [mx2*mz2, n(2)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a4buf, [n(2), mx2*mz2])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a5buf, [my3*mz3, n(1)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a6buf, [n(1), my3*mz3])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a1buf, [mx1*my1, n(3)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a2buf, [n(3), mx1*my1])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a3buf, [mx2*mz2, n(2)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a4buf, [n(2), mx2*mz2])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a5buf, [my3*mz3, n(1)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a6buf, [n(1), my3*mz3])
                fft_scratch_new%fft_scratch%group = fft_sizes%rs_group
 
                dim = fft_sizes%rs_group%num_pe_cart
@@ -2945,13 +2949,13 @@ CONTAINS
                mz1 = fft_sizes%mz1
                my3 = fft_sizes%my3
                mz3 = fft_sizes%mz3
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a1buf, [mx1*my1, n(3)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a2buf, [n(3), mx1*my1])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a1buf, [mx1*my1, n(3)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a2buf, [n(3), mx1*my1])
                fft_scratch_new%fft_scratch%group = fft_sizes%rs_group
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a3buf, [mx1*mz1, n(2)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a4buf, [n(2), mx1*mz1])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a5buf, [my3*mz3, n(1)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%a6buf, [n(1), my3*mz3])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a3buf, [mx1*mz1, n(2)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a4buf, [n(2), mx1*mz1])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a5buf, [my3*mz3, n(1)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%a6buf, [n(1), my3*mz3])
 
                dim = fft_sizes%rs_group%num_pe_cart
                pos = fft_sizes%rs_group%mepos_cart
@@ -2989,10 +2993,10 @@ CONTAINS
                np = fft_sizes%numtask
                nmray = fft_sizes%nmray
                nyzray = fft_sizes%nyzray
-               CALL fft_alloc(fft_scratch_new%fft_scratch%r1buf, [mmax, lmax])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%tbuf, [ny, nz, nx])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%r1buf, [mmax, lmax])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%tbuf, [ny, nz, nx])
                fft_scratch_new%fft_scratch%group = fft_sizes%rs_group
-               CALL fft_alloc(fft_scratch_new%fft_scratch%r2buf, [lg, mg])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%r2buf, [lg, mg])
                nm = nmray*mx2
                IF (alltoall_sgl) THEN
                   ALLOCATE (fft_scratch_new%fft_scratch%ss(mmax, lmax))
@@ -3031,13 +3035,13 @@ CONTAINS
                m2 = fft_sizes%r_dim(2)
                nbx = fft_sizes%nbx
                nbz = fft_sizes%nbz
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p1buf, [mx1*my1, n(3)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p6buf, [lg, mg])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p2buf, [n(3), mx1*my1])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p3buf, [mx2*mz2, n(2)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p4buf, [n(2), mx2*mz2])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p5buf, [nyzray, n(1)])
-               CALL fft_alloc(fft_scratch_new%fft_scratch%p7buf, [mg, lg])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p1buf, [mx1*my1, n(3)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p6buf, [lg, mg])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p2buf, [n(3), mx1*my1])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p3buf, [mx2*mz2, n(2)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p4buf, [n(2), mx2*mz2])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p5buf, [nyzray, n(1)])
+               CALL fft_allocate(fft_scratch_new%fft_scratch%p7buf, [mg, lg])
                IF (alltoall_sgl) THEN
                   ALLOCATE (fft_scratch_new%fft_scratch%yzbuf_sgl(mg*lg))
                   ALLOCATE (fft_scratch_new%fft_scratch%xzbuf_sgl(n(2)*mx2*mz2))
@@ -3104,8 +3108,8 @@ CONTAINS
 
             CASE (400) ! serial FFT
                np = 0
-               CALL fft_alloc(fft_scratch_new%fft_scratch%ziptr, n)
-               CALL fft_alloc(fft_scratch_new%fft_scratch%zoptr, n)
+               CALL fft_allocate(fft_scratch_new%fft_scratch%ziptr, n)
+               CALL fft_allocate(fft_scratch_new%fft_scratch%zoptr, n)
 
                !in place plans
                CALL fft_create_plan_3d(fft_scratch_new%fft_scratch%fft_plan(1), fft_type, .TRUE., FWFFT, n, &
