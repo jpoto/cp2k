@@ -1423,6 +1423,12 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
              npts_global[0], npts_global[1], npts_global[2], npts_global_ref[0],
              npts_global_ref[1], npts_global_ref[2], max_error);
     errors++;
+  } else {
+    if (my_process == 0)
+      printf("The fw R2C-3D FFT with ray layout works correctly (%i %i "
+             "%i)/(%i %i %i): %f!\n",
+             npts_global[0], npts_global[1], npts_global[2], npts_global_ref[0],
+             npts_global_ref[1], npts_global_ref[2], max_error);
   }
   fflush(stdout);
 

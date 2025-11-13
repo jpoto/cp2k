@@ -45,22 +45,26 @@ int main(int argc, char *argv[]) {
 
   offload_set_chosen_device(0);
 
-  int errors = run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, true, true, 0.01);
+  const bool debug = false;
+  const int backend = FFT_LIB_FFTW;
+  const int planning_mode = FFT_MEASURE;
+
+  int errors = run_tests(debug, backend, planning_mode, true, true, 0.01);
 
   // Test also the reference backend and without distributed FFTs from the
   // library
   if (fft_lib_use_mpi()) {
-    errors += run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, false, true, 0.01);
+    errors += run_tests(debug, backend, planning_mode, false, true, 0.01);
   }
 
   if (fft_lib_has_guru_interface()) {
 
-    int errors = run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, true, false, 0.01);
+    int errors = run_tests(debug, backend, planning_mode, true, false, 0.01);
 
     // Test also the reference backend and without distributed FFTs from the
     // library
     if (fft_lib_use_mpi()) {
-      errors += run_tests(false, FFT_LIB_FFTW, FFT_MEASURE, false, false, 0.01);
+      errors += run_tests(debug, backend, planning_mode, false, false, 0.01);
     }
   }
 
