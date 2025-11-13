@@ -283,8 +283,8 @@ CONTAINS
 #if defined(__NO_OFFLOAD_DBM)
       flags = TRIM(flags)//" no_offload_dbm"
 #endif
-#if defined(__NO_OFFLOAD_PW)
-      flags = TRIM(flags)//" no_offload_pw"
+#if defined(__NO_OFFLOAD_FFT)
+      flags = TRIM(flags)//" no_offload_fft"
 #endif
 #if defined(__OFFLOAD_PROFILING)
       flags = TRIM(flags)//" offload_profiling"

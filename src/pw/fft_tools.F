@@ -27,10 +27,6 @@
 !> \author JGH
 ! **************************************************************************************************
 MODULE fft_tools
-   USE ISO_C_BINDING,                   ONLY: C_F_POINTER,&
-                                              C_LOC,&
-                                              C_PTR,&
-                                              C_SIZE_T
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
    USE fft_api,                         ONLY: &
         FFT_LIBRARY_BACKEND_DEFAULT, FFT_LIBRARY_FFTW_MODE_ESTIMATE, fft_1d_bw_local, &
@@ -43,7 +39,6 @@ MODULE fft_tools
         fft_do_cleanup, fft_do_init, fft_get_lengths, fft_library
    USE fft_plan,                        ONLY: fft_plan_type
    USE kinds,                           ONLY: dp,&
-                                              dp_size,&
                                               sp
    USE mathconstants,                   ONLY: z_zero
    USE message_passing,                 ONLY: mp_cart_type,&
@@ -51,8 +46,6 @@ MODULE fft_tools
                                               mp_comm_type,&
                                               mp_request_type,&
                                               mp_waitall
-   USE offload_api,                     ONLY: offload_free_pinned_mem,&
-                                              offload_malloc_pinned_mem
 
 !$ USE OMP_LIB, ONLY: omp_get_max_threads, omp_get_thread_num, omp_in_parallel
 
@@ -167,12 +160,6 @@ MODULE fft_tools
    LOGICAL, SAVE :: alltoall_sgl = .FALSE.
    LOGICAL, SAVE :: use_fftsg_sizes = .TRUE.
    INTEGER, SAVE :: fft_plan_style = 1
-
-   ! these are only needed for pw_gpu (-D__OFFLOAD)
-   PUBLIC :: get_fft_scratch, release_fft_scratch
-   PUBLIC :: cube_transpose_1, cube_transpose_2
-   PUBLIC :: yz_to_x, x_to_yz, xz_to_yz, yz_to_xz
-   PUBLIC :: fft_scratch_sizes, fft_scratch_type
 
    INTERFACE fft3d
       MODULE PROCEDURE fft3d_s, fft3d_ps, fft3d_pb
@@ -2579,12 +2566,7 @@ CONTAINS
 !> \param fft_scratch ...
 ! **************************************************************************************************
    SUBROUTINE deallocate_fft_scratch_type(fft_scratch)
-      TYPE(fft_scratch_type), INTENT(INOUT)    :: fft_scratch
-
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-      INTEGER                   :: ierr
-      COMPLEX(KIND=dp), POINTER :: dummy_ptr_z
-#endif
+      TYPE(fft_scratch_type), INTENT(INOUT)              :: fft_scratch
 
       ! deallocate structures
       IF (ASSOCIATED(fft_scratch%ziptr)) THEN
@@ -2597,66 +2579,31 @@ CONTAINS
          CALL fft_dealloc(fft_scratch%p1buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p2buf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%p2buf(1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%p2buf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%p3buf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%p3buf(1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%p3buf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%p4buf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%p4buf(1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%p4buf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%p5buf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%p5buf(1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%p5buf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%p6buf)) THEN
          CALL fft_dealloc(fft_scratch%p6buf)
       END IF
       IF (ASSOCIATED(fft_scratch%p7buf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%p7buf(1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%p7buf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%r1buf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%r1buf(1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%r1buf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%r2buf)) THEN
          CALL fft_dealloc(fft_scratch%r2buf)
       END IF
       IF (ASSOCIATED(fft_scratch%tbuf)) THEN
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-         dummy_ptr_z => fft_scratch%tbuf(1, 1, 1)
-         ierr = offload_free_pinned_mem(c_loc(dummy_ptr_z))
-#else
          CALL fft_dealloc(fft_scratch%tbuf)
-#endif
       END IF
       IF (ASSOCIATED(fft_scratch%a1buf)) THEN
          CALL fft_dealloc(fft_scratch%a1buf)
@@ -2855,29 +2802,22 @@ CONTAINS
 !> \param fft_sizes ...
 ! **************************************************************************************************
    SUBROUTINE get_fft_scratch(fft_scratch, tf_type, n, fft_sizes)
-      TYPE(fft_scratch_type), POINTER          :: fft_scratch
-      INTEGER, INTENT(IN)                      :: tf_type
-      INTEGER, DIMENSION(:), INTENT(IN)        :: n
-      TYPE(fft_scratch_sizes), INTENT(IN), &
-         OPTIONAL                              :: fft_sizes
+      TYPE(fft_scratch_type), POINTER                    :: fft_scratch
+      INTEGER, INTENT(IN)                                :: tf_type
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: n
+      TYPE(fft_scratch_sizes), INTENT(IN), OPTIONAL      :: fft_sizes
 
-      CHARACTER(len=*), PARAMETER :: routineN = 'get_fft_scratch'
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'get_fft_scratch'
 
-      INTEGER :: coord(2), DIM(2), handle, i, ix, iz, lg, lmax, m1, m2, &
-                 mcx2, mcy3, mcz1, mcz2, mg, mmax, mx1, mx2, my1, my3, mz1, mz2, mz3, &
-                 nbx, nbz, nm, nmax, nmray, np, nx, ny, nyzray, nz, pos(2)
-      INTEGER, DIMENSION(3)                    :: pcoord
-      LOGICAL                                  :: equal
-      LOGICAL, DIMENSION(2)                    :: dims
-      TYPE(fft_scratch_pool_type), POINTER     :: fft_scratch_current, &
-                                                  fft_scratch_last, &
-                                                  fft_scratch_new
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-      INTEGER                   :: ierr
-      INTEGER(KIND=C_SIZE_T)    :: length
-      TYPE(C_PTR)               :: cptr_r1buf, cptr_tbuf, &
-                                   cptr_p2buf, cptr_p3buf, cptr_p4buf, cptr_p5buf, cptr_p7buf
-#endif
+      INTEGER :: coord(2), DIM(2), handle, i, ix, iz, lg, lmax, m1, m2, mcx2, mcy3, mcz1, mcz2, &
+         mg, mmax, mx1, mx2, my1, my3, mz1, mz2, mz3, nbx, nbz, nm, nmax, nmray, np, nx, ny, &
+         nyzray, nz, pos(2)
+      INTEGER, DIMENSION(3)                              :: pcoord
+      LOGICAL                                            :: equal
+      LOGICAL, DIMENSION(2)                              :: dims
+      TYPE(fft_scratch_pool_type), POINTER               :: fft_scratch_current, fft_scratch_last, &
+                                                            fft_scratch_new
+
       CALL timeset(routineN, handle)
 
       ! this is the place to check that the scratch_pool does not grow without limits
@@ -3049,19 +2989,8 @@ CONTAINS
                np = fft_sizes%numtask
                nmray = fft_sizes%nmray
                nyzray = fft_sizes%nyzray
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-               length = INT(2*dp_size*MAX(mmax, 1)*MAX(lmax, 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_r1buf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_r1buf, fft_scratch_new%fft_scratch%r1buf, [MAX(mmax, 1), MAX(lmax, 1)])
-               length = INT(2*dp_size*MAX(ny, 1)*MAX(nz, 1)*MAX(nx, 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_tbuf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_tbuf, fft_scratch_new%fft_scratch%tbuf, [MAX(ny, 1), MAX(nz, 1), MAX(nx, 1)])
-#else
                CALL fft_alloc(fft_scratch_new%fft_scratch%r1buf, [mmax, lmax])
                CALL fft_alloc(fft_scratch_new%fft_scratch%tbuf, [ny, nz, nx])
-#endif
                fft_scratch_new%fft_scratch%group = fft_sizes%rs_group
                CALL fft_alloc(fft_scratch_new%fft_scratch%r2buf, [lg, mg])
                nm = nmray*mx2
@@ -3104,34 +3033,11 @@ CONTAINS
                nbz = fft_sizes%nbz
                CALL fft_alloc(fft_scratch_new%fft_scratch%p1buf, [mx1*my1, n(3)])
                CALL fft_alloc(fft_scratch_new%fft_scratch%p6buf, [lg, mg])
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-               length = INT(2*dp_size*MAX(n(3), 1)*MAX(mx1*my1, 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_p2buf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_p2buf, fft_scratch_new%fft_scratch%p2buf, [MAX(n(3), 1), MAX(mx1*my1, 1)])
-               length = INT(2*dp_size*MAX(mx2*mz2, 1)*MAX(n(2), 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_p3buf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_p3buf, fft_scratch_new%fft_scratch%p3buf, [MAX(mx2*mz2, 1), MAX(n(2), 1)])
-               length = INT(2*dp_size*MAX(n(2), 1)*MAX(mx2*mz2, 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_p4buf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_p4buf, fft_scratch_new%fft_scratch%p4buf, [MAX(n(2), 1), MAX(mx2*mz2, 1)])
-               length = INT(2*dp_size*MAX(nyzray, 1)*MAX(n(1), 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_p5buf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_p5buf, fft_scratch_new%fft_scratch%p5buf, [MAX(nyzray, 1), MAX(n(1), 1)])
-               length = INT(2*dp_size*MAX(mg, 1)*MAX(lg, 1), KIND=C_SIZE_T)
-               ierr = offload_malloc_pinned_mem(cptr_p7buf, length)
-               CPASSERT(ierr == 0)
-               CALL c_f_pointer(cptr_p7buf, fft_scratch_new%fft_scratch%p7buf, [MAX(mg, 1), MAX(lg, 1)])
-#else
                CALL fft_alloc(fft_scratch_new%fft_scratch%p2buf, [n(3), mx1*my1])
                CALL fft_alloc(fft_scratch_new%fft_scratch%p3buf, [mx2*mz2, n(2)])
                CALL fft_alloc(fft_scratch_new%fft_scratch%p4buf, [n(2), mx2*mz2])
                CALL fft_alloc(fft_scratch_new%fft_scratch%p5buf, [nyzray, n(1)])
                CALL fft_alloc(fft_scratch_new%fft_scratch%p7buf, [mg, lg])
-#endif
                IF (alltoall_sgl) THEN
                   ALLOCATE (fft_scratch_new%fft_scratch%yzbuf_sgl(mg*lg))
                   ALLOCATE (fft_scratch_new%fft_scratch%xzbuf_sgl(n(2)*mx2*mz2))

@@ -11,6 +11,7 @@
 #include "fft_lib_ref.h"
 #include "fft_timer.h"
 #include "fpga/fft_fpga.h"
+#include "gpu/fft_gpu.h"
 
 #include <assert.h>
 #include <math.h>
@@ -67,14 +68,17 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
  ******************************************************************************/
 void fft_init_acc_lib() {
 #if defined(__FFT_FPGA)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 #error                                                                         \
-    "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_PW."
+    "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_FFT."
   CPABORT("OFFLOAD and FPGA cannot be configured concurrently! Recompile with "
-          "-D__NO_OFFLOAD_PW.")
+          "-D__NO_OFFLOAD_FFT.")
 #endif
   const int stat = fft_fpga_initialize()
       assert(stat == 0 && "Initialization of FPGA failed!");
+#endif
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  fft_gpu_init();
 #endif
 }
 
@@ -101,13 +105,16 @@ void fft_finalize_lib(const char *wisdom_file) {
  ******************************************************************************/
 void fft_finalize_acc_lib() {
 #if defined(__FFT_FPGA)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 #error                                                                         \
-    "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_PW."
+    "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_FFT."
   CPABORT("OFFLOAD and FPGA cannot be configured concurrently! Recompile with "
-          "-D__NO_OFFLOAD_PW.")
+          "-D__NO_OFFLOAD_FFT.")
 #endif
   fft_fpga_final_();
+#endif
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  fft_gpu_finalize();
 #endif
 }
 
@@ -127,6 +134,8 @@ bool fft_lib_use_mpi() {
     return fft_ref_lib_use_mpi();
   case FFT_LIB_FFTW:
     return fft_fftw_lib_use_mpi();
+  case FFT_LIB_GPU:
+    return false;
   default:
     assert(0 && "Unknown FFT library.");
     return false;
@@ -143,6 +152,8 @@ bool fft_lib_has_guru_interface() {
     return false;
   case FFT_LIB_FFTW:
     return fft_fftw_lib_has_guru_interface();
+  case FFT_LIB_GPU:
+    return false;
   default:
     assert(0 && "Unknown FFT library.");
     return false;
@@ -180,11 +191,14 @@ double complex *get_buffer_2() { return buffer_2; }
  * \author Frederick Stein
  ******************************************************************************/
 void fft_allocate_double(const int length, double **buffer) {
-  if (fft_lib_choice == FFT_LIB_REF) {
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
     fft_ref_allocate_double(length, buffer);
-  } else if (fft_lib_choice == FFT_LIB_FFTW) {
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_allocate_double(length, buffer);
-  } else {
+    break;
+  default:
     assert(0 && "Unknown FFT library.");
   }
 }
@@ -194,11 +208,14 @@ void fft_allocate_double(const int length, double **buffer) {
  * \author Frederick Stein
  ******************************************************************************/
 void fft_allocate_complex(const int length, double complex **buffer) {
-  if (fft_lib_choice == FFT_LIB_REF) {
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
     fft_ref_allocate_complex(length, buffer);
-  } else if (fft_lib_choice == FFT_LIB_FFTW) {
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_allocate_complex(length, buffer);
-  } else {
+    break;
+  default:
     assert(0 && "Unknown FFT library.");
   }
 }

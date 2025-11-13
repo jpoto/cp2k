@@ -2,14 +2,14 @@
 /*  CP2K: A general program to perform molecular dynamics simulations         */
 /*  Copyright 2000-2026 CP2K developers group <https://cp2k.org>              */
 /*                                                                            */
-/*  SPDX-License-Identifier: GPL-2.0-or-later                                 */
+/*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
 #include "../../offload/offload_runtime.h"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 
 #include "../../offload/offload_fft.h"
 #include "../../offload/offload_library.h"
-#include "pw_gpu_kernels.h"
+#include "fft_gpu_kernels.h"
 
 #include <assert.h>
 #include <omp.h>
@@ -26,8 +26,8 @@ typedef struct {
   offload_fftHandle *plan;
 } cache_entry;
 
-#define PW_GPU_CACHE_SIZE 32
-static cache_entry cache[PW_GPU_CACHE_SIZE];
+#define FFT_GPU_CACHE_SIZE 32
+static cache_entry cache[FFT_GPU_CACHE_SIZE];
 static int cache_oldest_entry = 0; // used for LRU eviction
 
 static double *buffer_dev_1, *buffer_dev_2;
@@ -38,17 +38,17 @@ static offloadStream_t stream;
 static bool is_initialized = false;
 
 /*******************************************************************************
- * \brief Initializes the pw_gpu library.
+ * \brief Initializes the fft_gpu library.
  * \author Ole Schuett
  ******************************************************************************/
-void pw_gpu_init(void) {
+void fft_gpu_init(void) {
   assert(omp_get_num_threads() == 1);
   if (is_initialized) {
-    // fprintf(stderr, "Error: pw_gpu was already initialized.\n");
+    // fprintf(stderr, "Error: fft_gpu was already initialized.\n");
     // TODO abort();
     return;
   }
-  memset(cache, 0, sizeof(cache_entry) * PW_GPU_CACHE_SIZE);
+  memset(cache, 0, sizeof(cache_entry) * FFT_GPU_CACHE_SIZE);
   cache_oldest_entry = 0;
 
   allocated_buffer_size = 1; // start small
@@ -63,17 +63,17 @@ void pw_gpu_init(void) {
 }
 
 /*******************************************************************************
- * \brief Releases resources held by the pw_gpu library.
+ * \brief Releases resources held by the fft_gpu library.
  * \author Ole Schuett
  ******************************************************************************/
-void pw_gpu_finalize(void) {
+void fft_gpu_finalize(void) {
   assert(omp_get_num_threads() == 1);
   if (!is_initialized) {
-    // fprintf(stderr, "Error: pw_gpu is not initialized.\n");
+    // fprintf(stderr, "Error: fft_gpu is not initialized.\n");
     // TODO abort();
     return;
   }
-  for (int i = 0; i < PW_GPU_CACHE_SIZE; i++) {
+  for (int i = 0; i < FFT_GPU_CACHE_SIZE; i++) {
     if (cache[i].plan != NULL) {
       offload_fftDestroy(*cache[i].plan);
       free(cache[i].plan);
@@ -113,7 +113,7 @@ static void ensure_memory_sizes(const size_t requested_buffer_size,
  ******************************************************************************/
 static offload_fftHandle *lookup_plan_from_cache(const int key[4]) {
   assert(is_initialized);
-  for (int i = 0; i < PW_GPU_CACHE_SIZE; i++) {
+  for (int i = 0; i < FFT_GPU_CACHE_SIZE; i++) {
     const int *x = cache[i].key;
     if (x[0] == key[0] && x[1] == key[1] && x[2] == key[2] && x[3] == key[3]) {
       return cache[i].plan;
@@ -128,7 +128,7 @@ static offload_fftHandle *lookup_plan_from_cache(const int key[4]) {
  ******************************************************************************/
 static void add_plan_to_cache(const int key[4], offload_fftHandle *plan) {
   const int i = cache_oldest_entry;
-  cache_oldest_entry = (cache_oldest_entry + 1) % PW_GPU_CACHE_SIZE;
+  cache_oldest_entry = (cache_oldest_entry + 1) % FFT_GPU_CACHE_SIZE;
   if (cache[i].plan != NULL) {
     offload_fftDestroy(*cache[i].plan);
     free(cache[i].plan);
@@ -203,8 +203,8 @@ static void fft_3d(const int direction, const int nx, const int ny,
  *          precision complex) gather, on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
-                  const int *npts, const int ngpts, const double scale) {
+void fft_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
+                   const int *npts, const int ngpts, const double scale) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -221,15 +221,15 @@ void pw_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
 
   // Upload REAL input and convert to COMPLEX on device.
   offloadMemcpyAsyncHtoD(buffer_dev_1, din, buffer_size / 2, stream);
-  pw_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
+  fft_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
 
   // Run FFT on the device.
   fft_3d(OFFLOAD_FFT_FORWARD, npts[2], npts[1], npts[0], buffer_dev_2);
 
   // Upload map and run gather on the device.
   offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
-  pw_gpu_launch_gather(buffer_dev_1, buffer_dev_2, scale, ngpts, ghatmap_dev,
-                       stream);
+  fft_gpu_launch_gather(buffer_dev_1, buffer_dev_2, scale, ngpts, ghatmap_dev,
+                        stream);
 
   // Download COMPLEX results to host.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, 2 * sizeof(double) * ngpts,
@@ -242,9 +242,9 @@ void pw_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
  *          (double precision complex) FFT, on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
-                  const int *npts, const int ngpts, const int nmaps,
-                  const double scale) {
+void fft_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
+                   const int *npts, const int ngpts, const int nmaps,
+                   const double scale) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -265,14 +265,14 @@ void pw_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
   // Upload map and run scatter on the device.
   offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
   offloadMemsetAsync(buffer_dev_2, 0, buffer_size, stream);
-  pw_gpu_launch_scatter(buffer_dev_2, buffer_dev_1, scale, ngpts, nmaps,
-                        ghatmap_dev, stream);
+  fft_gpu_launch_scatter(buffer_dev_2, buffer_dev_1, scale, ngpts, nmaps,
+                         ghatmap_dev, stream);
 
   // Run FFT on the device.
   fft_3d(OFFLOAD_FFT_INVERSE, npts[2], npts[1], npts[0], buffer_dev_2);
 
   // Convert COMPLEX results to REAL and download to host.
-  pw_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
+  fft_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
   offloadMemcpyAsyncDtoH(dout, buffer_dev_1, buffer_size / 2, stream);
   offloadStreamSynchronize(stream);
 }
@@ -282,7 +282,7 @@ void pw_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
  *          precision complex) 2D-FFT on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_cff(const double *din, double *zout, const int *npts) {
+void fft_gpu_cff(const double *din, double *zout, const int *npts) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -297,7 +297,7 @@ void pw_gpu_cff(const double *din, double *zout, const int *npts) {
 
   // Upload REAL input and convert to COMPLEX on device.
   offloadMemcpyAsyncHtoD(buffer_dev_1, din, buffer_size / 2, stream);
-  pw_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
+  fft_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
 
   // Run FFT on the device.
   // NOTE: Could use 2D-FFT, but CUDA does them C-shaped which is not optimal.
@@ -316,7 +316,7 @@ void pw_gpu_cff(const double *din, double *zout, const int *npts) {
  *          to double) shrink-down on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_ffc(const double *zin, double *dout, const int *npts) {
+void fft_gpu_ffc(const double *zin, double *dout, const int *npts) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -338,7 +338,7 @@ void pw_gpu_ffc(const double *zin, double *dout, const int *npts) {
          buffer_dev_2);
   fft_1d(OFFLOAD_FFT_INVERSE, npts[2], npts[0] * npts[1], buffer_dev_2,
          buffer_dev_1);
-  pw_gpu_launch_complex_to_real(buffer_dev_1, buffer_dev_2, nrpts, stream);
+  fft_gpu_launch_complex_to_real(buffer_dev_1, buffer_dev_2, nrpts, stream);
 
   // Download REAL results to host.
   offloadMemcpyAsyncDtoH(dout, buffer_dev_2, buffer_size / 2, stream);
@@ -350,7 +350,7 @@ void pw_gpu_ffc(const double *zin, double *dout, const int *npts) {
  *          precision complex) 1D-FFT on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_cf(const double *din, double *zout, const int *npts) {
+void fft_gpu_cf(const double *din, double *zout, const int *npts) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -365,7 +365,7 @@ void pw_gpu_cf(const double *din, double *zout, const int *npts) {
 
   // Upload REAL input and convert to COMPLEX on device.
   offloadMemcpyAsyncHtoD(buffer_dev_1, din, buffer_size / 2, stream);
-  pw_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
+  fft_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
 
   // Run FFT on the device.
   fft_1d(OFFLOAD_FFT_FORWARD, npts[2], npts[0] * npts[1], buffer_dev_2,
@@ -381,7 +381,7 @@ void pw_gpu_cf(const double *din, double *zout, const int *npts) {
  *          to double) shrink-down on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_fc(const double *zin, double *dout, const int *npts) {
+void fft_gpu_fc(const double *zin, double *dout, const int *npts) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -402,7 +402,7 @@ void pw_gpu_fc(const double *zin, double *dout, const int *npts) {
          buffer_dev_2);
 
   // Convert COMPLEX results to REAL and download to host.
-  pw_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
+  fft_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
   offloadMemcpyAsyncDtoH(dout, buffer_dev_1, buffer_size / 2, stream);
   offloadStreamSynchronize(stream);
 }
@@ -411,8 +411,8 @@ void pw_gpu_fc(const double *zin, double *dout, const int *npts) {
  * \brief   Performs a (double precision complex) 1D-FFT on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_f(const double *zin, double *zout, const int dir, const int n,
-              const int m) {
+void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
+               const int m) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = n * m;
@@ -445,9 +445,9 @@ void pw_gpu_f(const double *zin, double *zout, const int dir, const int n,
  *          precision complex) gather, on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_fg(const double *zin, double *zout, const int *ghatmap,
-               const int *npts, const int mmax, const int ngpts,
-               const double scale) {
+void fft_gpu_fg(const double *zin, double *zout, const int *ghatmap,
+                const int *npts, const int mmax, const int ngpts,
+                const double scale) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * mmax;
@@ -470,8 +470,8 @@ void pw_gpu_fg(const double *zin, double *zout, const int *ghatmap,
 
   // Upload map and run gather on the device.
   offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
-  pw_gpu_launch_gather(buffer_dev_1, buffer_dev_2, scale, ngpts, ghatmap_dev,
-                       stream);
+  fft_gpu_launch_gather(buffer_dev_1, buffer_dev_2, scale, ngpts, ghatmap_dev,
+                        stream);
 
   // Download COMPLEX results from device.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, 2 * sizeof(double) * ngpts,
@@ -484,9 +484,9 @@ void pw_gpu_fg(const double *zin, double *zout, const int *ghatmap,
  *          (double precision complex) 1D-FFT, on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void pw_gpu_sf(const double *zin, double *zout, const int *ghatmap,
-               const int *npts, const int mmax, const int ngpts,
-               const int nmaps, const double scale) {
+void fft_gpu_sf(const double *zin, double *zout, const int *ghatmap,
+                const int *npts, const int mmax, const int ngpts,
+                const int nmaps, const double scale) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * mmax;
@@ -507,8 +507,8 @@ void pw_gpu_sf(const double *zin, double *zout, const int *ghatmap,
   // Upload map and run scatter on the device.
   offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
   offloadMemsetAsync(buffer_dev_2, 0, buffer_size, stream);
-  pw_gpu_launch_scatter(buffer_dev_2, buffer_dev_1, scale, ngpts, nmaps,
-                        ghatmap_dev, stream);
+  fft_gpu_launch_scatter(buffer_dev_2, buffer_dev_1, scale, ngpts, nmaps,
+                         ghatmap_dev, stream);
 
   // Run FFT on the device.
   fft_1d(OFFLOAD_FFT_INVERSE, npts[0], mmax, buffer_dev_2, buffer_dev_1);
@@ -518,6 +518,6 @@ void pw_gpu_sf(const double *zin, double *zout, const int *ghatmap,
   offloadStreamSynchronize(stream);
 }
 
-#endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 
 // EOF

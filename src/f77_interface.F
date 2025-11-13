@@ -121,8 +121,6 @@ MODULE f77_interface
                                               offload_init,&
                                               offload_set_chosen_device
    USE periodic_table,                  ONLY: init_periodic_table
-   USE pw_gpu,                          ONLY: pw_gpu_finalize,&
-                                              pw_gpu_init
    USE pwdft_environment,               ONLY: pwdft_init
    USE pwdft_environment_types,         ONLY: pwdft_env_create,&
                                               pwdft_environment_type
@@ -312,7 +310,6 @@ CONTAINS
 #endif
          CALL gauxc_check_status(gauxc_status)
          CALL fft_library_acc_init()
-         CALL pw_gpu_init()
          CALL grid_library_init()
          CALL dbm_library_init()
       ELSE
@@ -353,7 +350,6 @@ CONTAINS
          ! Finalize libraries (Offload)
          CALL dbm_library_finalize()
          CALL grid_library_finalize()
-         CALL pw_gpu_finalize()
          CALL fft_library_acc_finalize()
          IF (cp_sirius_is_initialized()) CALL cp_sirius_finalize()
          CALL gauxc_finalize(gauxc_status)

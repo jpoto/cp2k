@@ -36,10 +36,6 @@ MODULE pw_methods
    USE mathconstants, ONLY: gaussi, &
                             z_zero
    USE pw_copy_all, ONLY: pw_copy_match
-   USE pw_gpu, ONLY: pw_gpu_c1dr3d_3d, &
-                     pw_gpu_c1dr3d_3d_ps, &
-                     pw_gpu_r3dc1d_3d, &
-                     pw_gpu_r3dc1d_3d_ps
    USE pw_grid_types, ONLY: HALFSPACE, &
                             PW_MODE_DISTRIBUTED, &
                             PW_MODE_LOCAL, &
@@ -1182,9 +1178,6 @@ CONTAINS
                                                                                        out_unit
                                  #:if (space=="rs" and kind=="r3d" and kind2=="c1d") or (space=="gs" and kind=="c1d" and kind2=="r3d")
                                     INTEGER, DIMENSION(3)                              :: nloc
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                    LOGICAL                                            :: use_pw_gpu
-#endif
                                  #:endif
                                  INTEGER, DIMENSION(:), POINTER                     :: n
                                  LOGICAL                                            :: test
@@ -1256,16 +1249,12 @@ CONTAINS
                                           CALL pw_gather_s_${kind2}$_c3d(pw2, c_out)
                                           DEALLOCATE (c_out)
                                        #:elif kind=="r3d" and kind2=="c1d"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                          CALL pw_gpu_r3dc1d_3d(pw1, pw2)
-#else
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           c_out = 0.0_dp
                                           CALL pw_copy_to_array(pw1, c_out)
                                           CALL fft3d(FWFFT, n, c_out, debug=test)
                                           CALL pw_gather_s_${kind2}$_c3d(pw2, c_out)
                                           DEALLOCATE (c_out)
-#endif
                                        #:endif
                                     #:else
                                        #:if kind=="c3d" and kind2=="c3d"
@@ -1286,9 +1275,6 @@ CONTAINS
                                           CALL pw_scatter_s_${kind}$_c3d(pw1, c_out)
                                           CALL fft3d(BWFFT, n, c_out, debug=test)
                                        #:elif kind=="c1d" and kind2=="r3d"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                          CALL pw_gpu_c1dr3d_3d(pw1, pw2)
-#else
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           IF (test .AND. out_unit > 0) WRITE (out_unit, '(A)') "  PW_SCATTER : 3d -> 1d "
                                           CALL pw_scatter_s_${kind}$_c3d(pw1, c_out)
@@ -1298,7 +1284,6 @@ CONTAINS
                                           IF (test .AND. out_unit > 0) WRITE (out_unit, '(A)') "  REAL part "
                                           CALL pw_copy_from_array(pw2, c_out)
                                           DEALLOCATE (c_out)
-#endif
                                        #:endif
                                     #:endif
 
@@ -1346,36 +1331,25 @@ CONTAINS
                                              WRITE (out_unit, '(A)') "  PW_GATHER : 2d -> 1d "
                                           CALL pw_gather_p_${kind2}$ (pw2, grays)
                                        #:elif kind=="r3d" and kind2=="c1d"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                          ! (no ray dist. is not efficient in CUDA)
-                                          use_pw_gpu = pw1%pw_grid%para%ray_distribution
-                                          IF (use_pw_gpu) THEN
-                                             CALL pw_gpu_r3dc1d_3d_ps(pw1, pw2)
-                                          ELSE
-#endif
 !..   prepare input
-                                             nloc = pw1%pw_grid%npts_local
-                                             ALLOCATE (c_in(nloc(1), nloc(2), nloc(3)))
-                                             CALL pw_copy_to_array(pw1, c_in)
-                                             grays = z_zero
-                                             !..transform
-                                             IF (pw1%pw_grid%para%ray_distribution) THEN
-                                                CALL fft3d(FWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
-                                                           pw1%pw_grid%para%yzp, pw1%pw_grid%para%nyzray, &
-                                                           pw1%pw_grid%para%bo, debug=test)
-                                             ELSE
-                                                CALL fft3d(FWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
-                                                           pw1%pw_grid%para%bo, debug=test)
-                                             END IF
-                                             !..prepare output
-                                             IF (test .AND. out_unit > 0) &
-                                                WRITE (out_unit, '(A)') "  PW_GATHER : 2d -> 1d "
-                                             CALL pw_gather_p_${kind2}$ (pw2, grays)
-                                             DEALLOCATE (c_in)
-
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                                          nloc = pw1%pw_grid%npts_local
+                                          ALLOCATE (c_in(nloc(1), nloc(2), nloc(3)))
+                                          CALL pw_copy_to_array(pw1, c_in)
+                                          grays = z_zero
+                                          !..transform
+                                          IF (pw1%pw_grid%para%ray_distribution) THEN
+                                             CALL fft3d(FWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
+                                                        pw1%pw_grid%para%yzp, pw1%pw_grid%para%nyzray, &
+                                                        pw1%pw_grid%para%bo, debug=test)
+                                          ELSE
+                                             CALL fft3d(FWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
+                                                        pw1%pw_grid%para%bo, debug=test)
                                           END IF
-#endif
+                                          !..prepare output
+                                          IF (test .AND. out_unit > 0) &
+                                             WRITE (out_unit, '(A)') "  PW_GATHER : 2d -> 1d "
+                                          CALL pw_gather_p_${kind2}$ (pw2, grays)
+                                          DEALLOCATE (c_in)
                                        #:endif
                                     #:else
                                        #:if kind=="c1d" and kind2=="c3d"
@@ -1396,37 +1370,27 @@ CONTAINS
                                           END IF
                                           !..prepare output (nothing to do)
                                        #:elif kind=="c1d" and kind2=="r3d"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                          ! (no ray dist. is not efficient in CUDA)
-                                          use_pw_gpu = pw1%pw_grid%para%ray_distribution
-                                          IF (use_pw_gpu) THEN
-                                             CALL pw_gpu_c1dr3d_3d_ps(pw1, pw2)
-                                          ELSE
-#endif
 !..   prepare input
-                                             IF (test .AND. out_unit > 0) &
-                                                WRITE (out_unit, '(A)') "  PW_SCATTER : 2d -> 1d "
-                                             grays = z_zero
-                                             CALL pw_scatter_p_${kind}$ (pw1, grays)
-                                             nloc = pw2%pw_grid%npts_local
-                                             ALLOCATE (c_in(nloc(1), nloc(2), nloc(3)))
-                                             !..transform
-                                             IF (pw1%pw_grid%para%ray_distribution) THEN
-                                                CALL fft3d(BWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
-                                                           pw1%pw_grid%para%yzp, pw1%pw_grid%para%nyzray, &
-                                                           pw1%pw_grid%para%bo, debug=test)
-                                             ELSE
-                                                CALL fft3d(BWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
-                                                           pw1%pw_grid%para%bo, debug=test)
-                                             END IF
-                                             !..prepare output
-                                             IF (test .AND. out_unit > 0) &
-                                                WRITE (out_unit, '(A)') "  Real part "
-                                             CALL pw_copy_from_array(pw2, c_in)
-                                             DEALLOCATE (c_in)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                                          IF (test .AND. out_unit > 0) &
+                                             WRITE (out_unit, '(A)') "  PW_SCATTER : 2d -> 1d "
+                                          grays = z_zero
+                                          CALL pw_scatter_p_${kind}$ (pw1, grays)
+                                          nloc = pw2%pw_grid%npts_local
+                                          ALLOCATE (c_in(nloc(1), nloc(2), nloc(3)))
+                                          !..transform
+                                          IF (pw1%pw_grid%para%ray_distribution) THEN
+                                             CALL fft3d(BWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
+                                                        pw1%pw_grid%para%yzp, pw1%pw_grid%para%nyzray, &
+                                                        pw1%pw_grid%para%bo, debug=test)
+                                          ELSE
+                                             CALL fft3d(BWFFT, n, c_in, grays, pw1%pw_grid%para%group, &
+                                                        pw1%pw_grid%para%bo, debug=test)
                                           END IF
-#endif
+                                          !..prepare output
+                                          IF (test .AND. out_unit > 0) &
+                                             WRITE (out_unit, '(A)') "  Real part "
+                                          CALL pw_copy_from_array(pw2, c_in)
+                                          DEALLOCATE (c_in)
                                        #:endif
                                     #:endif
                                  END IF
