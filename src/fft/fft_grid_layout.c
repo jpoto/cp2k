@@ -1190,57 +1190,18 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
 
   ensure_buffer_size(grid_layout->buffer_size);
 
-  const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   if (grid_layout->ray_distribution) {
-    const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
-    for (int process = 0; process < my_process; process++) {
-      my_ray_to_xy += grid_layout->rays_per_process[process];
-    }
-    const int my_number_of_rays = grid_layout->rays_per_process[my_process];
-    memset(grid_layout->buffer_1, 0,
-           my_number_of_rays * grid_layout->npts_global_gspace[2] *
-               sizeof(double complex));
-#pragma omp parallel for default(none)                                         \
-    shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
-    for (int index = 0; index < grid_layout->npts_gs_local; index++) {
-      int *index_g = grid_layout->index_to_g[index];
-      for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-        if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
-            my_ray_to_xy[xy_ray][1] == index_g[1]) {
-          grid_layout->buffer_1[xy_ray * grid_layout->npts_global_gspace[2] +
-                                index_g[2]] = grid_gs[index];
-          break;
-        }
-      }
-    }
-    fft_3d_bw_ray_low(grid_layout->buffer_1, grid_rs, true,
-                      grid_layout->npts_global, grid_layout->proc2local_rs,
-                      grid_layout->proc2local_ms, grid_layout->rays_per_process,
-                      grid_layout->ray_to_xy, grid_layout->comm,
-                      grid_layout->sub_comm);
+    fft_3d_bw_ray_low(
+        grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
+        true, grid_layout->npts_global, grid_layout->proc2local_rs,
+        grid_layout->proc2local_ms, grid_layout->rays_per_process,
+        grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
   } else {
-    int local_sizes_gs[3];
-    for (int dir = 0; dir < 3; dir++) {
-      local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
-                            grid_layout->proc2local_gs[my_process][dir][0] + 1;
-    }
-    memset(grid_layout->buffer_1, 0, product3(local_sizes_gs));
-#pragma omp parallel for default(none)                                         \
-    shared(grid_layout, local_sizes_gs, grid_gs, my_process)
-    for (int index = 0; index < grid_layout->npts_gs_local; index++) {
-      int *index_g = grid_layout->index_to_g[index];
-      grid_layout->buffer_1
-          [((index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
-                local_sizes_gs[1] +
-            (index_g[1] - grid_layout->proc2local_gs[my_process][1][0])) *
-               local_sizes_gs[2] +
-           (index_g[2] - grid_layout->proc2local_gs[my_process][2][0])] =
-          grid_gs[index];
-    }
     fft_3d_bw_blocked_low(
-        grid_layout->buffer_1, grid_rs, true, grid_layout->npts_global,
-        grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-        grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+        grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
+        true, grid_layout->npts_global, grid_layout->proc2local_rs,
+        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+        grid_layout->comm, grid_layout->sub_comm);
   }
 }
 
@@ -1261,15 +1222,7 @@ void fft_3d_bw_with_layout_from_cart(const double complex *restrict grid_gs,
 
   ensure_buffer_size(grid_layout->buffer_size);
 
-  const int my_process = cp_mpi_comm_rank(grid_layout->comm);
-  int local_sizes_gs[3];
-  for (int dir = 0; dir < 3; dir++) {
-    local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
-                          grid_layout->proc2local_gs[my_process][dir][0] + 1;
-  }
-  memcpy(grid_layout->buffer_1, grid_gs,
-         product3(local_sizes_gs) * sizeof(double complex));
-  fft_3d_bw_blocked_low(grid_layout->buffer_1, grid_rs, true,
+  fft_3d_bw_blocked_low(grid_gs, NULL, 0, grid_rs, true,
                         grid_layout->npts_global, grid_layout->proc2local_rs,
                         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
                         grid_layout->comm, grid_layout->sub_comm);
@@ -1292,112 +1245,35 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
 
   ensure_buffer_size(grid_layout->buffer_size);
 
-  const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   if (grid_layout->use_halfspace) {
     if (grid_layout->ray_distribution) {
-      const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
-      for (int process = 0; process < my_process; process++) {
-        my_ray_to_xy += grid_layout->rays_per_process[process];
-      }
-      const int my_number_of_rays = grid_layout->rays_per_process[my_process];
-      memset(grid_layout->buffer_1, 0,
-             grid_layout->npts_global_gspace[2] * my_number_of_rays);
-#pragma omp parallel for default(none)                                         \
-    shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
-      for (int index = 0; index < grid_layout->npts_gs_local; index++) {
-        int *index_g = grid_layout->index_to_g[index];
-        for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-          if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
-              my_ray_to_xy[xy_ray][1] == index_g[1]) {
-            grid_layout->buffer_1[xy_ray * grid_layout->npts_global_gspace[2] +
-                                  index_g[2]] = grid_gs[index];
-            break;
-          }
-        }
-      }
       fft_3d_bw_c2r_ray_low(
-          grid_layout->buffer_1, grid_rs, grid_layout->npts_global,
-          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->rays_per_process,
-          grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
-    } else {
-      int local_sizes_gs[3];
-      for (int dir = 0; dir < 3; dir++) {
-        local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
-                              grid_layout->proc2local_gs[my_process][dir][0] +
-                              1;
-      }
-      memset(grid_layout->buffer_1, 0, product3(local_sizes_gs));
-#pragma omp parallel for default(none)                                         \
-    shared(grid_layout, local_sizes_gs, grid_gs, my_process)
-      for (int index = 0; index < grid_layout->npts_gs_local; index++) {
-        int *index_g = grid_layout->index_to_g[index];
-        grid_layout->buffer_1
-            [(index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
-                 local_sizes_gs[1] * local_sizes_gs[2] +
-             (index_g[1] - grid_layout->proc2local_gs[my_process][1][0]) *
-                 local_sizes_gs[2] +
-             (index_g[2] - grid_layout->proc2local_gs[my_process][2][0])] =
-            grid_gs[index];
-      }
-      fft_3d_bw_c2r_blocked_low(
-          grid_layout->buffer_1, grid_rs, grid_layout->npts_global,
-          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+          grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->rays_per_process, grid_layout->ray_to_xy,
           grid_layout->comm, grid_layout->sub_comm);
+    } else {
+      fft_3d_bw_c2r_blocked_low(
+          grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
     }
   } else {
     if (grid_layout->ray_distribution) {
-      const int(*my_ray_to_xy)[2] = grid_layout->ray_to_xy;
-      for (int process = 0; process < my_process; process++) {
-        my_ray_to_xy += grid_layout->rays_per_process[process];
-      }
-      const int my_number_of_rays = grid_layout->rays_per_process[my_process];
-      memset(grid_layout->buffer_1, 0,
-             grid_layout->npts_global_gspace[2] * my_number_of_rays);
-#pragma omp parallel for default(none)                                         \
-    shared(grid_layout, grid_gs, my_ray_to_xy, my_number_of_rays)
-      for (int index = 0; index < grid_layout->npts_gs_local; index++) {
-        int *index_g = grid_layout->index_to_g[index];
-        for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-          if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
-              my_ray_to_xy[xy_ray][1] == index_g[1]) {
-            grid_layout->buffer_1[xy_ray * grid_layout->npts_global_gspace[2] +
-                                  index_g[2]] = grid_gs[index];
-            break;
-          }
-        }
-      }
-      fft_3d_bw_ray_low(grid_layout->buffer_1, (double complex *)grid_rs, false,
-                        grid_layout->npts_global, grid_layout->proc2local_rs,
-                        grid_layout->proc2local_ms,
+      fft_3d_bw_ray_low(grid_gs, grid_layout->index_to_g,
+                        grid_layout->npts_gs_local, (double complex *)grid_rs,
+                        false, grid_layout->npts_global,
+                        grid_layout->proc2local_rs, grid_layout->proc2local_ms,
                         grid_layout->rays_per_process, grid_layout->ray_to_xy,
                         grid_layout->comm, grid_layout->sub_comm);
     } else {
-      int local_sizes_gs[3];
-      for (int dir = 0; dir < 3; dir++) {
-        local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
-                              grid_layout->proc2local_gs[my_process][dir][0] +
-                              1;
-      }
-      memset(grid_layout->buffer_1, 0, product3(local_sizes_gs));
-#pragma omp parallel for default(none)                                         \
-    shared(grid_layout, local_sizes_gs, grid_gs, my_process)
-      for (int index = 0; index < grid_layout->npts_gs_local; index++) {
-        int *index_g = grid_layout->index_to_g[index];
-        grid_layout->buffer_1
-            [(index_g[0] - grid_layout->proc2local_gs[my_process][0][0]) *
-                 local_sizes_gs[1] * local_sizes_gs[2] +
-             (index_g[1] - grid_layout->proc2local_gs[my_process][1][0]) *
-                 local_sizes_gs[2] +
-             (index_g[2] - grid_layout->proc2local_gs[my_process][2][0])] =
-            grid_gs[index];
-      }
       fft_3d_bw_blocked_low(
-          grid_layout->buffer_1, (double complex *)grid_rs, false,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-          grid_layout->comm, grid_layout->sub_comm);
+          grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local,
+          (double complex *)grid_rs, false, grid_layout->npts_global,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
     }
   }
 }
@@ -1419,33 +1295,18 @@ void fft_3d_bw_c2r_with_layout_from_cart(const double complex *restrict grid_gs,
 
   ensure_buffer_size(grid_layout->buffer_size);
 
-  const int my_process = cp_mpi_comm_rank(grid_layout->comm);
   if (grid_layout->use_halfspace) {
-    int local_sizes_gs[3];
-    for (int dir = 0; dir < 3; dir++) {
-      local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
-                            grid_layout->proc2local_gs[my_process][dir][0] + 1;
-    }
-    memcpy(grid_layout->buffer_1, grid_gs,
-           product3(local_sizes_gs) * sizeof(double complex));
     fft_3d_bw_c2r_blocked_low(
-        grid_layout->buffer_1, grid_rs, grid_layout->npts_global,
+        grid_gs, NULL, 0, grid_rs, grid_layout->npts_global,
         grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->comm, grid_layout->sub_comm);
   } else {
-    int local_sizes_gs[3];
-    for (int dir = 0; dir < 3; dir++) {
-      local_sizes_gs[dir] = grid_layout->proc2local_gs[my_process][dir][1] -
-                            grid_layout->proc2local_gs[my_process][dir][0] + 1;
-    }
-    memcpy(grid_layout->buffer_1, grid_gs,
-           product3(local_sizes_gs) * sizeof(double complex));
-    fft_3d_bw_blocked_low(
-        grid_layout->buffer_1, (double complex *)grid_rs, false,
-        grid_layout->npts_global, grid_layout->proc2local_rs,
-        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-        grid_layout->comm, grid_layout->sub_comm);
+    fft_3d_bw_blocked_low(grid_gs, NULL, 0, (double complex *)grid_rs, false,
+                          grid_layout->npts_global, grid_layout->proc2local_rs,
+                          grid_layout->proc2local_ms,
+                          grid_layout->proc2local_gs, grid_layout->comm,
+                          grid_layout->sub_comm);
   }
 }
 

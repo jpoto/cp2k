@@ -318,52 +318,54 @@ void run_tests(const bool debug, const int backend, const int planning_mode,
   fft_init_timer(debug);
   fft_init_lib(backend, planning_mode, use_mpi, use_guru, NULL);
 
-  // These are approximate grid sizes of the finest grid level for the
-  // standard benchmark systems in benchmarks/QS
-  run_test_c2c((const int[3]){100, 100, 100}, 10);
-  run_test_c2c((const int[3]){125, 125, 125}, 10);
-  run_test_c2c((const int[3]){160, 160, 160}, 10);
-  run_test_c2c((const int[3]){200, 200, 200}, 10);
-  run_test_c2c((const int[3]){256, 256, 256}, 10);
-  // run_test_c2c((const int[3]){315, 315, 315}, 10);
-  // run_test_c2c((const int[3]){400, 400, 400}, 10);
-  // run_test_c2c((const int[3]){500, 500, 500}, 10);
-  // run_test_c2c((const int[3]){630, 630, 630}, 10);
-  //  QS_low_scaling_GW
-  run_test_c2c((const int[3]){600, 180, 120}, 10);
+  if (false) {
+    // These are approximate grid sizes of the finest grid level for the
+    // standard benchmark systems in benchmarks/QS
+    run_test_c2c((const int[3]){100, 100, 100}, 10);
+    run_test_c2c((const int[3]){125, 125, 125}, 10);
+    run_test_c2c((const int[3]){160, 160, 160}, 10);
+    run_test_c2c((const int[3]){200, 200, 200}, 10);
+    run_test_c2c((const int[3]){256, 256, 256}, 10);
+    // run_test_c2c((const int[3]){315, 315, 315}, 10);
+    // run_test_c2c((const int[3]){400, 400, 400}, 10);
+    // run_test_c2c((const int[3]){500, 500, 500}, 10);
+    // run_test_c2c((const int[3]){630, 630, 630}, 10);
+    //  QS_low_scaling_GW
+    run_test_c2c((const int[3]){600, 180, 120}, 10);
 
-  // Repeat using the half-space formalism (R2C/C2R FFTs)
-  run_test_r2c((const int[3]){100, 100, 100}, 10, false);
-  run_test_r2c((const int[3]){125, 125, 125}, 10, false);
-  run_test_r2c((const int[3]){160, 160, 160}, 10, false);
-  run_test_r2c((const int[3]){200, 200, 200}, 10, false);
-  run_test_r2c((const int[3]){256, 256, 256}, 10, false);
-  // run_test_r2c((const int[3]){315, 315, 315}, 10, false);
-  // run_test_r2c((const int[3]){400, 400, 400}, 10, false);
-  //  run_test_r2c((const int[3]){500, 500, 500}, 10, false);
-  //  run_test_r2c((const int[3]){630, 630, 630}, 10, false);
-  //   QS_low_scaling_GW
-  run_test_r2c((const int[3]){600, 180, 120}, 10, false);
+    // Repeat using the half-space formalism (R2C/C2R FFTs)
+    run_test_r2c((const int[3]){100, 100, 100}, 10, false);
+    run_test_r2c((const int[3]){125, 125, 125}, 10, false);
+    run_test_r2c((const int[3]){160, 160, 160}, 10, false);
+    run_test_r2c((const int[3]){200, 200, 200}, 10, false);
+    run_test_r2c((const int[3]){256, 256, 256}, 10, false);
+    // run_test_r2c((const int[3]){315, 315, 315}, 10, false);
+    // run_test_r2c((const int[3]){400, 400, 400}, 10, false);
+    //  run_test_r2c((const int[3]){500, 500, 500}, 10, false);
+    //  run_test_r2c((const int[3]){630, 630, 630}, 10, false);
+    //   QS_low_scaling_GW
+    run_test_r2c((const int[3]){600, 180, 120}, 10, false);
 
-  // Repeat using the half-space formalism (R2C/C2R FFTs)
-  run_test_r2c((const int[3]){100, 100, 100}, 10, true);
-  run_test_r2c((const int[3]){125, 125, 125}, 10, true);
-  run_test_r2c((const int[3]){160, 160, 160}, 10, true);
-  run_test_r2c((const int[3]){200, 200, 200}, 10, true);
-  run_test_r2c((const int[3]){256, 256, 256}, 10, true);
-  // run_test_r2c((const int[3]){315, 315, 315}, 10, true);
-  // run_test_r2c((const int[3]){400, 400, 400}, 10, true);
-  //  run_test_r2c((const int[3]){500, 500, 500}, 10, true);
-  //  run_test_r2c((const int[3]){630, 630, 630}, 10, true);
-  //   QS_low_scaling_GW
-  run_test_r2c((const int[3]){600, 180, 120}, 10, true);
+    // Repeat using the half-space formalism (R2C/C2R FFTs)
+    run_test_r2c((const int[3]){100, 100, 100}, 10, true);
+    run_test_r2c((const int[3]){125, 125, 125}, 10, true);
+    run_test_r2c((const int[3]){160, 160, 160}, 10, true);
+    run_test_r2c((const int[3]){200, 200, 200}, 10, true);
+    run_test_r2c((const int[3]){256, 256, 256}, 10, true);
+    // run_test_r2c((const int[3]){315, 315, 315}, 10, true);
+    // run_test_r2c((const int[3]){400, 400, 400}, 10, true);
+    //  run_test_r2c((const int[3]){500, 500, 500}, 10, true);
+    //  run_test_r2c((const int[3]){630, 630, 630}, 10, true);
+    //   QS_low_scaling_GW
+    run_test_r2c((const int[3]){600, 180, 120}, 10, true);
+  }
 
   // Continue with the ray distribution
 
   // These are approximate grid sizes of the finest grid level for the
   // standard benchmark systems in benchmarks/QS
   run_test_ray_c2c((const int[3]){100, 100, 100}, 10);
-  // run_test_ray_c2c((const int[3]){125, 125, 125}, 10);
+  run_test_ray_c2c((const int[3]){125, 125, 125}, 10);
   // run_test_ray_c2c((const int[3]){160, 160, 160}, 10);
   //  run_test_ray_c2c((const int[3]){200, 200, 200}, 10);
   //  run_test_ray_c2c((const int[3]){256, 256, 256}, 10);
@@ -376,7 +378,7 @@ void run_tests(const bool debug, const int backend, const int planning_mode,
 
   // Repeat using the half-space formalism (R2C/C2R FFTs)
   run_test_ray_r2c((const int[3]){100, 100, 100}, 10, false);
-  // run_test_ray_r2c((const int[3]){125, 125, 125}, 10, false);
+  run_test_ray_r2c((const int[3]){125, 125, 125}, 10, false);
   // run_test_ray_r2c((const int[3]){160, 160, 160}, 10, false);
   //  run_test_ray_r2c((const int[3]){200, 200, 200}, 10, false);
   //  run_test_ray_r2c((const int[3]){256, 256, 256}, 10, false);
@@ -389,7 +391,7 @@ void run_tests(const bool debug, const int backend, const int planning_mode,
 
   // Repeat using the half-space formalism (R2C/C2R FFTs)
   run_test_ray_r2c((const int[3]){100, 100, 100}, 10, true);
-  // run_test_ray_r2c((const int[3]){125, 125, 125}, 10, true);
+  run_test_ray_r2c((const int[3]){125, 125, 125}, 10, true);
   // run_test_ray_r2c((const int[3]){160, 160, 160}, 10, true);
   //  run_test_ray_r2c((const int[3]){200, 200, 200}, 10, true);
   //  run_test_ray_r2c((const int[3]){256, 256, 256}, 10, true);
