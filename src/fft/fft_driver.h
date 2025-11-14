@@ -15,14 +15,12 @@
  * \brief Performs a forward 3D-FFT using a blocked distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_blocked_low(double complex *restrict grid_buffer_1,
-                           double complex *restrict grid_buffer_2,
-                           const int npts_global[3],
-                           const int (*proc2local_rs)[3][2],
-                           const int (*proc2local_ms)[3][2],
-                           const int (*proc2local_gs)[3][2],
-                           const cp_mpi_comm_t comm,
-                           const cp_mpi_comm_t sub_comm[2]);
+void fft_3d_fw_blocked_low(
+    const double complex *restrict grid_rs, const bool is_complex,
+    double complex *restrict grid_buffer_2, const int npts_global[3],
+    const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
+    const int (*proc2local_gs)[3][2], const cp_mpi_comm_t comm,
+    const cp_mpi_comm_t sub_comm[2]);
 
 /*******************************************************************************
  * \brief Performs a forward 3D-FFT using a blocked distribution.
@@ -40,8 +38,8 @@ void fft_3d_fw_r2c_blocked_low(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_blocked_low(double complex *restrict grid_buffer_1,
-                           double complex *restrict grid_buffer_2,
-                           const int npts_global[3],
+                           double complex *restrict grid_rs,
+                           const bool is_complex, const int npts_global[3],
                            const int (*proc2local_rs)[3][2],
                            const int (*proc2local_ms)[3][2],
                            const int (*proc2local_gs)[3][2],
@@ -63,7 +61,7 @@ void fft_3d_bw_c2r_blocked_low(
  * \brief Performs a forward 3D-FFT using a ray distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_ray_low(double complex *restrict grid_buffer_1,
+void fft_3d_fw_ray_low(const double complex *restrict grid_rs, bool is_complex,
                        double complex *restrict grid_buffer_2,
                        const int npts_global[3],
                        const int (*proc2local_rs)[3][2],
@@ -88,7 +86,7 @@ void fft_3d_fw_r2c_ray_low(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_ray_low(double complex *restrict grid_buffer_1,
-                       double complex *restrict grid_buffer_2,
+                       double complex *restrict grid_rs, const bool is_complex,
                        const int npts_global[3],
                        const int (*proc2local_rs)[3][2],
                        const int (*proc2local_ms)[3][2],
