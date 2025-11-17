@@ -1172,23 +1172,18 @@ void fft_3d_bw_ray_low(
   // with all implementations of the FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
 
-    if (index_to_g != NULL) {
-      memset(grid_buffer_1, 0,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-      const int(*my_ray_to_xy)[2] = ray_to_xy;
-      for (int process = 0; process < my_process; process++)
-        my_ray_to_xy += rays_per_process[process];
-      for (int i = 0; i < number_of_local_gpts; i++) {
-        const int *index = index_to_g[i];
-        for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
-          if (my_ray_to_xy[ray][0] == index[0] &&
-              my_ray_to_xy[ray][1] == index[1])
-            grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
-        }
+    memset(grid_buffer_1, 0,
+           number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
+    const int(*my_ray_to_xy)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++)
+      my_ray_to_xy += rays_per_process[process];
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      const int *index = index_to_g[i];
+      for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
+        if (my_ray_to_xy[ray][0] == index[0] &&
+            my_ray_to_xy[ray][1] == index[1])
+          grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
       }
-    } else {
-      memcpy(grid_buffer_1, grid_gs,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
     }
     if (fft_lib_use_mpi()) {
       // Perform the first FFT in z-direction
@@ -1257,23 +1252,18 @@ void fft_3d_bw_ray_low(
     }
   } else if (proc_grid[0] > 1) {
 
-    if (index_to_g != NULL) {
-      memset(grid_buffer_1, 0,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-      const int(*my_ray_to_xy)[2] = ray_to_xy;
-      for (int process = 0; process < my_process; process++)
-        my_ray_to_xy += rays_per_process[process];
-      for (int i = 0; i < number_of_local_gpts; i++) {
-        const int *index = index_to_g[i];
-        for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
-          if (my_ray_to_xy[ray][0] == index[0] &&
-              my_ray_to_xy[ray][1] == index[1])
-            grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
-        }
+    memset(grid_buffer_1, 0,
+           number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
+    const int(*my_ray_to_xy)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++)
+      my_ray_to_xy += rays_per_process[process];
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      const int *index = index_to_g[i];
+      for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
+        if (my_ray_to_xy[ray][0] == index[0] &&
+            my_ray_to_xy[ray][1] == index[1])
+          grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
       }
-    } else {
-      memcpy(grid_buffer_1, grid_gs,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
     }
     // Perform the first FFT (xy_d,z) -> (z,xy_d)
     fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
@@ -1299,21 +1289,15 @@ void fft_3d_bw_ray_low(
     }
   } else {
 
-    if (index_to_g != NULL) {
-      // Ray distribution
-      memset(grid_buffer_2, 0, product3(npts_global) * sizeof(double complex));
-      const int(*my_ray_to_xy)[2] = ray_to_xy;
-      for (int process = 0; process < my_process; process++)
-        my_ray_to_xy += rays_per_process[process];
-      for (int i = 0; i < number_of_local_gpts; i++) {
-        const int *index = index_to_g[i];
-        grid_buffer_2[(index[0] * npts_global[1] + index[1]) * npts_global[2] +
-                      index[2]] = grid_gs[i];
-      }
-    } else {
-      // Cartesian distribution, plain copy is sufficient
-      memcpy(grid_buffer_2, grid_gs,
-             product3(npts_global) * sizeof(double complex));
+    // Ray distribution
+    memset(grid_buffer_2, 0, product3(npts_global) * sizeof(double complex));
+    const int(*my_ray_to_xy)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++)
+      my_ray_to_xy += rays_per_process[process];
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      const int *index = index_to_g[i];
+      grid_buffer_2[(index[0] * npts_global[1] + index[1]) * npts_global[2] +
+                    index[2]] = grid_gs[i];
     }
 
     if (is_complex) {
@@ -1381,23 +1365,18 @@ void fft_3d_bw_c2r_ray_low(
   // with all implementations of the FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
 
-    if (index_to_g != NULL) {
-      memset(grid_buffer_1, 0,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-      const int(*my_ray_to_xy)[2] = ray_to_xy;
-      for (int process = 0; process < my_process; process++)
-        my_ray_to_xy += rays_per_process[process];
-      for (int i = 0; i < number_of_local_gpts; i++) {
-        const int *index = index_to_g[i];
-        for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
-          if (my_ray_to_xy[ray][0] == index[0] &&
-              my_ray_to_xy[ray][1] == index[1])
-            grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
-        }
+    memset(grid_buffer_1, 0,
+           number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
+    const int(*my_ray_to_xy)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++)
+      my_ray_to_xy += rays_per_process[process];
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      const int *index = index_to_g[i];
+      for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
+        if (my_ray_to_xy[ray][0] == index[0] &&
+            my_ray_to_xy[ray][1] == index[1])
+          grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
       }
-    } else {
-      memcpy(grid_buffer_1, grid_gs,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
     }
     if (fft_lib_use_mpi()) {
       // Perform the first FFT in x-direction
@@ -1445,23 +1424,18 @@ void fft_3d_bw_c2r_ray_low(
     }
   } else if (proc_grid[0] > 1) {
 
-    if (index_to_g != NULL) {
-      memset(grid_buffer_1, 0,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-      const int(*my_ray_to_xy)[2] = ray_to_xy;
-      for (int process = 0; process < my_process; process++)
-        my_ray_to_xy += rays_per_process[process];
-      for (int i = 0; i < number_of_local_gpts; i++) {
-        const int *index = index_to_g[i];
-        for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
-          if (my_ray_to_xy[ray][0] == index[0] &&
-              my_ray_to_xy[ray][1] == index[1])
-            grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
-        }
+    memset(grid_buffer_1, 0,
+           number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
+    const int(*my_ray_to_xy)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++)
+      my_ray_to_xy += rays_per_process[process];
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      const int *index = index_to_g[i];
+      for (int ray = 0; ray < number_of_local_xy_rays; ray++) {
+        if (my_ray_to_xy[ray][0] == index[0] &&
+            my_ray_to_xy[ray][1] == index[1])
+          grid_buffer_1[ray * npts_global[2] + index[2]] = grid_gs[i];
       }
-    } else {
-      memcpy(grid_buffer_1, grid_gs,
-             number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
     }
     // Perform the first FFT (xy_d,z) -> (z,xy_d)
     fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
@@ -1499,20 +1473,15 @@ void fft_3d_bw_c2r_ray_low(
     }
   } else {
 
-    if (index_to_g != NULL) {
-      memset(grid_buffer_2, 0,
-             product3(npts_global_gspace) * sizeof(double complex));
-      const int(*my_ray_to_xy)[2] = ray_to_xy;
-      for (int process = 0; process < my_process; process++)
-        my_ray_to_xy += rays_per_process[process];
-      for (int i = 0; i < number_of_local_gpts; i++) {
-        const int *index = index_to_g[i];
-        grid_buffer_2[(index[0] * npts_global[1] + index[1]) * npts_global[2] +
-                      index[2]] = grid_gs[i];
-      }
-    } else {
-      memcpy(grid_buffer_2, grid_gs,
-             product3(npts_global_gspace) * sizeof(double complex));
+    memset(grid_buffer_2, 0,
+           product3(npts_global_gspace) * sizeof(double complex));
+    const int(*my_ray_to_xy)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++)
+      my_ray_to_xy += rays_per_process[process];
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      const int *index = index_to_g[i];
+      grid_buffer_2[(index[0] * npts_global[1] + index[1]) * npts_global[2] +
+                    index[2]] = grid_gs[i];
     }
     if (fft_lib_has_guru_interface()) {
       // Use the guru interface to merge both 1D FFTs into a single 2D FFT)
