@@ -36,6 +36,7 @@ typedef struct {
   int npts_gs_local;
   bool ray_distribution;
   int (*ray_to_xy)[2];
+  int *xy_to_ray;
   int *xy_to_process;
   int *rays_per_process;
   int my_number_of_rays;
