@@ -938,6 +938,10 @@ void fft_3d_fw_ray_low(const double complex *restrict grid_rs,
       proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
       proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
   int number_of_local_xy_rays = rays_per_process[my_process];
+  const int(*my_ray_to_xy)[2] = ray_to_xy;
+  for (int process = 0; process < my_process; process++) {
+    my_ray_to_xy += rays_per_process[process];
+  }
 
   int proc_grid[2];
   int periods[2];
@@ -1015,17 +1019,12 @@ void fft_3d_fw_ray_low(const double complex *restrict grid_rs,
       fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
                       grid_buffer_1, grid_buffer_2);
     }
-    const int(*my_ray_to_xy)[2] = ray_to_xy;
-    for (int process = 0; process < my_process; process++) {
-      my_ray_to_xy += rays_per_process[process];
-    }
-    const int my_number_of_rays = rays_per_process[my_process];
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, index_to_g, my_ray_to_xy, grid_gs,                   \
-               my_number_of_rays, npts_global, grid_buffer_2)
+               number_of_local_xy_rays, npts_global, grid_buffer_2)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
-      for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+      for (int xy_ray = 0; xy_ray < number_of_local_xy_rays; xy_ray++) {
         if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
             my_ray_to_xy[xy_ray][1] == index_g[1]) {
           grid_gs[index] = grid_buffer_2[xy_ray * npts_global[2] + index_g[2]];
@@ -1055,17 +1054,13 @@ void fft_3d_fw_ray_low(const double complex *restrict grid_rs,
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
                     grid_buffer_1, grid_buffer_2);
-    const int(*my_ray_to_xy)[2] = ray_to_xy;
-    for (int process = 0; process < my_process; process++) {
-      my_ray_to_xy += rays_per_process[process];
-    }
-    const int my_number_of_rays = rays_per_process[my_process];
+
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, index_to_g, my_ray_to_xy, grid_gs,                   \
-               my_number_of_rays, npts_global, grid_buffer_2)
+               number_of_local_xy_rays, npts_global, grid_buffer_2)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
-      for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
+      for (int xy_ray = 0; xy_ray < number_of_local_xy_rays; xy_ray++) {
         if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
             my_ray_to_xy[xy_ray][1] == index_g[1]) {
           grid_gs[index] = grid_buffer_2[xy_ray * npts_global[2] + index_g[2]];
@@ -1134,6 +1129,10 @@ void fft_3d_fw_r2c_ray_low(
       proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
       proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
   int number_of_local_xy_rays = rays_per_process[my_process];
+  const int(*my_ray_to_xy)[2] = ray_to_xy;
+  for (int process = 0; process < my_process; process++) {
+    my_ray_to_xy += rays_per_process[process];
+  }
 
   int proc_grid[2];
   int periods[2];
@@ -1165,10 +1164,6 @@ void fft_3d_fw_r2c_ray_low(
       collect_z_and_distribute_xy_ray_transpose(
           grid_buffer_2, grid_buffer_1, npts_global_gspace, proc2local_ms,
           rays_per_process, ray_to_xy, comm);
-
-      // Perform the final FFT (z,xy_d) -> (xy_d,z)
-      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
-                      grid_buffer_1, grid_buffer_2);
     } else {
       memcpy((double *)grid_buffer_1, grid_rs,
              product3(fft_sizes_rs) * sizeof(double));
@@ -1190,10 +1185,23 @@ void fft_3d_fw_r2c_ray_low(
       collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1,
                                       npts_global_gspace, proc2local_ms,
                                       rays_per_process, ray_to_xy, comm);
+    }
 
-      // Perform the third FFT (z,xy_d) -> (xy_d,z)
-      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
-                      grid_buffer_1, grid_buffer_2);
+    // Perform the third FFT (z,xy_d) -> (xy_d,z)
+    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
+                    grid_buffer_1, grid_buffer_2);
+#pragma omp parallel for default(none)                                         \
+    shared(npts_gs_local, my_ray_to_xy, npts_global, index_to_g, grid_gs,      \
+               number_of_local_xy_rays, grid_buffer_2)
+    for (int index = 0; index < npts_gs_local; index++) {
+      const int *index_g = index_to_g[index];
+      for (int xy_ray = 0; xy_ray < number_of_local_xy_rays; xy_ray++) {
+        if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+            my_ray_to_xy[xy_ray][1] == index_g[1]) {
+          grid_gs[index] = grid_buffer_2[xy_ray * npts_global[2] + index_g[2]];
+          break;
+        }
+      }
     }
   } else if (proc_grid[0] > 1) {
     if (fft_lib_has_guru_interface()) {
@@ -1233,6 +1241,19 @@ void fft_3d_fw_r2c_ray_low(
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
                     grid_buffer_1, grid_buffer_2);
+#pragma omp parallel for default(none)                                         \
+    shared(npts_gs_local, my_ray_to_xy, npts_global, index_to_g, grid_gs,      \
+               number_of_local_xy_rays, grid_buffer_2)
+    for (int index = 0; index < npts_gs_local; index++) {
+      const int *index_g = index_to_g[index];
+      for (int xy_ray = 0; xy_ray < number_of_local_xy_rays; xy_ray++) {
+        if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
+            my_ray_to_xy[xy_ray][1] == index_g[1]) {
+          grid_gs[index] = grid_buffer_2[xy_ray * npts_global[2] + index_g[2]];
+          break;
+        }
+      }
+    }
   } else {
     if (fft_lib_has_guru_interface()) {
       memcpy((double *)grid_buffer_2, grid_rs,
@@ -1261,37 +1282,14 @@ void fft_3d_fw_r2c_ray_low(
     }
 
 // Copy to the ray format
-// Maybe, a 2D FFT, redistribution to rays and final FFT is faster
 #pragma omp parallel for default(none)                                         \
-    shared(npts_global, grid_buffer_1, ray_to_xy, grid_buffer_2,               \
-               number_of_local_xy_rays, npts_global_gspace) collapse(2)
-    for (int index_z = 0; index_z < npts_global[2]; index_z++) {
-      for (int ray_xy = 0; ray_xy < number_of_local_xy_rays; ray_xy++) {
-        const int index_x = ray_to_xy[ray_xy][0];
-        const int index_y = ray_to_xy[ray_xy][1];
-        grid_buffer_2[index_z * number_of_local_xy_rays + ray_xy] =
-            grid_buffer_1[(index_z * npts_global_gspace[0] + index_x) *
-                              npts_global_gspace[1] +
-                          index_y];
-      }
-    }
-  }
-  const int(*my_ray_to_xy)[2] = ray_to_xy;
-  for (int process = 0; process < my_process; process++) {
-    my_ray_to_xy += rays_per_process[process];
-  }
-  const int my_number_of_rays = rays_per_process[my_process];
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, my_ray_to_xy, npts_global, index_to_g, grid_gs,      \
-               my_number_of_rays, grid_buffer_2)
-  for (int index = 0; index < npts_gs_local; index++) {
-    const int *index_g = index_to_g[index];
-    for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-      if (my_ray_to_xy[xy_ray][0] == index_g[0] &&
-          my_ray_to_xy[xy_ray][1] == index_g[1]) {
-        grid_gs[index] = grid_buffer_2[xy_ray * npts_global[2] + index_g[2]];
-        break;
-      }
+    shared(npts_gs_local, npts_global, index_to_g, grid_gs, grid_buffer_1)
+    for (int index = 0; index < npts_gs_local; index++) {
+      const int *index_g = index_to_g[index];
+      grid_gs[index] =
+          grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
+                            npts_global[2] +
+                        index_g[2]];
     }
   }
   fft_stop_timer(handle2);

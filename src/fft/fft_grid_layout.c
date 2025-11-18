@@ -154,8 +154,6 @@ void grid_free_fft_grid_layout(fft_grid_layout *fft_grid) {
       free(fft_grid->proc2local_rs);
       free(fft_grid->proc2local_ms);
       free(fft_grid->proc2local_gs);
-      fft_free_complex(fft_grid->buffer_1);
-      fft_free_complex(fft_grid->buffer_2);
       free(fft_grid->xy_to_process);
       free(fft_grid->ray_to_xy);
       free(fft_grid->rays_per_process);
@@ -483,17 +481,6 @@ void setup_proc2local(fft_grid_layout *my_fft_grid) {
   }
 }
 
-void allocate_fft_buffers(fft_grid_layout *my_fft_grid) {
-  // Determine the maximum buffer size
-  int buffer_size = my_fft_grid->buffer_size;
-  buffer_size = imax(buffer_size, my_fft_grid->npts_gs_local);
-  // Allocate the buffers
-  my_fft_grid->buffer_1 = NULL;
-  my_fft_grid->buffer_2 = NULL;
-  fft_allocate_complex(buffer_size, &my_fft_grid->buffer_1);
-  fft_allocate_complex(buffer_size, &my_fft_grid->buffer_2);
-}
-
 void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                  const cp_mpi_comm_t comm,
                                  const int npts_global[3],
@@ -571,8 +558,8 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
        my_fft_grid->proc2local_gs[my_process][1][0] + 1) *
       (my_fft_grid->proc2local_gs[my_process][2][1] -
        my_fft_grid->proc2local_gs[my_process][2][0] + 1);
-
-  allocate_fft_buffers(my_fft_grid);
+  my_fft_grid->buffer_size =
+      imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
 
   my_fft_grid->xy_to_process = NULL;
   my_fft_grid->ray_to_xy = NULL;
@@ -835,8 +822,6 @@ void grid_create_fft_grid_layout_from_reference(
     }
   }
   assert(own_index == my_fft_grid->npts_gs_local);
-
-  allocate_fft_buffers(my_fft_grid);
 
   *fft_grid = my_fft_grid;
 }

@@ -60,8 +60,6 @@ typedef struct {
   int (*proc2local_gs)[3][2]; // Order: (y, z, x)
   // Buffers for FFTs
   int buffer_size;
-  double complex *buffer_1;
-  double complex *buffer_2;
   // buffers for different purposes
 } fft_grid_layout;
 
