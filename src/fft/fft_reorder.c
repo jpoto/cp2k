@@ -30,11 +30,6 @@ void collect_y_and_distribute_x_blocked(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int my_process = cp_mpi_comm_rank(comm);
 
   int proc_coord[2];
@@ -105,7 +100,6 @@ void collect_y_and_distribute_x_blocked(
   free(send_displacements);
   free(recv_counts);
   free(recv_displacements);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -122,11 +116,6 @@ void collect_x_and_distribute_y_blocked(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_y_b");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_y_b_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int my_process = cp_mpi_comm_rank(comm);
 
   int proc_coord[2];
@@ -205,7 +194,6 @@ void collect_x_and_distribute_y_blocked(
   free(send_displacements);
   free(recv_counts);
   free(recv_displacements);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -222,11 +210,6 @@ void collect_z_and_distribute_y_blocked_transpose(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_y_bt");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_y_bt_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int my_process = cp_mpi_comm_rank(comm);
 
   int proc_coord[2];
@@ -300,7 +283,6 @@ void collect_z_and_distribute_y_blocked_transpose(
   free(send_displacements);
   free(recv_counts);
   free(recv_displacements);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -317,11 +299,6 @@ void collect_y_and_distribute_z_blocked_transpose(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_z_bt");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_z_bt_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int my_process = cp_mpi_comm_rank(comm);
 
   int proc_coord[2];
@@ -399,7 +376,6 @@ void collect_y_and_distribute_z_blocked_transpose(
   free(send_displacements);
   free(recv_counts);
   free(recv_displacements);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -416,11 +392,6 @@ void collect_z_and_distribute_y_blocked(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_y_b");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_y_b_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int my_process = cp_mpi_comm_rank(comm);
 
   int proc_coord[2];
@@ -492,7 +463,6 @@ void collect_z_and_distribute_y_blocked(
   free(send_displacements);
   free(recv_counts);
   free(recv_displacements);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -509,11 +479,6 @@ void collect_y_and_distribute_z_blocked(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_z_b");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_z_b_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int my_process = cp_mpi_comm_rank(comm);
 
   int proc_coord[2];
@@ -589,7 +554,6 @@ void collect_y_and_distribute_z_blocked(
   free(send_displacements);
   free(recv_counts);
   free(recv_displacements);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -608,11 +572,6 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int number_of_processes = cp_mpi_comm_size(comm);
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -748,7 +707,11 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
         send_buffer, number_of_elements_to_send, send_process, 1, comm);
 
     // Wait for the receive process and copy the data
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_recv");
+    const int handle2 = fft_start_timer(routine_name);
     cp_mpi_wait(&recv_request);
+    fft_stop_timer(handle2);
 
     // Unpack the received data
 #pragma omp parallel for default(none)                                         \
@@ -778,13 +741,16 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
         number_of_rays_to_recv;
 
     // Wait for the send request
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_send");
+    const int handle3 = fft_start_timer(routine_name);
     cp_mpi_wait(&send_request);
+    fft_stop_timer(handle3);
   }
   assert(number_of_received_elements == npts_global[2] * my_number_of_rays);
 
   free(recv_buffer);
   free(send_buffer);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -803,11 +769,6 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int number_of_processes = cp_mpi_comm_size(comm);
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -928,7 +889,11 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
         send_process, 1, comm);
 
     // Wait for the receive process and copy the data
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_recv");
+    const int handle2 = fft_start_timer(routine_name);
     cp_mpi_wait(&recv_request);
+    fft_stop_timer(handle2);
 
 #pragma omp parallel for default(none) shared(                                 \
         my_transposed_sizes, my_bounds, number_of_rays_to_recv, recv_buffer,   \
@@ -951,12 +916,15 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
     }
 
     // Wait for the send request
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_send");
+    const int handle3 = fft_start_timer(routine_name);
     cp_mpi_wait(&send_request);
+    fft_stop_timer(handle3);
   }
 
   free(recv_buffer);
   free(send_buffer);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -973,11 +941,6 @@ void collect_z_and_distribute_xy_ray_transpose(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_rt");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_rt_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int number_of_processes = cp_mpi_comm_size(comm);
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -1090,7 +1053,11 @@ void collect_z_and_distribute_xy_ray_transpose(
         send_buffer, number_of_elements_to_send, send_process, 1, comm);
 
     // Wait for the receive process and copy the data
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_recv");
+    const int handle2 = fft_start_timer(routine_name);
     cp_mpi_wait(&recv_request);
+    fft_stop_timer(handle2);
 
 #pragma omp parallel for default(none) shared(                                 \
         my_number_of_rays, npts_global, recv_buffer, transposed,               \
@@ -1114,12 +1081,15 @@ void collect_z_and_distribute_xy_ray_transpose(
     }
 
     // Wait for the send request
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_send");
+    const int handle3 = fft_start_timer(routine_name);
     cp_mpi_wait(&send_request);
+    fft_stop_timer(handle3);
   }
 
   free(recv_buffer);
   free(send_buffer);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
@@ -1136,11 +1106,6 @@ void collect_xy_and_distribute_z_ray_transpose(
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_rt");
   const int handle = fft_start_timer(routine_name);
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_rt_%i_%i_%i_%i",
-           npts_global[0], npts_global[1], npts_global[2],
-           cp_mpi_comm_size(comm));
-  const int handle2 = fft_start_timer(routine_name);
   const int number_of_processes = cp_mpi_comm_size(comm);
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -1261,7 +1226,11 @@ void collect_xy_and_distribute_z_ray_transpose(
         send_process, 1, comm);
 
     // Wait for the receive process and copy the data
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_recv");
+    const int handle2 = fft_start_timer(routine_name);
     cp_mpi_wait(&recv_request);
+    fft_stop_timer(handle2);
 
 #pragma omp parallel for default(none) shared(                                 \
         my_transposed_sizes, my_bounds, number_of_rays_to_recv, recv_buffer,   \
@@ -1284,12 +1253,15 @@ void collect_xy_and_distribute_z_ray_transpose(
     }
 
     // Wait for the send request
+    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_send");
+    const int handle3 = fft_start_timer(routine_name);
     cp_mpi_wait(&send_request);
+    fft_stop_timer(handle3);
   }
 
   free(recv_buffer);
   free(send_buffer);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
