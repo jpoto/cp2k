@@ -92,9 +92,13 @@ void collect_y_and_distribute_x_blocked(
          my_sizes[1] * my_sizes[2] * npts_global[0] * sizeof(double complex));
 
   // Use collective MPI communication
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
+  const int handle2 = fft_start_timer(routine_name);
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[1]);
+  fft_stop_timer(handle2);
 
   free(send_counts);
   free(send_displacements);
@@ -169,9 +173,14 @@ void collect_x_and_distribute_y_blocked(
   assert(recv_offset == npts_global[0] * number_of_yz_pairs);
 
   // Use collective MPI communication
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
+  const int handle2 = fft_start_timer(routine_name);
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[1]);
+  fft_stop_timer(handle2);
+
   memcpy(grid, transposed,
          npts_global[0] * my_sizes_transposed[1] * my_sizes_transposed[2] *
              sizeof(double complex));
@@ -275,9 +284,13 @@ void collect_z_and_distribute_y_blocked_transpose(
   memcpy(grid, transposed, product3(my_sizes) * sizeof(double complex));
 
   // Use collective MPI communication
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
+  const int handle2 = fft_start_timer(routine_name);
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[0]);
+  fft_stop_timer(handle2);
 
   free(send_counts);
   free(send_displacements);
@@ -349,9 +362,14 @@ void collect_y_and_distribute_z_blocked_transpose(
   assert(recv_offset == product3(my_sizes_transposed));
 
   // Use collective MPI communication
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
+  const int handle2 = fft_start_timer(routine_name);
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[0]);
+  fft_stop_timer(handle2);
+
   memcpy(grid, transposed,
          product3(my_sizes_transposed) * sizeof(double complex));
 
@@ -455,9 +473,13 @@ void collect_z_and_distribute_y_blocked(
   memcpy(grid, transposed, product3(my_sizes) * sizeof(double complex));
 
   // Use collective MPI communication
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
+  const int handle2 = fft_start_timer(routine_name);
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[0]);
+  fft_stop_timer(handle2);
 
   free(send_counts);
   free(send_displacements);
@@ -529,9 +551,14 @@ void collect_y_and_distribute_z_blocked(
   assert(recv_offset == product3(my_sizes_transposed));
 
   // Use collective MPI communication
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b");
+  const int handle2 = fft_start_timer(routine_name);
   cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
                                   transposed, recv_counts, recv_displacements,
                                   sub_comm[0]);
+  fft_stop_timer(handle2);
+
   memcpy(grid, transposed,
          product3(my_sizes_transposed) * sizeof(double complex));
 

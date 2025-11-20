@@ -22,21 +22,23 @@
  * \brief Performs a forward 3D-FFT using a blocked distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_blocked_low(
-    const double complex *restrict grid_rs, const bool is_complex,
-    double complex *restrict grid_gs, const int (*index_to_g)[3],
-    const int npts_gs_local, const int npts_global[3],
-    const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
-    const int (*proc2local_gs)[3][2], const cp_mpi_comm_t comm,
-    const cp_mpi_comm_t sub_comm[2]) {
+void fft_3d_fw_blocked(const double complex *restrict grid_rs,
+                       const bool is_complex, double complex *restrict grid_gs,
+                       const int (*index_to_g)[3], const int npts_gs_local,
+                       const int npts_global[3],
+                       const int (*proc2local_rs)[3][2],
+                       const int (*proc2local_ms)[3][2],
+                       const int (*proc2local_gs)[3][2],
+                       const cp_mpi_comm_t comm,
+                       const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_blocked_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_b");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH,
-           "fft_3d_fw_blocked_low_%i_%i_%i_%i", npts_global[0], npts_global[1],
-           npts_global[2], cp_mpi_comm_size(comm));
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_b_%i_%i_%i_%i",
+           npts_global[0], npts_global[1], npts_global[2],
+           cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
@@ -257,7 +259,7 @@ void fft_3d_fw_blocked_low(
  * \brief Performs a forward 3D-FFT using a blocked distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_r2c_blocked_low(
+void fft_3d_fw_r2c_blocked(
     const double *restrict grid_rs, double complex *restrict grid_gs,
     const int (*index_to_g)[3], const int npts_gs_local,
     const int npts_global[3], const int npts_global_gspace[3],
@@ -266,12 +268,12 @@ void fft_3d_fw_r2c_blocked_low(
     const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_blocked_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_b");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH,
-           "fft_3d_fw_r2c_ray_low_%i_%i_%i_%i", npts_global[0], npts_global[1],
-           npts_global[2], cp_mpi_comm_size(comm));
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_b_%i_%i_%i_%i",
+           npts_global[0], npts_global[1], npts_global[2],
+           cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
@@ -518,7 +520,7 @@ void fft_3d_fw_r2c_blocked_low(
  * \brief Performs a backward 3D-FFT using a blocked distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_blocked_low(
+void fft_3d_bw_blocked(
     const double complex *restrict grid_gs, const int (*index_to_g)[3],
     const int number_of_local_gpts, double complex *restrict grid_rs,
     const bool is_complex, const int npts_global[3],
@@ -527,12 +529,12 @@ void fft_3d_bw_blocked_low(
     const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_blocked_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_b");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH,
-           "fft_3d_bw_blocked_low_%i_%i_%i_%i", npts_global[0], npts_global[1],
-           npts_global[2], cp_mpi_comm_size(comm));
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_b_%i_%i_%i_%i",
+           npts_global[0], npts_global[1], npts_global[2],
+           cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
@@ -713,7 +715,7 @@ void fft_3d_bw_blocked_low(
  * \brief Performs a backward 3D-FFT using a blocked distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_c2r_blocked_low(
+void fft_3d_bw_c2r_blocked(
     const double complex *restrict grid_gs, const int (*index_to_g)[3],
     const int number_of_local_gpts, double *restrict grid_rs,
     const int npts_global[3], const int npts_global_gspace[3],
@@ -722,12 +724,12 @@ void fft_3d_bw_c2r_blocked_low(
     const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_blocked_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_b");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH,
-           "fft_3d_bw_c2r_blocked_low_%i_%i_%i_%i", npts_global[0],
-           npts_global[1], npts_global[2], cp_mpi_comm_size(comm));
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_b_%i_%i_%i_%i",
+           npts_global[0], npts_global[1], npts_global[2],
+           cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
@@ -904,21 +906,20 @@ void fft_3d_bw_c2r_blocked_low(
  * \brief Performs a forward 3D-FFT using a ray distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_ray_low(const double complex *restrict grid_rs,
-                       const bool is_complex, double complex *restrict grid_gs,
-                       const int (*index_to_g)[3], const int *xy_to_ray,
-                       const int npts_gs_local, const int npts_global[3],
-                       const int (*proc2local_rs)[3][2],
-                       const int (*proc2local_ms)[3][2],
-                       const int *rays_per_process, const int (*ray_to_xy)[2],
-                       const cp_mpi_comm_t comm,
-                       const cp_mpi_comm_t sub_comm[2]) {
+void fft_3d_fw_ray(const double complex *restrict grid_rs,
+                   const bool is_complex, double complex *restrict grid_gs,
+                   const int (*index_to_g)[3], const int *xy_to_ray,
+                   const int npts_gs_local, const int npts_global[3],
+                   const int (*proc2local_rs)[3][2],
+                   const int (*proc2local_ms)[3][2],
+                   const int *rays_per_process, const int (*ray_to_xy)[2],
+                   const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_ray_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_ray_low_%i_%i_%i_%i",
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r_%i_%i_%i_%i",
            npts_global[0], npts_global[1], npts_global[2],
            cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
@@ -1091,7 +1092,7 @@ void fft_3d_fw_ray_low(const double complex *restrict grid_rs,
  * \brief Performs a forward 3D-FFT using a ray distribution.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_fw_r2c_ray_low(
+void fft_3d_fw_r2c_ray(
     const double *restrict grid_rs, double complex *restrict grid_gs,
     const int (*index_to_g)[3], const int *xy_to_ray, const int npts_gs_local,
     const int npts_global[3], const int npts_global_gspace[3],
@@ -1100,12 +1101,12 @@ void fft_3d_fw_r2c_ray_low(
     const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_ray_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_r");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH,
-           "fft_3d_fw_r2c_ray_low_%i_%i_%i_%i", npts_global[0], npts_global[1],
-           npts_global[2], cp_mpi_comm_size(comm));
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_fw_r2c_r_%i_%i_%i_%i",
+           npts_global[0], npts_global[1], npts_global[2],
+           cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);
@@ -1288,22 +1289,20 @@ void fft_3d_fw_r2c_ray_low(
  * \brief Performs a backward 3D-FFT overwriting the buffers.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_ray_low(const double complex *restrict grid_gs,
-                       const int (*index_to_g)[3], const int *xy_to_ray,
-                       const int number_of_local_gpts,
-                       double complex *restrict grid_rs, const bool is_complex,
-                       const int npts_global[3],
-                       const int (*proc2local_rs)[3][2],
-                       const int (*proc2local_ms)[3][2],
-                       const int *rays_per_process, const int (*ray_to_xy)[2],
-                       const cp_mpi_comm_t comm,
-                       const cp_mpi_comm_t sub_comm[2]) {
+void fft_3d_bw_ray(const double complex *restrict grid_gs,
+                   const int (*index_to_g)[3], const int *xy_to_ray,
+                   const int number_of_local_gpts,
+                   double complex *restrict grid_rs, const bool is_complex,
+                   const int npts_global[3], const int (*proc2local_rs)[3][2],
+                   const int (*proc2local_ms)[3][2],
+                   const int *rays_per_process, const int (*ray_to_xy)[2],
+                   const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_ray_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_r");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_ray_low_%i_%i_%i_%i",
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_r_%i_%i_%i_%i",
            npts_global[0], npts_global[1], npts_global[2],
            cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
@@ -1477,24 +1476,24 @@ void fft_3d_bw_ray_low(const double complex *restrict grid_gs,
  * \brief Performs a backward 3D-FFT overwriting the buffers.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_3d_bw_c2r_ray_low(const double complex *restrict grid_gs,
-                           const int (*index_to_g)[3], const int *xy_to_ray,
-                           const int number_of_local_gpts,
-                           double *restrict grid_rs, const int npts_global[3],
-                           const int npts_global_gspace[3],
-                           const int (*proc2local_rs)[3][2],
-                           const int (*proc2local_ms)[3][2],
-                           const int *rays_per_process,
-                           const int (*ray_to_xy)[2], const cp_mpi_comm_t comm,
-                           const cp_mpi_comm_t sub_comm[2]) {
+void fft_3d_bw_c2r_ray(const double complex *restrict grid_gs,
+                       const int (*index_to_g)[3], const int *xy_to_ray,
+                       const int number_of_local_gpts, double *restrict grid_rs,
+                       const int npts_global[3],
+                       const int npts_global_gspace[3],
+                       const int (*proc2local_rs)[3][2],
+                       const int (*proc2local_ms)[3][2],
+                       const int *rays_per_process, const int (*ray_to_xy)[2],
+                       const cp_mpi_comm_t comm,
+                       const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_ray_low");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_r");
   const int handle = fft_start_timer(routine_name);
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH,
-           "fft_3d_bw_c2r_ray_low_%i_%i_%i_%i", npts_global[0], npts_global[1],
-           npts_global[2], cp_mpi_comm_size(comm));
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_r_%i_%i_%i_%i",
+           npts_global[0], npts_global[1], npts_global[2],
+           cp_mpi_comm_size(comm));
   const int handle2 = fft_start_timer(routine_name);
 
   const int my_process = cp_mpi_comm_rank(comm);

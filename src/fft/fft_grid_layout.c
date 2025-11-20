@@ -926,18 +926,18 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
   ensure_buffer_size(grid_layout->buffer_size);
 
   if (grid_layout->ray_distribution) {
-    fft_3d_fw_ray_low(grid_rs, true, grid_gs, grid_layout->index_to_g,
-                      grid_layout->xy_to_ray, grid_layout->npts_gs_local,
-                      grid_layout->npts_global, grid_layout->proc2local_rs,
-                      grid_layout->proc2local_ms, grid_layout->rays_per_process,
-                      grid_layout->ray_to_xy, grid_layout->comm,
-                      grid_layout->sub_comm);
+    fft_3d_fw_ray(grid_rs, true, grid_gs, grid_layout->index_to_g,
+                  grid_layout->xy_to_ray, grid_layout->npts_gs_local,
+                  grid_layout->npts_global, grid_layout->proc2local_rs,
+                  grid_layout->proc2local_ms, grid_layout->rays_per_process,
+                  grid_layout->ray_to_xy, grid_layout->comm,
+                  grid_layout->sub_comm);
   } else {
-    fft_3d_fw_blocked_low(
-        grid_rs, true, grid_gs, grid_layout->index_to_g,
-        grid_layout->npts_gs_local, grid_layout->npts_global,
-        grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-        grid_layout->proc2local_gs, grid_layout->comm, grid_layout->sub_comm);
+    fft_3d_fw_blocked(grid_rs, true, grid_gs, grid_layout->index_to_g,
+                      grid_layout->npts_gs_local, grid_layout->npts_global,
+                      grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+                      grid_layout->proc2local_gs, grid_layout->comm,
+                      grid_layout->sub_comm);
   }
 }
 
@@ -957,10 +957,10 @@ void fft_3d_fw_with_layout_to_cart(const double complex *restrict grid_rs,
 
   ensure_buffer_size(grid_layout->buffer_size);
 
-  fft_3d_fw_blocked_low(grid_rs, true, grid_gs, NULL, 0,
-                        grid_layout->npts_global, grid_layout->proc2local_rs,
-                        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-                        grid_layout->comm, grid_layout->sub_comm);
+  fft_3d_fw_blocked(grid_rs, true, grid_gs, NULL, 0, grid_layout->npts_global,
+                    grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+                    grid_layout->proc2local_gs, grid_layout->comm,
+                    grid_layout->sub_comm);
 }
 
 /*******************************************************************************
@@ -980,17 +980,16 @@ void fft_3d_fw_r2c_with_layout_to_cart(const double *restrict grid_rs,
   ensure_buffer_size(grid_layout->buffer_size);
 
   if (grid_layout->use_halfspace) {
-    fft_3d_fw_r2c_blocked_low(
+    fft_3d_fw_r2c_blocked(
         grid_rs, grid_gs, NULL, 0, grid_layout->npts_global,
         grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->comm, grid_layout->sub_comm);
   } else {
-    fft_3d_fw_blocked_low(
-        (const double complex *)grid_rs, true, grid_gs, NULL, 0,
-        grid_layout->npts_global, grid_layout->proc2local_rs,
-        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-        grid_layout->comm, grid_layout->sub_comm);
+    fft_3d_fw_blocked((const double complex *)grid_rs, true, grid_gs, NULL, 0,
+                      grid_layout->npts_global, grid_layout->proc2local_rs,
+                      grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+                      grid_layout->comm, grid_layout->sub_comm);
   }
 }
 
@@ -1012,14 +1011,14 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
 
   if (grid_layout->use_halfspace) {
     if (grid_layout->ray_distribution) {
-      fft_3d_fw_r2c_ray_low(
+      fft_3d_fw_r2c_ray(
           grid_rs, grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
           grid_layout->npts_gs_local, grid_layout->npts_global,
           grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
           grid_layout->proc2local_ms, grid_layout->rays_per_process,
           grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
     } else {
-      fft_3d_fw_r2c_blocked_low(
+      fft_3d_fw_r2c_blocked(
           grid_rs, grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local,
           grid_layout->npts_global, grid_layout->npts_global_gspace,
           grid_layout->proc2local_rs, grid_layout->proc2local_ms,
@@ -1027,19 +1026,18 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
     }
   } else {
     if (grid_layout->ray_distribution) {
-      fft_3d_fw_ray_low((const double complex *)grid_rs, false, grid_gs,
-                        grid_layout->index_to_g, grid_layout->xy_to_ray,
-                        grid_layout->npts_gs_local, grid_layout->npts_global,
-                        grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-                        grid_layout->rays_per_process, grid_layout->ray_to_xy,
-                        grid_layout->comm, grid_layout->sub_comm);
+      fft_3d_fw_ray((const double complex *)grid_rs, false, grid_gs,
+                    grid_layout->index_to_g, grid_layout->xy_to_ray,
+                    grid_layout->npts_gs_local, grid_layout->npts_global,
+                    grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+                    grid_layout->rays_per_process, grid_layout->ray_to_xy,
+                    grid_layout->comm, grid_layout->sub_comm);
     } else {
-      fft_3d_fw_blocked_low(
-          (const double complex *)grid_rs, false, grid_gs,
-          grid_layout->index_to_g, grid_layout->npts_gs_local,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-          grid_layout->comm, grid_layout->sub_comm);
+      fft_3d_fw_blocked((const double complex *)grid_rs, false, grid_gs,
+                        grid_layout->index_to_g, grid_layout->npts_gs_local,
+                        grid_layout->npts_global, grid_layout->proc2local_rs,
+                        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+                        grid_layout->comm, grid_layout->sub_comm);
     }
   }
 }
@@ -1062,18 +1060,18 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
   ensure_buffer_size(grid_layout->buffer_size);
 
   if (grid_layout->ray_distribution) {
-    fft_3d_bw_ray_low(grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
+    fft_3d_bw_ray(grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
+                  grid_layout->npts_gs_local, grid_rs, true,
+                  grid_layout->npts_global, grid_layout->proc2local_rs,
+                  grid_layout->proc2local_ms, grid_layout->rays_per_process,
+                  grid_layout->ray_to_xy, grid_layout->comm,
+                  grid_layout->sub_comm);
+  } else {
+    fft_3d_bw_blocked(grid_gs, grid_layout->index_to_g,
                       grid_layout->npts_gs_local, grid_rs, true,
                       grid_layout->npts_global, grid_layout->proc2local_rs,
-                      grid_layout->proc2local_ms, grid_layout->rays_per_process,
-                      grid_layout->ray_to_xy, grid_layout->comm,
-                      grid_layout->sub_comm);
-  } else {
-    fft_3d_bw_blocked_low(
-        grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
-        true, grid_layout->npts_global, grid_layout->proc2local_rs,
-        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-        grid_layout->comm, grid_layout->sub_comm);
+                      grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+                      grid_layout->comm, grid_layout->sub_comm);
   }
 }
 
@@ -1094,10 +1092,10 @@ void fft_3d_bw_with_layout_from_cart(const double complex *restrict grid_gs,
 
   ensure_buffer_size(grid_layout->buffer_size);
 
-  fft_3d_bw_blocked_low(grid_gs, NULL, 0, grid_rs, true,
-                        grid_layout->npts_global, grid_layout->proc2local_rs,
-                        grid_layout->proc2local_ms, grid_layout->proc2local_gs,
-                        grid_layout->comm, grid_layout->sub_comm);
+  fft_3d_bw_blocked(grid_gs, NULL, 0, grid_rs, true, grid_layout->npts_global,
+                    grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+                    grid_layout->proc2local_gs, grid_layout->comm,
+                    grid_layout->sub_comm);
 }
 
 /*******************************************************************************
@@ -1119,14 +1117,14 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
 
   if (grid_layout->use_halfspace) {
     if (grid_layout->ray_distribution) {
-      fft_3d_bw_c2r_ray_low(
+      fft_3d_bw_c2r_ray(
           grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
           grid_layout->npts_gs_local, grid_rs, grid_layout->npts_global,
           grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
           grid_layout->proc2local_ms, grid_layout->rays_per_process,
           grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
     } else {
-      fft_3d_bw_c2r_blocked_low(
+      fft_3d_bw_c2r_blocked(
           grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
           grid_layout->npts_global, grid_layout->npts_global_gspace,
           grid_layout->proc2local_rs, grid_layout->proc2local_ms,
@@ -1134,14 +1132,14 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
     }
   } else {
     if (grid_layout->ray_distribution) {
-      fft_3d_bw_ray_low(
-          grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
-          grid_layout->npts_gs_local, (double complex *)grid_rs, false,
-          grid_layout->npts_global, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->rays_per_process,
-          grid_layout->ray_to_xy, grid_layout->comm, grid_layout->sub_comm);
+      fft_3d_bw_ray(grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
+                    grid_layout->npts_gs_local, (double complex *)grid_rs,
+                    false, grid_layout->npts_global, grid_layout->proc2local_rs,
+                    grid_layout->proc2local_ms, grid_layout->rays_per_process,
+                    grid_layout->ray_to_xy, grid_layout->comm,
+                    grid_layout->sub_comm);
     } else {
-      fft_3d_bw_blocked_low(
+      fft_3d_bw_blocked(
           grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local,
           (double complex *)grid_rs, false, grid_layout->npts_global,
           grid_layout->proc2local_rs, grid_layout->proc2local_ms,
@@ -1168,17 +1166,16 @@ void fft_3d_bw_c2r_with_layout_from_cart(const double complex *restrict grid_gs,
   ensure_buffer_size(grid_layout->buffer_size);
 
   if (grid_layout->use_halfspace) {
-    fft_3d_bw_c2r_blocked_low(
+    fft_3d_bw_c2r_blocked(
         grid_gs, NULL, 0, grid_rs, grid_layout->npts_global,
         grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->comm, grid_layout->sub_comm);
   } else {
-    fft_3d_bw_blocked_low(grid_gs, NULL, 0, (double complex *)grid_rs, false,
-                          grid_layout->npts_global, grid_layout->proc2local_rs,
-                          grid_layout->proc2local_ms,
-                          grid_layout->proc2local_gs, grid_layout->comm,
-                          grid_layout->sub_comm);
+    fft_3d_bw_blocked(grid_gs, NULL, 0, (double complex *)grid_rs, false,
+                      grid_layout->npts_global, grid_layout->proc2local_rs,
+                      grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+                      grid_layout->comm, grid_layout->sub_comm);
   }
 }
 
