@@ -59,6 +59,11 @@ typedef struct {
   int (*proc2local_rs)[3][2]; // Order: (x, y, z)
   int (*proc2local_ms)[3][2]; // Order: (z, x, y)
   int (*proc2local_gs)[3][2]; // Order: (y, z, x)
+  // Ranges of the distributed indices in each representation
+  int (*proc2local_y_rs)[2];
+  int (*proc2local_z_rs)[2];
+  int (*proc2local_x_gs)[2];
+  int (*proc2local_y_gs)[2];
   // Buffers for FFTs
   int buffer_size;
   // buffers for different purposes
