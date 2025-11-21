@@ -82,9 +82,9 @@ int fft_test_transpose_blocked(const int npts_global[3],
 
   // Check the reverse direction
   collect_z_and_distribute_y_blocked_transpose(
-      buffer_2, buffer_1, fft_grid_layout->npts_global_gspace,
-      fft_grid_layout->proc2local_ms, fft_grid_layout->proc2local_gs,
-      fft_grid_layout->comm, fft_grid_layout->sub_comm);
+      buffer_2, buffer_1, fft_grid_layout->npts_global_gspace, my_sizes_gs[0],
+      fft_grid_layout->proc2local_y_gs, fft_grid_layout->proc2local_z_rs,
+      fft_grid_layout->sub_comm[0]);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
@@ -142,9 +142,9 @@ int fft_test_transpose_blocked(const int npts_global[3],
 
   // Check the reverse direction
   collect_y_and_distribute_z_blocked_transpose(
-      buffer_2, buffer_1, fft_grid_layout->npts_global_gspace,
-      fft_grid_layout->proc2local_gs, fft_grid_layout->proc2local_ms,
-      fft_grid_layout->comm, fft_grid_layout->sub_comm);
+      buffer_2, buffer_1, fft_grid_layout->npts_global_gspace, my_sizes_gs[0],
+      fft_grid_layout->proc2local_y_gs, fft_grid_layout->proc2local_z_rs,
+      fft_grid_layout->sub_comm[0]);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
@@ -201,8 +201,8 @@ int fft_test_transpose_blocked(const int npts_global[3],
 
   collect_y_and_distribute_x_blocked(
       buffer_1, buffer_2, fft_grid_layout->npts_global_gspace,
-      fft_grid_layout->proc2local_rs, fft_grid_layout->proc2local_ms,
-      fft_grid_layout->comm, fft_grid_layout->sub_comm);
+      fft_grid_layout->proc2local_x_gs, fft_grid_layout->proc2local_y_rs,
+      my_sizes_rs[2], fft_grid_layout->sub_comm[1]);
 
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
@@ -257,8 +257,8 @@ int fft_test_transpose_blocked(const int npts_global[3],
   // Check the reverse direction
   collect_x_and_distribute_y_blocked(
       buffer_2, buffer_1, fft_grid_layout->npts_global_gspace,
-      fft_grid_layout->proc2local_ms, fft_grid_layout->proc2local_rs,
-      fft_grid_layout->comm, fft_grid_layout->sub_comm);
+      fft_grid_layout->proc2local_x_gs, fft_grid_layout->proc2local_y_rs,
+      my_sizes_rs[2], fft_grid_layout->sub_comm[1]);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
