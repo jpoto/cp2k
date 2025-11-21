@@ -36,9 +36,7 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
   const int(*my_bound)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
   memset(grid_rs.data, 0,
-         (my_bound[0][1] - my_bound[0][0] + 1) *
-             (my_bound[1][1] - my_bound[1][0] + 1) *
-             (my_bound[2][1] - my_bound[2][0] + 1) * sizeof(double));
+         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
@@ -107,9 +105,7 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
   const int(*my_bound)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
   memset(grid_rs.data, 0,
-         (my_bound[0][1] - my_bound[0][0] + 1) *
-             (my_bound[1][1] - my_bound[1][0] + 1) *
-             (my_bound[2][1] - my_bound[2][0] + 1) * sizeof(double));
+         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
@@ -181,9 +177,7 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
   const int(*my_bound)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
   memset(grid_rs.data, 0,
-         (my_bound[0][1] - my_bound[0][0] + 1) *
-             (my_bound[1][1] - my_bound[1][0] + 1) *
-             (my_bound[2][1] - my_bound[2][0] + 1) * sizeof(double));
+         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
@@ -257,9 +251,7 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
   const int(*my_bound)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
   memset(grid_rs.data, 0,
-         (my_bound[0][1] - my_bound[0][0] + 1) *
-             (my_bound[1][1] - my_bound[1][0] + 1) *
-             (my_bound[2][1] - my_bound[2][0] + 1) * sizeof(double));
+         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();

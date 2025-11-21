@@ -78,7 +78,7 @@ void grid_create_real_rs_grid(fft_real_rs_grid *grid,
       grid_layout->proc2local_rs[cp_mpi_comm_rank(grid_layout->comm)];
   int number_of_elements = 1;
   for (int dir = 0; dir < 3; dir++) {
-    number_of_elements *= imax(0, my_bounds[dir][1] - my_bounds[dir][0] + 1);
+    number_of_elements *= imax(0, my_bounds[dir][1]);
   }
   grid->data = NULL;
   fft_allocate_double(number_of_elements, &grid->data);
@@ -100,7 +100,7 @@ void grid_create_complex_rs_grid(fft_complex_rs_grid *grid,
       grid_layout->proc2local_rs[cp_mpi_comm_rank(grid_layout->comm)];
   int number_of_elements = 1;
   for (int dir = 0; dir < 3; dir++) {
-    number_of_elements *= imax(0, my_bounds[dir][1] - my_bounds[dir][0] + 1);
+    number_of_elements *= imax(0, my_bounds[dir][1]);
   }
   grid->data = NULL;
   fft_allocate_complex(number_of_elements, &grid->data);
@@ -133,7 +133,7 @@ void grid_create_complex_cart_gs_grid(fft_complex_cart_gs_grid *grid,
       grid_layout->proc2local_gs[cp_mpi_comm_rank(grid_layout->comm)];
   int number_of_elements = 1;
   for (int dir = 0; dir < 3; dir++) {
-    number_of_elements *= imax(0, my_bounds[dir][1] - my_bounds[dir][0] + 1);
+    number_of_elements *= imax(0, my_bounds[dir][1]);
   }
   grid->data = NULL;
   fft_allocate_complex(number_of_elements, &grid->data);

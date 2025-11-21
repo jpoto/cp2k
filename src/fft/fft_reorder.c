@@ -37,18 +37,13 @@ void collect_y_and_distribute_x_blocked(
   int periods[2];
   cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
 
-  const int my_sizes[3] = {
-      proc2local[my_process][0][1] - proc2local[my_process][0][0] + 1,
-      proc2local[my_process][1][1] - proc2local[my_process][1][0] + 1,
-      proc2local[my_process][2][1] - proc2local[my_process][2][0] + 1};
+  const int my_sizes[3] = {proc2local[my_process][0][1],
+                           proc2local[my_process][1][1],
+                           proc2local[my_process][2][1]};
   // assert(my_sizes[0] == npts_global[0]);
-  const int my_sizes_transposed[3] = {
-      proc2local_transposed[my_process][0][1] -
-          proc2local_transposed[my_process][0][0] + 1,
-      proc2local_transposed[my_process][1][1] -
-          proc2local_transposed[my_process][1][0] + 1,
-      proc2local_transposed[my_process][2][1] -
-          proc2local_transposed[my_process][2][0] + 1};
+  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
+                                      proc2local_transposed[my_process][1][1],
+                                      proc2local_transposed[my_process][2][1]};
   assert(my_sizes_transposed[1] == npts_global[1]);
   assert(my_sizes[2] == my_sizes_transposed[2]);
 
@@ -66,15 +61,13 @@ void collect_y_and_distribute_x_blocked(
     recv_displacements[process] = recv_offset;
     const int proc_coords[] = {proc_coord[0], process};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_send_size_0 = proc2local_transposed[rank][0][1] -
-                                    proc2local_transposed[rank][0][0] + 1;
+    const int current_send_size_0 = proc2local_transposed[rank][0][1];
     const int current_send_count =
         my_sizes[1] * my_sizes[2] * current_send_size_0;
     send_counts[process] = current_send_count;
-    const int current_recv_count =
-        my_sizes_transposed[0] *
-        (proc2local[rank][1][1] - proc2local[rank][1][0] + 1) *
-        my_sizes_transposed[2];
+    const int current_recv_count = my_sizes_transposed[0] *
+                                   proc2local[rank][1][1] *
+                                   my_sizes_transposed[2];
     recv_counts[process] = current_recv_count;
     send_offset += current_send_count;
     recv_offset += current_recv_count;
@@ -127,18 +120,13 @@ void collect_x_and_distribute_y_blocked(
   int periods[2];
   cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
 
-  const int my_sizes[3] = {
-      proc2local[my_process][0][1] - proc2local[my_process][0][0] + 1,
-      proc2local[my_process][1][1] - proc2local[my_process][1][0] + 1,
-      proc2local[my_process][2][1] - proc2local[my_process][2][0] + 1};
+  const int my_sizes[3] = {proc2local[my_process][0][1],
+                           proc2local[my_process][1][1],
+                           proc2local[my_process][2][1]};
   assert(my_sizes[1] == npts_global[1]);
-  const int my_sizes_transposed[3] = {
-      proc2local_transposed[my_process][0][1] -
-          proc2local_transposed[my_process][0][0] + 1,
-      proc2local_transposed[my_process][1][1] -
-          proc2local_transposed[my_process][1][0] + 1,
-      proc2local_transposed[my_process][2][1] -
-          proc2local_transposed[my_process][2][0] + 1};
+  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
+                                      proc2local_transposed[my_process][1][1],
+                                      proc2local_transposed[my_process][2][1]};
   // assert(my_sizes_transposed[0] == npts_global[0]);
   assert(my_sizes[2] == my_sizes_transposed[2]);
 
@@ -157,14 +145,11 @@ void collect_x_and_distribute_y_blocked(
     recv_displacements[process] = recv_offset;
     const int proc_coords[] = {proc_coord[0], process};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_send_count = my_sizes[0] *
-                                   (proc2local_transposed[rank][1][1] -
-                                    proc2local_transposed[rank][1][0] + 1) *
-                                   my_sizes[2];
+    const int current_send_count =
+        my_sizes[0] * proc2local_transposed[rank][1][1] * my_sizes[2];
     send_counts[process] = current_send_count;
     send_offset += current_send_count;
-    const int current_recv_size_0 =
-        proc2local[rank][0][1] - proc2local[rank][0][0] + 1;
+    const int current_recv_size_0 = proc2local[rank][0][1];
     const int current_recv_count = current_recv_size_0 * number_of_yz_pairs;
     recv_counts[process] = current_recv_count;
     recv_offset += current_recv_count;
@@ -188,8 +173,7 @@ void collect_x_and_distribute_y_blocked(
   for (int process = 0; process < dims[1]; process++) {
     const int proc_coords[] = {proc_coord[0], process};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_recv_size_0 =
-        proc2local[rank][0][1] - proc2local[rank][0][0] + 1;
+    const int current_recv_size_0 = proc2local[rank][0][1];
     double complex *transposed_ptr = transposed + proc2local[rank][0][0];
     double complex *recv_buffer = grid + recv_displacements[process];
     for (int index_yz = 0; index_yz < number_of_yz_pairs; index_yz++) {
@@ -226,18 +210,13 @@ void collect_z_and_distribute_y_blocked_transpose(
   int periods[2];
   cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
 
-  const int my_sizes[3] = {
-      proc2local[my_process][0][1] - proc2local[my_process][0][0] + 1,
-      proc2local[my_process][1][1] - proc2local[my_process][1][0] + 1,
-      proc2local[my_process][2][1] - proc2local[my_process][2][0] + 1};
+  const int my_sizes[3] = {proc2local[my_process][0][1],
+                           proc2local[my_process][1][1],
+                           proc2local[my_process][2][1]};
   assert(my_sizes[1] == npts_global[1]);
-  const int my_sizes_transposed[3] = {
-      proc2local_transposed[my_process][0][1] -
-          proc2local_transposed[my_process][0][0] + 1,
-      proc2local_transposed[my_process][1][1] -
-          proc2local_transposed[my_process][1][0] + 1,
-      proc2local_transposed[my_process][2][1] -
-          proc2local_transposed[my_process][2][0] + 1};
+  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
+                                      proc2local_transposed[my_process][1][1],
+                                      proc2local_transposed[my_process][2][1]};
   assert(my_sizes_transposed[2] == npts_global[2]);
   assert(my_sizes[0] == my_sizes_transposed[0]);
 
@@ -256,13 +235,12 @@ void collect_z_and_distribute_y_blocked_transpose(
     recv_displacements[process] = recv_offset;
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int send_size_1 = proc2local_transposed[rank][1][1] -
-                            proc2local_transposed[rank][1][0] + 1;
+    const int send_size_1 = proc2local_transposed[rank][1][1];
     const int current_send_count = my_sizes[0] * send_size_1 * my_sizes[2];
     send_counts[process] = current_send_count;
-    const int current_recv_count =
-        my_sizes_transposed[0] * my_sizes_transposed[1] *
-        (proc2local[rank][2][1] - proc2local[rank][2][0] + 1);
+    const int current_recv_count = my_sizes_transposed[0] *
+                                   my_sizes_transposed[1] *
+                                   proc2local[rank][2][1];
     recv_counts[process] = current_recv_count;
     send_offset += current_send_count;
     recv_offset += current_recv_count;
@@ -319,18 +297,13 @@ void collect_y_and_distribute_z_blocked_transpose(
   int periods[2];
   cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
 
-  const int my_sizes[3] = {
-      proc2local[my_process][0][1] - proc2local[my_process][0][0] + 1,
-      proc2local[my_process][1][1] - proc2local[my_process][1][0] + 1,
-      proc2local[my_process][2][1] - proc2local[my_process][2][0] + 1};
+  const int my_sizes[3] = {proc2local[my_process][0][1],
+                           proc2local[my_process][1][1],
+                           proc2local[my_process][2][1]};
   assert(my_sizes[2] == npts_global[2]);
-  const int my_sizes_transposed[3] = {
-      proc2local_transposed[my_process][0][1] -
-          proc2local_transposed[my_process][0][0] + 1,
-      proc2local_transposed[my_process][1][1] -
-          proc2local_transposed[my_process][1][0] + 1,
-      proc2local_transposed[my_process][2][1] -
-          proc2local_transposed[my_process][2][0] + 1};
+  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
+                                      proc2local_transposed[my_process][1][1],
+                                      proc2local_transposed[my_process][2][1]};
   assert(my_sizes_transposed[1] == npts_global[1]);
   assert(my_sizes[0] == my_sizes_transposed[0]);
 
@@ -347,13 +320,12 @@ void collect_y_and_distribute_z_blocked_transpose(
     recv_displacements[process] = recv_offset;
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_recv_count =
-        my_sizes_transposed[0] * my_sizes_transposed[2] *
-        (proc2local[rank][1][1] - proc2local[rank][1][0] + 1);
+    const int current_recv_count = my_sizes_transposed[0] *
+                                   my_sizes_transposed[2] *
+                                   proc2local[rank][1][1];
     recv_counts[process] = current_recv_count;
-    const int current_send_count = (proc2local_transposed[rank][2][1] -
-                                    proc2local_transposed[rank][2][0] + 1) *
-                                   my_sizes[0] * my_sizes[1];
+    const int current_send_count =
+        proc2local_transposed[rank][2][1] * my_sizes[0] * my_sizes[1];
     send_counts[process] = current_send_count;
     send_offset += current_send_count;
     recv_offset += current_recv_count;
@@ -376,7 +348,7 @@ void collect_y_and_distribute_z_blocked_transpose(
   for (int process = 0; process < dims[0]; process++) {
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int recv_size_1 = proc2local[rank][1][1] - proc2local[rank][1][0] + 1;
+    const int recv_size_1 = proc2local[rank][1][1];
     double complex *transposed_ptr =
         transposed + proc2local[rank][1][0] * my_sizes_transposed[2];
     double complex *recv_buffer = grid + recv_displacements[process];
@@ -417,18 +389,13 @@ void collect_z_and_distribute_y_blocked(
   int periods[2];
   cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
 
-  const int my_sizes[3] = {
-      proc2local[my_process][0][1] - proc2local[my_process][0][0] + 1,
-      proc2local[my_process][1][1] - proc2local[my_process][1][0] + 1,
-      proc2local[my_process][2][1] - proc2local[my_process][2][0] + 1};
+  const int my_sizes[3] = {proc2local[my_process][0][1],
+                           proc2local[my_process][1][1],
+                           proc2local[my_process][2][1]};
   assert(my_sizes[1] == npts_global[1]);
-  const int my_sizes_transposed[3] = {
-      proc2local_transposed[my_process][0][1] -
-          proc2local_transposed[my_process][0][0] + 1,
-      proc2local_transposed[my_process][1][1] -
-          proc2local_transposed[my_process][1][0] + 1,
-      proc2local_transposed[my_process][2][1] -
-          proc2local_transposed[my_process][2][0] + 1};
+  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
+                                      proc2local_transposed[my_process][1][1],
+                                      proc2local_transposed[my_process][2][1]};
   assert(my_sizes_transposed[2] == npts_global[2]);
   assert(my_sizes[0] == my_sizes_transposed[0]);
 
@@ -447,14 +414,12 @@ void collect_z_and_distribute_y_blocked(
     recv_displacements[process] = recv_offset;
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_send_size_1 = proc2local_transposed[rank][1][1] -
-                                    proc2local_transposed[rank][1][0] + 1;
+    const int current_send_size_1 = proc2local_transposed[rank][1][1];
     const int current_send_count =
         my_sizes[0] * current_send_size_1 * my_sizes[2];
     send_counts[process] = current_send_count;
     send_offset += current_send_count;
-    const int current_recv_size_2 =
-        proc2local[rank][2][1] - proc2local[rank][2][0] + 1;
+    const int current_recv_size_2 = proc2local[rank][2][1];
     const int current_recv_count =
         current_recv_size_2 * my_sizes_transposed[0] * my_sizes_transposed[1];
     recv_counts[process] = current_recv_count;
@@ -508,18 +473,13 @@ void collect_y_and_distribute_z_blocked(
   int periods[2];
   cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
 
-  const int my_sizes[3] = {
-      proc2local[my_process][0][1] - proc2local[my_process][0][0] + 1,
-      proc2local[my_process][1][1] - proc2local[my_process][1][0] + 1,
-      proc2local[my_process][2][1] - proc2local[my_process][2][0] + 1};
+  const int my_sizes[3] = {proc2local[my_process][0][1],
+                           proc2local[my_process][1][1],
+                           proc2local[my_process][2][1]};
   assert(my_sizes[2] == npts_global[2]);
-  const int my_sizes_transposed[3] = {
-      proc2local_transposed[my_process][0][1] -
-          proc2local_transposed[my_process][0][0] + 1,
-      proc2local_transposed[my_process][1][1] -
-          proc2local_transposed[my_process][1][0] + 1,
-      proc2local_transposed[my_process][2][1] -
-          proc2local_transposed[my_process][2][0] + 1};
+  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
+                                      proc2local_transposed[my_process][1][1],
+                                      proc2local_transposed[my_process][2][1]};
   assert(my_sizes_transposed[1] == npts_global[1]);
   assert(my_sizes[0] == my_sizes_transposed[0]);
 
@@ -536,12 +496,11 @@ void collect_y_and_distribute_z_blocked(
     recv_displacements[process] = recv_offset;
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_send_count = (proc2local_transposed[rank][2][1] -
-                                    proc2local_transposed[rank][2][0] + 1) *
-                                   my_sizes[0] * my_sizes[1];
+    const int current_send_count =
+        proc2local_transposed[rank][2][1] * my_sizes[0] * my_sizes[1];
     send_counts[process] = current_send_count;
     send_offset += current_send_count;
-    const int recv_size_1 = proc2local[rank][1][1] - proc2local[rank][1][0] + 1;
+    const int recv_size_1 = proc2local[rank][1][1];
     const int current_recv_count =
         my_sizes_transposed[0] * recv_size_1 * my_sizes_transposed[2];
     recv_counts[process] = current_recv_count;
@@ -565,7 +524,7 @@ void collect_y_and_distribute_z_blocked(
   for (int process = 0; process < dims[0]; process++) {
     const int proc_coords[] = {process, proc_coord[1]};
     const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int recv_size_1 = proc2local[rank][1][1] - proc2local[rank][1][0] + 1;
+    const int recv_size_1 = proc2local[rank][1][1];
     double complex *transp = transposed + proc2local[rank][1][0];
     double complex *received_data = grid + recv_displacements[process];
     for (int index_xz = 0;
@@ -607,9 +566,7 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
     my_ray_offset += number_of_rays[process];
   const int my_number_of_rays = number_of_rays[my_process];
   const int(*my_bounds)[2] = proc2local[my_process];
-  const int my_sizes[3] = {my_bounds[0][1] - my_bounds[0][0] + 1,
-                           my_bounds[1][1] - my_bounds[1][0] + 1,
-                           my_bounds[2][1] - my_bounds[2][0] + 1};
+  const int my_sizes[3] = {my_bounds[0][1], my_bounds[1][1], my_bounds[2][1]};
   assert(my_sizes[1] == npts_global[1]);
 
   double complex *recv_buffer =
@@ -635,7 +592,8 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
     const int index_x = my_rays[xy_ray][0];
 
     // Check whether we carry that ray before the transposition
-    if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+    if (index_x >= my_bounds[0][0] &&
+        index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
       number_of_local_rays_to_recv++;
     }
   }
@@ -643,14 +601,16 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
 #pragma omp parallel for default(none)                                         \
     shared(my_sizes, my_bounds, my_number_of_rays, grid, my_rays, transposed,  \
                number_of_local_rays_to_recv)
-  for (int index_z = my_bounds[2][0]; index_z <= my_bounds[2][1]; index_z++) {
+  for (int index_z = my_bounds[2][0];
+       index_z <= my_bounds[2][0] + my_bounds[2][1] - 1; index_z++) {
     int number_of_copied_rays = 0;
     for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
       const int index_x = my_rays[xy_ray][0];
       const int index_y = my_rays[xy_ray][1];
 
       // Check whether we carry that ray before the transposition
-      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         // Copy the data
         transposed[index_z * my_number_of_rays + xy_ray] =
             grid[((index_z - my_bounds[2][0]) * my_sizes[0] +
@@ -662,8 +622,7 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
     }
     assert(number_of_local_rays_to_recv == number_of_copied_rays);
   }
-  number_of_received_elements +=
-      (my_bounds[2][1] - my_bounds[2][0] + 1) * number_of_local_rays_to_recv;
+  number_of_received_elements += my_bounds[2][1] * number_of_local_rays_to_recv;
 
   for (int process_shift = 1; process_shift < number_of_processes;
        process_shift++) {
@@ -682,13 +641,12 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
     for (int ray = 0; ray < my_number_of_rays; ray++) {
       const int index_x = my_rays[ray][0];
       if (index_x >= proc2local_recv[0][0] &&
-          index_x <= proc2local_recv[0][1]) {
+          index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
         number_of_rays_to_recv++;
       }
     }
     const int number_of_elements_to_recv =
-        number_of_rays_to_recv *
-        (proc2local_recv[2][1] - proc2local_recv[2][0] + 1);
+        number_of_rays_to_recv * proc2local_recv[2][1];
     memset(recv_buffer, 0, number_of_elements_to_recv * sizeof(double complex));
 
     // Post receive request
@@ -703,7 +661,8 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
     int number_of_rays_to_send = 0;
     for (int ray = 0; ray < number_of_rays_send; ray++) {
       const int index_x = send_rays[ray][0];
-      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         number_of_rays_to_send++;
       }
     }
@@ -718,7 +677,8 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
       for (int ray = 0; ray < number_of_rays_send; ray++) {
         const int index_x = send_rays[ray][0];
         const int index_y = send_rays[ray][1];
-        if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+        if (index_x >= my_bounds[0][0] &&
+            index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
           send_buffer[index_z * number_of_rays_to_send + ray_position] =
               grid[(index_z * my_sizes[0] + (index_x - my_bounds[0][0])) *
                        my_sizes[1] +
@@ -744,14 +704,12 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
 #pragma omp parallel for default(none)                                         \
     shared(my_number_of_rays, recv_buffer, transposed, proc2local_recv,        \
                number_of_rays_to_recv, my_rays)
-    for (int index_z = 0;
-         index_z < proc2local_recv[2][1] - proc2local_recv[2][0] + 1;
-         index_z++) {
+    for (int index_z = 0; index_z < proc2local_recv[2][1]; index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < my_number_of_rays; ray++) {
         const int index_x = my_rays[ray][0];
         if (index_x >= proc2local_recv[0][0] &&
-            index_x <= proc2local_recv[0][1]) {
+            index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
           transposed[(index_z + proc2local_recv[2][0]) * my_number_of_rays +
                      ray] =
               recv_buffer[index_z * number_of_rays_to_recv + ray_position];
@@ -761,11 +719,9 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
       assert(ray_position == number_of_rays_to_recv);
     }
     assert(number_of_elements_to_recv ==
-           (proc2local_recv[2][1] - proc2local_recv[2][0] + 1) *
-               number_of_rays_to_recv);
+           proc2local_recv[2][1] * number_of_rays_to_recv);
     number_of_received_elements +=
-        (proc2local_recv[2][1] - proc2local_recv[2][0] + 1) *
-        number_of_rays_to_recv;
+        proc2local_recv[2][1] * number_of_rays_to_recv;
 
     // Wait for the send request
     memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
@@ -806,7 +762,7 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
   const int(*my_bounds)[2] = proc2local_transposed[my_process];
   int my_transposed_sizes[3];
   for (int dir = 0; dir < 3; dir++)
-    my_transposed_sizes[dir] = my_bounds[dir][1] - my_bounds[dir][0] + 1;
+    my_transposed_sizes[dir] = my_bounds[dir][1];
   assert(my_transposed_sizes[1] == npts_global[1]);
   const int max_number_of_elements =
       imax(max_number_of_rays * npts_global[2], product3(my_transposed_sizes));
@@ -834,11 +790,13 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
     const int index_y = my_rays[xy_ray][1];
 
     // Check whether we carry that ray after the transposition
-    if (index_x < my_bounds[0][0] || index_x > my_bounds[0][1])
+    if (index_x < my_bounds[0][0] ||
+        index_x > my_bounds[0][0] + my_bounds[0][1] - 1)
       continue;
 
     // Copy the data
-    for (int index_z = my_bounds[2][0]; index_z <= my_bounds[2][1]; index_z++) {
+    for (int index_z = my_bounds[2][0];
+         index_z <= my_bounds[2][0] + my_bounds[2][1] - 1; index_z++) {
       transposed[((index_z - my_bounds[2][0]) * my_transposed_sizes[0] +
                   (index_x - my_bounds[0][0])) *
                      my_transposed_sizes[1] +
@@ -865,7 +823,8 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
     reduction(+ : number_of_rays_to_recv)
     for (int ray = 0; ray < number_of_rays_recv; ray++) {
       const int index_x = recv_rays[ray][0];
-      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         number_of_rays_to_recv++;
       }
     }
@@ -885,20 +844,21 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
     for (int ray = 0; ray < my_number_of_rays; ray++) {
       const int index_x = my_rays[ray][0];
       if (index_x >= proc2local_send[0][0] &&
-          index_x <= proc2local_send[0][1]) {
+          index_x <= proc2local_send[0][0] + proc2local_send[0][1] - 1) {
         number_of_rays_to_send++;
       }
     }
 #pragma omp parallel for default(none)                                         \
     shared(npts_global, number_of_rays_to_send, send_buffer, grid, my_rays,    \
                proc2local_send, my_number_of_rays)
-    for (int index_z = proc2local_send[2][0]; index_z <= proc2local_send[2][1];
+    for (int index_z = proc2local_send[2][0];
+         index_z <= proc2local_send[2][0] + proc2local_send[2][1] - 1;
          index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < my_number_of_rays; ray++) {
         const int index_x = my_rays[ray][0];
         if (index_x >= proc2local_send[0][0] &&
-            index_x <= proc2local_send[0][1]) {
+            index_x <= proc2local_send[0][0] + proc2local_send[0][1] - 1) {
           send_buffer[(index_z - proc2local_send[2][0]) *
                           number_of_rays_to_send +
                       ray_position] = grid[index_z * my_number_of_rays + ray];
@@ -910,9 +870,7 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
 
     // Post send request
     send_request = cp_mpi_isend_double_complex(
-        send_buffer,
-        number_of_rays_to_send *
-            (proc2local_send[2][1] - proc2local_send[2][0] + 1),
+        send_buffer, number_of_rays_to_send * proc2local_send[2][1],
         send_process, 1, comm);
 
     // Wait for the receive process and copy the data
@@ -930,7 +888,8 @@ void collect_xy_and_distribute_z_ray(double complex *restrict grid,
       for (int ray = 0; ray < number_of_rays_recv; ray++) {
         const int index_x = recv_rays[ray][0];
         const int index_y = recv_rays[ray][1];
-        if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+        if (index_x >= my_bounds[0][0] &&
+            index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
           transposed[(index_z * my_transposed_sizes[0] +
                       (index_x - my_bounds[0][0])) *
                          my_transposed_sizes[1] +
@@ -976,9 +935,7 @@ void collect_z_and_distribute_xy_ray_transpose(
     my_ray_offset += number_of_rays[process];
   const int my_number_of_rays = number_of_rays[my_process];
   const int(*my_bounds)[2] = proc2local[my_process];
-  const int my_sizes[3] = {my_bounds[0][1] - my_bounds[0][0] + 1,
-                           my_bounds[1][1] - my_bounds[1][0] + 1,
-                           my_bounds[2][1] - my_bounds[2][0] + 1};
+  const int my_sizes[3] = {my_bounds[0][1], my_bounds[1][1], my_bounds[2][1]};
   assert(my_sizes[1] == npts_global[1]);
 
   double complex *recv_buffer =
@@ -994,14 +951,16 @@ void collect_z_and_distribute_xy_ray_transpose(
 // Copy and transpose the local data
 #pragma omp parallel for default(none)                                         \
     shared(my_sizes, my_bounds, my_number_of_rays, grid, ray_to_xy,            \
-               transposed, my_ray_offset, npts_global) collapse(2)
-  for (int index_z = my_bounds[2][0]; index_z <= my_bounds[2][1]; index_z++) {
+               transposed, my_ray_offset) collapse(2)
+  for (int index_z = my_bounds[2][0];
+       index_z <= my_bounds[2][0] + my_bounds[2][1] - 1; index_z++) {
     for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
       const int index_x = ray_to_xy[my_ray_offset + xy_ray][0];
       const int index_y = ray_to_xy[my_ray_offset + xy_ray][1];
 
       // Check whether we carry that ray after the transposition
-      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         // Copy the data
         transposed[index_z * my_number_of_rays + xy_ray] =
             grid[((index_x - my_bounds[0][0]) * my_sizes[1] + index_y -
@@ -1029,13 +988,12 @@ void collect_z_and_distribute_xy_ray_transpose(
          ray++) {
       const int index_x = ray_to_xy[ray][0];
       if (index_x >= proc2local_recv[0][0] &&
-          index_x <= proc2local_recv[0][1]) {
+          index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
         number_of_rays_to_recv++;
       }
     }
     const int number_of_elements_to_recv =
-        number_of_rays_to_recv *
-        (proc2local_recv[2][1] - proc2local_recv[2][0] + 1);
+        number_of_rays_to_recv * proc2local_recv[2][1];
     memset(recv_buffer, 0, number_of_elements_to_recv * sizeof(double complex));
 
     // Post receive request
@@ -1049,7 +1007,8 @@ void collect_z_and_distribute_xy_ray_transpose(
     int number_of_rays_to_send = 0;
     for (int ray = 0; ray < number_of_rays_send; ray++) {
       const int index_x = send_rays[ray][0];
-      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         number_of_rays_to_send++;
       }
     }
@@ -1063,7 +1022,8 @@ void collect_z_and_distribute_xy_ray_transpose(
       for (int ray = 0; ray < number_of_rays_send; ray++) {
         const int index_x = send_rays[ray][0];
         const int index_y = send_rays[ray][1];
-        if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+        if (index_x >= my_bounds[0][0] &&
+            index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
           send_buffer[index_z * number_of_rays_to_send + ray_position] =
               grid[((index_x - my_bounds[0][0]) * my_sizes[1] + index_y -
                     my_bounds[1][0]) *
@@ -1086,18 +1046,16 @@ void collect_z_and_distribute_xy_ray_transpose(
     cp_mpi_wait(&recv_request);
     fft_stop_timer(handle2);
 
-#pragma omp parallel for default(none) shared(                                 \
-        my_number_of_rays, npts_global, recv_buffer, transposed,               \
-            proc2local_recv, number_of_rays_to_recv, ray_to_xy, my_ray_offset)
-    for (int index_z = 0;
-         index_z < proc2local_recv[2][1] - proc2local_recv[2][0] + 1;
-         index_z++) {
+#pragma omp parallel for default(none)                                         \
+    shared(my_number_of_rays, recv_buffer, transposed, proc2local_recv,        \
+               number_of_rays_to_recv, ray_to_xy, my_ray_offset)
+    for (int index_z = 0; index_z < proc2local_recv[2][1]; index_z++) {
       int ray_position = 0;
       for (int ray = my_ray_offset; ray < my_ray_offset + my_number_of_rays;
            ray++) {
         const int index_x = ray_to_xy[ray][0];
         if (index_x >= proc2local_recv[0][0] &&
-            index_x <= proc2local_recv[0][1]) {
+            index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
           transposed[(index_z + proc2local_recv[2][0]) * my_number_of_rays +
                      (ray - my_ray_offset)] =
               recv_buffer[index_z * number_of_rays_to_recv + ray_position];
@@ -1143,7 +1101,7 @@ void collect_xy_and_distribute_z_ray_transpose(
   const int(*my_bounds)[2] = proc2local_transposed[my_process];
   int my_transposed_sizes[3];
   for (int dir = 0; dir < 3; dir++)
-    my_transposed_sizes[dir] = my_bounds[dir][1] - my_bounds[dir][0] + 1;
+    my_transposed_sizes[dir] = my_bounds[dir][1];
   assert(my_transposed_sizes[1] == npts_global[1]);
   const int max_number_of_elements =
       imax(max_number_of_rays * npts_global[2], product3(my_transposed_sizes));
@@ -1165,20 +1123,22 @@ void collect_xy_and_distribute_z_ray_transpose(
     my_rays += number_of_rays[process];
 #pragma omp parallel for default(none)                                         \
     shared(my_transposed_sizes, my_bounds, my_rays, my_number_of_rays, grid,   \
-               transposed, npts_global) reduction(+ : number_of_received_rays)
+               transposed) reduction(+ : number_of_received_rays)
   for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
     const int index_x = my_rays[xy_ray][0];
     const int index_y = my_rays[xy_ray][1];
 
     // Check whether we carry that ray after the transposition
-    if (index_x < my_bounds[0][0] || index_x > my_bounds[0][1])
+    if (index_x < my_bounds[0][0] ||
+        index_x > my_bounds[0][0] + my_bounds[0][1] - 1)
       continue;
 
     // Copy the data
-    for (int index_z = my_bounds[2][0]; index_z <= my_bounds[2][1]; index_z++) {
-      transposed[(index_x - my_bounds[0][0]) * my_transposed_sizes[1] *
+    for (int index_z = my_bounds[2][0];
+         index_z <= my_bounds[2][0] + my_bounds[2][1] - 1; index_z++) {
+      transposed[((index_x - my_bounds[0][0]) * my_transposed_sizes[1] +
+                  (index_y - my_bounds[1][0])) *
                      my_transposed_sizes[2] +
-                 (index_y - my_bounds[1][0]) * my_transposed_sizes[2] +
                  (index_z - my_bounds[2][0])] =
           grid[index_z * my_number_of_rays + xy_ray];
     }
@@ -1202,7 +1162,8 @@ void collect_xy_and_distribute_z_ray_transpose(
     reduction(+ : number_of_rays_to_recv)
     for (int ray = 0; ray < number_of_rays_recv; ray++) {
       const int index_x = recv_rays[ray][0];
-      if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         number_of_rays_to_recv++;
       }
     }
@@ -1222,20 +1183,21 @@ void collect_xy_and_distribute_z_ray_transpose(
     for (int ray = 0; ray < my_number_of_rays; ray++) {
       const int index_x = my_rays[ray][0];
       if (index_x >= proc2local_send[0][0] &&
-          index_x <= proc2local_send[0][1]) {
+          index_x <= proc2local_send[0][0] + proc2local_send[0][1] - 1) {
         number_of_rays_to_send++;
       }
     }
 #pragma omp parallel for default(none)                                         \
-    shared(npts_global, number_of_rays_to_send, send_buffer, grid, my_rays,    \
+    shared(number_of_rays_to_send, send_buffer, grid, my_rays,                 \
                proc2local_send, my_number_of_rays)
-    for (int index_z = proc2local_send[2][0]; index_z <= proc2local_send[2][1];
+    for (int index_z = proc2local_send[2][0];
+         index_z <= proc2local_send[2][0] + proc2local_send[2][1] - 1;
          index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < my_number_of_rays; ray++) {
         const int index_x = my_rays[ray][0];
         if (index_x >= proc2local_send[0][0] &&
-            index_x <= proc2local_send[0][1]) {
+            index_x <= proc2local_send[0][0] + proc2local_send[0][1] - 1) {
           send_buffer[(index_z - proc2local_send[2][0]) *
                           number_of_rays_to_send +
                       ray_position] = grid[index_z * my_number_of_rays + ray];
@@ -1247,9 +1209,7 @@ void collect_xy_and_distribute_z_ray_transpose(
 
     // Post send request
     send_request = cp_mpi_isend_double_complex(
-        send_buffer,
-        number_of_rays_to_send *
-            (proc2local_send[2][1] - proc2local_send[2][0] + 1),
+        send_buffer, number_of_rays_to_send * proc2local_send[2][1],
         send_process, 1, comm);
 
     // Wait for the receive process and copy the data
@@ -1259,18 +1219,19 @@ void collect_xy_and_distribute_z_ray_transpose(
     cp_mpi_wait(&recv_request);
     fft_stop_timer(handle2);
 
-#pragma omp parallel for default(none) shared(                                 \
-        my_transposed_sizes, my_bounds, number_of_rays_to_recv, recv_buffer,   \
-            transposed, number_of_rays_recv, recv_rays, number_of_rays)
+#pragma omp parallel for default(none)                                         \
+    shared(my_transposed_sizes, my_bounds, number_of_rays_to_recv,             \
+               recv_buffer, transposed, number_of_rays_recv, recv_rays)
     for (int index_z = 0; index_z < my_transposed_sizes[2]; index_z++) {
       int ray_position = 0;
       for (int ray = 0; ray < number_of_rays_recv; ray++) {
         const int index_x = recv_rays[ray][0];
         const int index_y = recv_rays[ray][1];
-        if (index_x >= my_bounds[0][0] && index_x <= my_bounds[0][1]) {
-          transposed[(index_x - my_bounds[0][0]) * my_transposed_sizes[1] *
+        if (index_x >= my_bounds[0][0] &&
+            index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
+          transposed[((index_x - my_bounds[0][0]) * my_transposed_sizes[1] +
+                      (index_y - my_bounds[1][0])) *
                          my_transposed_sizes[2] +
-                     (index_y - my_bounds[1][0]) * my_transposed_sizes[2] +
                      index_z] =
               recv_buffer[index_z * number_of_rays_to_recv + ray_position];
           ray_position++;

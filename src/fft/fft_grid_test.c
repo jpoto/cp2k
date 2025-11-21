@@ -41,13 +41,13 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int(*my_bounds_gs)[2] = fft_grid_layout->proc2local_gs[my_process];
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_gs[dir] = my_bounds_gs[dir][1] - my_bounds_gs[dir][0] + 1;
+    my_sizes_gs[dir] = my_bounds_gs[dir][1];
   const int my_number_of_elements_gs = product3(my_sizes_gs);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
@@ -71,9 +71,12 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
         memset(grid_rs.data, 0,
                my_number_of_elements_rs * sizeof(double complex));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                         my_bounds_rs[1][0]) *
                            my_sizes_rs[2] +
@@ -82,8 +85,8 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
         fft_3d_fw_with_layout(grid_rs.data, grid_gs.data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(grid_gs, my_bounds_gs, my_sizes_gs, fft_grid_layout, nx, ny, nz,    \
-               npts_global) reduction(max : max_error)
+    shared(grid_gs, fft_grid_layout, nx, ny, nz, npts_global)                  \
+    reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = grid_gs.data[index];
@@ -129,9 +132,12 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
         memset(grid_rs.data, 0,
                my_number_of_elements_rs * sizeof(double complex));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                         my_bounds_rs[1][0]) *
                            my_sizes_rs[2] +
@@ -140,9 +146,8 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
         fft_fw(&grid_rs, &grid_gs);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, my_bounds_gs, my_sizes_gs, grid_gs,                \
-               my_number_of_elements_gs, nx, ny, nz, scale, my_process,        \
-               npts_global) reduction(max : max_error)
+    shared(fft_grid_layout, grid_gs, my_number_of_elements_gs, nx, ny, nz,     \
+               scale, npts_global) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_gs; index++) {
           const int mx = fft_grid_layout->index_to_g[index][0];
           const int my = fft_grid_layout->index_to_g[index][1];
@@ -272,13 +277,13 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int(*my_bounds_gs)[2] = fft_grid_layout->proc2local_gs[my_process];
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_gs[dir] = my_bounds_gs[dir][1] - my_bounds_gs[dir][0] + 1;
+    my_sizes_gs[dir] = my_bounds_gs[dir][1];
   const int my_number_of_elements_gs = product3(my_sizes_gs);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
@@ -302,9 +307,12 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
         memset(grid_rs.data, 0,
                my_number_of_elements_rs * sizeof(double complex));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                         my_bounds_rs[1][0]) *
                            my_sizes_rs[2] +
@@ -367,9 +375,12 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
         memset(grid_rs.data, 0,
                my_number_of_elements_rs * sizeof(double complex));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                         my_bounds_rs[1][0]) *
                            my_sizes_rs[2] +
@@ -523,13 +534,13 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int(*my_bounds_gs)[2] = fft_grid_layout->proc2local_gs[my_process];
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_gs[dir] = my_bounds_gs[dir][1] - my_bounds_gs[dir][0] + 1;
+    my_sizes_gs[dir] = my_bounds_gs[dir][1];
   const int my_number_of_elements_gs = product3(my_sizes_gs);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
@@ -553,9 +564,12 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
         double *buffer_real = grid_rs.data;
         memset(buffer_real, 0, my_number_of_elements_rs * sizeof(double));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           buffer_real[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                        my_bounds_rs[1][0]) *
                           my_sizes_rs[2] +
@@ -564,8 +578,8 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
         fft_3d_fw_r2c_with_layout(buffer_real, grid_gs.data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(grid_gs, my_bounds_gs, my_sizes_gs, fft_grid_layout, nx, ny, nz,    \
-               npts_global) reduction(max : max_error)
+    shared(grid_gs, fft_grid_layout, nx, ny, nz, npts_global)                  \
+    reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = grid_gs.data[index];
@@ -610,9 +624,12 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
 
         memset(grid_rs.data, 0, my_number_of_elements_rs * sizeof(double));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                         my_bounds_rs[1][0]) *
                            my_sizes_rs[2] +
@@ -621,9 +638,8 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
         fft_fw_r2c(&grid_rs, &grid_gs);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, my_bounds_gs, my_sizes_gs, grid_gs,                \
-               my_number_of_elements_gs, nx, ny, nz, scale, my_process,        \
-               npts_global) reduction(max : max_error)
+    shared(fft_grid_layout, grid_gs, my_number_of_elements_gs, nx, ny, nz,     \
+               scale, my_process, npts_global) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_gs; index++) {
           const int mx = fft_grid_layout->index_to_g[index][0];
           const int my = fft_grid_layout->index_to_g[index][1];
@@ -756,13 +772,13 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int(*my_bounds_gs)[2] = fft_grid_layout->proc2local_gs[my_process];
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_gs[dir] = my_bounds_gs[dir][1] - my_bounds_gs[dir][0] + 1;
+    my_sizes_gs[dir] = my_bounds_gs[dir][1];
   const int my_number_of_elements_gs = product3(my_sizes_gs);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
@@ -786,9 +802,12 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
         double *buffer_real = grid_rs.data;
         memset(buffer_real, 0, my_number_of_elements_rs * sizeof(double));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           buffer_real[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                        my_bounds_rs[1][0]) *
                           my_sizes_rs[2] +
@@ -797,8 +816,8 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
         fft_3d_fw_r2c_with_layout(buffer_real, grid_gs.data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(grid_gs, my_bounds_gs, my_sizes_gs, fft_grid_layout, nx, ny, nz,    \
-               npts_global) reduction(max : max_error)
+    shared(grid_gs, fft_grid_layout, nx, ny, nz, npts_global)                  \
+    reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = grid_gs.data[index];
@@ -844,9 +863,12 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
 
         memset(grid_rs.data, 0, my_number_of_elements_rs * sizeof(double));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           grid_rs.data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                         my_bounds_rs[1][0]) *
                            my_sizes_rs[2] +
@@ -855,9 +877,8 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
         fft_fw_r2c(&grid_rs, &grid_gs);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, my_bounds_gs, my_sizes_gs, grid_gs,                \
-               my_number_of_elements_gs, nx, ny, nz, scale, my_process,        \
-               npts_global) reduction(max : max_error)
+    shared(fft_grid_layout, grid_gs, my_number_of_elements_gs, nx, ny, nz,     \
+               scale, npts_global) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_gs; index++) {
           const int mx = fft_grid_layout->index_to_g[index][0];
           const int my = fft_grid_layout->index_to_g[index][1];
@@ -989,7 +1010,7 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int my_number_of_elements_gs =
@@ -1017,9 +1038,12 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
         number_of_tests++;
         memset(buffer_1, 0, my_number_of_elements_rs * sizeof(double complex));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           buffer_1[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                     my_bounds_rs[1][0]) *
                        my_sizes_rs[2] +
@@ -1028,8 +1052,8 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
         fft_3d_fw_with_layout(buffer_1, buffer_2, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, my_ray_offset, npts_global, my_sizes_rs,           \
-               my_process, nx, ny, nz, buffer_2) reduction(max : max_error)
+    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2)                 \
+    reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int index_x = fft_grid_layout->index_to_g[index][0];
           const int index_y = fft_grid_layout->index_to_g[index][1];
@@ -1097,8 +1121,8 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
       fft_3d_bw_with_layout(buffer_2, buffer_1, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, buffer_1, my_sizes_rs, my_bounds_rs, npts_global,  \
-               nx, ny, nz) reduction(max : max_error) collapse(3)
+    shared(buffer_1, my_sizes_rs, my_bounds_rs, npts_global, nx, ny, nz)       \
+    reduction(max : max_error) collapse(3)
       for (int mx = 0; mx < my_sizes_rs[0]; mx++) {
         for (int my = 0; my < my_sizes_rs[1]; my++) {
           for (int mz = 0; mz < my_sizes_rs[2]; mz++) {
@@ -1171,7 +1195,7 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int my_number_of_elements_gs =
@@ -1198,9 +1222,12 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
         number_of_tests++;
         memset(buffer_1, 0, my_number_of_elements_rs * sizeof(double));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           buffer_1[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                     my_bounds_rs[1][0]) *
                        my_sizes_rs[2] +
@@ -1209,8 +1236,8 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
         fft_3d_fw_r2c_with_layout(buffer_1, buffer_2, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, my_ray_offset, npts_global, my_sizes_rs,           \
-               my_process, nx, ny, nz, buffer_2) reduction(max : max_error)
+    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2)                 \
+    reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int index_x = fft_grid_layout->index_to_g[index][0];
           const int index_y = fft_grid_layout->index_to_g[index][1];
@@ -1278,8 +1305,8 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
       fft_3d_bw_c2r_with_layout(buffer_2, buffer_1, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, buffer_1, my_sizes_rs, my_bounds_rs, npts_global,  \
-               nx, ny, nz) reduction(max : max_error) collapse(3)
+    shared(buffer_1, my_sizes_rs, my_bounds_rs, npts_global, nx, ny, nz)       \
+    reduction(max : max_error) collapse(3)
       for (int mx = 0; mx < my_sizes_rs[0]; mx++) {
         for (int my = 0; my < my_sizes_rs[1]; my++) {
           for (int mz = 0; mz < my_sizes_rs[2]; mz++) {
@@ -1353,7 +1380,7 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
   for (int dir = 0; dir < 3; dir++)
-    my_sizes_rs[dir] = my_bounds_rs[dir][1] - my_bounds_rs[dir][0] + 1;
+    my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int my_number_of_elements_gs =
@@ -1380,9 +1407,12 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
         number_of_tests++;
         memset(buffer_1, 0, my_number_of_elements_rs * sizeof(double));
 
-        if (nx >= my_bounds_rs[0][0] && nx <= my_bounds_rs[0][1] &&
-            ny >= my_bounds_rs[1][0] && ny <= my_bounds_rs[1][1] &&
-            nz >= my_bounds_rs[2][0] && nz <= my_bounds_rs[2][1])
+        if (nx >= my_bounds_rs[0][0] &&
+            nx <= my_bounds_rs[0][0] + my_bounds_rs[0][1] - 1 &&
+            ny >= my_bounds_rs[1][0] &&
+            ny <= my_bounds_rs[1][0] + my_bounds_rs[1][1] - 1 &&
+            nz >= my_bounds_rs[2][0] &&
+            nz <= my_bounds_rs[2][0] + my_bounds_rs[2][1] - 1)
           buffer_1[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                     my_bounds_rs[1][0]) *
                        my_sizes_rs[2] +
@@ -1391,8 +1421,8 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
         fft_3d_fw_r2c_with_layout(buffer_1, buffer_2, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, my_ray_offset, npts_global, my_sizes_rs,           \
-               my_process, nx, ny, nz, buffer_2) reduction(max : max_error)
+    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2)                 \
+    reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int index_x = fft_grid_layout->index_to_g[index][0];
           const int index_y = fft_grid_layout->index_to_g[index][1];
@@ -1463,8 +1493,8 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
         fft_3d_bw_c2r_with_layout(buffer_2, buffer_1, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, buffer_1, my_sizes_rs, my_bounds_rs, npts_global,  \
-               nx, ny, nz) reduction(max : max_error) collapse(3)
+    shared(buffer_1, my_sizes_rs, my_bounds_rs, npts_global, nx, ny, nz)       \
+    reduction(max : max_error) collapse(3)
         for (int mx = 0; mx < my_sizes_rs[0]; mx++) {
           for (int my = 0; my < my_sizes_rs[1]; my++) {
             for (int mz = 0; mz < my_sizes_rs[2]; mz++) {

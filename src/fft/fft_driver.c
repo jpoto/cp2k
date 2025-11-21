@@ -47,18 +47,15 @@ void fft_3d_fw_blocked(const double complex *restrict grid_rs,
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
-  int fft_sizes_gs[3] = {
-      proc2local_gs[my_process][0][1] - proc2local_gs[my_process][0][0] + 1,
-      proc2local_gs[my_process][1][1] - proc2local_gs[my_process][1][0] + 1,
-      proc2local_gs[my_process][2][1] - proc2local_gs[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
+  int fft_sizes_gs[3] = {proc2local_gs[my_process][0][1],
+                         proc2local_gs[my_process][1][1],
+                         proc2local_gs[my_process][2][1]};
 
   int proc_grid[2];
   int periods[2];
@@ -282,18 +279,15 @@ void fft_3d_fw_r2c_blocked(
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
-  int fft_sizes_gs[3] = {
-      proc2local_gs[my_process][0][1] - proc2local_gs[my_process][0][0] + 1,
-      proc2local_gs[my_process][1][1] - proc2local_gs[my_process][1][0] + 1,
-      proc2local_gs[my_process][2][1] - proc2local_gs[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
+  int fft_sizes_gs[3] = {proc2local_gs[my_process][0][1],
+                         proc2local_gs[my_process][1][1],
+                         proc2local_gs[my_process][2][1]};
 
   int proc_grid[2];
   int periods[2];
@@ -543,18 +537,15 @@ void fft_3d_bw_blocked(
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
-  int fft_sizes_gs[3] = {
-      proc2local_gs[my_process][0][1] - proc2local_gs[my_process][0][0] + 1,
-      proc2local_gs[my_process][1][1] - proc2local_gs[my_process][1][0] + 1,
-      proc2local_gs[my_process][2][1] - proc2local_gs[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
+  int fft_sizes_gs[3] = {proc2local_gs[my_process][0][1],
+                         proc2local_gs[my_process][1][1],
+                         proc2local_gs[my_process][2][1]};
 
   int proc_grid[2];
   int periods[2];
@@ -738,18 +729,15 @@ void fft_3d_bw_c2r_blocked(
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
-  int fft_sizes_gs[3] = {
-      proc2local_gs[my_process][0][1] - proc2local_gs[my_process][0][0] + 1,
-      proc2local_gs[my_process][1][1] - proc2local_gs[my_process][1][0] + 1,
-      proc2local_gs[my_process][2][1] - proc2local_gs[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
+  int fft_sizes_gs[3] = {proc2local_gs[my_process][0][1],
+                         proc2local_gs[my_process][1][1],
+                         proc2local_gs[my_process][2][1]};
 
   int proc_grid[2];
   int periods[2];
@@ -930,14 +918,12 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
   int number_of_local_xy_rays = rays_per_process[my_process];
   const int(*my_ray_to_xy)[2] = ray_to_xy;
   for (int process = 0; process < my_process; process++) {
@@ -1115,14 +1101,12 @@ void fft_3d_fw_r2c_ray(
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
   int number_of_local_xy_rays = rays_per_process[my_process];
   const int(*my_ray_to_xy)[2] = ray_to_xy;
   for (int process = 0; process < my_process; process++) {
@@ -1313,14 +1297,12 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
   int number_of_local_xy_rays = rays_per_process[my_process];
 
   int proc_grid[2];
@@ -1502,14 +1484,12 @@ void fft_3d_bw_c2r_ray(const double complex *restrict grid_gs,
   double complex *grid_buffer_2 = get_buffer_2();
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {
-      proc2local_rs[my_process][0][1] - proc2local_rs[my_process][0][0] + 1,
-      proc2local_rs[my_process][1][1] - proc2local_rs[my_process][1][0] + 1,
-      proc2local_rs[my_process][2][1] - proc2local_rs[my_process][2][0] + 1};
-  int fft_sizes_ms[3] = {
-      proc2local_ms[my_process][0][1] - proc2local_ms[my_process][0][0] + 1,
-      proc2local_ms[my_process][1][1] - proc2local_ms[my_process][1][0] + 1,
-      proc2local_ms[my_process][2][1] - proc2local_ms[my_process][2][0] + 1};
+  int fft_sizes_rs[3] = {proc2local_rs[my_process][0][1],
+                         proc2local_rs[my_process][1][1],
+                         proc2local_rs[my_process][2][1]};
+  int fft_sizes_ms[3] = {proc2local_ms[my_process][0][1],
+                         proc2local_ms[my_process][1][1],
+                         proc2local_ms[my_process][2][1]};
   int number_of_local_xy_rays = rays_per_process[my_process];
 
   int proc_grid[2];
