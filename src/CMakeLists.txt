@@ -1432,8 +1432,8 @@ set(CP2K_GRID_SRCS_C
     fft_lib_ref.c
     fft_lib_ref_low.c
     fft_lib_test.c
-    fft_reorder.c
-    fft_reorder_test.c
+    fft_redistribution.c
+    fft_redistribution_test.c
     fft_timer.c)
 
 set(CP2K_GRID_SRCS_C

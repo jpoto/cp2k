@@ -4,8 +4,8 @@
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
-#ifndef FFT_REORDER_TEST_H
-#define FFT_REORDER_TEST_H
+#ifndef FFT_REDISTRIBUTION_TEST_H
+#define FFT_REDISTRIBUTION_TEST_H
 
 /*******************************************************************************
  * \brief Function to test the parallel transposition operation.
@@ -13,6 +13,6 @@
  ******************************************************************************/
 int fft_test_transpose_parallel();
 
-#endif /* FFT_TEST_H */
+#endif /* FFT_REDISTRIBUTION_TEST_H */
 
 // EOF

@@ -14,7 +14,7 @@
 #include "fft_grid_test.h"
 #include "fft_lib.h"
 #include "fft_lib_test.h"
-#include "fft_reorder_test.h"
+#include "fft_redistribution_test.h"
 #include "fft_timer.h"
 
 int run_tests(const bool debug, const int backend, const int planning_mode,

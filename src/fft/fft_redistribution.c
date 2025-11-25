@@ -5,7 +5,7 @@
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
 
-#include "fft_reorder.h"
+#include "fft_redistribution.h"
 #include "../mpiwrap/cp_mpi.h"
 #include "fft_timer.h"
 #include "fft_utils.h"
@@ -18,72 +18,180 @@
 #include <string.h>
 
 /*******************************************************************************
+ * \brief Cleanup the redistribution type
+ * \author Frederick Stein
+ ******************************************************************************/
+void cleanup_redistribution(fft_redistribution_t *redistribution) {
+  free(redistribution->displacements_xy_x);
+  free(redistribution->displacements_xy_y);
+  free(redistribution->counts_xy_x);
+  free(redistribution->counts_xy_y);
+  free(redistribution->displacements_yzt_y);
+  free(redistribution->displacements_yzt_z);
+  free(redistribution->counts_yzt_y);
+  free(redistribution->counts_yzt_z);
+  free(redistribution->displacements_yz_y);
+  free(redistribution->displacements_yz_z);
+  free(redistribution->counts_yz_y);
+  free(redistribution->counts_yz_z);
+}
+
+/*******************************************************************************
+ * \brief Prepare the redistribution steps
+ * \author Frederick Stein
+ ******************************************************************************/
+void prepare_redistribution(fft_redistribution_t *redistribution,
+                            const int npts_global_gspace[3],
+                            const int (*proc2local_x_gs)[2],
+                            const int (*proc2local_y_rs)[2],
+                            const int (*proc2local_y_gs)[2],
+                            const int (*proc2local_z_rs)[2],
+                            const cp_mpi_comm_t sub_comm[2]) {
+
+  assert(redistribution != NULL);
+
+  cleanup_redistribution(redistribution);
+
+  const int process_grid[2] = {cp_mpi_comm_size(sub_comm[0]),
+                               cp_mpi_comm_size(sub_comm[1])};
+  const int process_coords[2] = {cp_mpi_comm_rank(sub_comm[0]),
+                                 cp_mpi_comm_rank(sub_comm[1])};
+  redistribution->my_size_x_gs = proc2local_x_gs[process_coords[1]][1];
+  redistribution->my_size_y_rs = proc2local_y_rs[process_coords[1]][1];
+  redistribution->my_size_y_gs = proc2local_y_gs[process_coords[0]][1];
+  redistribution->my_size_z_rs = proc2local_z_rs[process_coords[0]][1];
+
+  // Copy the general information on the data
+  memcpy(redistribution->npts_global_gspace, npts_global_gspace,
+         3 * sizeof(int));
+
+  // Setup the redistribution between x and y being local
+  redistribution->displacements_xy_x = calloc(process_grid[1], sizeof(int));
+  redistribution->displacements_xy_y = calloc(process_grid[1], sizeof(int));
+  redistribution->counts_xy_x = calloc(process_grid[1], sizeof(int));
+  redistribution->counts_xy_y = calloc(process_grid[1], sizeof(int));
+  int send_offset = 0;
+  int recv_offset = 0;
+  for (int process = 0; process < process_grid[1]; process++) {
+    // Setup arrays
+    redistribution->displacements_xy_x[process] = send_offset;
+    redistribution->displacements_xy_y[process] = recv_offset;
+    const int current_send_count = proc2local_x_gs[process][1] *
+                                   redistribution->my_size_y_rs *
+                                   redistribution->my_size_z_rs;
+    redistribution->counts_xy_x[process] = current_send_count;
+    const int current_recv_count = redistribution->my_size_x_gs *
+                                   proc2local_y_rs[process][1] *
+                                   redistribution->my_size_z_rs;
+    redistribution->counts_xy_y[process] = current_recv_count;
+    send_offset += current_send_count;
+    recv_offset += current_recv_count;
+  }
+  assert(send_offset == npts_global_gspace[0] * redistribution->my_size_y_rs *
+                            redistribution->my_size_z_rs);
+  assert(recv_offset == redistribution->my_size_x_gs * npts_global_gspace[1] *
+                            redistribution->my_size_z_rs);
+
+  // Next, yz with transposition
+  redistribution->displacements_yzt_y = calloc(process_grid[0], sizeof(int));
+  redistribution->displacements_yzt_z = calloc(process_grid[0], sizeof(int));
+  redistribution->counts_yzt_y = calloc(process_grid[0], sizeof(int));
+  redistribution->counts_yzt_z = calloc(process_grid[0], sizeof(int));
+
+  send_offset = 0;
+  recv_offset = 0;
+  for (int process = 0; process < process_grid[0]; process++) {
+    // Setup arrays
+    redistribution->displacements_yzt_y[process] = send_offset;
+    redistribution->displacements_yzt_z[process] = recv_offset;
+    const int current_send_count = redistribution->my_size_x_gs *
+                                   proc2local_y_gs[process][1] *
+                                   redistribution->my_size_z_rs;
+    redistribution->counts_yzt_y[process] = current_send_count;
+    const int current_recv_count = redistribution->my_size_x_gs *
+                                   redistribution->my_size_y_gs *
+                                   proc2local_z_rs[process][1];
+    redistribution->counts_yzt_z[process] = current_recv_count;
+    send_offset += current_send_count;
+    recv_offset += current_recv_count;
+  }
+  assert(send_offset == redistribution->my_size_x_gs * npts_global_gspace[1] *
+                            redistribution->my_size_z_rs);
+  assert(recv_offset == redistribution->my_size_x_gs *
+                            redistribution->my_size_y_gs *
+                            npts_global_gspace[2]);
+
+  // yz redistribution non-transposed
+  redistribution->displacements_yz_y = calloc(process_grid[0], sizeof(int));
+  redistribution->displacements_yz_z = calloc(process_grid[0], sizeof(int));
+  redistribution->counts_yz_y = calloc(process_grid[0], sizeof(int));
+  redistribution->counts_yz_z = calloc(process_grid[0], sizeof(int));
+
+  send_offset = 0;
+  recv_offset = 0;
+  for (int process = 0; process < process_grid[0]; process++) {
+    // Setup arrays
+    redistribution->displacements_yz_y[process] = send_offset;
+    redistribution->displacements_yz_z[process] = recv_offset;
+    const int current_send_count = redistribution->my_size_x_gs *
+                                   proc2local_y_gs[process][1] *
+                                   redistribution->my_size_z_rs;
+    redistribution->counts_yz_y[process] = current_send_count;
+    send_offset += current_send_count;
+    const int current_recv_count = redistribution->my_size_x_gs *
+                                   redistribution->my_size_y_gs *
+                                   proc2local_z_rs[process][1];
+    redistribution->counts_yz_z[process] = current_recv_count;
+    recv_offset += current_recv_count;
+  }
+  assert(send_offset == redistribution->my_size_x_gs * npts_global_gspace[1] *
+                            redistribution->my_size_z_rs);
+  assert(recv_offset == redistribution->my_size_x_gs *
+                            redistribution->my_size_y_gs *
+                            npts_global_gspace[2]);
+}
+
+/*******************************************************************************
  * \brief Performs a transposition of (y_d,z_D,x)->(y,z_D,x_d).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_y_and_distribute_x_blocked(double complex *restrict grid,
-                                        double complex *restrict transposed,
-                                        const int npts_global[3],
-                                        const int (*proc2local_x_ms)[2],
-                                        const int (*proc2local_y_rs)[2],
-                                        const int size_z,
-                                        const cp_mpi_comm_t comm) {
+void collect_y_and_distribute_x_blocked(
+    double complex *restrict grid, double complex *restrict transposed,
+    const fft_redistribution_t *redistribution, const int (*proc2local_x_ms)[2],
+    const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
   const int number_of_processes = cp_mpi_comm_size(comm);
 
-  const int my_size_x = proc2local_x_ms[my_process][1];
-  const int my_size_y = proc2local_y_rs[my_process][1];
-
-  int *send_displacements = calloc(number_of_processes, sizeof(int));
-  int *recv_displacements = calloc(number_of_processes, sizeof(int));
-  int *send_counts = calloc(number_of_processes, sizeof(int));
-  int *recv_counts = calloc(number_of_processes, sizeof(int));
-
   // Reorder the input data to enable MPI_alltoall
-  int send_offset = 0;
-  int recv_offset = 0;
+  const int number_of_yz_pairs =
+      redistribution->my_size_y_rs * redistribution->my_size_z_rs;
   for (int process = 0; process < number_of_processes; process++) {
-    // Setup arrays
-    send_displacements[process] = send_offset;
-    recv_displacements[process] = recv_offset;
     const int current_send_size_0 = proc2local_x_ms[process][1];
-    const int current_send_count = current_send_size_0 * my_size_y * size_z;
-    send_counts[process] = current_send_count;
-    const int current_recv_count =
-        my_size_x * proc2local_y_rs[process][1] * size_z;
-    recv_counts[process] = current_recv_count;
-    send_offset += current_send_count;
-    recv_offset += current_recv_count;
-    double complex *send_buffer = transposed + send_displacements[process];
+    double complex *send_buffer =
+        transposed + redistribution->displacements_xy_x[process];
     double complex *grid_ptr = grid + proc2local_x_ms[process][0];
-    for (int index_yz = 0; index_yz < my_size_y * size_z; index_yz++) {
+    for (int index_yz = 0; index_yz < number_of_yz_pairs; index_yz++) {
       memcpy(send_buffer + index_yz * current_send_size_0,
-             grid_ptr + index_yz * npts_global[0],
+             grid_ptr + index_yz * redistribution->npts_global_gspace[0],
              current_send_size_0 * sizeof(double complex));
     }
   }
-  assert(send_offset == npts_global[0] * my_size_y * size_z);
-  assert(recv_offset == my_size_x * npts_global[1] * size_z);
   memcpy(grid, transposed,
-         npts_global[0] * my_size_y * size_z * sizeof(double complex));
+         redistribution->npts_global_gspace[0] * number_of_yz_pairs *
+             sizeof(double complex));
 
   // Use collective MPI communication
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
   const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
-                                  transposed, recv_counts, recv_displacements,
-                                  comm);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_xy_x,
+                                  redistribution->displacements_xy_x,
+                                  transposed, redistribution->counts_xy_y,
+                                  redistribution->displacements_xy_y, comm);
   fft_stop_timer(handle2);
-
-  free(send_counts);
-  free(send_displacements);
-  free(recv_counts);
-  free(recv_displacements);
   fft_stop_timer(handle);
 }
 
@@ -91,74 +199,45 @@ void collect_y_and_distribute_x_blocked(double complex *restrict grid,
  * \brief Performs a transposition of (y,z_d,x_d) -> (y_d,z_d,x).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_x_and_distribute_y_blocked(double complex *restrict grid,
-                                        double complex *restrict transposed,
-                                        const int npts_global[3],
-                                        const int (*proc2local_x_ms)[2],
-                                        const int (*proc2local_y_rs)[2],
-                                        const int size_z,
-                                        const cp_mpi_comm_t comm) {
+void collect_x_and_distribute_y_blocked(
+    double complex *restrict grid, double complex *restrict transposed,
+    const fft_redistribution_t *redistribution, const int (*proc2local_x_ms)[2],
+    const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_y_b");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
   const int number_of_processes = cp_mpi_comm_size(comm);
 
-  const int my_size_x = proc2local_x_ms[my_process][1];
-  const int my_size_y = proc2local_y_rs[my_process][1];
-
-  int *send_displacements = calloc(number_of_processes, sizeof(int));
-  int *recv_displacements = calloc(number_of_processes, sizeof(int));
-  int *send_counts = calloc(number_of_processes, sizeof(int));
-  int *recv_counts = calloc(number_of_processes, sizeof(int));
-
-  int send_offset = 0;
-  int recv_offset = 0;
-  const int number_of_yz_pairs = my_size_y * size_z;
-  for (int process = 0; process < number_of_processes; process++) {
-    // Setup arrays
-    send_displacements[process] = send_offset;
-    recv_displacements[process] = recv_offset;
-    const int current_send_count =
-        my_size_x * proc2local_y_rs[process][1] * size_z;
-    send_counts[process] = current_send_count;
-    send_offset += current_send_count;
-    const int current_recv_size_0 = proc2local_x_ms[process][1];
-    const int current_recv_count = current_recv_size_0 * number_of_yz_pairs;
-    recv_counts[process] = current_recv_count;
-    recv_offset += current_recv_count;
-  }
-  assert(send_offset == my_size_x * npts_global[1] * size_z);
-  assert(recv_offset == npts_global[0] * number_of_yz_pairs);
+  const int number_of_yz_pairs =
+      redistribution->my_size_y_rs * redistribution->my_size_z_rs;
 
   // Use collective MPI communication
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
   const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
-                                  transposed, recv_counts, recv_displacements,
-                                  comm);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_xy_y,
+                                  redistribution->displacements_xy_y,
+                                  transposed, redistribution->counts_xy_x,
+                                  redistribution->displacements_xy_x, comm);
   fft_stop_timer(handle2);
 
   memcpy(grid, transposed,
-         npts_global[0] * my_size_y * size_z * sizeof(double complex));
+         redistribution->npts_global_gspace[0] * number_of_yz_pairs *
+             sizeof(double complex));
 
   for (int process = 0; process < number_of_processes; process++) {
     const int current_recv_size_0 = proc2local_x_ms[process][1];
     double complex *transposed_ptr = transposed + proc2local_x_ms[process][0];
-    double complex *recv_buffer = grid + recv_displacements[process];
+    double complex *recv_buffer =
+        grid + redistribution->displacements_xy_x[process];
     for (int index_yz = 0; index_yz < number_of_yz_pairs; index_yz++) {
-      memcpy(transposed_ptr + index_yz * npts_global[0],
+      memcpy(transposed_ptr + index_yz * redistribution->npts_global_gspace[0],
              recv_buffer + index_yz * current_recv_size_0,
              current_recv_size_0 * sizeof(double complex));
     }
   }
 
-  free(send_counts);
-  free(send_displacements);
-  free(recv_counts);
-  free(recv_displacements);
   fft_stop_timer(handle);
 }
 
@@ -168,69 +247,51 @@ void collect_x_and_distribute_y_blocked(double complex *restrict grid,
  ******************************************************************************/
 void collect_z_and_distribute_y_blocked_transpose(
     double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int size_x, const int (*proc2local_y_gs)[2],
-    const int (*proc2local_z_ms)[2], const cp_mpi_comm_t comm) {
+    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
+    const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_y_bt");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
   const int number_of_processes = cp_mpi_comm_size(comm);
 
-  const int my_size_y = proc2local_y_gs[my_process][1];
-  const int my_size_z = proc2local_z_ms[my_process][1];
-
-  int *send_displacements = calloc(number_of_processes, sizeof(int));
-  int *recv_displacements = calloc(number_of_processes, sizeof(int));
-  int *send_counts = calloc(number_of_processes, sizeof(int));
-  int *recv_counts = calloc(number_of_processes, sizeof(int));
-
   memset(transposed, 0,
-         size_x * npts_global[1] * my_size_z * sizeof(double complex));
+         redistribution->my_size_x_gs * redistribution->npts_global_gspace[1] *
+             redistribution->my_size_z_rs * sizeof(double complex));
 
-  int send_offset = 0;
-  int recv_offset = 0;
   for (int process = 0; process < number_of_processes; process++) {
     // Setup arrays
-    send_displacements[process] = send_offset;
-    recv_displacements[process] = recv_offset;
     const int send_size_1 = proc2local_y_gs[process][1];
-    const int current_send_count = size_x * send_size_1 * my_size_z;
-    send_counts[process] = current_send_count;
-    const int current_recv_count =
-        size_x * my_size_y * proc2local_z_ms[process][1];
-    recv_counts[process] = current_recv_count;
-    send_offset += current_send_count;
-    recv_offset += current_recv_count;
-    double complex *send_buffer = transposed + send_displacements[process];
-    double complex *grid_ptr = grid + proc2local_y_gs[process][0] * my_size_z;
+    double complex *send_buffer =
+        transposed + redistribution->displacements_yzt_y[process];
+    double complex *grid_ptr =
+        grid + proc2local_y_gs[process][0] * redistribution->my_size_z_rs;
     // Use an explicit loop because we need all values in x-direction but not
     // all in y-direction
-    for (int index_x = 0; index_x < size_x; index_x++) {
-      transpose_local_complex(grid_ptr + index_x * npts_global[1] * my_size_z,
-                              send_buffer + index_x * send_size_1, my_size_z,
-                              send_size_1, my_size_z, send_size_1 * size_x);
+    for (int index_x = 0; index_x < redistribution->my_size_x_gs; index_x++) {
+      transpose_local_complex(
+          grid_ptr + index_x * redistribution->npts_global_gspace[1] *
+                         redistribution->my_size_z_rs,
+          send_buffer + index_x * send_size_1, redistribution->my_size_z_rs,
+          send_size_1, redistribution->my_size_z_rs,
+          send_size_1 * redistribution->my_size_x_gs);
     }
   }
-  assert(send_offset == size_x * npts_global[1] * my_size_z);
-  assert(recv_offset == size_x * my_size_y * npts_global[2]);
 
   memcpy(grid, transposed,
-         size_x * npts_global[1] * my_size_z * sizeof(double complex));
+         redistribution->my_size_x_gs * redistribution->npts_global_gspace[1] *
+             redistribution->my_size_z_rs * sizeof(double complex));
 
   // Use collective MPI communication
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
   const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
-                                  transposed, recv_counts, recv_displacements,
-                                  comm);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_yzt_y,
+                                  redistribution->displacements_yzt_y,
+                                  transposed, redistribution->counts_yzt_z,
+                                  redistribution->displacements_yzt_z, comm);
   fft_stop_timer(handle2);
 
-  free(send_counts);
-  free(send_displacements);
-  free(recv_counts);
-  free(recv_displacements);
   fft_stop_timer(handle);
 }
 
@@ -240,70 +301,45 @@ void collect_z_and_distribute_y_blocked_transpose(
  ******************************************************************************/
 void collect_y_and_distribute_z_blocked_transpose(
     double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int size_x, const int (*proc2local_y_gs)[2],
-    const int (*proc2local_z_ms)[2], const cp_mpi_comm_t comm) {
+    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
+    const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_z_bt");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
   const int number_of_processes = cp_mpi_comm_size(comm);
-
-  const int my_size_y = proc2local_y_gs[my_process][1];
-  const int my_size_z = proc2local_z_ms[my_process][1];
-
-  int *send_displacements = calloc(number_of_processes, sizeof(int));
-  int *recv_displacements = calloc(number_of_processes, sizeof(int));
-  int *send_counts = calloc(number_of_processes, sizeof(int));
-  int *recv_counts = calloc(number_of_processes, sizeof(int));
-
-  int send_offset = 0;
-  int recv_offset = 0;
-  for (int process = 0; process < number_of_processes; process++) {
-    // Setup arrays
-    send_displacements[process] = send_offset;
-    recv_displacements[process] = recv_offset;
-    const int current_recv_count =
-        size_x * my_size_z * proc2local_y_gs[process][1];
-    recv_counts[process] = current_recv_count;
-    const int current_send_count =
-        proc2local_z_ms[process][1] * size_x * my_size_y;
-    send_counts[process] = current_send_count;
-    send_offset += current_send_count;
-    recv_offset += current_recv_count;
-  }
-  assert(send_offset == size_x * my_size_y * npts_global[2]);
-  assert(recv_offset == size_x * npts_global[1] * my_size_z);
 
   // Use collective MPI communication
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
   const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
-                                  transposed, recv_counts, recv_displacements,
-                                  comm);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_yzt_z,
+                                  redistribution->displacements_yzt_z,
+                                  transposed, redistribution->counts_yzt_y,
+                                  redistribution->displacements_yzt_y, comm);
   fft_stop_timer(handle2);
 
   memcpy(grid, transposed,
-         size_x * npts_global[1] * my_size_z * sizeof(double complex));
+         redistribution->my_size_x_gs * redistribution->npts_global_gspace[1] *
+             redistribution->my_size_z_rs * sizeof(double complex));
 
   for (int process = 0; process < number_of_processes; process++) {
     const int recv_size_1 = proc2local_y_gs[process][1];
     double complex *transposed_ptr =
-        transposed + proc2local_y_gs[process][0] * my_size_z;
-    double complex *recv_buffer = grid + recv_displacements[process];
-    for (int index_x = 0; index_x < size_x; index_x++) {
+        transposed + proc2local_y_gs[process][0] * redistribution->my_size_z_rs;
+    double complex *recv_buffer =
+        grid + redistribution->displacements_yzt_y[process];
+    for (int index_x = 0; index_x < redistribution->my_size_x_gs; index_x++) {
       transpose_local_complex(
           recv_buffer + index_x * recv_size_1,
-          transposed_ptr + index_x * npts_global[1] * my_size_z, recv_size_1,
-          my_size_z, size_x * recv_size_1, my_size_z);
+          transposed_ptr + index_x * redistribution->npts_global_gspace[1] *
+                               redistribution->my_size_z_rs,
+          recv_size_1, redistribution->my_size_z_rs,
+          redistribution->my_size_x_gs * recv_size_1,
+          redistribution->my_size_z_rs);
     }
   }
 
-  free(send_counts);
-  free(send_displacements);
-  free(recv_counts);
-  free(recv_displacements);
   fft_stop_timer(handle);
 }
 
@@ -313,81 +349,45 @@ void collect_y_and_distribute_z_blocked_transpose(
  ******************************************************************************/
 void collect_z_and_distribute_y_blocked(
     double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int (*proc2local)[3][2],
-    const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
-    const cp_mpi_comm_t sub_comm[2]) {
+    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
+    const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_y_b");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
+  const int number_of_processes = cp_mpi_comm_size(comm);
 
-  int proc_coord[2];
-  int dims[2];
-  int periods[2];
-  cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
+  memset(transposed, 0,
+         redistribution->my_size_x_gs * redistribution->npts_global_gspace[1] *
+             redistribution->my_size_z_rs * sizeof(double complex));
 
-  const int my_sizes[3] = {proc2local[my_process][0][1],
-                           proc2local[my_process][1][1],
-                           proc2local[my_process][2][1]};
-  assert(my_sizes[1] == npts_global[1]);
-  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
-                                      proc2local_transposed[my_process][1][1],
-                                      proc2local_transposed[my_process][2][1]};
-  assert(my_sizes_transposed[2] == npts_global[2]);
-  assert(my_sizes[0] == my_sizes_transposed[0]);
-
-  int *send_displacements = calloc(dims[0], sizeof(int));
-  int *recv_displacements = calloc(dims[0], sizeof(int));
-  int *send_counts = calloc(dims[0], sizeof(int));
-  int *recv_counts = calloc(dims[0], sizeof(int));
-
-  memset(transposed, 0, product3(my_sizes) * sizeof(double complex));
-
-  int send_offset = 0;
-  int recv_offset = 0;
-  for (int process = 0; process < dims[0]; process++) {
-    // Setup arrays
-    send_displacements[process] = send_offset;
-    recv_displacements[process] = recv_offset;
-    const int proc_coords[] = {process, proc_coord[1]};
-    const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_send_size_1 = proc2local_transposed[rank][1][1];
-    const int current_send_count =
-        my_sizes[0] * current_send_size_1 * my_sizes[2];
-    send_counts[process] = current_send_count;
-    send_offset += current_send_count;
-    const int current_recv_size_2 = proc2local[rank][2][1];
-    const int current_recv_count =
-        current_recv_size_2 * my_sizes_transposed[0] * my_sizes_transposed[1];
-    recv_counts[process] = current_recv_count;
-    recv_offset += current_recv_count;
-    double complex *grid_ptr = grid + proc2local_transposed[rank][1][0];
-    double complex *send_buffer = transposed + send_displacements[process];
-    for (int index_xz = 0; index_xz < my_sizes[0] * my_sizes[2]; index_xz++) {
-      memcpy(send_buffer + index_xz * current_send_size_1,
-             grid_ptr + index_xz * my_sizes[1],
-             current_send_size_1 * sizeof(double complex));
+  for (int process = 0; process < number_of_processes; process++) {
+    double complex *grid_ptr = grid + proc2local_y_gs[process][0];
+    double complex *send_buffer =
+        transposed + redistribution->displacements_yz_y[process];
+    for (int index_xz = 0;
+         index_xz < redistribution->my_size_x_gs * redistribution->my_size_z_rs;
+         index_xz++) {
+      memcpy(send_buffer + index_xz * proc2local_y_gs[process][1],
+             grid_ptr + index_xz * redistribution->npts_global_gspace[1],
+             proc2local_y_gs[process][1] * sizeof(double complex));
     }
   }
-  assert(send_offset == product3(my_sizes));
-  assert(recv_offset == product3(my_sizes_transposed));
 
-  memcpy(grid, transposed, product3(my_sizes) * sizeof(double complex));
+  memcpy(grid, transposed,
+         redistribution->my_size_x_gs * redistribution->npts_global_gspace[1] *
+             redistribution->my_size_z_rs * sizeof(double complex));
 
   // Use collective MPI communication
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
   const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
-                                  transposed, recv_counts, recv_displacements,
-                                  sub_comm[0]);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_yz_y,
+                                  redistribution->displacements_yz_y,
+                                  transposed, redistribution->counts_yz_z,
+                                  redistribution->displacements_yz_z, comm);
   fft_stop_timer(handle2);
 
-  free(send_counts);
-  free(send_displacements);
-  free(recv_counts);
-  free(recv_displacements);
   fft_stop_timer(handle);
 }
 
@@ -397,87 +397,42 @@ void collect_z_and_distribute_y_blocked(
  ******************************************************************************/
 void collect_y_and_distribute_z_blocked(
     double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int (*proc2local)[3][2],
-    const int (*proc2local_transposed)[3][2], const cp_mpi_comm_t comm,
-    const cp_mpi_comm_t sub_comm[2]) {
+    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
+    const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_z_b");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
-
-  int proc_coord[2];
-  int dims[2];
-  int periods[2];
-  cp_mpi_cart_get(comm, 2, dims, periods, proc_coord);
-
-  const int my_sizes[3] = {proc2local[my_process][0][1],
-                           proc2local[my_process][1][1],
-                           proc2local[my_process][2][1]};
-  assert(my_sizes[2] == npts_global[2]);
-  const int my_sizes_transposed[3] = {proc2local_transposed[my_process][0][1],
-                                      proc2local_transposed[my_process][1][1],
-                                      proc2local_transposed[my_process][2][1]};
-  assert(my_sizes_transposed[1] == npts_global[1]);
-  assert(my_sizes[0] == my_sizes_transposed[0]);
-
-  int *send_displacements = calloc(dims[0], sizeof(int));
-  int *recv_displacements = calloc(dims[0], sizeof(int));
-  int *send_counts = calloc(dims[0], sizeof(int));
-  int *recv_counts = calloc(dims[0], sizeof(int));
-
-  int send_offset = 0;
-  int recv_offset = 0;
-  for (int process = 0; process < dims[0]; process++) {
-    // Setup arrays
-    send_displacements[process] = send_offset;
-    recv_displacements[process] = recv_offset;
-    const int proc_coords[] = {process, proc_coord[1]};
-    const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int current_send_count =
-        proc2local_transposed[rank][2][1] * my_sizes[0] * my_sizes[1];
-    send_counts[process] = current_send_count;
-    send_offset += current_send_count;
-    const int recv_size_1 = proc2local[rank][1][1];
-    const int current_recv_count =
-        my_sizes_transposed[0] * recv_size_1 * my_sizes_transposed[2];
-    recv_counts[process] = current_recv_count;
-    recv_offset += current_recv_count;
-  }
-  assert(send_offset == product3(my_sizes));
-  assert(recv_offset == product3(my_sizes_transposed));
+  const int number_of_processes = cp_mpi_comm_size(comm);
 
   // Use collective MPI communication
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b");
   const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, send_counts, send_displacements,
-                                  transposed, recv_counts, recv_displacements,
-                                  sub_comm[0]);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_yz_z,
+                                  redistribution->displacements_yz_z,
+                                  transposed, redistribution->counts_yz_y,
+                                  redistribution->displacements_yz_y, comm);
   fft_stop_timer(handle2);
 
   memcpy(grid, transposed,
-         product3(my_sizes_transposed) * sizeof(double complex));
+         redistribution->my_size_x_gs * redistribution->npts_global_gspace[1] *
+             redistribution->my_size_z_rs * sizeof(double complex));
 
-  for (int process = 0; process < dims[0]; process++) {
-    const int proc_coords[] = {process, proc_coord[1]};
-    const int rank = cp_mpi_cart_rank(comm, proc_coords);
-    const int recv_size_1 = proc2local[rank][1][1];
-    double complex *transp = transposed + proc2local[rank][1][0];
-    double complex *received_data = grid + recv_displacements[process];
-    for (int index_xz = 0;
-         index_xz < my_sizes_transposed[2] * my_sizes_transposed[0];
-         index_xz++) {
-      memcpy(transp + index_xz * my_sizes_transposed[1],
+  const int number_of_xz_pairs =
+      redistribution->my_size_x_gs * redistribution->my_size_z_rs;
+  for (int process = 0; process < number_of_processes; process++) {
+    const int recv_size_1 = proc2local_y_gs[process][1];
+    double complex *transp = transposed + proc2local_y_gs[process][0];
+    double complex *received_data =
+        grid + redistribution->displacements_yz_y[process];
+    for (int index_xz = 0; index_xz < number_of_xz_pairs; index_xz++) {
+      memcpy(transp + index_xz * redistribution->npts_global_gspace[1],
              received_data + index_xz * recv_size_1,
              recv_size_1 * sizeof(double complex));
     }
   }
 
-  free(send_counts);
-  free(send_displacements);
-  free(recv_counts);
-  free(recv_displacements);
   fft_stop_timer(handle);
 }
 

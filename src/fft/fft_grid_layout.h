@@ -9,6 +9,7 @@
 
 #include "../mpiwrap/cp_mpi.h"
 #include "fft_lib.h"
+#include "fft_redistribution.h"
 
 #include <complex.h>
 #include <stdbool.h>
@@ -64,6 +65,8 @@ typedef struct {
   int (*proc2local_z_rs)[2];
   int (*proc2local_x_gs)[2];
   int (*proc2local_y_gs)[2];
+  // redistribution object
+  fft_redistribution_t *redistribution;
   // Buffers for FFTs
   int buffer_size;
   // buffers for different purposes

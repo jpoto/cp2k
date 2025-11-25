@@ -13,8 +13,8 @@ ALL_HEADERS := $(shell find . -name "*.h") $(shell find ../offload/ -name "*.h")
 ALL_OBJECTS := ../offload/offload_buffer.o \
         ../offload/offload_library.o \
         fft_perftest.o \
-        fft_reorder.o \
-        fft_reorder_test.o \
+        fft_redistribution.o \
+        fft_redistribution_test.o \
         fft_grid_test.o \
         fft_grid.o \
         fft_grid_layout.o \
