@@ -976,7 +976,7 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
           rays_per_process, ray_to_xy, comm);
 
       // Perform the final FFT (z,xy_d) -> (xy_d,z)
-      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
+      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
     } else {
       if (is_complex) {
@@ -1007,7 +1007,7 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                                       ray_to_xy, comm);
 
       // Perform the third FFT (z,xy_d) -> (xy_d,z)
-      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
+      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
     }
 #pragma omp parallel for default(none)                                         \
@@ -1040,7 +1040,7 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                                     comm);
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
-    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
+    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
@@ -1148,6 +1148,10 @@ void fft_3d_fw_r2c_ray(
       collect_z_and_distribute_xy_ray_transpose(
           grid_buffer_2, grid_buffer_1, npts_global_gspace, proc2local_ms,
           rays_per_process, ray_to_xy, comm);
+
+      // Perform the third FFT (z,xy_d) -> (xy_d,z)
+      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
+                      grid_buffer_1, grid_buffer_2);
     } else {
       memcpy((double *)grid_buffer_1, grid_rs,
              product3(fft_sizes_rs) * sizeof(double));
@@ -1169,11 +1173,11 @@ void fft_3d_fw_r2c_ray(
       collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1,
                                       npts_global_gspace, proc2local_ms,
                                       rays_per_process, ray_to_xy, comm);
-    }
 
-    // Perform the third FFT (z,xy_d) -> (xy_d,z)
-    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
-                    grid_buffer_1, grid_buffer_2);
+      // Perform the third FFT (z,xy_d) -> (xy_d,z)
+      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
+                      grid_buffer_1, grid_buffer_2);
+    }
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, npts_global, index_to_g, grid_gs, xy_to_ray,         \
                grid_buffer_2)
@@ -1220,7 +1224,7 @@ void fft_3d_fw_r2c_ray(
                                     rays_per_process, ray_to_xy, comm);
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
-    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, true, false,
+    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, xy_to_ray, npts_global, index_to_g, grid_gs,         \
@@ -1335,7 +1339,7 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
     }
     if (fft_lib_use_mpi()) {
       // Perform the first FFT in z-direction
-      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
+      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
 
       // Perform second redistribution and transpose
@@ -1368,7 +1372,7 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
       }
     } else {
       // Perform the first FFT (xy_d,z) -> (z,xy_d)
-      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
+      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
 
       // Perform transpose (z,xy_d) -> (z_d,x_d,y)
@@ -1412,7 +1416,7 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                     index[2]] = grid_gs[i];
     }
     // Perform the first FFT (xy_d,z) -> (z,xy_d)
-    fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
+    fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
     // Perform transpose (z,xy_d) -> (z_d,x,y)
@@ -1521,7 +1525,7 @@ void fft_3d_bw_c2r_ray(
     }
     if (fft_lib_use_mpi()) {
       // Perform the first FFT in x-direction
-      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
+      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
 
       // Perform second redistribution and transpose
@@ -1542,7 +1546,7 @@ void fft_3d_bw_c2r_ray(
           fft_sizes_rs[2], fft_sizes_rs[1], fft_sizes_rs[2]);
     } else {
       // Perform the first FFT (xy_d,z) -> (z,xy_d)
-      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
+      fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
 
       // Perform transpose (z,xy_d) -> (z_d,x_d,y)
@@ -1574,7 +1578,7 @@ void fft_3d_bw_c2r_ray(
                     index[2]] = grid_gs[i];
     }
     // Perform the first FFT (xy_d,z) -> (z,xy_d)
-    fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, true, false,
+    fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
     // Perform transpose (z,xy_d) -> (z_d,x,y)

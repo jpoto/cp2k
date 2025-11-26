@@ -486,8 +486,7 @@ int fft_test_transpose_ray(const int npts_global[3],
       const int index_y =
           fft_grid_ray_layout->ray_to_xy[ray_index_offset + xy_ray][1];
       const double complex my_value =
-          buffer_2[index_z * fft_grid_ray_layout->rays_per_process[my_process] +
-                   xy_ray];
+          buffer_2[xy_ray * npts_global[2] + index_z];
       const double complex ref_value =
           (index_y * npts_global[2] + index_z) + I * index_x;
       double current_error = cabs(my_value - ref_value);
@@ -532,8 +531,7 @@ int fft_test_transpose_ray(const int npts_global[3],
           fft_grid_ray_layout->ray_to_xy[ray_index_offset + xy_ray][0];
       const int index_y =
           fft_grid_ray_layout->ray_to_xy[ray_index_offset + xy_ray][1];
-      buffer_1[index_z * fft_grid_ray_layout->rays_per_process[my_process] +
-               xy_ray] =
+      buffer_1[xy_ray * fft_grid_ray_layout->npts_global[2] + index_z] =
           (index_y * fft_grid_ray_layout->npts_global[2] + index_z) +
           I * index_x;
     }
@@ -642,8 +640,7 @@ int fft_test_transpose_ray(const int npts_global[3],
       const int index_y =
           fft_grid_ray_layout->ray_to_xy[ray_index_offset + xy_ray][1];
       const double complex my_value =
-          buffer_2[index_z * fft_grid_ray_layout->rays_per_process[my_process] +
-                   xy_ray];
+          buffer_2[xy_ray * fft_grid_ray_layout->npts_global[2] + index_z];
       const double complex ref_value =
           (index_y * npts_global[2] + index_z) + I * index_x;
       double current_error = cabs(my_value - ref_value);
@@ -683,8 +680,7 @@ int fft_test_transpose_ray(const int npts_global[3],
           fft_grid_ray_layout->ray_to_xy[ray_index_offset + xy_ray][0];
       const int index_y =
           fft_grid_ray_layout->ray_to_xy[ray_index_offset + xy_ray][1];
-      buffer_1[index_z * fft_grid_ray_layout->rays_per_process[my_process] +
-               xy_ray] =
+      buffer_1[xy_ray * fft_grid_ray_layout->npts_global[2] + index_z] =
           (index_y * fft_grid_ray_layout->npts_global[2] + index_z) +
           I * index_x;
     }
