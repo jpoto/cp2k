@@ -481,9 +481,12 @@ fft_fftw_create_1d_plan_r2c(const int direction, const int fft_size,
                                      istride, idist, buffer_2, onembed, ostride,
                                      odist, fftw_planning_mode);
     } else {
-      *plan = fftw_plan_many_dft_c2r(rank, n, howmany, buffer_2, onembed,
-                                     ostride, odist, buffer_1, inembed, istride,
-                                     idist, fftw_planning_mode);
+      // We use the buffers the other way around to prevent
+      // out-of-bounds-accesses of the planner if the output array has only the
+      // minimum size
+      *plan = fftw_plan_many_dft_c2r(
+          rank, n, howmany, (double complex *)buffer_1, onembed, ostride, odist,
+          (double *)buffer_2, inembed, istride, idist, fftw_planning_mode);
     }
     assert(plan != NULL);
     add_plan_to_cache(key, plan);
@@ -618,9 +621,13 @@ fft_fftw_create_2d_plan_r2c(const int direction, const int fft_size[2],
                                      istride, idist, complex_buffer, onembed,
                                      ostride, odist, fftw_planning_mode);
     } else {
-      *plan = fftw_plan_many_dft_c2r(rank, n, howmany, complex_buffer, onembed,
-                                     ostride, odist, double_buffer, inembed,
-                                     istride, idist, fftw_planning_mode);
+      // We use the buffers the other way around to prevent
+      // out-of-bounds-accesses of the planner if the output array has only the
+      // minimum size
+      *plan = fftw_plan_many_dft_c2r(
+          rank, n, howmany, (double complex *)double_buffer, onembed, ostride,
+          odist, (double *)complex_buffer, inembed, istride, idist,
+          fftw_planning_mode);
     }
     assert(plan != NULL);
     add_plan_to_cache(key, plan);
@@ -726,9 +733,13 @@ fftw_plan *fft_fftw_create_3d_plan_r2c(const int direction,
                                    double_buffer, complex_buffer,
                                    fftw_planning_mode);
     } else {
-      *plan = fftw_plan_dft_c2r_3d(fft_size[0], fft_size[1], fft_size[2],
-                                   complex_buffer, double_buffer,
-                                   fftw_planning_mode);
+      // We use the buffers the other way around to prevent
+      // out-of-bounds-accesses of the planner if the output array has only the
+      // minimum size
+      *plan =
+          fftw_plan_dft_c2r_3d(fft_size[0], fft_size[1], fft_size[2],
+                               (double complex *)double_buffer,
+                               (double *)complex_buffer, fftw_planning_mode);
     }
     add_plan_to_cache(key, plan);
     assert(plan != NULL);
@@ -860,9 +871,13 @@ fftw_plan *fft_fftw_create_guru_plan_r2c(
                                      double_buffer, complex_buffer,
                                      fftw_planning_mode);
     } else {
-      *plan = fftw_plan_guru_dft_c2r(rank, dims, howmany_rank, howmany_dims,
-                                     complex_buffer, double_buffer,
-                                     fftw_planning_mode);
+      // We use the buffers the other way around to prevent
+      // out-of-bounds-accesses of the planner if the output array has only the
+      // minimum size
+      *plan =
+          fftw_plan_guru_dft_c2r(rank, dims, howmany_rank, howmany_dims,
+                                 (double complex *)double_buffer,
+                                 (double *)complex_buffer, fftw_planning_mode);
     }
     add_plan_to_cache(key, plan);
     assert(plan != NULL);
@@ -994,20 +1009,24 @@ fftw_plan *fft_fftw_create_distributed_2d_plan_r2c(const int direction,
         2, (const ptrdiff_t[2]){fft_size[0], fft_size[1] / 2 + 1}, howmany,
         block_size_0, block_size_1, comm, &local_n0, &local_0_start, &local_n1,
         &local_1_start);
-    double *real_buffer = fftw_alloc_real(2 * buffer_size);
+    double *double_buffer = fftw_alloc_real(2 * buffer_size);
     double complex *complex_buffer = grid_out;
     plan = malloc(sizeof(fftw_plan));
     if (direction == FFTW_FORWARD) {
       *plan = fftw_mpi_plan_many_dft_r2c(
-          2, n, howmany, block_size_0, block_size_1, real_buffer,
+          2, n, howmany, block_size_0, block_size_1, double_buffer,
           complex_buffer, comm, fftw_planning_mode + FFTW_MPI_TRANSPOSED_OUT);
     } else {
+      // We use the buffers the other way around to prevent
+      // out-of-bounds-accesses of the planner if the output array has only the
+      // minimum size
       *plan = fftw_mpi_plan_many_dft_c2r(
-          2, n, howmany, block_size_1, block_size_0, complex_buffer,
-          real_buffer, comm, fftw_planning_mode + FFTW_MPI_TRANSPOSED_IN);
+          2, n, howmany, block_size_1, block_size_0,
+          (double complex *)double_buffer, (double *)complex_buffer, comm,
+          fftw_planning_mode + FFTW_MPI_TRANSPOSED_IN);
     }
     assert(plan != NULL);
-    fftw_free(real_buffer);
+    fftw_free(double_buffer);
     add_plan_to_cache(key, plan);
   }
   fft_stop_timer(handle2);

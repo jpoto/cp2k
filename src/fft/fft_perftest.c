@@ -138,7 +138,6 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
     sum_time += current_time;
     sum_time_squared += current_time * current_time;
   }
-
   grid_free_real_rs_grid(&grid_rs);
   grid_free_complex_gs_grid(&grid_gs);
   grid_free_fft_grid_layout(grid_layout);
@@ -405,21 +404,26 @@ int main(int argc, char *argv[]) {
     fflush(stdout);
   }
 
-  run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, true, true, 0.01);
+  const bool debug = false;
+  const int backend = FFT_LIB_FFTW;
+  const int planning_mode = FFT_MEASURE;
+  const double threshold = 0.01;
 
-  // Test also the reference backend and without distributed FFTs from the
-  // library
+  // Test with Guru and MPI backend turned on
+  run_tests(debug, backend, planning_mode, true, true, threshold);
+
+  // Test without distributed FFTW but with Guru interface
   if (fft_lib_use_mpi()) {
-    run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, false, true, 0.01);
+    run_tests(debug, backend, planning_mode, false, true, threshold);
   }
 
   if (fft_lib_has_guru_interface()) {
-    run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, true, false, 0.01);
+    // Now, test with MPI but without Guru interface
+    run_tests(debug, backend, planning_mode, true, false, threshold);
 
-    // Test also the reference backend and without distributed FFTs from the
-    // library
+    // Test without MPI and without Guru interface
     if (fft_lib_use_mpi()) {
-      run_tests(false, FFT_LIB_FFTW, FFT_ESTIMATE, false, false, 0.01);
+      run_tests(debug, backend, planning_mode, false, false, threshold);
     }
   }
 
