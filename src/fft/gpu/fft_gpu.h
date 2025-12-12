@@ -4,18 +4,8 @@
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
-#include "../../offload/offload_runtime.h"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
-
-#include "../../offload/offload_fft.h"
-#include "../../offload/offload_library.h"
-#include "fft_gpu_kernels.h"
-
-#include <assert.h>
-#include <omp.h>
-#include <stdbool.h>
+#include <complex.h>
 #include <stddef.h>
-#include <string.h>
 
 /*******************************************************************************
  * \brief Initializes the fft_gpu library.
@@ -33,9 +23,31 @@ void fft_gpu_finalize(void);
  * \brief Checks size of device buffers and re-allocates them if necessary.
  * \author Ole Schuett
  ******************************************************************************/
-static void ensure_memory_sizes(const size_t requested_buffer_size,
-                                const size_t requested_map_size);
+void ensure_memory_sizes(const size_t requested_buffer_size,
+                         const size_t requested_map_size);
 
-#endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+/*******************************************************************************
+ * \brief Allocate buffer of type double.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_allocate_double(const int length, double **buffer);
+
+/*******************************************************************************
+ * \brief Allocate buffer of type double complex.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_allocate_complex(const int length, double complex **buffer);
+
+/*******************************************************************************
+ * \brief Allocate buffer of type double.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_free_double(double *buffer);
+
+/*******************************************************************************
+ * \brief Allocate buffer of type double complex.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_free_complex(double complex *buffer);
 
 // EOF

@@ -16,6 +16,7 @@
 typedef enum { FFT_LIB_REF, FFT_LIB_FFTW, FFT_LIB_GPU } fft_lib;
 
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+static const fft_lib FFT_LIB_DEFAULT = FFT_LIB_GPU;
 #elif defined(__FFTW3)
 static const fft_lib FFT_LIB_DEFAULT = FFT_LIB_FFTW;
 #else

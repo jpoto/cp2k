@@ -21,7 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__FFTW3)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+fft_lib fft_lib_choice = FFT_LIB_GPU;
+#elif defined(__FFTW3)
 fft_lib fft_lib_choice = FFT_LIB_FFTW;
 #else
 fft_lib fft_lib_choice = FFT_LIB_REF;
@@ -200,6 +202,9 @@ void fft_allocate_double(const int length, double **buffer) {
   case FFT_LIB_FFTW:
     fft_fftw_allocate_double(length, buffer);
     break;
+  case FFT_LIB_GPU:
+    fft_gpu_allocate_double(length, buffer);
+    break;
   default:
     assert(0 && "Unknown FFT library.");
   }
@@ -217,6 +222,9 @@ void fft_allocate_complex(const int length, double complex **buffer) {
   case FFT_LIB_FFTW:
     fft_fftw_allocate_complex(length, buffer);
     break;
+  case FFT_LIB_GPU:
+    fft_gpu_allocate_complex(length, buffer);
+    break;
   default:
     assert(0 && "Unknown FFT library.");
   }
@@ -231,6 +239,8 @@ void fft_free_double(double *buffer) {
     fft_ref_free_double(buffer);
   } else if (fft_lib_choice == FFT_LIB_FFTW) {
     fft_fftw_free_double(buffer);
+  } else if (fft_lib_choice == FFT_LIB_GPU) {
+    fft_gpu_free_double(buffer);
   } else {
     assert(0 && "Unknown FFT library.");
   }
@@ -245,6 +255,8 @@ void fft_free_complex(double complex *buffer) {
     fft_ref_free_complex(buffer);
   } else if (fft_lib_choice == FFT_LIB_FFTW) {
     fft_fftw_free_complex(buffer);
+  } else if (fft_lib_choice == FFT_LIB_GPU) {
+    fft_gpu_free_complex(buffer);
   } else {
     assert(0 && "Unknown FFT library.");
   }
@@ -267,6 +279,7 @@ void fft_1d_fw_local(const int fft_size, const int number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_1d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -293,6 +306,7 @@ void fft_1d_fw_local_r2c(const int fft_size, const int number_of_ffts,
                             transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_1d_fw_local_r2c(fft_size, number_of_ffts, transpose_rs,
                              transpose_gs, grid_in, grid_out);
     break;
@@ -319,6 +333,7 @@ void fft_1d_bw_local(const int fft_size, const int number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_1d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -345,6 +360,7 @@ void fft_1d_bw_local_c2r(const int fft_size, const int number_of_ffts,
                             transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_1d_bw_local_c2r(fft_size, number_of_ffts, transpose_rs,
                              transpose_gs, grid_in, grid_out);
     break;
@@ -371,6 +387,7 @@ void fft_2d_fw_local(const int fft_size[2], const int number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_2d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -397,6 +414,7 @@ void fft_2d_fw_local_r2c(const int fft_size[2], const int number_of_ffts,
                             transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_2d_fw_local_r2c(fft_size, number_of_ffts, transpose_rs,
                              transpose_gs, grid_in, grid_out);
     break;
@@ -425,6 +443,7 @@ void fft_2d_bw_local(const int fft_size[2], const int number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_2d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -453,6 +472,7 @@ void fft_2d_bw_local_c2r(const int fft_size[2], const int number_of_ffts,
                             transpose_rs, transpose_gs);
     break;
   case FFT_LIB_FFTW:
+  case FFT_LIB_GPU:
     fft_fftw_2d_bw_local_c2r(fft_size, number_of_ffts, transpose_rs,
                              transpose_gs, grid_in, grid_out);
     break;
@@ -495,6 +515,7 @@ void fft_3d_fw_local(const int fft_size[3], double complex *grid_in,
       fft_ref_3d_fw_local(grid_in, grid_out, fft_size);
       break;
     case FFT_LIB_FFTW:
+    case FFT_LIB_GPU:
       fft_fftw_3d_fw_local(fft_size, grid_in, grid_out);
       break;
     default:
@@ -540,6 +561,7 @@ void fft_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
       fft_ref_3d_fw_local_r2c(grid_in, grid_out, fft_size);
       break;
     case FFT_LIB_FFTW:
+    case FFT_LIB_GPU:
       fft_fftw_3d_fw_local_r2c(fft_size, grid_in, grid_out);
       break;
     default:
@@ -584,6 +606,7 @@ void fft_3d_bw_local(const int fft_size[3], double complex *grid_in,
       fft_ref_3d_bw_local(grid_in, grid_out, fft_size);
       break;
     case FFT_LIB_FFTW:
+    case FFT_LIB_GPU:
       fft_fftw_3d_bw_local(fft_size, grid_in, grid_out);
       break;
     default:
@@ -630,6 +653,7 @@ void fft_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
       fft_ref_3d_bw_local_c2r(grid_in, grid_out, fft_size);
       break;
     case FFT_LIB_FFTW:
+    case FFT_LIB_GPU:
       fft_fftw_3d_bw_local_c2r(fft_size, grid_in, grid_out);
       break;
     default:

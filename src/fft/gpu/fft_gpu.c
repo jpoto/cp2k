@@ -4,12 +4,14 @@
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
+#include "fft_gpu.h"
 #include "../../offload/offload_runtime.h"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 #include "../../offload/offload_fft.h"
 #include "../../offload/offload_library.h"
 #include "fft_gpu_kernels.h"
+#endif
 
 #include <assert.h>
 #include <omp.h>
@@ -17,6 +19,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 /*******************************************************************************
  * \brief Static variables for retaining objects that are expensive to create.
  * \author Ole Schuett
@@ -36,6 +39,7 @@ static size_t allocated_buffer_size, allocated_map_size;
 
 static offloadStream_t stream;
 static bool is_initialized = false;
+#endif
 
 /*******************************************************************************
  * \brief Initializes the fft_gpu library.
@@ -43,6 +47,7 @@ static bool is_initialized = false;
  ******************************************************************************/
 void fft_gpu_init(void) {
   assert(omp_get_num_threads() == 1);
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   if (is_initialized) {
     // fprintf(stderr, "Error: fft_gpu was already initialized.\n");
     // TODO abort();
@@ -60,6 +65,9 @@ void fft_gpu_init(void) {
 
   offloadStreamCreate(&stream);
   is_initialized = true;
+#else
+// Nothing to initialize
+#endif
 }
 
 /*******************************************************************************
@@ -68,6 +76,7 @@ void fft_gpu_init(void) {
  ******************************************************************************/
 void fft_gpu_finalize(void) {
   assert(omp_get_num_threads() == 1);
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   if (!is_initialized) {
     // fprintf(stderr, "Error: fft_gpu is not initialized.\n");
     // TODO abort();
@@ -84,14 +93,18 @@ void fft_gpu_finalize(void) {
   offloadFree(ghatmap_dev);
   offloadStreamDestroy(stream);
   is_initialized = false;
+#else
+// Nothing to finalize
+#endif
 }
 
 /*******************************************************************************
  * \brief Checks size of device buffers and re-allocates them if necessary.
  * \author Ole Schuett
  ******************************************************************************/
-static void ensure_memory_sizes(const size_t requested_buffer_size,
-                                const size_t requested_map_size) {
+void ensure_memory_sizes(const size_t requested_buffer_size,
+                         const size_t requested_map_size) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   assert(is_initialized);
   if (requested_buffer_size > allocated_buffer_size) {
     offloadFree(buffer_dev_1);
@@ -105,8 +118,71 @@ static void ensure_memory_sizes(const size_t requested_buffer_size,
     offloadMalloc((void **)&ghatmap_dev, requested_map_size);
     allocated_map_size = requested_map_size;
   }
+#else
+  (void)requested_buffer_size;
+  (void)requested_map_size;
+#endif
 }
 
+/*******************************************************************************
+ * \brief Allocate buffer of type double.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_allocate_double(const int length, double **buffer) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  assert(is_initialized);
+  offload_host_malloc(buffer, length * sizeof(double));
+#else
+  assert(0 && "FFT backend was compiled without GPU support!");
+  (void)length;
+  (void)buffer;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Allocate buffer of type double complex.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_allocate_complex(const int length, double complex **buffer) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  assert(is_initialized);
+  offload_host_malloc(buffer, length * sizeof(double complex));
+#else
+  assert(0 && "FFT backend was compiled without GPU support!");
+  (void)length;
+  (void)buffer;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Allocate buffer of type double.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_free_double(double *buffer) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  assert(is_initialized);
+  offload_host_free(buffer);
+#else
+  assert(0 && "FFT backend was compiled without GPU support!");
+  (void)buffer;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Allocate buffer of type double complex.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_gpu_free_complex(double complex *buffer) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  assert(is_initialized);
+  offload_host_free(buffer);
+#else
+  assert(0 && "FFT backend was compiled without GPU support!");
+  (void)buffer;
+#endif
+}
+
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 /*******************************************************************************
  * \brief Fetches an fft plan from the cache. Returns NULL if not found.
  * \author Ole Schuett
@@ -146,8 +222,8 @@ static void add_plan_to_cache(const int key[4], offload_fftHandle *plan) {
  *          Input/output are DEVICE pointers (data_in, date_out).
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-static void fft_1d(const int direction, const int n, const int m,
-                   const double *data_in, double *data_out) {
+static void fft_1d_gpu(const int direction, const int n, const int m,
+                       const double *data_in, double *data_out) {
   const int key[4] = {1, direction, n, m}; // first key entry is dimensions
   offload_fftHandle *plan = lookup_plan_from_cache(key);
 
@@ -183,8 +259,8 @@ static void fft_1d(const int direction, const int n, const int m,
  *          Input/output is a DEVICE pointer (data).
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-static void fft_3d(const int direction, const int nx, const int ny,
-                   const int nz, double *data) {
+static void fft_3d_gpu(const int direction, const int nx, const int ny,
+                       const int nz, double *data) {
   const int key[4] = {3, nx, ny, nz}; // first key entry is dimensions
   offload_fftHandle *plan = lookup_plan_from_cache(key);
 
@@ -197,6 +273,7 @@ static void fft_3d(const int direction, const int nx, const int ny,
 
   offload_fftExecZ2Z(*plan, data, data, direction);
 }
+#endif
 
 /*******************************************************************************
  * \brief   Performs a (double precision complex) FFT, followed by a (double
@@ -207,6 +284,7 @@ void fft_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
                    const int *npts, const int ngpts, const double scale) {
   // Check inputs.
   assert(omp_get_num_threads() == 1);
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   const int nrpts = npts[0] * npts[1] * npts[2];
   assert(ngpts <= nrpts);
   if (nrpts == 0 || ngpts == 0) {
@@ -235,6 +313,14 @@ void fft_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, 2 * sizeof(double) * ngpts,
                          stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)din;
+  (void)zout;
+  (void)ghatmap;
+  (void)npts;
+  (void)ngpts;
+  (void)scale;
+#endif
 }
 
 /*******************************************************************************
@@ -245,6 +331,7 @@ void fft_gpu_cfffg(const double *din, double *zout, const int *ghatmap,
 void fft_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
                    const int *npts, const int ngpts, const int nmaps,
                    const double scale) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -275,6 +362,15 @@ void fft_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
   fft_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
   offloadMemcpyAsyncDtoH(dout, buffer_dev_1, buffer_size / 2, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)dout;
+  (void)ghatmap;
+  (void)npts;
+  (void)ngpts;
+  (void)nmaps;
+  (void)scale;
+#endif
 }
 
 /*******************************************************************************
@@ -283,6 +379,7 @@ void fft_gpu_sfffc(const double *zin, double *dout, const int *ghatmap,
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
 void fft_gpu_cff(const double *din, double *zout, const int *npts) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -309,6 +406,11 @@ void fft_gpu_cff(const double *din, double *zout, const int *npts) {
   // Download COMPLEX results to host.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_2, buffer_size, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)din;
+  (void)zout;
+  (void)npts;
+#endif
 }
 
 /*******************************************************************************
@@ -317,6 +419,7 @@ void fft_gpu_cff(const double *din, double *zout, const int *npts) {
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
 void fft_gpu_ffc(const double *zin, double *dout, const int *npts) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -343,6 +446,11 @@ void fft_gpu_ffc(const double *zin, double *dout, const int *npts) {
   // Download REAL results to host.
   offloadMemcpyAsyncDtoH(dout, buffer_dev_2, buffer_size / 2, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)dout;
+  (void)npts;
+#endif
 }
 
 /*******************************************************************************
@@ -351,6 +459,7 @@ void fft_gpu_ffc(const double *zin, double *dout, const int *npts) {
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
 void fft_gpu_cf(const double *din, double *zout, const int *npts) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -374,6 +483,11 @@ void fft_gpu_cf(const double *din, double *zout, const int *npts) {
   // Download COMPLEX results from device.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, buffer_size, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)din;
+  (void)zout;
+  (void)npts;
+#endif
 }
 
 /*******************************************************************************
@@ -382,6 +496,7 @@ void fft_gpu_cf(const double *din, double *zout, const int *npts) {
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
 void fft_gpu_fc(const double *zin, double *dout, const int *npts) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * npts[1] * npts[2];
@@ -405,6 +520,11 @@ void fft_gpu_fc(const double *zin, double *dout, const int *npts) {
   fft_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
   offloadMemcpyAsyncDtoH(dout, buffer_dev_1, buffer_size / 2, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)dout;
+  (void)npts;
+#endif
 }
 
 /*******************************************************************************
@@ -413,6 +533,7 @@ void fft_gpu_fc(const double *zin, double *dout, const int *npts) {
  ******************************************************************************/
 void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
                const int m) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = n * m;
@@ -438,6 +559,13 @@ void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
   // Download COMPLEX results from device.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_2, buffer_size, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)zout;
+  (void)dir;
+  (void)n;
+  (void)m;
+#endif
 }
 
 /*******************************************************************************
@@ -448,6 +576,7 @@ void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
 void fft_gpu_fg(const double *zin, double *zout, const int *ghatmap,
                 const int *npts, const int mmax, const int ngpts,
                 const double scale) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * mmax;
@@ -477,6 +606,15 @@ void fft_gpu_fg(const double *zin, double *zout, const int *ghatmap,
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, 2 * sizeof(double) * ngpts,
                          stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)zout;
+  (void)ghatmap;
+  (void)npts;
+  (void)mmax;
+  (void)ngpts;
+  (void)scale;
+#endif
 }
 
 /*******************************************************************************
@@ -487,6 +625,7 @@ void fft_gpu_fg(const double *zin, double *zout, const int *ghatmap,
 void fft_gpu_sf(const double *zin, double *zout, const int *ghatmap,
                 const int *npts, const int mmax, const int ngpts,
                 const int nmaps, const double scale) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
   const int nrpts = npts[0] * mmax;
@@ -516,8 +655,16 @@ void fft_gpu_sf(const double *zin, double *zout, const int *ghatmap,
   // Download COMPLEX results from device.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, buffer_size, stream);
   offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)zout;
+  (void)ghatmap;
+  (void)npts;
+  (void)mmax;
+  (void)ngpts;
+  (void)nmaps;
+  (void)scale;
+#endif
 }
-
-#endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 
 // EOF
