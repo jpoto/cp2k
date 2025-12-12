@@ -278,8 +278,11 @@ void fft_1d_fw_local(const int fft_size, const int number_of_ffts,
     fft_ref_1d_fw_local(grid_in, grid_out, fft_size, number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
-  case FFT_LIB_FFTW:
   case FFT_LIB_GPU:
+    fft_gpu_f((const double *)grid_in, (double *)grid_out, 1, fft_size,
+              number_of_ffts, transpose_rs, transpose_gs);
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_1d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -332,8 +335,11 @@ void fft_1d_bw_local(const int fft_size, const int number_of_ffts,
     fft_ref_1d_bw_local(grid_in, grid_out, fft_size, number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
-  case FFT_LIB_FFTW:
   case FFT_LIB_GPU:
+    fft_gpu_f((const double *)grid_in, (double *)grid_out, -1, fft_size,
+              number_of_ffts, transpose_gs, transpose_rs);
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_1d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;

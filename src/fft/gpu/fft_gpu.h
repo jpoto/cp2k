@@ -5,6 +5,7 @@
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
 #include <complex.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 /*******************************************************************************
@@ -49,5 +50,12 @@ void fft_gpu_free_double(double *buffer);
  * \author Frederick Stein
  ******************************************************************************/
 void fft_gpu_free_complex(double complex *buffer);
+
+/*******************************************************************************
+ * \brief   Performs a (double precision complex) 1D-FFT on the GPU.
+ * \author  Andreas Gloess, Ole Schuett
+ ******************************************************************************/
+void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
+               const int m, const bool transpose_in, const bool transpose_out);
 
 // EOF

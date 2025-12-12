@@ -223,6 +223,7 @@ static void add_plan_to_cache(const int key[4], offload_fftHandle *plan) {
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
 static void fft_1d_gpu(const int direction, const int n, const int m,
+                       const bool transpose_in, const bool transpose_out,
                        const double *data_in, double *data_out) {
   const int key[4] = {1, direction, n, m}; // first key entry is dimensions
   offload_fftHandle *plan = lookup_plan_from_cache(key);
@@ -232,15 +233,15 @@ static void fft_1d_gpu(const int direction, const int n, const int m,
     int inembed[1] = {0}; // Is ignored, but is not allowed to be NULL.
     int onembed[1] = {0}; // Is ignored, but is not allowed to be NULL.
     int batch = m;
-    int istride, idist, ostride, odist;
-    if (direction == OFFLOAD_FFT_FORWARD) {
+    int istride = 1;
+    int idist = n;
+    int ostride = 1;
+    int odist = n;
+    if (transpose_in) {
       istride = m;
       idist = 1;
-      ostride = 1;
-      odist = n;
-    } else {
-      istride = 1;
-      idist = n;
+    }
+    if (transpose_out) {
       ostride = m;
       odist = 1;
     }
@@ -398,10 +399,10 @@ void fft_gpu_cff(const double *din, double *zout, const int *npts) {
 
   // Run FFT on the device.
   // NOTE: Could use 2D-FFT, but CUDA does them C-shaped which is not optimal.
-  fft_1d(OFFLOAD_FFT_FORWARD, npts[2], npts[0] * npts[1], buffer_dev_2,
-         buffer_dev_1);
-  fft_1d(OFFLOAD_FFT_FORWARD, npts[1], npts[0] * npts[2], buffer_dev_1,
-         buffer_dev_2);
+  fft_1d_gpu(OFFLOAD_FFT_FORWARD, npts[2], npts[0] * npts[1], buffer_dev_2,
+             buffer_dev_1);
+  fft_1d_gpu(OFFLOAD_FFT_FORWARD, npts[1], npts[0] * npts[2], buffer_dev_1,
+             buffer_dev_2);
 
   // Download COMPLEX results to host.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_2, buffer_size, stream);
@@ -437,10 +438,10 @@ void fft_gpu_ffc(const double *zin, double *dout, const int *npts) {
 
   // Run FFT on the device.
   // NOTE: Could use 2D-FFT, but CUDA does them C-shaped which is not optimal.
-  fft_1d(OFFLOAD_FFT_INVERSE, npts[1], npts[0] * npts[2], buffer_dev_1,
-         buffer_dev_2);
-  fft_1d(OFFLOAD_FFT_INVERSE, npts[2], npts[0] * npts[1], buffer_dev_2,
-         buffer_dev_1);
+  fft_1d_gpu(OFFLOAD_FFT_INVERSE, npts[1], npts[0] * npts[2], buffer_dev_1,
+             buffer_dev_2);
+  fft_1d_gpu(OFFLOAD_FFT_INVERSE, npts[2], npts[0] * npts[1], buffer_dev_2,
+             buffer_dev_1);
   fft_gpu_launch_complex_to_real(buffer_dev_1, buffer_dev_2, nrpts, stream);
 
   // Download REAL results to host.
@@ -477,8 +478,8 @@ void fft_gpu_cf(const double *din, double *zout, const int *npts) {
   fft_gpu_launch_real_to_complex(buffer_dev_1, buffer_dev_2, nrpts, stream);
 
   // Run FFT on the device.
-  fft_1d(OFFLOAD_FFT_FORWARD, npts[2], npts[0] * npts[1], buffer_dev_2,
-         buffer_dev_1);
+  fft_1d_gpu(OFFLOAD_FFT_FORWARD, npts[2], npts[0] * npts[1], buffer_dev_2,
+             buffer_dev_1);
 
   // Download COMPLEX results from device.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, buffer_size, stream);
@@ -513,8 +514,8 @@ void fft_gpu_fc(const double *zin, double *dout, const int *npts) {
   offloadMemcpyAsyncHtoD(buffer_dev_1, zin, buffer_size, stream);
 
   // Run FFT on the device.
-  fft_1d(OFFLOAD_FFT_INVERSE, npts[2], npts[0] * npts[1], buffer_dev_1,
-         buffer_dev_2);
+  fft_1d_gpu(OFFLOAD_FFT_INVERSE, npts[2], npts[0] * npts[1], buffer_dev_1,
+             buffer_dev_2);
 
   // Convert COMPLEX results to REAL and download to host.
   fft_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
@@ -532,7 +533,7 @@ void fft_gpu_fc(const double *zin, double *dout, const int *npts) {
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
 void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
-               const int m) {
+               const int m, const bool transpose_in, const bool transpose_out) {
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
@@ -551,9 +552,11 @@ void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
 
   // Run FFT on the device.
   if (dir > 0) {
-    fft_1d(OFFLOAD_FFT_FORWARD, n, m, buffer_dev_1, buffer_dev_2);
+    fft_1d_gpu(OFFLOAD_FFT_FORWARD, n, m, transpose_in, transpose_out,
+               buffer_dev_1, buffer_dev_2);
   } else {
-    fft_1d(OFFLOAD_FFT_INVERSE, n, m, buffer_dev_1, buffer_dev_2);
+    fft_1d_gpu(OFFLOAD_FFT_INVERSE, n, m, transpose_in, transpose_out,
+               buffer_dev_1, buffer_dev_2);
   }
 
   // Download COMPLEX results from device.
@@ -565,6 +568,8 @@ void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
   (void)dir;
   (void)n;
   (void)m;
+  (void)transpose_in;
+  (void)transpose_out;
 #endif
 }
 
@@ -595,7 +600,7 @@ void fft_gpu_fg(const double *zin, double *zout, const int *ghatmap,
   offloadMemcpyAsyncHtoD(buffer_dev_1, zin, buffer_size, stream);
 
   // Run FFT on the device.
-  fft_1d(OFFLOAD_FFT_FORWARD, npts[0], mmax, buffer_dev_1, buffer_dev_2);
+  fft_1d_gpu(OFFLOAD_FFT_FORWARD, npts[0], mmax, buffer_dev_1, buffer_dev_2);
 
   // Upload map and run gather on the device.
   offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
@@ -650,7 +655,7 @@ void fft_gpu_sf(const double *zin, double *zout, const int *ghatmap,
                          ghatmap_dev, stream);
 
   // Run FFT on the device.
-  fft_1d(OFFLOAD_FFT_INVERSE, npts[0], mmax, buffer_dev_2, buffer_dev_1);
+  fft_1d_gpu(OFFLOAD_FFT_INVERSE, npts[0], mmax, buffer_dev_2, buffer_dev_1);
 
   // Download COMPLEX results from device.
   offloadMemcpyAsyncDtoH(zout, buffer_dev_1, buffer_size, stream);
