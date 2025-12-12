@@ -39,11 +39,15 @@ typedef hipfftResult offload_fftResult;
 #define OFFLOAD_FFT_FORWARD CUFFT_FORWARD
 #define OFFLOAD_FFT_INVERSE CUFFT_INVERSE
 #define OFFLOAD_FFT_Z2Z CUFFT_Z2Z
+#define OFFLOAD_FFT_D2Z CUFFT_D2Z
+#define OFFLOAD_FFT_Z2D CUFFT_Z2D
 #elif defined(__OFFLOAD_HIP)
 #define OFFLOAD_FFT_SUCCESS HIPFFT_SUCCESS
 #define OFFLOAD_FFT_FORWARD HIPFFT_FORWARD
 #define OFFLOAD_FFT_INVERSE HIPFFT_BACKWARD // inconsistent
 #define OFFLOAD_FFT_Z2Z HIPFFT_Z2Z
+#define OFFLOAD_FFT_D2Z HIPFFT_D2Z
+#define OFFLOAD_FFT_Z2D HIPFFT_Z2D
 #endif
 
 /*******************************************************************************

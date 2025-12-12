@@ -39,6 +39,11 @@ static size_t allocated_buffer_size, allocated_map_size;
 
 static offloadStream_t stream;
 static bool is_initialized = false;
+
+// Flags for the planner
+#define FFT_GPU_R2C 4
+#define FFT_GPU_TRANSPOSE_IN 8
+#define FFT_GPU_TRANSPOSE_OUT 16
 #endif
 
 /*******************************************************************************
@@ -225,7 +230,9 @@ static void add_plan_to_cache(const int key[4], offload_fftHandle *plan) {
 static void fft_1d_gpu(const int direction, const int n, const int m,
                        const bool transpose_in, const bool transpose_out,
                        const double *data_in, double *data_out) {
-  const int key[4] = {1, direction, n, m}; // first key entry is dimensions
+  const int key[4] = {1 + (transpose_in ? FFT_GPU_TRANSPOSE_IN : 0) +
+                          (transpose_out ? FFT_GPU_TRANSPOSE_OUT : 0),
+                      direction, n, m}; // first key entry is dimensions
   offload_fftHandle *plan = lookup_plan_from_cache(key);
 
   if (plan == NULL) {
@@ -248,6 +255,62 @@ static void fft_1d_gpu(const int direction, const int n, const int m,
     plan = malloc(sizeof(cache_entry));
     offload_fftPlanMany(plan, 1, nsize, inembed, istride, idist, onembed,
                         ostride, odist, OFFLOAD_FFT_Z2Z, batch);
+    offload_fftSetStream(*plan, stream);
+    add_plan_to_cache(key, plan);
+  }
+
+  offload_fftExecZ2Z(*plan, data_in, data_out, direction);
+}
+}
+
+/*******************************************************************************
+ * \brief   Performs a scaled double precision complex 1D-FFT many times on
+ *          the GPU.
+ *          Input/output are DEVICE pointers (data_in, date_out).
+ * \author  Andreas Gloess, Ole Schuett
+ ******************************************************************************/
+static void fft_r2c_1d_gpu(const int direction, const int n, const int m,
+                           const bool transpose_in, const bool transpose_out,
+                           const double *data_in, double *data_out) {
+  const int key[4] = {1 + FFT_GPU_R2C +
+                          (transpose_in ? FFT_GPU_TRANSPOSE_IN : 0) +
+                          (transpose_out ? FFT_GPU_TRANSPOSE_OUT : 0),
+                      direction, n, m}; // first key entry is dimensions
+  offload_fftHandle *plan = lookup_plan_from_cache(key);
+
+  if (plan == NULL) {
+    int nsize[1] = {n};
+    int inembed[1] = {0}; // Is ignored, but is not allowed to be NULL.
+    int onembed[1] = {0}; // Is ignored, but is not allowed to be NULL.
+    int batch = m;
+    int istride, idist, ostride, odist;
+    if (direction > 0) {
+      int istride = 1;
+      int idist = n;
+      int ostride = 1;
+      int odist = n / 2 + 1;
+    } else {
+      int istride = 1;
+      int idist = n / 2 + 1;
+      int ostride = 1;
+      int odist = n;
+    }
+    if (transpose_in) {
+      istride = m;
+      idist = 1;
+    }
+    if (transpose_out) {
+      ostride = m;
+      odist = 1;
+    }
+    plan = malloc(sizeof(cache_entry));
+    if (direction > 0) {
+      offload_fftPlanMany(plan, 1, nsize, inembed, istride, idist, onembed,
+                          ostride, odist, OFFLOAD_FFT_D2Z, batch);
+    } else {
+      offload_fftPlanMany(plan, 1, nsize, inembed, istride, idist, onembed,
+                          ostride, odist, OFFLOAD_FFT_Z2D, batch);
+    }
     offload_fftSetStream(*plan, stream);
     add_plan_to_cache(key, plan);
   }
@@ -557,6 +620,52 @@ void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
   } else {
     fft_1d_gpu(OFFLOAD_FFT_INVERSE, n, m, transpose_in, transpose_out,
                buffer_dev_1, buffer_dev_2);
+  }
+
+  // Download COMPLEX results from device.
+  offloadMemcpyAsyncDtoH(zout, buffer_dev_2, buffer_size, stream);
+  offloadStreamSynchronize(stream);
+#else
+  (void)zin;
+  (void)zout;
+  (void)dir;
+  (void)n;
+  (void)m;
+  (void)transpose_in;
+  (void)transpose_out;
+#endif
+}
+
+/*******************************************************************************
+ * \brief   Performs a (double precision complex) 1D-FFT on the GPU.
+ * \author  Andreas Gloess, Ole Schuett
+ ******************************************************************************/
+void fft_r2c_gpu_f(const double *zin, double *zout, const int dir, const int n,
+                   const int m, const bool transpose_in,
+                   const bool transpose_out) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  // Check inputs.
+  assert(omp_get_num_threads() == 1);
+  const int nrpts = (n / 2 + 1) * m;
+  if (nrpts == 0) {
+    return; // Nothing to do.
+  }
+
+  // Allocate device memory.
+  offload_activate_chosen_device();
+  const size_t buffer_size = 2 * sizeof(double) * nrpts;
+  ensure_memory_sizes(buffer_size, 0);
+
+  // Upload COMPLEX input to device.
+  offloadMemcpyAsyncHtoD(buffer_dev_1, zin, buffer_size, stream);
+
+  // Run FFT on the device.
+  if (dir > 0) {
+    fft_r2c_1d_gpu(OFFLOAD_FFT_FORWARD, n, m, transpose_in, transpose_out,
+                   buffer_dev_1, buffer_dev_2);
+  } else {
+    fft_r2c_1d_gpu(OFFLOAD_FFT_INVERSE, n, m, transpose_in, transpose_out,
+                   buffer_dev_1, buffer_dev_2);
   }
 
   // Download COMPLEX results from device.
