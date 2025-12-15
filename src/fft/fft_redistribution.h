@@ -14,6 +14,7 @@
 typedef struct {
   // Some general information on the redistribution step
   int npts_global_gspace[3];
+  int process_grid[2];
   int my_size_x_gs;
   int my_size_y_rs;
   int my_size_y_gs;
@@ -46,15 +47,39 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
 
 void cleanup_redistribution(fft_redistribution_t *redistribution);
 
-void collect_y_and_distribute_x_blocked(
-    double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_x_ms)[2],
-    const cp_mpi_comm_t comm);
+/*******************************************************************************
+ * \brief Performs the packing of (y_d,z_D,x)->(y,z_D,x_d).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_y_and_distribute_x_blocked_pack(
+    double complex *restrict grid, double complex *restrict grid_packed,
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_x_ms)[2]);
 
-void collect_x_and_distribute_y_blocked(
+/*******************************************************************************
+ * \brief Performs the communication (y_d,z_D,x)->(y,z_D,x_d).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_y_and_distribute_x_blocked_comm(
     double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_x_ms)[2],
-    const cp_mpi_comm_t comm);
+    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Performs the communication of the transposition of (y,z_d,x_d) ->
+ *(y_d,z_d,x). \author Frederick Stein
+ ******************************************************************************/
+void collect_x_and_distribute_y_blocked_comm(
+    double complex *restrict grid, double complex *restrict transposed,
+    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Performs the unpacking of the transposition of (y,z_d,x_d) ->
+ *(y_d,z_d,x). \author Frederick Stein
+ ******************************************************************************/
+void collect_x_and_distribute_y_blocked_unpack(
+    double complex *restrict grid_packed, double complex *restrict grid,
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_x_ms)[2]);
 
 void collect_z_and_distribute_y_blocked_transpose(
     double complex *restrict grid, double complex *restrict transposed,

@@ -163,6 +163,23 @@ bool fft_lib_has_guru_interface() {
 }
 
 /*******************************************************************************
+ * \brief Whether compound operations (FFT+copy) are available.
+ * \author Frederick Stein
+ ******************************************************************************/
+bool fft_lib_has_compound_operations() {
+  switch (fft_lib_choice) {
+  case FFT_LIB_REF:
+  case FFT_LIB_FFTW:
+    return false;
+  case FFT_LIB_GPU:
+    return true;
+  default:
+    assert(0 && "Unknown FFT library.");
+    return false;
+  }
+}
+
+/*******************************************************************************
  * \brief Ensure that buffers have a required size (in units of complex numbers)
  * \author Frederick Stein
  ******************************************************************************/

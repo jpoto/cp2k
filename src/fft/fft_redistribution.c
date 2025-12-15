@@ -54,6 +54,7 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
 
   const int process_grid[2] = {cp_mpi_comm_size(sub_comm[0]),
                                cp_mpi_comm_size(sub_comm[1])};
+  memcpy(redistribution->process_grid, process_grid, 2 * sizeof(int));
   const int process_coords[2] = {cp_mpi_comm_rank(sub_comm[0]),
                                  cp_mpi_comm_rank(sub_comm[1])};
   redistribution->my_size_x_gs = proc2local_x_gs[process_coords[1]][1];
@@ -152,18 +153,18 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
 }
 
 /*******************************************************************************
- * \brief Performs a transposition of (y_d,z_D,x)->(y,z_D,x_d).
+ * \brief Performs the packing of (y_d,z_D,x)->(y,z_D,x_d).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_y_and_distribute_x_blocked(
-    double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_x_ms)[2],
-    const cp_mpi_comm_t comm) {
+void collect_y_and_distribute_x_blocked_pack(
+    double complex *restrict grid, double complex *restrict grid_packed,
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_x_ms)[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_pack");
   const int handle = fft_start_timer(routine_name);
-  const int number_of_processes = cp_mpi_comm_size(comm);
+  const int number_of_processes = redistribution->process_grid[1];
 
   // Reorder the input data to enable MPI_alltoall
   const int number_of_yz_pairs =
@@ -171,7 +172,7 @@ void collect_y_and_distribute_x_blocked(
   for (int process = 0; process < number_of_processes; process++) {
     const int current_send_size_0 = proc2local_x_ms[process][1];
     double complex *send_buffer =
-        transposed + redistribution->displacements_xy_x[process];
+        grid_packed + redistribution->displacements_xy_x[process];
     double complex *grid_ptr = grid + proc2local_x_ms[process][0];
     for (int index_yz = 0; index_yz < number_of_yz_pairs; index_yz++) {
       memcpy(send_buffer + index_yz * current_send_size_0,
@@ -179,58 +180,69 @@ void collect_y_and_distribute_x_blocked(
              current_send_size_0 * sizeof(double complex));
     }
   }
-  memcpy(grid, transposed,
-         redistribution->npts_global_gspace[0] * number_of_yz_pairs *
-             sizeof(double complex));
-
-  // Use collective MPI communication
-  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
-  const int handle2 = fft_start_timer(routine_name);
-  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_xy_x,
-                                  redistribution->displacements_xy_x,
-                                  transposed, redistribution->counts_xy_y,
-                                  redistribution->displacements_xy_y, comm);
-  fft_stop_timer(handle2);
   fft_stop_timer(handle);
 }
 
 /*******************************************************************************
- * \brief Performs a transposition of (y,z_d,x_d) -> (y_d,z_d,x).
+ * \brief Performs the communication (y_d,z_D,x)->(y,z_D,x_d).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_x_and_distribute_y_blocked(
+void collect_y_and_distribute_x_blocked_comm(
     double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_x_ms)[2],
-    const cp_mpi_comm_t comm) {
+    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_y_b");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_comm");
   const int handle = fft_start_timer(routine_name);
-  const int number_of_processes = cp_mpi_comm_size(comm);
+  cp_mpi_alltoallv_double_complex(grid, redistribution->counts_xy_x,
+                                  redistribution->displacements_xy_x,
+                                  transposed, redistribution->counts_xy_y,
+                                  redistribution->displacements_xy_y, comm);
+  fft_stop_timer(handle);
+}
 
-  const int number_of_yz_pairs =
-      redistribution->my_size_y_rs * redistribution->my_size_z_rs;
-
-  // Use collective MPI communication
+/*******************************************************************************
+ * \brief Performs the communication of the transposition of (y,z_d,x_d) ->
+ *(y_d,z_d,x). \author Frederick Stein
+ ******************************************************************************/
+void collect_x_and_distribute_y_blocked_comm(
+    double complex *restrict grid, double complex *restrict transposed,
+    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_y_dist_x_b_alltoall");
-  const int handle2 = fft_start_timer(routine_name);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_y_b_comm");
+  const int handle = fft_start_timer(routine_name);
+
   cp_mpi_alltoallv_double_complex(grid, redistribution->counts_xy_y,
                                   redistribution->displacements_xy_y,
                                   transposed, redistribution->counts_xy_x,
                                   redistribution->displacements_xy_x, comm);
-  fft_stop_timer(handle2);
 
-  memcpy(grid, transposed,
-         redistribution->npts_global_gspace[0] * number_of_yz_pairs *
-             sizeof(double complex));
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs the unpacking of the transposition of (y,z_d,x_d) ->
+ *(y_d,z_d,x). \author Frederick Stein
+ ******************************************************************************/
+void collect_x_and_distribute_y_blocked_unpack(
+    double complex *restrict grid_packed, double complex *restrict grid,
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_x_ms)[2]) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_x_dist_y_b_unpack");
+  const int handle = fft_start_timer(routine_name);
+  const int number_of_processes = redistribution->process_grid[1];
+
+  const int number_of_yz_pairs =
+      redistribution->my_size_y_rs * redistribution->my_size_z_rs;
 
   for (int process = 0; process < number_of_processes; process++) {
     const int current_recv_size_0 = proc2local_x_ms[process][1];
-    double complex *transposed_ptr = transposed + proc2local_x_ms[process][0];
+    double complex *transposed_ptr = grid + proc2local_x_ms[process][0];
     double complex *recv_buffer =
-        grid + redistribution->displacements_xy_x[process];
+        grid_packed + redistribution->displacements_xy_x[process];
     for (int index_yz = 0; index_yz < number_of_yz_pairs; index_yz++) {
       memcpy(transposed_ptr + index_yz * redistribution->npts_global_gspace[0],
              recv_buffer + index_yz * current_recv_size_0,

@@ -197,19 +197,23 @@ int fft_test_transpose_blocked(const int npts_global[3],
     }
   }
 
-  collect_y_and_distribute_x_blocked(
-      buffer_1, buffer_2, fft_grid_layout->redistribution,
-      fft_grid_layout->proc2local_x_gs, fft_grid_layout->sub_comm[1]);
+  collect_y_and_distribute_x_blocked_pack(buffer_1, buffer_2,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->proc2local_x_gs);
+
+  collect_y_and_distribute_x_blocked_comm(buffer_2, buffer_1,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->sub_comm[1]);
 
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
-    shared(buffer_2, my_sizes_ms, my_bounds_ms, npts_global) collapse(3)       \
+    shared(buffer_1, my_sizes_ms, my_bounds_ms, npts_global) collapse(3)       \
     reduction(max : max_error)
   for (int ny = 0; ny < my_sizes_ms[1]; ny++) {
     for (int nx = 0; nx < my_sizes_ms[0]; nx++) {
       for (int nz = 0; nz < my_sizes_ms[2]; nz++) {
         const double complex my_value =
-            buffer_2[(ny * my_sizes_ms[2] + nz) * my_sizes_ms[0] + nx];
+            buffer_1[(ny * my_sizes_ms[2] + nz) * my_sizes_ms[0] + nx];
         const double complex ref_value =
             ((nx + my_bounds_ms[0][0]) * npts_global[1] +
              (ny + my_bounds_ms[1][0])) +
@@ -252,20 +256,23 @@ int fft_test_transpose_blocked(const int npts_global[3],
   memset(buffer_1, 0, my_number_of_elements_rs * sizeof(double complex));
 
   // Check the reverse direction
-  collect_x_and_distribute_y_blocked(
-      buffer_2, buffer_1, fft_grid_layout->redistribution,
-      fft_grid_layout->proc2local_x_gs, fft_grid_layout->sub_comm[1]);
+  collect_x_and_distribute_y_blocked_comm(buffer_2, buffer_1,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->sub_comm[1]);
+  collect_x_and_distribute_y_blocked_unpack(buffer_1, buffer_2,
+                                            fft_grid_layout->redistribution,
+                                            fft_grid_layout->proc2local_x_gs);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, buffer_1, my_sizes_rs, my_bounds_rs, npts_global,  \
+    shared(fft_grid_layout, buffer_2, my_sizes_rs, my_bounds_rs, npts_global,  \
                use_halfspace) collapse(3) reduction(max : max_error)
   for (int ny = 0; ny < my_sizes_rs[1]; ny++) {
     for (int nz = 0; nz < my_sizes_rs[2]; nz++) {
       for (int nx = 0; nx < fft_grid_layout->npts_global_gspace[0]; nx++) {
         const double complex my_value =
-            buffer_1[(ny * my_sizes_rs[2] + nz) *
+            buffer_2[(ny * my_sizes_rs[2] + nz) *
                          fft_grid_layout->npts_global_gspace[0] +
                      nx];
         const double complex ref_value =

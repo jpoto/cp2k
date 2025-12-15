@@ -68,6 +68,12 @@ bool fft_lib_use_mpi();
 bool fft_lib_has_guru_interface();
 
 /*******************************************************************************
+ * \brief Whether compound operations (FFT+copy) are available.
+ * \author Frederick Stein
+ ******************************************************************************/
+bool fft_lib_has_compound_operations();
+
+/*******************************************************************************
  * \brief Ensure that buffers have a required size (in units of complex numbers)
  * \author Frederick Stein
  ******************************************************************************/
