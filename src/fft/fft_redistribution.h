@@ -25,11 +25,6 @@ typedef struct {
   int *counts_xy_x;
   int *displacements_xy_y;
   int *counts_xy_y;
-  // y<->z (transposed)
-  int *displacements_yzt_y;
-  int *counts_yzt_y;
-  int *displacements_yzt_z;
-  int *counts_yzt_z;
   // y<->z (non-transposed)
   int *displacements_yz_y;
   int *counts_yz_y;
@@ -81,25 +76,57 @@ void collect_x_and_distribute_y_blocked_unpack(
     const fft_redistribution_t *redistribution,
     const int (*proc2local_x_ms)[2]);
 
-void collect_z_and_distribute_y_blocked_transpose(
-    double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
-    const cp_mpi_comm_t comm);
+/*******************************************************************************
+ * \brief Performs the packing to a transposition of the kind
+ *(x_d,y,z_D)->(z,x_D,y_D). \author Frederick Stein
+ ******************************************************************************/
+void collect_z_and_distribute_y_blocked_transpose_pack(
+    double complex *restrict grid, double complex *restrict grid_packed,
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_y_gs)[2]);
 
-void collect_y_and_distribute_z_blocked_transpose(
+/*******************************************************************************
+ * \brief Performs the unpacking to transposition of the kind
+ *(z,x_d,y_d)->(x_d,y,z_d). \author Frederick Stein
+ ******************************************************************************/
+void collect_y_and_distribute_z_blocked_transpose_unpack(
     double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
-    const cp_mpi_comm_t comm);
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_y_gs)[2]);
 
-void collect_z_and_distribute_y_blocked(
+/*******************************************************************************
+ * \brief Performs the packing to a redistribution of (z_d,x_d,y)->(z,x_d,y_d).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_z_and_distribute_y_blocked_pack(
     double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
-    const cp_mpi_comm_t comm);
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_y_gs)[2]);
 
-void collect_y_and_distribute_z_blocked(
+/*******************************************************************************
+ * \brief Performs the communication to a redistribution of
+ *(z_d,x_d,y)->(z,x_d,y_d). \author Frederick Stein
+ ******************************************************************************/
+void collect_z_and_distribute_y_blocked_comm(
     double complex *restrict grid, double complex *restrict transposed,
-    const fft_redistribution_t *redistribution, const int (*proc2local_y_gs)[2],
-    const cp_mpi_comm_t comm);
+    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Performs a redistribution of (z,x_d,y_d)->(z_d,x_d,y).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_y_and_distribute_z_blocked_comm(
+    double complex *restrict grid, double complex *restrict transposed,
+    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm);
+
+/*******************************************************************************
+ * \brief Performs a redistribution of (z,x_d,y_d)->(z_d,x_d,y).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_y_and_distribute_z_blocked_unpack(
+    double complex *restrict grid_packed, double complex *restrict grid,
+    const fft_redistribution_t *redistribution,
+    const int (*proc2local_y_gs)[2]);
 
 void collect_z_and_distribute_xy_ray(double complex *restrict grid,
                                      double complex *restrict transposed,

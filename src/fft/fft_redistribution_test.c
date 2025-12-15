@@ -81,20 +81,23 @@ int fft_test_transpose_blocked(const int npts_global[3],
   memset(buffer_1, 0, my_number_of_elements_gs * sizeof(double complex));
 
   // Check the reverse direction
-  collect_z_and_distribute_y_blocked_transpose(
+  collect_z_and_distribute_y_blocked_transpose_pack(
       buffer_2, buffer_1, fft_grid_layout->redistribution,
-      fft_grid_layout->proc2local_y_gs, fft_grid_layout->sub_comm[0]);
+      fft_grid_layout->proc2local_y_gs);
+  collect_z_and_distribute_y_blocked_comm(buffer_1, buffer_2,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->sub_comm[0]);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
-    shared(buffer_1, my_sizes_gs, my_bounds_gs, npts_global) collapse(3)       \
+    shared(buffer_2, my_sizes_gs, my_bounds_gs, npts_global) collapse(3)       \
     reduction(max : max_error)
   for (int nz = 0; nz < my_sizes_gs[2]; nz++) {
     for (int nx = 0; nx < my_sizes_gs[0]; nx++) {
       for (int ny = 0; ny < my_sizes_gs[1]; ny++) {
         const double complex my_value =
-            buffer_1[(nz * my_sizes_gs[0] + nx) * my_sizes_gs[1] + ny];
+            buffer_2[(nz * my_sizes_gs[0] + nx) * my_sizes_gs[1] + ny];
         const double complex ref_value =
             ((nx + my_bounds_gs[0][0]) * npts_global[1] +
              (ny + my_bounds_gs[1][0])) +
@@ -140,20 +143,23 @@ int fft_test_transpose_blocked(const int npts_global[3],
   memset(buffer_1, 0, my_number_of_elements_ms * sizeof(double complex));
 
   // Check the reverse direction
-  collect_y_and_distribute_z_blocked_transpose(
-      buffer_2, buffer_1, fft_grid_layout->redistribution,
-      fft_grid_layout->proc2local_y_gs, fft_grid_layout->sub_comm[0]);
+  collect_y_and_distribute_z_blocked_comm(buffer_2, buffer_1,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->sub_comm[0]);
+  collect_y_and_distribute_z_blocked_transpose_unpack(
+      buffer_1, buffer_2, fft_grid_layout->redistribution,
+      fft_grid_layout->proc2local_y_gs);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
-    shared(buffer_1, my_sizes_ms, my_bounds_ms, npts_global) collapse(3)       \
+    shared(buffer_2, my_sizes_ms, my_bounds_ms, npts_global) collapse(3)       \
     reduction(max : max_error)
   for (int nx = 0; nx < my_sizes_ms[0]; nx++) {
     for (int ny = 0; ny < my_sizes_ms[1]; ny++) {
       for (int nz = 0; nz < my_sizes_ms[2]; nz++) {
         const double complex my_value =
-            buffer_1[(nx * my_sizes_ms[1] + ny) * my_sizes_ms[2] + nz];
+            buffer_2[(nx * my_sizes_ms[1] + ny) * my_sizes_ms[2] + nz];
         const double complex ref_value =
             ((nx + my_bounds_ms[0][0]) * npts_global[1] +
              (ny + my_bounds_ms[1][0])) +
@@ -317,20 +323,23 @@ int fft_test_transpose_blocked(const int npts_global[3],
   memset(buffer_2, 0, my_number_of_elements_gs * sizeof(double complex));
 
   // Check the MS/GS direction
-  collect_z_and_distribute_y_blocked(
-      buffer_1, buffer_2, fft_grid_layout->redistribution,
-      fft_grid_layout->proc2local_y_gs, fft_grid_layout->sub_comm[0]);
+  collect_z_and_distribute_y_blocked_pack(buffer_1, buffer_2,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->proc2local_y_gs);
+  collect_z_and_distribute_y_blocked_comm(buffer_2, buffer_1,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->sub_comm[0]);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
-    shared(buffer_2, my_sizes_gs, my_bounds_gs, npts_global) collapse(3)       \
+    shared(buffer_1, my_sizes_gs, my_bounds_gs, npts_global) collapse(3)       \
     reduction(max : max_error)
   for (int nx = 0; nx < my_sizes_gs[0]; nx++) {
     for (int ny = 0; ny < my_sizes_gs[1]; ny++) {
       for (int nz = 0; nz < my_sizes_gs[2]; nz++) {
         const double complex my_value =
-            buffer_2[(nz * my_sizes_gs[0] + nx) * my_sizes_gs[1] + ny];
+            buffer_1[(nz * my_sizes_gs[0] + nx) * my_sizes_gs[1] + ny];
         const double complex ref_value =
             ((nx + my_bounds_gs[0][0]) * npts_global[1] +
              (ny + my_bounds_gs[1][0])) +
@@ -373,20 +382,23 @@ int fft_test_transpose_blocked(const int npts_global[3],
   memset(buffer_2, 0, my_number_of_elements_ms);
 
   // Check the MS/GS direction
-  collect_y_and_distribute_z_blocked(
-      buffer_1, buffer_2, fft_grid_layout->redistribution,
-      fft_grid_layout->proc2local_y_gs, fft_grid_layout->sub_comm[0]);
+  collect_y_and_distribute_z_blocked_comm(buffer_1, buffer_2,
+                                          fft_grid_layout->redistribution,
+                                          fft_grid_layout->sub_comm[0]);
+  collect_y_and_distribute_z_blocked_unpack(buffer_2, buffer_1,
+                                            fft_grid_layout->redistribution,
+                                            fft_grid_layout->proc2local_y_gs);
 
   // Check forward RS->MS FFTs
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \
-    shared(buffer_2, my_sizes_ms, my_bounds_ms, npts_global) collapse(3)       \
+    shared(buffer_1, my_sizes_ms, my_bounds_ms, npts_global) collapse(3)       \
     reduction(max : max_error)
   for (int nx = 0; nx < my_sizes_ms[0]; nx++) {
     for (int nz = 0; nz < my_sizes_ms[2]; nz++) {
       for (int ny = 0; ny < my_sizes_ms[1]; ny++) {
         const double complex my_value =
-            buffer_2[(nz * my_sizes_ms[0] + nx) * my_sizes_ms[1] + ny];
+            buffer_1[(nz * my_sizes_ms[0] + nx) * my_sizes_ms[1] + ny];
         const double complex ref_value =
             ((nx + my_bounds_ms[0][0]) * npts_global[1] +
              (ny + my_bounds_ms[1][0])) +
