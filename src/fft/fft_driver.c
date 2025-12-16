@@ -97,8 +97,6 @@ void fft_3d_fw_blocked(
       // (x_d,y,z_d) -> (z,x_d,y_d)
       collect_z_and_distribute_y_blocked_transpose_pack(
           grid_buffer_1, grid_buffer_2, redistribution, proc2local_y_gs);
-      collect_z_and_distribute_y_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
     } else {
       if (is_complex) {
         memcpy(grid_buffer_1, grid_rs,
@@ -124,12 +122,14 @@ void fft_3d_fw_blocked(
       fft_1d_fw_local(npts_global[1], fft_sizes_ms[0] * fft_sizes_ms[2], true,
                       false, grid_buffer_2, grid_buffer_1);
 
-      // Perform second redistribution
+      // Pack the buffer
       collect_z_and_distribute_y_blocked_pack(grid_buffer_1, grid_buffer_2,
                                               redistribution, proc2local_y_gs);
-      collect_z_and_distribute_y_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
     }
+
+    // Exchange data
+    collect_z_and_distribute_y_blocked_comm(grid_buffer_2, grid_buffer_1,
+                                            redistribution, sub_comm[0]);
 
     // Perform the third FFT
     if (index_to_g != NULL) {
@@ -322,8 +322,6 @@ void fft_3d_fw_r2c_blocked(
       // (x_d,y,z_d) -> (z,x_d,y_d)
       collect_z_and_distribute_y_blocked_transpose_pack(
           grid_buffer_1, grid_buffer_2, redistribution, proc2local_y_gs);
-      collect_z_and_distribute_y_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
     } else {
       memcpy((double *)grid_buffer_1, grid_rs,
              product3(fft_sizes_rs) * sizeof(double));
@@ -343,12 +341,14 @@ void fft_3d_fw_r2c_blocked(
       fft_1d_fw_local(npts_global[1], fft_sizes_ms[0] * fft_sizes_ms[2], true,
                       false, grid_buffer_2, grid_buffer_1);
 
-      // Perform second redistribution
+      // Pack the buffer
       collect_z_and_distribute_y_blocked_pack(grid_buffer_1, grid_buffer_2,
                                               redistribution, proc2local_y_gs);
-      collect_z_and_distribute_y_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
     }
+
+    // Exchange data
+    collect_z_and_distribute_y_blocked_comm(grid_buffer_2, grid_buffer_1,
+                                            redistribution, sub_comm[0]);
 
     // Perform the third FFT
     if (index_to_g != NULL) {
@@ -584,15 +584,16 @@ void fft_3d_bw_blocked(
   // the Guru interface which is not available with all implementations of the
   // FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
-    if (fft_lib_use_mpi()) {
-      // Perform the first FFT in z-direction
-      fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
-                      false, grid_buffer_1, grid_buffer_2);
+    // Perform the first FFT in z-direction
+    fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
+                    false, grid_buffer_1, grid_buffer_2);
 
-      // Perform second redistribution and transpose
-      // (z,x_d,y_d) -> (x_d,y,z_d)
-      collect_y_and_distribute_z_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
+    // Perform second redistribution and transpose
+    // (z,x_d,y_d) -> (x_d,y,z_d)
+    collect_y_and_distribute_z_blocked_comm(grid_buffer_2, grid_buffer_1,
+                                            redistribution, sub_comm[0]);
+
+    if (fft_lib_use_mpi()) {
       collect_y_and_distribute_z_blocked_transpose_unpack(
           grid_buffer_1, grid_buffer_2, redistribution, proc2local_y_gs);
 
@@ -618,13 +619,6 @@ void fft_3d_bw_blocked(
           grid_rs_double[i] = creal(grid_buffer_2[i]);
       }
     } else {
-      // Perform the first FFT and one transposition (x_D,y_D,z)->(z,x_D,y_D)
-      fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
-                      false, grid_buffer_1, grid_buffer_2);
-
-      // Collect data in y-direction and distribute z-direction
-      collect_y_and_distribute_z_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
       collect_y_and_distribute_z_blocked_unpack(
           grid_buffer_1, grid_buffer_2, redistribution, proc2local_y_gs);
 
@@ -783,15 +777,15 @@ void fft_3d_bw_c2r_blocked(
   // the Guru interface which is not available with all implementations of the
   // FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
-    if (fft_lib_use_mpi()) {
-      // Perform the first FFT in z-direction (x_d,y_d,z)->(z,x_d,y_d)
-      fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
-                      false, grid_buffer_1, grid_buffer_2);
+    // Perform the first FFT in z-direction (x_d,y_d,z)->(z,x_d,y_d)
+    fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
+                    false, grid_buffer_1, grid_buffer_2);
 
-      // Perform second redistribution and transpose
-      // (z,x_d,y_d) -> (x_d,y,z_d)
-      collect_y_and_distribute_z_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
+    // Perform second redistribution and transpose
+    // (z,x_d,y_d) -> (x_d,y,z_d)
+    collect_y_and_distribute_z_blocked_comm(grid_buffer_2, grid_buffer_1,
+                                            redistribution, sub_comm[0]);
+    if (fft_lib_use_mpi()) {
       collect_y_and_distribute_z_blocked_transpose_unpack(
           grid_buffer_1, grid_buffer_2, redistribution, proc2local_y_gs);
 
@@ -806,13 +800,6 @@ void fft_3d_bw_c2r_blocked(
           fft_sizes_rs[1], fft_sizes_rs[2], 2 * npts_global_gspace[0],
           fft_sizes_rs[2], fft_sizes_rs[1], fft_sizes_rs[2]);
     } else {
-      // Perform the first FFT and one transposition (x,y_d,z)->(z,x,y_d)
-      fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
-                      false, grid_buffer_1, grid_buffer_2);
-
-      // Collect data in y-direction and distribute x-direction
-      collect_y_and_distribute_z_blocked_comm(grid_buffer_2, grid_buffer_1,
-                                              redistribution, sub_comm[0]);
       collect_y_and_distribute_z_blocked_unpack(
           grid_buffer_1, grid_buffer_2, redistribution, proc2local_y_gs);
 
