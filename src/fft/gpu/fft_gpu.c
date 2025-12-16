@@ -646,18 +646,19 @@ void fft_r2c_gpu_f(const double *zin, double *zout, const int dir, const int n,
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   // Check inputs.
   assert(omp_get_num_threads() == 1);
-  const int nrpts = (n / 2 + 1) * m;
   if (nrpts == 0) {
     return; // Nothing to do.
   }
 
   // Allocate device memory.
   offload_activate_chosen_device();
-  const size_t buffer_size = 2 * sizeof(double) * nrpts;
-  ensure_memory_sizes(buffer_size, 0);
+  const int nrpts = n * m;
+  const int ngpts = 2 * (n / 2 + 1) * m;
+  ensure_memory_sizes(ngpts * sizeof(double), 0);
 
   // Upload COMPLEX input to device.
-  offloadMemcpyAsyncHtoD(buffer_dev_1, zin, buffer_size, stream);
+  offloadMemcpyAsyncHtoD(buffer_dev_1, zin,
+                         (dir > 0 ? nrpts : ngpts) * sizeof(double), stream);
 
   // Run FFT on the device.
   if (dir > 0) {
@@ -669,7 +670,8 @@ void fft_r2c_gpu_f(const double *zin, double *zout, const int dir, const int n,
   }
 
   // Download COMPLEX results from device.
-  offloadMemcpyAsyncDtoH(zout, buffer_dev_2, buffer_size, stream);
+  offloadMemcpyAsyncDtoH(zout, buffer_dev_2,
+                         (dir > 0 ? ngpts : nrpts) * sizeof(double), stream);
   offloadStreamSynchronize(stream);
 #else
   (void)zin;

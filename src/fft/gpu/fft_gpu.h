@@ -62,7 +62,7 @@ void fft_gpu_f(const double *zin, double *zout, const int dir, const int n,
  * \brief   Performs a (double precision complex) R2C 1D-FFT on the GPU.
  * \author  Andreas Gloess, Ole Schuett
  ******************************************************************************/
-void fft_gpu_r2c_f(const double *zin, double *zout, const int dir, const int n,
+void fft_r2c_gpu_f(const double *zin, double *zout, const int dir, const int n,
                    const int m, const bool transpose_in,
                    const bool transpose_out);
 
