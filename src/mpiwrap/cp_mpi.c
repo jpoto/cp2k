@@ -28,12 +28,17 @@
 #endif
 
 /*******************************************************************************
- * \brief Wrapper around MPI_Init.
+ * \brief Wrapper around MPI_Init_thread.
  * \author Ole Schuett
  ******************************************************************************/
 void cp_mpi_init(int *argc, char ***argv) {
 #if defined(__parallel)
-  CHECK(MPI_Init(argc, argv));
+  const int required_thread_level = MPI_THREAD_SERIALIZED;
+  int provided_thread_level;
+  CHECK(MPI_Init_thread(argc, argv, required_thread_level,
+                        &provided_thread_level));
+  assert(provided_thread_level >= required_thread_level &&
+         "Required thread level (MPI_THREAD_SERIALIZED) is not supported");
 #else
   (void)argc; // mark used
   (void)argv;

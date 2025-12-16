@@ -148,8 +148,7 @@ void grid_free_fft_grid_layout(fft_grid_layout *fft_grid) {
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_free_grid_layout");
   const int handle = fft_start_timer(routine_name);
   if (fft_grid != NULL) {
-    if (cp_mpi_comm_rank(fft_grid->comm) == 0)
-      assert((fft_grid->ref_counter) > 0);
+    assert((fft_grid->ref_counter) > 0);
     fft_grid->ref_counter--;
     if (fft_grid->ref_counter == 0) {
       cp_mpi_comm_free(&fft_grid->comm);

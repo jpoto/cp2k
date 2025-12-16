@@ -71,16 +71,16 @@ void fft_3d_fw_blocked(
     // Perform the first FFT
     if (fft_lib_use_mpi()) {
       if (is_complex) {
-        transpose_local_complex_block(grid_rs, grid_buffer_1, fft_sizes_rs[1],
+        transpose_local_complex_block(grid_rs, grid_buffer_2, fft_sizes_rs[1],
                                       fft_sizes_rs[0], fft_sizes_rs[2],
                                       fft_sizes_rs[1], fft_sizes_rs[2],
                                       fft_sizes_rs[0], fft_sizes_rs[2]);
       } else {
         const double *grid_rs_double = (const double *)grid_rs;
         for (int i = 0; i < product3(fft_sizes_rs); i++)
-          grid_buffer_2[i] = CMPLX(grid_rs_double[i], 0.0);
+          grid_buffer_1[i] = CMPLX(grid_rs_double[i], 0.0);
         transpose_local_complex_block(
-            grid_buffer_2, grid_buffer_1, fft_sizes_rs[1], fft_sizes_rs[0],
+            grid_buffer_1, grid_buffer_2, fft_sizes_rs[1], fft_sizes_rs[0],
             fft_sizes_rs[2], fft_sizes_rs[1], fft_sizes_rs[2], fft_sizes_rs[0],
             fft_sizes_rs[2]);
       }
@@ -88,9 +88,6 @@ void fft_3d_fw_blocked(
       // Perform the first two FFTs in x- and y-direction
       // transpose the last two indices (is cheaper)
       // (x,y_d,z_d) -> (y_d,x,z_d)
-      // Copy back (we do not have in-place transposition implemented)
-      memcpy(grid_buffer_2, grid_buffer_1,
-             product3(fft_sizes_rs) * sizeof(double complex));
       // 2D FFT (y_d,x,z_d) -> (x_d,y,z_d)
       fft_2d_fw_distributed((const int[2]){npts_global[1], npts_global[0]},
                             fft_sizes_rs[2], sub_comm[1], grid_buffer_2,
@@ -170,8 +167,8 @@ void fft_3d_fw_blocked(
       }
       // 3D FFT (z_D,y,x) -> (y_D,z,x)
       fft_3d_fw_distributed(
-          (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, comm,
-          grid_buffer_2, grid_buffer_1);
+          (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+          sub_comm[0], grid_buffer_2, grid_buffer_1);
       // Transpose the data (y_D,z,x) -> (x,y_D,z)
       if (index_to_g != NULL) {
         for (int index = 0; index < npts_gs_local; index++) {
@@ -383,8 +380,8 @@ void fft_3d_fw_r2c_blocked(
       // Perform the distributed 3D FFT in one shot (z_d,y,x)->(y_D,z,x)
       // Returns transposed layout (z_d,y,x) -> (y_d,z,x)
       fft_3d_fw_distributed_r2c(
-          (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, comm,
-          (double *)grid_buffer_2, grid_buffer_1);
+          (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+          sub_comm[0], (double *)grid_buffer_2, grid_buffer_1);
 
       // Exchange the first two dimensions to arrive at the correct layout
       // Transpose the data (y_D,z,x) -> (x,y_D,z)
@@ -664,8 +661,8 @@ void fft_3d_bw_blocked(
           fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
       // 3D FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed(
-          (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, comm,
-          grid_buffer_2, grid_buffer_1);
+          (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+          sub_comm[0], grid_buffer_2, grid_buffer_1);
       // Transpose back (z_d,y,x) -> (x,y,z_d)
 
       if (is_complex) {
@@ -841,8 +838,8 @@ void fft_3d_bw_c2r_blocked(
           fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
       // Distributed FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed_c2r(
-          (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, comm,
-          grid_buffer_2, (double *)grid_buffer_1);
+          (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+          sub_comm[0], grid_buffer_2, (double *)grid_buffer_1);
       // Swap indices back (z_d,y,x) -> (x,y,z_d)
       transpose_xyz2zyx_double((const double *)grid_buffer_1, grid_rs,
                                fft_sizes_rs[2], fft_sizes_rs[1], npts_global[0],
