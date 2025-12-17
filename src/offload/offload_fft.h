@@ -212,6 +212,36 @@ static inline void offload_fftExecZ2Z(offload_fftHandle plan,
 #endif
 }
 
+/*******************************************************************************
+ * \brief Wrapper around cufftExecZ2Z.
+ ******************************************************************************/
+static inline void offload_fftExecD2Z(offload_fftHandle plan,
+                                      const double *idata, double *odata,
+                                      int direction) {
+#if defined(__OFFLOAD_CUDA)
+  OFFLOAD_FFT_CHECK(cufftExecD2Z(plan, (cufftDoubleReal *)idata,
+                                 (cufftDoubleComplex *)odata, direction));
+#elif defined(__OFFLOAD_HIP)
+  OFFLOAD_FFT_CHECK(hipfftExecD2Z(plan, (hipfftDoubleReal *)idata,
+                                  (hipfftDoubleComplex *)odata, direction));
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around cufftExecZ2Z.
+ ******************************************************************************/
+static inline void offload_fftExecZ2D(offload_fftHandle plan,
+                                      const double *idata, double *odata,
+                                      int direction) {
+#if defined(__OFFLOAD_CUDA)
+  OFFLOAD_FFT_CHECK(cufftExecZ2D(plan, (cufftDoubleComplex *)idata,
+                                 (cufftDoubleReal *)odata, direction));
+#elif defined(__OFFLOAD_HIP)
+  OFFLOAD_FFT_CHECK(hipfftExecZ2D(plan, (hipfftDoubleComplex *)idata,
+                                  (hipfftDoubleReal *)odata, direction));
+#endif
+}
+
 #endif // #if (defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP))
 
 #endif

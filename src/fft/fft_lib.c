@@ -415,8 +415,11 @@ void fft_2d_fw_local(const int fft_size[2], const int number_of_ffts,
     fft_ref_2d_fw_local(grid_in, grid_out, fft_size, number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
-  case FFT_LIB_FFTW:
   case FFT_LIB_GPU:
+    fft_gpu_ff((const double *)grid_in, (double *)grid_out, 1, fft_size,
+               number_of_ffts, transpose_rs, transpose_gs);
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_2d_fw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -442,8 +445,11 @@ void fft_2d_fw_local_r2c(const int fft_size[2], const int number_of_ffts,
     fft_ref_2d_fw_local_r2c(grid_in, grid_out, fft_size, number_of_ffts,
                             transpose_rs, transpose_gs);
     break;
-  case FFT_LIB_FFTW:
   case FFT_LIB_GPU:
+    fft_r2c_gpu_ff((const double *)grid_in, (double *)grid_out, 1, fft_size,
+                   number_of_ffts, transpose_rs, transpose_gs);
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_2d_fw_local_r2c(fft_size, number_of_ffts, transpose_rs,
                              transpose_gs, grid_in, grid_out);
     break;
@@ -471,8 +477,11 @@ void fft_2d_bw_local(const int fft_size[2], const int number_of_ffts,
     fft_ref_2d_bw_local(grid_in, grid_out, fft_size, number_of_ffts,
                         transpose_rs, transpose_gs);
     break;
-  case FFT_LIB_FFTW:
   case FFT_LIB_GPU:
+    fft_gpu_ff((const double *)grid_in, (double *)grid_out, -1, fft_size,
+               number_of_ffts, transpose_gs, transpose_rs);
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_2d_bw_local(fft_size, number_of_ffts, transpose_rs, transpose_gs,
                          grid_in, grid_out);
     break;
@@ -500,8 +509,11 @@ void fft_2d_bw_local_c2r(const int fft_size[2], const int number_of_ffts,
     fft_ref_2d_bw_local_c2r(grid_in, grid_out, fft_size, number_of_ffts,
                             transpose_rs, transpose_gs);
     break;
-  case FFT_LIB_FFTW:
   case FFT_LIB_GPU:
+    fft_r2c_gpu_ff((const double *)grid_in, (double *)grid_out, -1, fft_size,
+                   number_of_ffts, transpose_gs, transpose_rs);
+    break;
+  case FFT_LIB_FFTW:
     fft_fftw_2d_bw_local_c2r(fft_size, number_of_ffts, transpose_rs,
                              transpose_gs, grid_in, grid_out);
     break;
@@ -543,8 +555,10 @@ void fft_3d_fw_local(const int fft_size[3], double complex *grid_in,
     case FFT_LIB_REF:
       fft_ref_3d_fw_local(grid_in, grid_out, fft_size);
       break;
-    case FFT_LIB_FFTW:
     case FFT_LIB_GPU:
+      fft_gpu_fff((const double *)grid_in, (double *)grid_out, +1, fft_size);
+      break;
+    case FFT_LIB_FFTW:
       fft_fftw_3d_fw_local(fft_size, grid_in, grid_out);
       break;
     default:
@@ -589,8 +603,11 @@ void fft_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
     case FFT_LIB_REF:
       fft_ref_3d_fw_local_r2c(grid_in, grid_out, fft_size);
       break;
-    case FFT_LIB_FFTW:
     case FFT_LIB_GPU:
+      fft_r2c_gpu_fff((const double *)grid_in, (double *)grid_out, +1,
+                      fft_size);
+      break;
+    case FFT_LIB_FFTW:
       fft_fftw_3d_fw_local_r2c(fft_size, grid_in, grid_out);
       break;
     default:
@@ -634,8 +651,10 @@ void fft_3d_bw_local(const int fft_size[3], double complex *grid_in,
     case FFT_LIB_REF:
       fft_ref_3d_bw_local(grid_in, grid_out, fft_size);
       break;
-    case FFT_LIB_FFTW:
     case FFT_LIB_GPU:
+      fft_gpu_fff((const double *)grid_in, (double *)grid_out, -1, fft_size);
+      break;
+    case FFT_LIB_FFTW:
       fft_fftw_3d_bw_local(fft_size, grid_in, grid_out);
       break;
     default:
@@ -681,8 +700,11 @@ void fft_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
     case FFT_LIB_REF:
       fft_ref_3d_bw_local_c2r(grid_in, grid_out, fft_size);
       break;
-    case FFT_LIB_FFTW:
     case FFT_LIB_GPU:
+      fft_r2c_gpu_fff((const double *)grid_in, (double *)grid_out, -1,
+                      fft_size);
+      break;
+    case FFT_LIB_FFTW:
       fft_fftw_3d_bw_local_c2r(fft_size, grid_in, grid_out);
       break;
     default:
