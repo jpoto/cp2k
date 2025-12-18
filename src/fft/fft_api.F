@@ -11,9 +11,10 @@
 ! **************************************************************************************************
 MODULE fft_api
    USE ISO_C_BINDING,                   ONLY: &
-        C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, C_NULL_CHAR, &
+        C_ASSOCIATED, C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, C_NULL_CHAR, &
         C_NULL_PTR, C_PTR
    USE kinds,                           ONLY: dp
+   USE message_passing,                 ONLY: mp_comm_type
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -27,6 +28,7 @@ MODULE fft_api
    PUBLIC :: fft_print_timing_report
    PUBLIC :: fft_backend_in_use, fft_use_mpi, fft_has_guru_interface
    PUBLIC :: fft_allocate, fft_free
+   PUBLIC :: fft_create_grid, fft_create_grid_from_reference, fft_free_grid
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -90,6 +92,11 @@ MODULE fft_api
          TYPE(C_PTR), VALUE :: buffer
       END SUBROUTINE fft_free_complex_c
    END INTERFACE
+
+   TYPE fft_grid_type
+      PRIVATE
+      TYPE(C_PTR) :: fft_grid = C_NULL_PTR
+   END TYPE fft_grid_type
 
 CONTAINS
 
@@ -826,5 +833,98 @@ CONTAINS
       CALL fft_3d_bw_local_inplace_c([fft_size(3), fft_size(2), fft_size(1)], grid)
 
    END SUBROUTINE fft_3d_bw_local_inplace
+
+! **************************************************************************************************
+!> \brief ...
+!> \param fft_grid ...
+!> \param fft_size ...
+!> \param comm ...
+!> \param dh_inv ...
+!> \param use_halfspace ...
+! **************************************************************************************************
+   SUBROUTINE fft_create_grid(fft_grid, fft_size, comm, dh_inv, use_halfspace)
+      TYPE(fft_grid_type), INTENT(INOUT)                 :: fft_grid
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
+
+      CLASS(mp_comm_type), INTENT(IN) :: comm
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN) :: dh_inv
+      LOGICAL, INTENT(IN) :: use_halfspace
+
+      INTERFACE
+         SUBROUTINE fft_create_grid_c(layout, comm, fft_size, dh_inv, use_halfspace) &
+            BIND(C, name="fft_create_grid_F")
+            IMPORT :: C_INT, C_DOUBLE, C_PTR, C_BOOL
+            TYPE(C_PTR), INTENT(INOUT) :: layout
+            INTEGER(C_INT), INTENT(IN) :: comm
+            INTEGER(C_INT), DIMENSION(3), INTENT(IN) :: fft_size
+            REAL(C_DOUBLE), DIMENSION(3, 3), INTENT(IN) :: dh_inv
+            LOGICAL(C_BOOL), VALUE :: use_halfspace
+         END SUBROUTINE fft_create_grid_c
+      END INTERFACE
+
+      IF (C_ASSOCIATED(fft_grid%fft_grid)) &
+         CPABORT("The grid layout must be unassociated before creation")
+
+      CALL fft_create_grid_c(fft_grid%fft_grid, INT(comm%get_handle(), C_INT), INT(fft_size, C_INT), &
+                             REAL(dh_inv, C_DOUBLE), LOGICAL(use_halfspace, C_BOOL))
+
+      IF (.NOT. C_ASSOCIATED(fft_grid%fft_grid)) &
+         CPABORT("Grid creation failed")
+
+   END SUBROUTINE fft_create_grid
+
+! **************************************************************************************************
+!> \brief ...
+!> \param fft_grid ...
+!> \param fft_size ...
+!> \param fft_grid_ref ...
+! **************************************************************************************************
+   SUBROUTINE fft_create_grid_from_reference(fft_grid, fft_size, fft_grid_ref)
+      TYPE(fft_grid_type), INTENT(INOUT) :: fft_grid
+      INTEGER, INTENT(IN), DIMENSION(3) :: fft_size
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid_ref
+
+      INTERFACE
+         SUBROUTINE fft_create_grid_from_reference_c(layout, fft_size, layout_ref) &
+            BIND(C, name="fft_create_grid_from_reference_F")
+            IMPORT :: C_INT, C_PTR
+            TYPE(C_PTR), INTENT(INOUT) :: layout
+            INTEGER(C_INT), DIMENSION(3), INTENT(IN) :: fft_size
+            TYPE(C_PTR), VALUE :: layout_ref
+         END SUBROUTINE fft_create_grid_from_reference_c
+      END INTERFACE
+
+      IF (C_ASSOCIATED(fft_grid%fft_grid)) &
+         CPABORT("The grid must be unassociated before creation")
+      IF (.NOT. C_ASSOCIATED(fft_grid_ref%fft_grid)) &
+         CPABORT("The reference grid must be associated")
+
+      CALL fft_create_grid_from_reference_c(fft_grid%fft_grid, INT(fft_size, C_INT), fft_grid_ref%fft_grid)
+
+      IF (.NOT. C_ASSOCIATED(fft_grid%fft_grid)) &
+         CPABORT("The grid creation failed")
+
+   END SUBROUTINE fft_create_grid_from_reference
+
+! **************************************************************************************************
+!> \brief ...
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_free_grid(fft_grid)
+      TYPE(fft_grid_type), INTENT(INOUT) :: fft_grid
+
+      INTERFACE
+         SUBROUTINE fft_free_grid_c(layout) &
+            BIND(C, name="fft_free_grid_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+         END SUBROUTINE fft_free_grid_c
+      END INTERFACE
+
+      CALL fft_free_grid_c(fft_grid%fft_grid)
+
+      fft_grid%fft_grid = C_NULL_PTR
+
+   END SUBROUTINE fft_free_grid
 
 END MODULE fft_api

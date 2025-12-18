@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
 
   offload_set_chosen_device(0);
 
-  const bool debug = true;
+  const bool debug = false;
   const int backend = FFT_LIB_FFTW;
   const int planning_mode = FFT_MEASURE;
 

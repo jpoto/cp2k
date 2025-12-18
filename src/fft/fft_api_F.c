@@ -5,6 +5,7 @@
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
 
+#include "fft_grid_layout.h"
 #include "fft_lib.h"
 #include "fft_timer.h"
 
@@ -146,6 +147,52 @@ void fft_3d_fw_local_inplace_F(const int fft_size[3], double complex *grid) {
 
 void fft_3d_bw_local_inplace_F(const int fft_size[3], double complex *grid) {
   fft_3d_bw_local(fft_size, grid, grid);
+}
+
+/*******************************************************************************
+ * \brief Create a FFT grid.
+ * \note If a grid layout was created using use_halfspace, only real-valued
+ *grids in real-space can be created from this layout \author Frederick Stein
+ ******************************************************************************/
+void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
+                            const int npts_global[3], const double dh_inv[3][3],
+                            const bool use_halfspace) {
+  grid_create_fft_grid_layout(
+      fft_grid, cp_mpi_comm_f2c(comm_F),
+      (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+      (const double[3][3]){{dh_inv[2][2], dh_inv[2][1], dh_inv[2][0]},
+                           {dh_inv[1][2], dh_inv[1][1], dh_inv[1][0]},
+                           {dh_inv[0][2], dh_inv[0][1], dh_inv[0][0]}},
+      use_halfspace);
+}
+
+/*******************************************************************************
+ * \brief Create a FFT grid using a reference grid to interact with this grid.
+ * \note The reference grid has had to be created using
+ *grid_create_fft_grid_layout \author Frederick Stein
+ ******************************************************************************/
+void fft_create_grid_from_reference_F(
+    fft_grid_layout **fft_grid, const int npts_global[3],
+    const fft_grid_layout *fft_grid_ref) {
+  grid_create_fft_grid_layout_from_reference(
+      fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+      fft_grid_ref);
+}
+
+/*******************************************************************************
+ * \brief Retains a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_retain_grid_F(fft_grid_layout *fft_grid) {
+  grid_retain_fft_grid_layout(fft_grid);
+}
+
+/*******************************************************************************
+ * \brief Frees a FFT grid.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_free_grid_F(fft_grid_layout *fft_grid) {
+  grid_free_fft_grid_layout(fft_grid);
 }
 
 // EOF
