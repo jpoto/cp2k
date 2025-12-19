@@ -51,8 +51,6 @@ static int cache_oldest_entry = 0; // used for LRU eviction
 static bool is_initialized = false;
 
 static int fftw_planning_mode = -1;
-static bool use_fftw_mpi = false;
-static bool has_guru_interface = true;
 
 // These constants encode transposition and MPI usage into the key to cache the
 // plans
@@ -94,6 +92,9 @@ static void add_plan_to_cache(const int key[KEY_SIZE], fftw_plan *plan) {
   cache[i].plan = plan;
 }
 #endif
+
+static bool use_fftw_mpi = false;
+static bool has_guru_interface = false;
 
 #if defined(__FFTW3)
 bool is_guru_interface_available() {
@@ -1834,11 +1835,8 @@ void fft_fftw_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
   }
 #else
   (void)fft_size;
-  (void)number_of_ffts;
   (void)grid_in;
   (void)grid_out;
-  (void)transpose_rs;
-  (void)transpose_gs;
   assert(0 && "The grid library was not compiled with FFTW support.");
 #endif
 }
@@ -2134,11 +2132,8 @@ void fft_fftw_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
   }
 #else
   (void)fft_size;
-  (void)number_of_ffts;
   (void)grid_in;
   (void)grid_out;
-  (void)transpose_rs;
-  (void)transpose_gs;
   assert(0 && "The grid library was not compiled with FFTW support.");
 #endif
 }
