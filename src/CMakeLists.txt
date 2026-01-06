@@ -1421,20 +1421,21 @@ set(CP2K_DBM_SRCS_C
     dbm/dbm_multiply_cpu.c
     dbm/dbm_shard.c)
 
-set(CP2K_GRID_SRCS_C
-    fft_api_F.c
-    fft_driver.c
-    fft_grid.c
-    fft_grid_layout.c
-    fft_grid_test.c
-    fft_lib.c
-    fft_lib_fftw.c
-    fft_lib_ref.c
-    fft_lib_ref_low.c
-    fft_lib_test.c
-    fft_redistribution.c
-    fft_redistribution_test.c
-    fft_timer.c)
+set(CP2K_FFT_SRCS_C
+    fft/fft_api_F.c
+    fft/fft_driver.c
+    fft/gpu/fft_gpu.c
+    fft/fft_grid.c
+    fft/fft_grid_layout.c
+    fft/fft_grid_test.c
+    fft/fft_lib.c
+    fft/fft_lib_fftw.c
+    fft/fft_lib_ref.c
+    fft/fft_lib_ref_low.c
+    fft/fft_lib_test.c
+    fft/fft_redistribution.c
+    fft/fft_redistribution_test.c
+    fft/fft_timer.c)
 
 set(CP2K_GRID_SRCS_C
     grid/common/grid_basis_set.c
@@ -1577,7 +1578,7 @@ if(CP2K_USE_CUDA
   endif()
 endif()
 
-list(APPEND CP2K_SRCS_C ${CP2K_DBM_SRCS_C} ${CP2K_GRID_SRCS_C})
+list(APPEND CP2K_SRCS_C ${CP2K_DBM_SRCS_C} ${CP2K_FFT_SRCS_C} ${CP2K_GRID_SRCS_C})
 
 list(APPEND CP2K_SRCS_F openpmd_api.F input/cp_output_handling_openpmd.F
      cp_realspace_grid_openpmd.F pw/realspace_grid_openpmd.F)
@@ -1590,7 +1591,7 @@ list(APPEND CP2K_SRCS_CPP openpmd_c_api.cpp)
 
 if(CP2K_ENABLE_CONSISTENCY_CHECKS)
   cp2k_compare_src_with_list(
-    "${CP2K_FPGA_SRC_C};${CP2K_SRCS_C};${CP2K_MPIWRAP_SRCS_C};${CP2K_OFFLOAD_SRCS_C};${CP2K_DBM_SRCS_C};${CP2K_GRID_SRCS_C};${CP2K_PW_SRCS_C};${CP2K_DBM_SRCS_GPU_C};${CP2K_PROGS_C}"
+    "${CP2K_FPGA_SRC_C};${CP2K_SRCS_C};${CP2K_MPIWRAP_SRCS_C};${CP2K_OFFLOAD_SRCS_C};${CP2K_DBM_SRCS_C};${CP2K_GRID_SRCS_C};${CP2K_FFT_SRCS_C};${CP2K_PW_SRCS_C};${CP2K_DBM_SRCS_GPU_C};${CP2K_PROGS_C}
     "*.c"
     "${CP2K_EXCLUDED_SRCS_C}")
   cp2k_compare_src_with_list(
