@@ -127,6 +127,7 @@ option(CP2K_USE_DEEPMD "Enable DeePMD support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_DFTD4 "Enable DFTD4 support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_TBLITE "Enable TBLITE support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_FFTW3 "Enable FFTW3 support" ${CP2K_USE_EVERYTHING})
+option(CP2K_USE_FFTW3_MPI "Enable FFTW3-MPI support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_GREENX "Enable GreenX support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_HDF5 "Enable HDF5 support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_LIBFCI "Enable LibFCI active-space solver support"
@@ -770,6 +771,7 @@ endif()
 
 # we set this variable to ON when we want FFTW3 support (with or without MKL)
 set(CP2K_USE_FFTW3_ OFF)
+set(CP2K_USE_FFTW3_MPI_ OFF)
 if(CP2K_USE_FFTW3)
   if(NOT CP2K_BLAS_VENDOR MATCHES "MKL" OR CP2K_USE_FFTW3_WITH_MKL)
     find_package(Fftw REQUIRED)
@@ -804,6 +806,16 @@ if(CP2K_USE_FFTW3)
       endif()
     endforeach()
     set(CP2K_USE_FFTW3_MKL_ ON)
+  endif()
+
+  # Check for FFTW3-MPI
+  if (CP2K_USE_FFTW3_MPI)
+    if (NOT TARGET cp2k::FFTW3::fftw3_mpi)
+      message(
+        FATAL_ERROR
+          "FFTW3was compiled without MPI support (--enable-mpi option in the FFTW3 build system).")
+    endif()
+    set(CP2K_USE_FFTW3_MPI_ ON)
   endif()
 endif()
 
@@ -1121,6 +1133,10 @@ if(CP2K_USE_FFTW3)
           "    - libraries: ${CP2K_FFTW3_LINK_LIBRARIES}\n\n")
 endif()
 
+if(CP2K_USE_FFTW3_MPI)
+  message("  - FFTW3_MPI: ON\n\n")
+endif()
+
 if(CP2K_USE_PLUMED)
   message("  - PLUMED\n"
           "    - include directories: ${CP2K_PLUMED_INCLUDE_DIRS}\n"
@@ -1342,6 +1358,12 @@ endif()
 
 if(NOT CP2K_USE_FFTW3)
   message("   - FFTW3")
+endif()
+
+if (CP2K_USE_MPI)
+  if(NOT CP2K_USE_FFTW3_MPI)
+    message("   - FFTW3_MPI")
+  endif()
 endif()
 
 if(NOT CP2K_USE_LIBTORCH)

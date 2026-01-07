@@ -1639,6 +1639,7 @@ target_link_libraries(
             $<$<BOOL:${CP2K_USE_LIBXSMM}>:cp2k::LibXSMM::libxsmmext>
             $<$<BOOL:${CP2K_USE_LIBXSMM}>:cp2k::LibXSMM::libxsmm>
             cp2k::BLAS::blas
+    $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:cp2k::FFTW3::fftw3_mpi>
     $<$<BOOL:${CP2K_USE_FFTW3_}>:cp2k::FFTW3::fftw3>
     $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_THREADS_SUPPORT}>>:cp2k::FFTW3::fftw3_threads>
     $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_OPENMP_SUPPORT}>>:cp2k::FFTW3::fftw3_omp>
@@ -1770,6 +1771,7 @@ target_link_libraries(
     $<$<BOOL:${CP2K_USE_GAUXC}>:gauxc::gauxc>
     $<$<BOOL:${CP2K_USE_ELPA}>:cp2k::ELPA::elpa>
     $<$<BOOL:${CP2K_USE_PLUMED}>:cp2k::plumed::plumed>
+    $<$<BOOL:${CP2K_USE_FFTW3_MPI}>:cp2k::FFTW3::fftw3_mpi>
     $<$<BOOL:${CP2K_USE_FFTW3_}>:cp2k::FFTW3::fftw3>
     $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_THREADS_SUPPORT}>>:cp2k::FFTW3::fftw3_threads>
     $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_OPENMP_SUPPORT}>>:cp2k::FFTW3::fftw3_omp>
@@ -1838,6 +1840,7 @@ target_compile_definitions(
     $<$<BOOL:${CP2K_USE_OPENPMD}>:__OPENPMD>
     $<$<BOOL:${CP2K_USE_TREXIO}>:__TREXIO>
     $<$<BOOL:${CP2K_USE_GREENX}>:__GREENX>
+    $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:__FFTW3_MPI>
     $<$<OR:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_USE_FFTW3_MKL_}>>:__FFTW3>
     $<$<BOOL:${CP2K_USE_LIBINT2}>:__LIBINT>
     $<$<BOOL:${CP2K_USE_LIBFCI}>:__LIBFCI>
@@ -1997,6 +2000,7 @@ foreach(__app fft_perftest fft_unittest)
   target_compile_definitions(
     ${__app} PRIVATE 
     $<$<BOOL:${CP2K_USE_MPI}>:__parallel>
+    $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:__FFTW3_MPI>
     $<$<OR:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_USE_FFTW3_MKL_}>>:__FFTW3>
                      $<$<STREQUAL:"${CP2K_BLAS_VENDOR}","MKL">:__MKL>)
 
