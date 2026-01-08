@@ -398,13 +398,11 @@ CONTAINS
 !> \brief ...
 !> \param pw ...
 !> \param c ...
-!> \param scale ...
 ! **************************************************************************************************
-         SUBROUTINE pw_gather_p_${kind}$ (pw, c, scale)
+         SUBROUTINE pw_gather_p_${kind}$ (pw, c)
 
             TYPE(pw_${kind}$_gs_type), INTENT(INOUT)                       :: pw
             COMPLEX(KIND=dp), DIMENSION(:, :), CONTIGUOUS, INTENT(IN)      :: c
-            REAL(KIND=dp), INTENT(IN), OPTIONAL                :: scale
 
             CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_gather_p'
 
@@ -419,19 +417,6 @@ CONTAINS
             ASSOCIATE (mapl => pw%pw_grid%mapl%pos, mapm => pw%pw_grid%mapm%pos, mapn => pw%pw_grid%mapn%pos, &
                        ngpts => SIZE(pw%pw_grid%gsq), ghat => pw%pw_grid%g_hat, yzq => pw%pw_grid%para%yzq)
 
-               IF (PRESENT(scale)) THEN
-!$OMP PARALLEL DO DEFAULT(NONE) &
-!$OMP             PRIVATE(l, m, mn, n) &
-!$OMP             SHARED(c, pw, scale)
-                  DO gpt = 1, ngpts
-                     l = mapl(ghat(1, gpt)) + 1
-                     m = mapm(ghat(2, gpt)) + 1
-                     n = mapn(ghat(3, gpt)) + 1
-                     mn = yzq(m, n)
-                     pw%array(gpt) = scale*${type2type("c(l, mn)", "c3d", kind)}$
-                  END DO
-!$OMP END PARALLEL DO
-               ELSE
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP             PRIVATE(l, m, mn, n) &
 !$OMP             SHARED(c, pw)
@@ -443,7 +428,6 @@ CONTAINS
                      pw%array(gpt) = ${type2type("c(l, mn)", "c3d", kind)}$
                   END DO
 !$OMP END PARALLEL DO
-               END IF
 
             END ASSOCIATE
 
@@ -457,10 +441,9 @@ CONTAINS
 !> \param c ...
 !> \param scale ...
 ! **************************************************************************************************
-         SUBROUTINE pw_scatter_p_${kind}$ (pw, c, scale)
+         SUBROUTINE pw_scatter_p_${kind}$ (pw, c)
             TYPE(pw_${kind}$_gs_type), INTENT(IN)                          :: pw
             COMPLEX(KIND=dp), DIMENSION(:, :), CONTIGUOUS, INTENT(INOUT)   :: c
-            REAL(KIND=dp), INTENT(IN), OPTIONAL                :: scale
 
             CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_scatter_p'
 
@@ -475,21 +458,8 @@ CONTAINS
             ASSOCIATE (mapl => pw%pw_grid%mapl%pos, mapm => pw%pw_grid%mapm%pos, mapn => pw%pw_grid%mapn%pos, &
                        ghat => pw%pw_grid%g_hat, yzq => pw%pw_grid%para%yzq, ngpts => SIZE(pw%pw_grid%gsq))
 
-               IF (.NOT. PRESENT(scale)) c = z_zero
+               c = z_zero
 
-               IF (PRESENT(scale)) THEN
-!$OMP PARALLEL DO DEFAULT(NONE) &
-!$OMP             PRIVATE(l, m, mn, n) &
-!$OMP             SHARED(c, pw, scale)
-                  DO gpt = 1, ngpts
-                     l = mapl(ghat(1, gpt)) + 1
-                     m = mapm(ghat(2, gpt)) + 1
-                     n = mapn(ghat(3, gpt)) + 1
-                     mn = yzq(m, n)
-                     c(l, mn) = ${type2type("scale*pw%array(gpt)", kind, "c3d")}$
-                  END DO
-!$OMP END PARALLEL DO
-               ELSE
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP             PRIVATE(l, m, mn, n) &
 !$OMP             SHARED(c, pw)
@@ -501,7 +471,6 @@ CONTAINS
                      c(l, mn) = ${type2type("pw%array(gpt)", kind, "c3d")}$
                   END DO
 !$OMP END PARALLEL DO
-               END IF
 
             END ASSOCIATE
 
@@ -510,19 +479,6 @@ CONTAINS
                ASSOCIATE (mapm => pw%pw_grid%mapm%neg, mapn => pw%pw_grid%mapn%neg, mapl => pw%pw_grid%mapl%neg, &
                           ghat => pw%pw_grid%g_hat, ngpts => SIZE(pw%pw_grid%gsq), yzq => pw%pw_grid%para%yzq)
 
-                  IF (PRESENT(scale)) THEN
-!$OMP PARALLEL DO DEFAULT(NONE) &
-!$OMP             PRIVATE(l, m, mn, n) &
-!$OMP             SHARED(c, pw, scale)
-                     DO gpt = 1, ngpts
-                        l = mapl(ghat(1, gpt)) + 1
-                        m = mapm(ghat(2, gpt)) + 1
-                        n = mapn(ghat(3, gpt)) + 1
-                        mn = yzq(m, n)
-                        c(l, mn) = scale*#{if kind[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, "c3d")}$)
-                     END DO
-!$OMP END PARALLEL DO
-                  ELSE
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP             PRIVATE(l, m, mn, n) &
 !$OMP             SHARED(c, pw)
@@ -534,7 +490,6 @@ CONTAINS
                         c(l, mn) = #{if kind[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, "c3d")}$)
                      END DO
 !$OMP END PARALLEL DO
-                  END IF
                END ASSOCIATE
             END IF
 
@@ -1413,18 +1368,16 @@ CONTAINS
 !> \brief Gathers the pw vector from a 3d data field
 !> \param pw ...
 !> \param c ...
-!> \param scale ...
 !> \par History
 !>      none
 !> \author JGH
 ! **************************************************************************************************
-                        SUBROUTINE pw_gather_s_${kind}$_${kind2}$_2(pw1, pw2, scale)
+                        SUBROUTINE pw_gather_s_${kind}$_${kind2}$_2(pw1, pw2)
 
                            TYPE(pw_${kind2}$_gs_type), INTENT(IN)                       :: pw1
                            TYPE(pw_${kind}$_gs_type), INTENT(INOUT)   :: pw2
-                           REAL(KIND=dp), INTENT(IN), OPTIONAL                :: scale
 
-                           CALL pw_gather_s_${kind}$_${kind2}$ (pw2, pw1%array, scale)
+                           CALL pw_gather_s_${kind}$_${kind2}$ (pw2, pw1%array)
 
                         END SUBROUTINE pw_gather_s_${kind}$_${kind2}$_2
 
@@ -1432,16 +1385,14 @@ CONTAINS
 !> \brief Gathers the pw vector from a 3d data field
 !> \param pw ...
 !> \param c ...
-!> \param scale ...
 !> \par History
 !>      none
 !> \author JGH
 ! **************************************************************************************************
-                        SUBROUTINE pw_gather_s_${kind}$_${kind2}$ (pw, c, scale)
+                        SUBROUTINE pw_gather_s_${kind}$_${kind2}$ (pw, c)
 
                            TYPE(pw_${kind}$_gs_type), INTENT(INOUT)                       :: pw
                            ${type2}$, CONTIGUOUS, INTENT(IN)   :: c
-                           REAL(KIND=dp), INTENT(IN), OPTIONAL                :: scale
 
                            CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_gather_s'
 
@@ -1452,16 +1403,6 @@ CONTAINS
                            ASSOCIATE (mapl => pw%pw_grid%mapl%pos, mapm => pw%pw_grid%mapm%pos, mapn => pw%pw_grid%mapn%pos, &
                                       ngpts => SIZE(pw%pw_grid%gsq), ghat => pw%pw_grid%g_hat)
 
-                              IF (PRESENT(scale)) THEN
-!$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw, scale)
-                                 DO gpt = 1, ngpts
-                                    l = mapl(ghat(1, gpt)) + 1
-                                    m = mapm(ghat(2, gpt)) + 1
-                                    n = mapn(ghat(3, gpt)) + 1
-                                    pw%array(gpt) = scale*${type2type("c(l, m, n)", kind2, kind)}$
-                                 END DO
-!$OMP END PARALLEL DO
-                              ELSE
 !$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw)
                                  DO gpt = 1, ngpts
                                     l = mapl(ghat(1, gpt)) + 1
@@ -1470,8 +1411,6 @@ CONTAINS
                                     pw%array(gpt) = ${type2type("c(l, m, n)", kind2, kind)}$
                                  END DO
 !$OMP END PARALLEL DO
-                              END IF
-
                            END ASSOCIATE
 
                            CALL timestop(handle)
@@ -1482,18 +1421,16 @@ CONTAINS
 !> \brief Scatters a pw vector to a 3d data field
 !> \param pw ...
 !> \param c ...
-!> \param scale ...
 !> \par History
 !>      none
 !> \author JGH
 ! **************************************************************************************************
-                        SUBROUTINE pw_scatter_s_${kind}$_${kind2}$_2(pw1, pw2, scale)
+                        SUBROUTINE pw_scatter_s_${kind}$_${kind2}$_2(pw1, pw2)
 
                            TYPE(pw_${kind}$_gs_type), INTENT(IN)                 :: pw1
                            TYPE(pw_${kind2}$_gs_type), INTENT(INOUT)               :: pw2
-                           REAL(KIND=dp), INTENT(IN), OPTIONAL                :: scale
 
-                           CALL pw_scatter_s_${kind}$_${kind2}$ (pw1, pw2%array, scale)
+                           CALL pw_scatter_s_${kind}$_${kind2}$ (pw1, pw2%array)
 
                         END SUBROUTINE pw_scatter_s_${kind}$_${kind2}$_2
 
@@ -1501,16 +1438,14 @@ CONTAINS
 !> \brief Scatters a pw vector to a 3d data field
 !> \param pw ...
 !> \param c ...
-!> \param scale ...
 !> \par History
 !>      none
 !> \author JGH
 ! **************************************************************************************************
-                        SUBROUTINE pw_scatter_s_${kind}$_${kind2}$ (pw, c, scale)
+                        SUBROUTINE pw_scatter_s_${kind}$_${kind2}$ (pw, c)
 
                            TYPE(pw_${kind}$_gs_type), INTENT(IN)                 :: pw
                            ${type2}$, CONTIGUOUS, INTENT(INOUT)               :: c
-                           REAL(KIND=dp), INTENT(IN), OPTIONAL                :: scale
 
                            CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_scatter_s'
 
@@ -1522,18 +1457,8 @@ CONTAINS
                                       ghat => pw%pw_grid%g_hat, ngpts => SIZE(pw%pw_grid%gsq))
 
                               ! should only zero the unused bits (but the zero is needed)
-                              IF (.NOT. PRESENT(scale)) c = 0.0_dp
+                              c = 0.0_dp
 
-                              IF (PRESENT(scale)) THEN
-!$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw, scale)
-                                 DO gpt = 1, ngpts
-                                    l = mapl(ghat(1, gpt)) + 1
-                                    m = mapm(ghat(2, gpt)) + 1
-                                    n = mapn(ghat(3, gpt)) + 1
-                                    c(l, m, n) = scale*${type2type("pw%array(gpt)", kind, kind2)}$
-                                 END DO
-!$OMP END PARALLEL DO
-                              ELSE
 !$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw)
                                  DO gpt = 1, ngpts
                                     l = mapl(ghat(1, gpt)) + 1
@@ -1542,7 +1467,6 @@ CONTAINS
                                     c(l, m, n) = ${type2type("pw%array(gpt)", kind, kind2)}$
                                  END DO
 !$OMP END PARALLEL DO
-                              END IF
 
                            END ASSOCIATE
 
@@ -1551,16 +1475,6 @@ CONTAINS
                               ASSOCIATE (mapl => pw%pw_grid%mapl%neg, mapm => pw%pw_grid%mapm%neg, mapn => pw%pw_grid%mapn%neg, &
                                          ghat => pw%pw_grid%g_hat, ngpts => SIZE(pw%pw_grid%gsq))
 
-                                 IF (PRESENT(scale)) THEN
-!$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw, scale)
-                                    DO gpt = 1, ngpts
-                                       l = mapl(ghat(1, gpt)) + 1
-                                       m = mapm(ghat(2, gpt)) + 1
-                                       n = mapn(ghat(3, gpt)) + 1
-                                       c(l, m, n) = scale*#{if kind[0]=="c" and kind2[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, kind2)}$)
-                                    END DO
-!$OMP END PARALLEL DO
-                                 ELSE
 !$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw)
                                     DO gpt = 1, ngpts
                                        l = mapl(ghat(1, gpt)) + 1
@@ -1569,8 +1483,6 @@ CONTAINS
                                        c(l, m, n) = #{if kind[0]=="c" and kind2[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, kind2)}$)
                                     END DO
 !$OMP END PARALLEL DO
-                                 END IF
-
                               END ASSOCIATE
 
                            END IF
