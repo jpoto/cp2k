@@ -23,7 +23,7 @@
  * \brief Function to test the parallel FFT backend.
  * \author Frederick Stein
  ******************************************************************************/
-int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
+int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -110,7 +110,7 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw 3D FFT (blocked) does not work correctly (%i "
+      printf("The fw 3D FFT (cartesian) does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -144,14 +144,14 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
         fft_3d_bw_with_layout(gs_data, rs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(rs_data, my_sizes_rs, my_number_of_elements_rs, nx, ny, nz) reduction(max : max_error)
+    shared(rs_data, my_sizes_rs, my_number_of_elements_rs, nx, ny, nz, npts_global) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_rs; index++) {
           const double complex my_value = rs_data[index];
-          const int index_x = index % my_sizes_rs[2];
+          const int index_z = index % my_sizes_rs[2];
           const int index_y = index / my_sizes_rs[2] % my_sizes_rs[1];
-          const int index_z = index / my_sizes_rs[2] / my_sizes_rs[1];
+          const int index_x = index / my_sizes_rs[2] / my_sizes_rs[1];
           const double complex ref_value =
-              index_x == nx && index_y == ny && index_z == nz ? 1.0 : 0.0;
+              index_x == nx && index_y == ny && index_z == nz ? ((double)product3(npts_global)) : 0.0;
           double current_error = cabs(my_value - ref_value);
           if (current_error > 1e-12)
             printf("ERROR %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n",
@@ -168,7 +168,7 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw 3D FFT (blocked) does not work correctly (%i "
+      printf("The bw 3D FFT (non-cartesian) does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -179,7 +179,7 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
   grid_free_fft_grid_layout(fft_grid_layout);
 
   if (errors == 0 && my_process == 0)
-    printf("The 3D FFT with blocked layout does work correctly (sizes %i %i "
+    printf("The 3D FFT with non-cartesian layout does work correctly (sizes %i %i "
            "%i)!\n",
            npts_global[0], npts_global[1], npts_global[2]);
   return errors;
@@ -189,7 +189,7 @@ int fft_test_3d_blocked(const int npts_global[3], const int test_every) {
  * \brief Function to test the parallel FFT backend.
  * \author Frederick Stein
  ******************************************************************************/
-int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
+int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -283,7 +283,7 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw 3D FFT (blocked, cartesian) does not work correctly (%i "
+      printf("The fw 3D FFT (cartesian) does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -347,7 +347,7 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw 3D FFT (blocked) does not work correctly (%i "
+      printf("The bw 3D FFT (cartesian) does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -358,7 +358,7 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
   grid_free_fft_grid_layout(fft_grid_layout);
 
   if (errors == 0 && my_process == 0)
-    printf("The 3D FFT with blocked, cartesian layout does work correctly "
+    printf("The 3D FFT with cartesian layout does work correctly "
            "(sizes %i %i "
            "%i)!\n",
            npts_global[0], npts_global[1], npts_global[2]);
@@ -369,7 +369,7 @@ int fft_test_3d_blocked_cart(const int npts_global[3], const int test_every) {
  * \brief Function to test the parallel FFT backend.
  * \author Frederick Stein
  ******************************************************************************/
-int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
+int fft_test_3d_r2c_cartesian(const int npts_global[3], const int test_every) {
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
   const int my_process = cp_mpi_comm_rank(comm);
 
@@ -455,7 +455,7 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw R2C 3D FFT (blocked) does not work correctly (%i "
+      printf("The fw R2C 3D FFT (non-cartesian) does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -519,7 +519,7 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The bw R2C 3D FFT (blocked) to ordered layout does not work "
+      printf("The bw R2C 3D FFT (non-cartesian) to ordered layout does not work "
              "correctly "
              "(%i %i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
@@ -532,7 +532,7 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
 
   if (errors == 0 && my_process == 0)
     printf(
-        "The 3D R2C FFT with blocked layout does work correctly (sizes %i %i "
+        "The 3D R2C FFT with non-cartesian layout does work correctly (sizes %i %i "
         "%i)!\n",
         npts_global[0], npts_global[1], npts_global[2]);
   return errors;
@@ -542,7 +542,7 @@ int fft_test_3d_r2c_blocked(const int npts_global[3], const int test_every) {
  * \brief Function to test the parallel FFT backend.
  * \author Frederick Stein
  ******************************************************************************/
-int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
+int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
                                       const int test_every) {
   const cp_mpi_comm_t comm = cp_mpi_get_comm_world();
   const int my_process = cp_mpi_comm_rank(comm);
@@ -630,7 +630,7 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
   if (max_error > 1e-12) {
     if (my_process == 0)
       printf(
-          "The fw R2C 3D FFT (blocked, halfspace) does not work correctly (%i "
+          "The fw R2C 3D FFT (non-cartesian, halfspace) does not work correctly (%i "
           "%i %i): %f!\n",
           npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -692,7 +692,7 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The bw R2C 3D FFT (blocked, halfspace) to ordered layout does "
+      printf("The bw R2C 3D FFT (non-cartesian, halfspace) to ordered layout does "
              "not work correctly (%i %i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -703,7 +703,7 @@ int fft_test_3d_r2c_blocked_halfspace(const int npts_global[3],
   grid_free_fft_grid_layout(fft_grid_layout);
 
   if (errors == 0 && my_process == 0)
-    printf("The 3D R2C FFT with blocked, halfspace layout does work correctly "
+    printf("The 3D R2C FFT with non-cartesian, halfspace layout does work correctly "
            "(sizes %i %i %i)!\n",
            npts_global[0], npts_global[1], npts_global[2]);
   return errors;
@@ -1280,23 +1280,23 @@ int fft_test_3d() {
   const int npts_global_small_reverse[3] = {5, 3, 2};
 
   clock_t begin = clock();
-  // Check the blocked layout
-  errors += fft_test_3d_blocked(npts_global, 5);
-  errors += fft_test_3d_blocked(npts_global_small, 13);
-  errors += fft_test_3d_blocked(npts_global_reverse, 11);
-  errors += fft_test_3d_blocked(npts_global_small_reverse, 7);
+  // Check the cartesian layout
+  errors += fft_test_3d_cartesian(npts_global, 5);
+  errors += fft_test_3d_cartesian(npts_global_small, 13);
+  errors += fft_test_3d_cartesian(npts_global_reverse, 11);
+  errors += fft_test_3d_cartesian(npts_global_small_reverse, 7);
 
-  // Check the blocked layout
-  errors += fft_test_3d_r2c_blocked(npts_global, 13);
-  errors += fft_test_3d_r2c_blocked(npts_global_small, 17);
-  errors += fft_test_3d_r2c_blocked(npts_global_reverse, 19);
-  errors += fft_test_3d_r2c_blocked(npts_global_small_reverse, 11);
+  // Check the cartesian layout
+  errors += fft_test_3d_r2c_cartesian(npts_global, 13);
+  errors += fft_test_3d_r2c_cartesian(npts_global_small, 17);
+  errors += fft_test_3d_r2c_cartesian(npts_global_reverse, 19);
+  errors += fft_test_3d_r2c_cartesian(npts_global_small_reverse, 11);
 
-  // Check the blocked layout with the halfspace flavor
-  errors += fft_test_3d_r2c_blocked_halfspace(npts_global, 13);
-  errors += fft_test_3d_r2c_blocked_halfspace(npts_global_small, 17);
-  errors += fft_test_3d_r2c_blocked_halfspace(npts_global_reverse, 19);
-  errors += fft_test_3d_r2c_blocked_halfspace(npts_global_small_reverse, 11);
+  // Check the cartesian layout with the halfspace flavor
+  errors += fft_test_3d_r2c_cartesian_halfspace(npts_global, 13);
+  errors += fft_test_3d_r2c_cartesian_halfspace(npts_global_small, 17);
+  errors += fft_test_3d_r2c_cartesian_halfspace(npts_global_reverse, 19);
+  errors += fft_test_3d_r2c_cartesian_halfspace(npts_global_small_reverse, 11);
 
   // Check the ray layout with the same grid sizes
   errors += fft_test_3d_ray(npts_global, npts_global, 19);
