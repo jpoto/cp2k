@@ -84,13 +84,13 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
         fft_3d_fw_with_layout(rs_data, gs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global)                  \
+    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale)                  \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = gs_data[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)index_g[0]) * nx / npts_global[0] +
                     ((double)index_g[1]) * ny / npts_global[1] +
                     ((double)index_g[2]) * nz / npts_global[2]));
@@ -252,7 +252,7 @@ int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
 
 #pragma omp parallel for default(none)                                         \
     shared(gs_data, my_bounds_gs, my_sizes_gs, nx, ny, nz, npts_global,        \
-               my_number_of_elements_gs) reduction(max : max_error)
+               my_number_of_elements_gs, scale) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_gs; index++) {
           const int mx =
               my_number_of_elements_gs / my_sizes_gs[1] / my_sizes_gs[2] +
@@ -264,7 +264,7 @@ int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
               my_number_of_elements_gs % my_sizes_gs[2] + my_bounds_gs[0][0];
           const double complex my_value = gs_data[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)mx) * nx / npts_global[0] +
                     ((double)my) * ny / npts_global[1] +
                     ((double)mz) * nz / npts_global[2]));
@@ -429,13 +429,13 @@ int fft_test_3d_r2c_cartesian(const int npts_global[3], const int test_every) {
         fft_3d_fw_r2c_with_layout(rs_data, gs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global)                  \
+    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale)                  \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = gs_data[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)index_g[0]) * nx / npts_global[0] +
                     ((double)index_g[1]) * ny / npts_global[1] +
                     ((double)index_g[2]) * nz / npts_global[2]));
@@ -603,13 +603,13 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
         fft_3d_fw_r2c_with_layout(rs_data, gs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global)                  \
+    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale)                  \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = gs_data[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)index_g[0]) * nx / npts_global[0] +
                     ((double)index_g[1]) * ny / npts_global[1] +
                     ((double)index_g[2]) * nz / npts_global[2]));
@@ -745,6 +745,9 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
   for (int process = 0; process < my_process; process++)
     my_ray_offset += fft_grid_layout->rays_per_process[process];
 
+  const double scale = 1.0 / ((double)npts_global[0]) /
+                       ((double)npts_global[1]) / ((double)npts_global[2]);
+
   double complex *buffer_1 =
       calloc(my_number_of_elements_rs, sizeof(double complex));
   double complex *buffer_2 =
@@ -777,7 +780,7 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
         fft_3d_fw_with_layout(buffer_1, buffer_2, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2)                 \
+    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2, scale)                 \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int index_x = fft_grid_layout->index_to_g[index][0];
@@ -785,7 +788,7 @@ int fft_test_3d_ray(const int npts_global[3], const int npts_global_ref[3],
           const int index_z = fft_grid_layout->index_to_g[index][2];
           const double complex my_value = buffer_2[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)index_x) * nx / npts_global[0] +
                     ((double)index_y) * ny / npts_global[1] +
                     ((double)index_z) * nz / npts_global[2]));
@@ -930,6 +933,9 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
   for (int process = 0; process < my_process; process++)
     my_ray_offset += fft_grid_layout->rays_per_process[process];
 
+  const double scale = 1.0 / ((double)npts_global[0]) /
+                       ((double)npts_global[1]) / ((double)npts_global[2]);
+
   double *buffer_1 = calloc(my_number_of_elements_rs, sizeof(double));
   double complex *buffer_2 =
       calloc(my_number_of_elements_gs, sizeof(double complex));
@@ -961,7 +967,7 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
         fft_3d_fw_r2c_with_layout(buffer_1, buffer_2, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2)                 \
+    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2, scale)                 \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int index_x = fft_grid_layout->index_to_g[index][0];
@@ -969,7 +975,7 @@ int fft_test_3d_r2c_ray(const int npts_global[3], const int npts_global_ref[3],
           const int index_z = fft_grid_layout->index_to_g[index][2];
           const double complex my_value = buffer_2[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)index_x) * nx / npts_global[0] +
                     ((double)index_y) * ny / npts_global[1] +
                     ((double)index_z) * nz / npts_global[2]));
@@ -1115,6 +1121,9 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
   for (int process = 0; process < my_process; process++)
     my_ray_offset += fft_grid_layout->rays_per_process[process];
 
+  const double scale = 1.0 / ((double)npts_global[0]) /
+                       ((double)npts_global[1]) / ((double)npts_global[2]);
+
   double *buffer_1 = calloc(my_number_of_elements_rs, sizeof(double));
   double complex *buffer_2 =
       calloc(my_number_of_elements_gs, sizeof(double complex));
@@ -1146,7 +1155,7 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
         fft_3d_fw_r2c_with_layout(buffer_1, buffer_2, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2)                 \
+    shared(fft_grid_layout, npts_global, nx, ny, nz, buffer_2, scale)                 \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int index_x = fft_grid_layout->index_to_g[index][0];
@@ -1154,7 +1163,7 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
           const int index_z = fft_grid_layout->index_to_g[index][2];
           const double complex my_value = buffer_2[index];
           const double complex ref_value =
-              cexp(-2.0 * I * pi *
+              scale*cexp(-2.0 * I * pi *
                    (((double)index_x) * nx / npts_global[0] +
                     ((double)index_y) * ny / npts_global[1] +
                     ((double)index_z) * nz / npts_global[2]));
