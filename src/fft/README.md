@@ -1,16 +1,18 @@
 # fft: FFT wrapper for CP2K
 
 This package hosts the FFT operations required by cp2k. The code is entirely written in C and can be
-built stand-alone in order to provide be reusable by other projects.
+built stand-alone in order to be reusable by other projects.
 
 This package offers the following main features:
 
 - Local 1D, 2D and 3D FFTs
+- out-of-place and in-place FFTs.
 - Local and distributed FFTs using MPI
 - Complex-to-complex, Real-to-complex and complex-to-real FFTs
+- Fortran API
 
 Currently, this package has its own tiny reference backend (not well-performing) and a FFTW-based
-backends. This package currently supports FFTW-based backend by FFTW3, MKL and CUDA.
+backends. This package currently supports FFTW-based backend by FFTW3 and MKL.
 
 ## Unit Test
 

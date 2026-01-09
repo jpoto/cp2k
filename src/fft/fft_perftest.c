@@ -6,8 +6,8 @@
 /*----------------------------------------------------------------------------*/
 
 #include "../mpiwrap/cp_mpi.h"
-#include "fft_grid.h"
 #include "fft_grid_layout.h"
+#include "fft_lib.h"
 #include "fft_timer.h"
 
 #include <math.h>
@@ -28,20 +28,22 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
   grid_create_fft_grid_layout(&grid_layout, cp_mpi_get_comm_world(), fft_size,
                               dh_inv, false);
 
-  fft_complex_rs_grid grid_rs;
-  grid_create_complex_rs_grid(&grid_rs, grid_layout);
-  fft_complex_cart_gs_grid grid_gs;
-  grid_create_complex_cart_gs_grid(&grid_gs, grid_layout);
-
-  const int(*my_bound)[2] =
+  const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  memset(grid_rs.data, 0,
-         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
+  const int(*my_bound_gs)[2] =
+      grid_layout->proc2local_gs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
+  double complex * grid_rs;
+  fft_allocate_complex(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
+  double complex * grid_gs;
+  fft_allocate_complex(my_bound_gs[0][1]*my_bound_gs[1][1]*my_bound_gs[2][1], &grid_gs);
+
+  memset(grid_rs, 0,
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double complex));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
-  fft_fw_to_cart(&grid_rs, &grid_gs);
-  fft_bw_from_cart(&grid_gs, &grid_rs);
+  fft_3d_fw_with_layout_to_cart(grid_rs, grid_gs, grid_layout);
+  fft_3d_bw_with_layout_from_cart(grid_gs, grid_rs, grid_layout);
   cp_mpi_barrier(cp_mpi_get_comm_world());
   double end = omp_get_wtime();
 
@@ -59,8 +61,8 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
   for (int run = 0; run < number_of_runs; run++) {
     cp_mpi_barrier(cp_mpi_get_comm_world());
     begin = omp_get_wtime();
-    fft_fw_to_cart(&grid_rs, &grid_gs);
-    fft_bw_from_cart(&grid_gs, &grid_rs);
+    fft_3d_fw_with_layout_to_cart(grid_rs, grid_gs, grid_layout);
+    fft_3d_bw_with_layout_from_cart(grid_gs, grid_rs, grid_layout);
     cp_mpi_barrier(cp_mpi_get_comm_world());
     end = omp_get_wtime();
     const double current_time = end - begin;
@@ -70,8 +72,8 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
     sum_time_squared += current_time * current_time;
   }
 
-  grid_free_complex_rs_grid(&grid_rs);
-  grid_free_complex_cart_gs_grid(&grid_gs);
+  fft_free_complex(grid_rs);
+  fft_free_complex(grid_gs);
   grid_free_fft_grid_layout(grid_layout);
 
   if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
@@ -97,20 +99,22 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
   grid_create_fft_grid_layout(&grid_layout, cp_mpi_get_comm_world(), fft_size,
                               dh_inv, use_halfspace);
 
-  fft_real_rs_grid grid_rs;
-  grid_create_real_rs_grid(&grid_rs, grid_layout);
-  fft_complex_gs_grid grid_gs;
-  grid_create_complex_gs_grid(&grid_gs, grid_layout);
-
-  const int(*my_bound)[2] =
+  const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  memset(grid_rs.data, 0,
-         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
+  const int(*my_bound_gs)[2] =
+      grid_layout->proc2local_gs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
+  double * grid_rs;
+  fft_allocate_double(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
+  double complex * grid_gs;
+  fft_allocate_complex(my_bound_gs[0][1]*my_bound_gs[1][1]*my_bound_gs[2][1], &grid_gs);
+
+  memset(grid_rs, 0,
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
-  fft_fw_r2c(&grid_rs, &grid_gs);
-  fft_bw_c2r(&grid_gs, &grid_rs);
+  fft_3d_fw_r2c_with_layout_to_cart(grid_rs, grid_gs, grid_layout);
+  fft_3d_bw_c2r_with_layout_from_cart(grid_gs, grid_rs, grid_layout);
   cp_mpi_barrier(cp_mpi_get_comm_world());
   double end = omp_get_wtime();
 
@@ -128,8 +132,8 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
   for (int run = 0; run < number_of_runs; run++) {
     cp_mpi_barrier(cp_mpi_get_comm_world());
     begin = omp_get_wtime();
-    fft_fw_r2c(&grid_rs, &grid_gs);
-    fft_bw_c2r(&grid_gs, &grid_rs);
+    fft_3d_fw_r2c_with_layout_to_cart(grid_rs, grid_gs, grid_layout);
+    fft_3d_bw_c2r_with_layout_from_cart(grid_gs, grid_rs, grid_layout);
     cp_mpi_barrier(cp_mpi_get_comm_world());
     end = omp_get_wtime();
     const double current_time = end - begin;
@@ -138,8 +142,8 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
     sum_time += current_time;
     sum_time_squared += current_time * current_time;
   }
-  grid_free_real_rs_grid(&grid_rs);
-  grid_free_complex_gs_grid(&grid_gs);
+  fft_free_double(grid_rs);
+  fft_free_complex(grid_gs);
   grid_free_fft_grid_layout(grid_layout);
 
   if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
@@ -168,20 +172,20 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
   grid_create_fft_grid_layout_from_reference(&grid_layout_ray, fft_size,
                                              grid_layout);
 
-  fft_complex_rs_grid grid_rs;
-  grid_create_complex_rs_grid(&grid_rs, grid_layout_ray);
-  fft_complex_gs_grid grid_gs;
-  grid_create_complex_gs_grid(&grid_gs, grid_layout_ray);
-
-  const int(*my_bound)[2] =
+  const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  memset(grid_rs.data, 0,
-         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
+  double complex * grid_rs;
+  fft_allocate_complex(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
+  double complex * grid_gs;
+  fft_allocate_complex(grid_layout_ray->npts_gs_local, &grid_gs);
+
+  memset(grid_rs, 0,
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double complex));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
-  fft_fw(&grid_rs, &grid_gs);
-  fft_bw(&grid_gs, &grid_rs);
+  fft_3d_fw_with_layout(grid_rs, grid_gs, grid_layout_ray);
+  fft_3d_bw_with_layout_from_cart(grid_gs, grid_rs, grid_layout_ray);
   cp_mpi_barrier(cp_mpi_get_comm_world());
   double end = omp_get_wtime();
 
@@ -199,8 +203,8 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
   for (int run = 0; run < number_of_runs; run++) {
     cp_mpi_barrier(cp_mpi_get_comm_world());
     begin = omp_get_wtime();
-    fft_fw(&grid_rs, &grid_gs);
-    fft_bw(&grid_gs, &grid_rs);
+    fft_3d_fw_with_layout(grid_rs, grid_gs, grid_layout_ray);
+    fft_3d_bw_with_layout_from_cart(grid_gs, grid_rs, grid_layout_ray);
     cp_mpi_barrier(cp_mpi_get_comm_world());
     end = omp_get_wtime();
     const double current_time = end - begin;
@@ -210,8 +214,8 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
     sum_time_squared += current_time * current_time;
   }
 
-  grid_free_complex_rs_grid(&grid_rs);
-  grid_free_complex_gs_grid(&grid_gs);
+  fft_free_complex(grid_rs);
+  fft_free_complex(grid_gs);
   grid_free_fft_grid_layout(grid_layout_ray);
   grid_free_fft_grid_layout(grid_layout);
 
@@ -242,20 +246,20 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
   grid_create_fft_grid_layout_from_reference(&grid_layout_ray, fft_size,
                                              grid_layout);
 
-  fft_real_rs_grid grid_rs;
-  grid_create_real_rs_grid(&grid_rs, grid_layout_ray);
-  fft_complex_gs_grid grid_gs;
-  grid_create_complex_gs_grid(&grid_gs, grid_layout_ray);
-
-  const int(*my_bound)[2] =
+  const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  memset(grid_rs.data, 0,
-         my_bound[0][1] * my_bound[1][1] * my_bound[2][1] * sizeof(double));
+  double * grid_rs;
+  fft_allocate_double(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
+  double complex * grid_gs;
+  fft_allocate_complex(grid_layout_ray->npts_gs_local, &grid_gs);
+
+  memset(grid_rs, 0,
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
-  fft_fw_r2c(&grid_rs, &grid_gs);
-  fft_bw_c2r(&grid_gs, &grid_rs);
+  fft_3d_fw_r2c_with_layout(grid_rs, grid_gs, grid_layout_ray);
+  fft_3d_bw_c2r_with_layout(grid_gs, grid_rs, grid_layout_ray);
   cp_mpi_barrier(cp_mpi_get_comm_world());
   double end = omp_get_wtime();
 
@@ -273,8 +277,8 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
   for (int run = 0; run < number_of_runs; run++) {
     cp_mpi_barrier(cp_mpi_get_comm_world());
     begin = omp_get_wtime();
-    fft_fw_r2c(&grid_rs, &grid_gs);
-    fft_bw_c2r(&grid_gs, &grid_rs);
+    fft_3d_fw_r2c_with_layout(grid_rs, grid_gs, grid_layout_ray);
+    fft_3d_bw_c2r_with_layout(grid_gs, grid_rs, grid_layout_ray);
     cp_mpi_barrier(cp_mpi_get_comm_world());
     end = omp_get_wtime();
     const double current_time = end - begin;
@@ -284,8 +288,8 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
     sum_time_squared += current_time * current_time;
   }
 
-  grid_free_real_rs_grid(&grid_rs);
-  grid_free_complex_gs_grid(&grid_gs);
+  fft_free_double(grid_rs);
+  fft_free_complex(grid_gs);
   grid_free_fft_grid_layout(grid_layout_ray);
   grid_free_fft_grid_layout(grid_layout);
 

@@ -34,7 +34,6 @@ int run_tests(const bool debug, const int backend, const int planning_mode,
   errors += fft_test_transpose();
   errors += fft_test_transpose_parallel();
   errors += fft_test_3d();
-  //   errors += fft_test_add_copy();
   fft_print_timing_report(threshold);
 
   return errors;
