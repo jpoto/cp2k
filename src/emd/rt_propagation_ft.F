@@ -104,7 +104,7 @@ CONTAINS
 
       COMPLEX(kind=dp)                                   :: subtract_value
       COMPLEX(kind=dp), CONTIGUOUS, DIMENSION(:), &
-         POINTER                                         :: ft_samples, samples, samples_input
+         POINTER                                         :: ft_samples, samples_input
       INTEGER                                            :: handle, i, i0, j, nsamples, nseries
       LOGICAL                                            :: subtract_initial
       REAL(kind=dp)                                      :: damping, t0, t_total
@@ -159,10 +159,8 @@ CONTAINS
       ! Use FFTW3 library
       ! Allocate the in-out arrays (on every rank)
       CALL timeset(routineN, handle)
-      NULLIFY (samples)
       NULLIFY (samples_input)
       NULLIFY (ft_samples)
-      CALL fft_allocate(samples, nsamples*nseries)
       CALL fft_allocate(samples_input, nsamples*nseries)
       CALL fft_allocate(ft_samples, nsamples*nseries)
       ! Fill the samples with data
@@ -180,7 +178,7 @@ CONTAINS
       END DO
       ! Carry out the transform
       ! Scale by dt - to transform to an integral
-      CALL fft_1d_bw_local(nsamples, nseries, .FALSE., .FALSE., samples, ft_samples)
+      CALL fft_1d_bw_local(nsamples, nseries, .FALSE., .FALSE., samples_input, ft_samples)
       CALL ZDSCAL(nsamples*nseries, time_series(2) - time_series(1), ft_samples, 1)
       ! Successful FT requires shift
       DO i = 1, nseries
@@ -188,7 +186,6 @@ CONTAINS
          result_series(i, :) = ft_samples((i - 1)*nsamples + 1:i*nsamples)
       END DO
       ! Deallocate
-      CALL fft_free(samples)
       CALL fft_free(ft_samples)
       CALL fft_free(samples_input)
       CALL timestop(handle)
