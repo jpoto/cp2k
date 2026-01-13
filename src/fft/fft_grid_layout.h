@@ -43,6 +43,17 @@ typedef struct {
   int my_number_of_rays;
   // maps of index in g-space to g-space vectors
   int (*index_to_g)[3];
+  // maps of index in sorted layout to cartesian or ray-layout (C2C-FFT)
+  int *index_to_cart;
+  int *index_to_ray;
+  // maps of index in sorted layout to cartesian or ray-layout (C2C-FFT)
+  int number_of_positive_gs_points;
+  int number_of_negative_gs_points;
+  int (*index_to_cart_pos)[2];
+  int (*index_to_cart_neg)[2];
+  int (*index_to_ray_pos)[2];
+  int (*index_to_ray_neg)[2];
+  // maps of index to reference grid
   int *local_index_to_ref_grid;
   // New communicator
   cp_mpi_comm_t comm;
