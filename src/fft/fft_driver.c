@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------*/
 /*  CP2K: A general program to perform molecular dynamics simulations         */
-/*  Copyright 2000-2025 CP2K developers group <https://cp2k.org>              */
+/*  Copyright 2000-2026 CP2K developers group <https://cp2k.org>              */
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
@@ -45,19 +45,16 @@ void fft_3d_fw_blocked(
   double complex *grid_buffer_1 = get_buffer_1();
   double complex *grid_buffer_2 = get_buffer_2();
 
-  const int (*my_bounds_rs)[2] = proc2local_rs[my_process];
-  const int (*my_bounds_ms)[2] = proc2local_ms[my_process];
-  const int (*my_bounds_gs)[2] = proc2local_gs[my_process];
+  const int(*my_bounds_rs)[2] = proc2local_rs[my_process];
+  const int(*my_bounds_ms)[2] = proc2local_ms[my_process];
+  const int(*my_bounds_gs)[2] = proc2local_gs[my_process];
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {my_bounds_rs[0][1],
-                         my_bounds_rs[1][1],
+  int fft_sizes_rs[3] = {my_bounds_rs[0][1], my_bounds_rs[1][1],
                          my_bounds_rs[2][1]};
-  int fft_sizes_ms[3] = {my_bounds_ms[0][1],
-                         my_bounds_ms[1][1],
+  int fft_sizes_ms[3] = {my_bounds_ms[0][1], my_bounds_ms[1][1],
                          my_bounds_ms[2][1]};
-  int fft_sizes_gs[3] = {my_bounds_gs[0][1],
-                         my_bounds_gs[1][1],
+  int fft_sizes_gs[3] = {my_bounds_gs[0][1], my_bounds_gs[1][1],
                          my_bounds_gs[2][1]};
 
   int proc_grid[2];
@@ -65,11 +62,15 @@ void fft_3d_fw_blocked(
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
 
-  // The total number of points may be larger than the largest representable number of type int (large semiempirical systems)
-  // So, we need to convert the lengths to long int first
-  const long int number_of_points = ((long int)npts_global[0])*((long int)npts_global[1])*((long int)npts_global[2]);
-  const double scaling_factor = 1.0/((double)number_of_points);
-  const int number_of_points_to_scale = index_to_g != NULL ? npts_gs_local : product3(fft_sizes_gs);
+  // The total number of points may be larger than the largest representable
+  // number of type int (large semiempirical systems) So, we need to convert the
+  // lengths to long int first
+  const long int number_of_points = ((long int)npts_global[0]) *
+                                    ((long int)npts_global[1]) *
+                                    ((long int)npts_global[2]);
+  const double scaling_factor = 1.0 / ((double)number_of_points);
+  const int number_of_points_to_scale =
+      index_to_g != NULL ? npts_gs_local : product3(fft_sizes_gs);
   const int stride_size = 1;
 
   // We use different data distribution schemes depending on the availability of
@@ -150,12 +151,13 @@ void fft_3d_fw_blocked(
                       false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
         const int *index_g = index_to_g[index];
         grid_gs[index] =
-            scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                               fft_sizes_gs[1] +
+            scaling_factor *
+            grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
                            (index_g[1] - my_bounds_gs[1][0])) *
                               fft_sizes_gs[2] +
                           (index_g[2] - my_bounds_gs[2][0])];
@@ -163,7 +165,8 @@ void fft_3d_fw_blocked(
     } else {
       fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_gs);
-      zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+      zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+              &stride_size);
     }
   } else if (proc_grid[0] > 1) {
     assert(fft_sizes_rs[1] == npts_global[1]);
@@ -190,12 +193,11 @@ void fft_3d_fw_blocked(
       if (index_to_g != NULL) {
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
-          grid_gs[index] =
-              grid_buffer_1[((index_g[1] - my_bounds_gs[1][0]) *
-                                 fft_sizes_gs[2] +
-                             (index_g[2] - my_bounds_gs[2][0])) *
-                                fft_sizes_gs[0] +
-                            (index_g[0] - my_bounds_gs[0][0])];
+          grid_gs[index] = grid_buffer_1[((index_g[1] - my_bounds_gs[1][0]) *
+                                              fft_sizes_gs[2] +
+                                          (index_g[2] - my_bounds_gs[2][0])) *
+                                             fft_sizes_gs[0] +
+                                         (index_g[0] - my_bounds_gs[0][0])];
         }
       } else {
         transpose_local_complex(grid_buffer_1, grid_gs, fft_sizes_gs[0],
@@ -229,20 +231,22 @@ void fft_3d_fw_blocked(
                         false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
-          grid_gs[index] =
-              scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                                 fft_sizes_gs[1] +
-                             (index_g[1] - my_bounds_gs[1][0])) *
-                                fft_sizes_gs[2] +
-                            (index_g[2] - my_bounds_gs[2][0])];
+          grid_gs[index] = scaling_factor *
+                           grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
+                                              fft_sizes_gs[1] +
+                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                             fft_sizes_gs[2] +
+                                         (index_g[2] - my_bounds_gs[2][0])];
         }
       } else {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_gs);
-        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+                &stride_size);
       }
     }
   } else {
@@ -259,19 +263,21 @@ void fft_3d_fw_blocked(
       fft_3d_fw_local(npts_global, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
         const int *index_g = index_to_g[index];
         grid_gs[index] =
-            scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                               fft_sizes_gs[1] +
+            scaling_factor *
+            grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
                            (index_g[1] - my_bounds_gs[1][0])) *
                               fft_sizes_gs[2] +
                           (index_g[2] - my_bounds_gs[2][0])];
       }
     } else {
       fft_3d_fw_local(npts_global, grid_buffer_1, grid_gs);
-      zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+      zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+              &stride_size);
     }
   }
 
@@ -306,19 +312,16 @@ void fft_3d_fw_r2c_blocked(
   double complex *grid_buffer_1 = get_buffer_1();
   double complex *grid_buffer_2 = get_buffer_2();
 
-  const int (*my_bounds_rs)[2] = proc2local_rs[my_process];
-  const int (*my_bounds_ms)[2] = proc2local_ms[my_process];
-  const int (*my_bounds_gs)[2] = proc2local_gs[my_process];
+  const int(*my_bounds_rs)[2] = proc2local_rs[my_process];
+  const int(*my_bounds_ms)[2] = proc2local_ms[my_process];
+  const int(*my_bounds_gs)[2] = proc2local_gs[my_process];
 
   // Collect the local sizes (for buffer sizes and FFT dimensions)
-  int fft_sizes_rs[3] = {my_bounds_rs[0][1],
-                         my_bounds_rs[1][1],
+  int fft_sizes_rs[3] = {my_bounds_rs[0][1], my_bounds_rs[1][1],
                          my_bounds_rs[2][1]};
-  int fft_sizes_ms[3] = {my_bounds_ms[0][1],
-                         my_bounds_ms[1][1],
+  int fft_sizes_ms[3] = {my_bounds_ms[0][1], my_bounds_ms[1][1],
                          my_bounds_ms[2][1]};
-  int fft_sizes_gs[3] = {my_bounds_gs[0][1],
-                         my_bounds_gs[1][1],
+  int fft_sizes_gs[3] = {my_bounds_gs[0][1], my_bounds_gs[1][1],
                          my_bounds_gs[2][1]};
 
   int proc_grid[2];
@@ -326,11 +329,15 @@ void fft_3d_fw_r2c_blocked(
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
 
-  // The total number of points may be larger than the largest representable number of type int (large semiempirical systems)
-  // So, we need to convert the lengths to long int first
-  const long int number_of_points = ((long int)npts_global[0])*((long int)npts_global[1])*((long int)npts_global[2]);
-  const double scaling_factor = 1.0/((double)number_of_points);
-  const int number_of_points_to_scale = index_to_g != NULL ? npts_gs_local : product3(fft_sizes_gs);
+  // The total number of points may be larger than the largest representable
+  // number of type int (large semiempirical systems) So, we need to convert the
+  // lengths to long int first
+  const long int number_of_points = ((long int)npts_global[0]) *
+                                    ((long int)npts_global[1]) *
+                                    ((long int)npts_global[2]);
+  const double scaling_factor = 1.0 / ((double)number_of_points);
+  const int number_of_points_to_scale =
+      index_to_g != NULL ? npts_gs_local : product3(fft_sizes_gs);
   const int stride_size = 1;
 
   // We use different data distribution schemes depending on the availability of
@@ -395,12 +402,13 @@ void fft_3d_fw_r2c_blocked(
                       false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
         const int *index_g = index_to_g[index];
         grid_gs[index] =
-            scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                               fft_sizes_gs[1] +
+            scaling_factor *
+            grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
                            (index_g[1] - my_bounds_gs[1][0])) *
                               fft_sizes_gs[2] +
                           (index_g[2] - my_bounds_gs[2][0])];
@@ -408,7 +416,8 @@ void fft_3d_fw_r2c_blocked(
     } else {
       fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_gs);
-      zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+      zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+              &stride_size);
     }
   } else if (proc_grid[0] > 1) {
     assert(fft_sizes_rs[1] == npts_global[1]);
@@ -485,20 +494,22 @@ void fft_3d_fw_r2c_blocked(
                         false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
-          grid_gs[index] =
-              scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                                 fft_sizes_gs[1] +
-                             (index_g[1] - my_bounds_gs[1][0])) *
-                                fft_sizes_gs[2] +
-                            (index_g[2] - my_bounds_gs[2][0])];
+          grid_gs[index] = scaling_factor *
+                           grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
+                                              fft_sizes_gs[1] +
+                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                             fft_sizes_gs[2] +
+                                         (index_g[2] - my_bounds_gs[2][0])];
         }
       } else {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_gs);
-                        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+                &stride_size);
       }
     }
   } else {
@@ -519,20 +530,22 @@ void fft_3d_fw_r2c_blocked(
       if (index_to_g != NULL) {
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
-          grid_gs[index] =
-              scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                                 fft_sizes_gs[1] +
-                             (index_g[1] - my_bounds_gs[1][0])) *
-                                fft_sizes_gs[2] +
-                            (index_g[2] - my_bounds_gs[2][0])];
+          grid_gs[index] = scaling_factor *
+                           grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
+                                              fft_sizes_gs[1] +
+                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                             fft_sizes_gs[2] +
+                                         (index_g[2] - my_bounds_gs[2][0])];
         }
       } else {
         memcpy(grid_gs, grid_buffer_2,
                product3(npts_global_gspace) * sizeof(double complex));
-                        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+                &stride_size);
       }
     } else {
       memcpy((double *)grid_buffer_2, grid_rs,
@@ -552,21 +565,23 @@ void fft_3d_fw_r2c_blocked(
                         grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs, grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
+               grid_buffer_2, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
-          grid_gs[index] =
-              scaling_factor*grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                                 fft_sizes_gs[1] +
-                             (index_g[1] - my_bounds_gs[1][0])) *
-                                fft_sizes_gs[2] +
-                            (index_g[2] - my_bounds_gs[2][0])];
+          grid_gs[index] = scaling_factor *
+                           grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
+                                              fft_sizes_gs[1] +
+                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                             fft_sizes_gs[2] +
+                                         (index_g[2] - my_bounds_gs[2][0])];
         }
       } else {
         fft_2d_fw_local((const int[2]){npts_global[1], npts_global[2]},
                         npts_global_gspace[0], false, false, grid_buffer_1,
                         grid_gs);
-                        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs, &stride_size);
+        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+                &stride_size);
       }
     }
   }
@@ -1006,10 +1021,13 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
 
-  // The total number of points may be larger than the largest representable number of type int (large semiempirical systems)
-  // So, we need to convert the lengths to long int first
-  const long int number_of_points = ((long int)npts_global[0])*((long int)npts_global[1])*((long int)npts_global[2]);
-  const double scaling_factor = 1.0/((double)number_of_points);
+  // The total number of points may be larger than the largest representable
+  // number of type int (large semiempirical systems) So, we need to convert the
+  // lengths to long int first
+  const long int number_of_points = ((long int)npts_global[0]) *
+                                    ((long int)npts_global[1]) *
+                                    ((long int)npts_global[2]);
+  const double scaling_factor = 1.0 / ((double)number_of_points);
 
   // We use different data distribution schemes depending on the
   // availability of a distributed FFT library because FFTW requires the
@@ -1080,9 +1098,9 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                                       ray_to_xy, comm);
     }
 
-      // Perform the third FFT (z,xy_d) -> (xy_d,z)
-      fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
-                      grid_buffer_1, grid_buffer_2);
+    // Perform the third FFT (z,xy_d) -> (xy_d,z)
+    fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
+                    grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, index_to_g, xy_to_ray, grid_gs, npts_global,         \
@@ -1090,7 +1108,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
       grid_gs[index] =
-          scaling_factor*grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
+          scaling_factor *
+          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
                             npts_global[2] +
                         index_g[2]];
     }
@@ -1123,7 +1142,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
       grid_gs[index] =
-          scaling_factor*grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
+          scaling_factor *
+          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
                             npts_global[2] +
                         index_g[2]];
     }
@@ -1139,11 +1159,13 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
 
     fft_3d_fw_local(npts_global, grid_buffer_2, grid_buffer_1);
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, npts_global, grid_buffer_1, scaling_factor)
+    shared(npts_gs_local, index_to_g, grid_gs, npts_global, grid_buffer_1,     \
+               scaling_factor)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
       grid_gs[index] =
-          scaling_factor*grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
+          scaling_factor *
+          grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
                             npts_global[2] +
                         index_g[2]];
     }
@@ -1198,10 +1220,13 @@ void fft_3d_fw_r2c_ray(
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
 
-  // The total number of points may be larger than the largest representable number of type int (large semiempirical systems)
-  // So, we need to convert the lengths to long int first
-  const long int number_of_points = ((long int)npts_global[0])*((long int)npts_global[1])*((long int)npts_global[2]);
-  const double scaling_factor = 1.0/((double)number_of_points);
+  // The total number of points may be larger than the largest representable
+  // number of type int (large semiempirical systems) So, we need to convert the
+  // lengths to long int first
+  const long int number_of_points = ((long int)npts_global[0]) *
+                                    ((long int)npts_global[1]) *
+                                    ((long int)npts_global[2]);
+  const double scaling_factor = 1.0 / ((double)number_of_points);
 
   // We use different data distribution schemes depending on the
   // availability of a distributed FFT library because FFTW requires the
@@ -1268,7 +1293,8 @@ void fft_3d_fw_r2c_ray(
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
       grid_gs[index] =
-          scaling_factor*grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
+          scaling_factor *
+          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
                             npts_global[2] +
                         index_g[2]];
     }
@@ -1316,7 +1342,8 @@ void fft_3d_fw_r2c_ray(
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
       grid_gs[index] =
-          scaling_factor*grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
+          scaling_factor *
+          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
                             npts_global[2] +
                         index_g[2]];
     }
@@ -1349,11 +1376,13 @@ void fft_3d_fw_r2c_ray(
 
 // Copy to the ray format
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, npts_global, index_to_g, grid_gs, grid_buffer_1, scaling_factor)
+    shared(npts_gs_local, npts_global, index_to_g, grid_gs, grid_buffer_1,     \
+               scaling_factor)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
       grid_gs[index] =
-          scaling_factor*grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
+          scaling_factor *
+          grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
                             npts_global[2] +
                         index_g[2]];
     }

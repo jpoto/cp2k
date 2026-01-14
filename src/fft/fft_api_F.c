@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------*/
 /*  CP2K: A general program to perform molecular dynamics simulations         */
-/*  Copyright 2000-2025 CP2K developers group <https://cp2k.org>              */
+/*  Copyright 2000-2026 CP2K developers group <https://cp2k.org>              */
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
@@ -155,8 +155,8 @@ void fft_3d_bw_local_inplace_F(const int fft_size[3], double complex *grid) {
  *grids in real-space can be created from this layout \author Frederick Stein
  ******************************************************************************/
 void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
-                            const int npts_global[3], const double dh_inv[3][3],
-                            const bool use_halfspace) {
+                       const int npts_global[3], const double dh_inv[3][3],
+                       const bool use_halfspace) {
   grid_create_fft_grid_layout(
       fft_grid, cp_mpi_comm_f2c(comm_F),
       (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
@@ -171,9 +171,9 @@ void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
  * \note The reference grid has had to be created using
  *grid_create_fft_grid_layout \author Frederick Stein
  ******************************************************************************/
-void fft_create_grid_from_reference_F(
-    fft_grid_layout **fft_grid, const int npts_global[3],
-    const fft_grid_layout *fft_grid_ref) {
+void fft_create_grid_from_reference_F(fft_grid_layout **fft_grid,
+                                      const int npts_global[3],
+                                      const fft_grid_layout *fft_grid_ref) {
   grid_create_fft_grid_layout_from_reference(
       fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
       fft_grid_ref);

@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------*/
 /*  CP2K: A general program to perform molecular dynamics simulations         */
-/*  Copyright 2000-2025 CP2K developers group <https://cp2k.org>              */
+/*  Copyright 2000-2026 CP2K developers group <https://cp2k.org>              */
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
@@ -32,13 +32,16 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
   const int(*my_bound_gs)[2] =
       grid_layout->proc2local_gs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  double complex * grid_rs;
-  fft_allocate_complex(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
-  double complex * grid_gs;
-  fft_allocate_complex(my_bound_gs[0][1]*my_bound_gs[1][1]*my_bound_gs[2][1], &grid_gs);
+  double complex *grid_rs;
+  fft_allocate_complex(
+      my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1], &grid_rs);
+  double complex *grid_gs;
+  fft_allocate_complex(
+      my_bound_gs[0][1] * my_bound_gs[1][1] * my_bound_gs[2][1], &grid_gs);
 
   memset(grid_rs, 0,
-         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double complex));
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] *
+             sizeof(double complex));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
@@ -103,13 +106,16 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
   const int(*my_bound_gs)[2] =
       grid_layout->proc2local_gs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  double * grid_rs;
-  fft_allocate_double(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
-  double complex * grid_gs;
-  fft_allocate_complex(my_bound_gs[0][1]*my_bound_gs[1][1]*my_bound_gs[2][1], &grid_gs);
+  double *grid_rs;
+  fft_allocate_double(my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1],
+                      &grid_rs);
+  double complex *grid_gs;
+  fft_allocate_complex(
+      my_bound_gs[0][1] * my_bound_gs[1][1] * my_bound_gs[2][1], &grid_gs);
 
   memset(grid_rs, 0,
-         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double));
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] *
+             sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
@@ -174,13 +180,15 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
 
   const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  double complex * grid_rs;
-  fft_allocate_complex(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
-  double complex * grid_gs;
+  double complex *grid_rs;
+  fft_allocate_complex(
+      my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1], &grid_rs);
+  double complex *grid_gs;
   fft_allocate_complex(grid_layout_ray->npts_gs_local, &grid_gs);
 
   memset(grid_rs, 0,
-         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double complex));
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] *
+             sizeof(double complex));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();
@@ -248,13 +256,15 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
 
   const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
-  double * grid_rs;
-  fft_allocate_double(my_bound_rs[0][1]*my_bound_rs[1][1]*my_bound_rs[2][1], &grid_rs);
-  double complex * grid_gs;
+  double *grid_rs;
+  fft_allocate_double(my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1],
+                      &grid_rs);
+  double complex *grid_gs;
   fft_allocate_complex(grid_layout_ray->npts_gs_local, &grid_gs);
 
   memset(grid_rs, 0,
-         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] * sizeof(double));
+         my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1] *
+             sizeof(double));
   cp_mpi_barrier(cp_mpi_get_comm_world());
 
   double begin = omp_get_wtime();

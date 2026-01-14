@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2025 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2026 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: BSD-3-Clause                                                          !
 !--------------------------------------------------------------------------------------------------!
@@ -11,8 +11,8 @@
 ! **************************************************************************************************
 MODULE fft_api
    USE ISO_C_BINDING,                   ONLY: &
-        C_ASSOCIATED, C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, C_NULL_CHAR, &
-        C_NULL_PTR, C_PTR
+        C_ASSOCIATED, C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, &
+        C_NULL_CHAR, C_NULL_PTR, C_PTR
    USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_comm_type
 #include "../base/base_uses.f90"

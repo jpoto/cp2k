@@ -109,21 +109,21 @@ CONTAINS
 !> \brief Allocates resources on the fpga device
 ! **************************************************************************************************
    SUBROUTINE pw_fpga_init()
-#if defined (__PW_FPGA)
+#if defined (__FFT_FPGA)
       INTEGER :: stat
 
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-#error "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_PW."
-      CPABORT("OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_PW.")
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+#error "OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_FFT."
+      CPABORT("OFFLOAD and FPGA cannot be configured concurrently! Recompile with -D__NO_OFFLOAD_FFT.")
 #endif
       stat = pw_fpga_initialize()
       IF (stat /= 0) &
          CPABORT("pw_fpga_init: failed")
 #endif
 
-#if (__PW_FPGA_SP && !(__PW_FPGA))
-#error "Define both __PW_FPGA_SP and __PW_FPGA"
-      CPABORT("Define both __PW_FPGA_SP and __PW_FPGA")
+#if (__FFT_FPGA_SP && !(__FFT_FPGA))
+#error "Define both __FFT_FPGA_SP and __FFT_FPGA"
+      CPABORT("Define both __FFT_FPGA_SP and __FFT_FPGA")
 #endif
 
    END SUBROUTINE pw_fpga_init
@@ -132,7 +132,7 @@ CONTAINS
 !> \brief Releases resources on the fpga device
 ! **************************************************************************************************
    SUBROUTINE pw_fpga_finalize()
-#if defined (__PW_FPGA)
+#if defined (__FFT_FPGA)
       CALL pw_fpga_final()
 #endif
    END SUBROUTINE pw_fpga_finalize
@@ -146,7 +146,7 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)          :: n
       COMPLEX(KIND=dp), INTENT(INOUT)            :: c_out(n(1), n(2), n(3))
 
-#if ! defined (__PW_FPGA)
+#if ! defined (__FFT_FPGA)
       MARK_USED(c_out)
       MARK_USED(n)
 #else
@@ -170,7 +170,7 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)                 :: n
       COMPLEX(KIND=dp), INTENT(INOUT)    :: c_out(n(1), n(2), n(3))
 
-#if ! defined (__PW_FPGA)
+#if ! defined (__FFT_FPGA)
       MARK_USED(c_out)
       MARK_USED(n)
 #else
@@ -194,7 +194,7 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)                 :: n
       COMPLEX(KIND=dp), INTENT(INOUT)             :: c_out(n(1), n(2), n(3))
 
-#if ! defined (__PW_FPGA)
+#if ! defined (__FFT_FPGA)
       MARK_USED(c_out)
       MARK_USED(n)
 #else
@@ -228,7 +228,7 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)                 :: n
       COMPLEX(KIND=dp), INTENT(INOUT)             :: c_out(n(1), n(2), n(3))
 
-#if ! defined (__PW_FPGA)
+#if ! defined (__FFT_FPGA)
       MARK_USED(c_out)
       MARK_USED(n)
 
@@ -263,7 +263,7 @@ CONTAINS
       INTEGER, DIMENSION(:), INTENT(IN)                 :: n
       INTEGER                                           :: res
 
-#if ! defined (__PW_FPGA)
+#if ! defined (__FFT_FPGA)
       res = 0
       MARK_USED(n)
       MARK_USED(res)

@@ -1039,7 +1039,7 @@ CONTAINS
             CPASSERT(ALL(nn > no))
             CALL pw_grid_create(mt_super_ref_pw_grid, para_env, cell_ref%hmat, &
                                 cutoff=my_cutilev, spherical=spherical, fft_compatible_grid=.TRUE., &
-                                blocked=do_pw_grid_blocked_false, rs_dims=(/para_env%num_pe, 1/), &
+                                blocked=do_pw_grid_blocked_false, rs_dims=[para_env%num_pe, 1], &
                                 iounit=iounit)
             super_ref_pw_grid => mt_super_ref_pw_grid
          END IF

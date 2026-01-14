@@ -1,6 +1,6 @@
 /*----------------------------------------------------------------------------*/
 /*  CP2K: A general program to perform molecular dynamics simulations         */
-/*  Copyright 2000-2025 CP2K developers group <https://cp2k.org>              */
+/*  Copyright 2000-2026 CP2K developers group <https://cp2k.org>              */
 /*                                                                            */
 /*  SPDX-License-Identifier: BSD-3-Clause                                     */
 /*----------------------------------------------------------------------------*/
@@ -193,7 +193,7 @@ void fft_fftw_init_lib(const fftw_plan_type fftw_planning_flag,
     assert(0 && "Unknown FFTW planning flag.");
   }
 
-      has_guru_interface = use_guru_interface;
+  has_guru_interface = use_guru_interface;
   if (has_guru_interface) {
     has_guru_interface = is_guru_interface_available();
     if (is_print_rank) {
@@ -1553,7 +1553,8 @@ void fft_fftw_3d_fw_local(const int fft_size[3], double complex *grid_in,
   assert(omp_get_num_threads() == 1);
   if (has_guru_interface &&
       (fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
-       omp_get_max_threads() > 1) && (fftw_planning_mode == FFTW_ESTIMATE)) {
+       omp_get_max_threads() > 1) &&
+      (fftw_planning_mode == FFTW_ESTIMATE)) {
     // The 3D FFT is not efficient with threading and estimate planning mode
     // So, we decompose it in a sequence of 1D FFTs
     int number_of_threads = 1;
@@ -1696,7 +1697,8 @@ void fft_fftw_3d_fw_local_r2c(const int fft_size[3], double *grid_in,
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
   if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
-       omp_get_max_threads() > 1) && (fftw_planning_mode == FFTW_ESTIMATE)) {
+       omp_get_max_threads() > 1) &&
+      (fftw_planning_mode == FFTW_ESTIMATE)) {
     // The 3D FFT is not efficient with threading and estimate planning mode
     // So, we decompose it in a sequence of 1D FFTs
     int number_of_threads = 1;
@@ -1850,7 +1852,8 @@ void fft_fftw_3d_bw_local(const int fft_size[3], double complex *grid_in,
 #if defined(__FFTW3)
   assert(omp_get_num_threads() == 1);
   if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
-       omp_get_max_threads() > 1) && (fftw_planning_mode == FFTW_ESTIMATE)) {
+       omp_get_max_threads() > 1) &&
+      (fftw_planning_mode == FFTW_ESTIMATE)) {
     // The 3D FFT is not efficient with threading and estimate planning mode
     // So, we decompose it in a sequence of 1D FFTs
     int number_of_threads = 1;
@@ -1996,7 +1999,8 @@ void fft_fftw_3d_bw_local_c2r(const int fft_size[3], double complex *grid_in,
   (void)in_place;
   (void)fft_size;
   if ((fft_size[0] >= 256 || fft_size[1] >= 256 || fft_size[2] >= 256 ||
-       omp_get_max_threads() > 1) && (fftw_planning_mode == FFTW_ESTIMATE)) {
+       omp_get_max_threads() > 1) &&
+      (fftw_planning_mode == FFTW_ESTIMATE)) {
     // We cannot use the output buffer for planning because it may be too small
     // So, we allocate a new one
     double complex *buffer =

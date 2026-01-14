@@ -63,6 +63,9 @@ Since CP2K is OpenMP parallelized, the FFTW3 threading library libfftw3_omp (or 
 required. Pass `-DCP2K_ENABLE_FFTW3_OPENMP_SUPPORT=ON` or `-DCP2K_ENABLE_FFTW3_THREADS_SUPPORT=ON`
 respectivly to CMake.
 
+CP2K can also make use of the MPI-capabilities of FFTw. Pass `-DCP2K_USE_FFTW3_MPI=ON` to CMake to
+activate it.
+
 ## LIBINT (enables methods including HF exchange)
 
 - Hartree-Fock exchange requires the LIBINT package to calculate ERI.

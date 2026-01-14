@@ -1576,7 +1576,8 @@ if(CP2K_USE_CUDA
   endif()
 endif()
 
-list(APPEND CP2K_SRCS_C ${CP2K_DBM_SRCS_C} ${CP2K_FFT_SRCS_C} ${CP2K_GRID_SRCS_C})
+list(APPEND CP2K_SRCS_C ${CP2K_DBM_SRCS_C} ${CP2K_FFT_SRCS_C}
+     ${CP2K_GRID_SRCS_C})
 
 list(APPEND CP2K_SRCS_F openpmd_api.F input/cp_output_handling_openpmd.F
      cp_realspace_grid_openpmd.F pw/realspace_grid_openpmd.F)
@@ -1637,10 +1638,10 @@ target_link_libraries(
             $<$<BOOL:${CP2K_USE_LIBXSMM}>:cp2k::LibXSMM::libxsmmext>
             $<$<BOOL:${CP2K_USE_LIBXSMM}>:cp2k::LibXSMM::libxsmm>
             cp2k::BLAS::blas
-    $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:cp2k::FFTW3::fftw3_mpi>
-    $<$<BOOL:${CP2K_USE_FFTW3_}>:cp2k::FFTW3::fftw3>
-    $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_THREADS_SUPPORT}>>:cp2k::FFTW3::fftw3_threads>
-    $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_OPENMP_SUPPORT}>>:cp2k::FFTW3::fftw3_omp>
+            $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:cp2k::FFTW3::fftw3_mpi>
+            $<$<BOOL:${CP2K_USE_FFTW3_}>:cp2k::FFTW3::fftw3>
+            $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_THREADS_SUPPORT}>>:cp2k::FFTW3::fftw3_threads>
+            $<$<AND:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_ENABLE_FFTW3_OPENMP_SUPPORT}>>:cp2k::FFTW3::fftw3_omp>
             $<$<BOOL:${CP2K_USE_CUDA}>:cp2k_cuda_libs>
             $<$<BOOL:${CP2K_USE_HIP}>:cp2k_hip_libs>
             $<$<BOOL:${CP2K_USE_MPI}>:MPI::MPI_Fortran>
@@ -1996,11 +1997,12 @@ foreach(__app fft_perftest fft_unittest)
     ${CP2K_MPIWRAP_SRCS_C}
     ${CP2K_OFFLOAD_SRCS_C})
   target_compile_definitions(
-    ${__app} PRIVATE 
-    $<$<BOOL:${CP2K_USE_MPI}>:__parallel>
-    $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:__FFTW3_MPI>
-    $<$<OR:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_USE_FFTW3_MKL_}>>:__FFTW3>
-                     $<$<STREQUAL:"${CP2K_BLAS_VENDOR}","MKL">:__MKL>)
+    ${__app}
+    PRIVATE
+      $<$<BOOL:${CP2K_USE_MPI}>:__parallel>
+      $<$<BOOL:${CP2K_USE_FFTW3_MPI_}>:__FFTW3_MPI>
+      $<$<OR:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_USE_FFTW3_MKL_}>>:__FFTW3>
+      $<$<STREQUAL:"${CP2K_BLAS_VENDOR}","MKL">:__MKL>)
 
   if(CP2K_DISABLE_GRID_GPU)
     target_compile_definitions(${__app} PUBLIC __NO_OFFLOAD_GRID)
@@ -2038,13 +2040,14 @@ foreach(__app grid_miniapp grid_unittest fft_unittest fft_perftest dbm_miniapp)
 
   target_include_directories(
     ${__app}
-    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-           $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/base>
-           $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/common>
-           $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
-           $<$<OR:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_USE_FFTW3_MKL_}>>:${CP2K_FFTW3_INCLUDE_DIRS}>
-           $<$<BOOL:${CP2K_USE_CUDA}>:${CMAKE_CUDA_INCLUDE_DIRECTORIES}>
-           $<$<BOOL:${CP2K_USE_HIP}>:${CMAKE_HIP_INCLUDE_DIRECTORIES}>)
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+      $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/base>
+      $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/common>
+      $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+      $<$<OR:$<BOOL:${CP2K_USE_FFTW3_}>,$<BOOL:${CP2K_USE_FFTW3_MKL_}>>:${CP2K_FFTW3_INCLUDE_DIRS}>
+      $<$<BOOL:${CP2K_USE_CUDA}>:${CMAKE_CUDA_INCLUDE_DIRECTORIES}>
+      $<$<BOOL:${CP2K_USE_HIP}>:${CMAKE_HIP_INCLUDE_DIRECTORIES}>)
 
   target_link_libraries(
     ${__app}
@@ -2056,7 +2059,13 @@ endforeach()
 # installation
 # ##############################################################################
 install(
-  TARGETS ${__CP2K_APPS} cp2k-bin grid_miniapp grid_unittest fft_unittest fft_perftest dbm_miniapp
+  TARGETS ${__CP2K_APPS}
+          cp2k-bin
+          grid_miniapp
+          grid_unittest
+          fft_unittest
+          fft_perftest
+          dbm_miniapp
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   INCLUDES

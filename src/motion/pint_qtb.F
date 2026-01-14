@@ -937,4 +937,4 @@ CONTAINS
 
    END SUBROUTINE pint_qtb_linreg
 
-END MODULE
+END MODULE pint_qtb

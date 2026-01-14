@@ -420,13 +420,13 @@ CONTAINS
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP             PRIVATE(l, m, mn, n) &
 !$OMP             SHARED(c, pw)
-                  DO gpt = 1, ngpts
-                     l = mapl(ghat(1, gpt)) + 1
-                     m = mapm(ghat(2, gpt)) + 1
-                     n = mapn(ghat(3, gpt)) + 1
-                     mn = yzq(m, n)
-                     pw%array(gpt) = ${type2type("c(l, mn)", "c3d", kind)}$
-                  END DO
+               DO gpt = 1, ngpts
+                  l = mapl(ghat(1, gpt)) + 1
+                  m = mapm(ghat(2, gpt)) + 1
+                  n = mapn(ghat(3, gpt)) + 1
+                  mn = yzq(m, n)
+                  pw%array(gpt) = ${type2type("c(l, mn)", "c3d", kind)}$
+               END DO
 !$OMP END PARALLEL DO
 
             END ASSOCIATE
@@ -463,13 +463,13 @@ CONTAINS
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP             PRIVATE(l, m, mn, n) &
 !$OMP             SHARED(c, pw)
-                  DO gpt = 1, ngpts
-                     l = mapl(ghat(1, gpt)) + 1
-                     m = mapm(ghat(2, gpt)) + 1
-                     n = mapn(ghat(3, gpt)) + 1
-                     mn = yzq(m, n)
-                     c(l, mn) = ${type2type("pw%array(gpt)", kind, "c3d")}$
-                  END DO
+               DO gpt = 1, ngpts
+                  l = mapl(ghat(1, gpt)) + 1
+                  m = mapm(ghat(2, gpt)) + 1
+                  n = mapn(ghat(3, gpt)) + 1
+                  mn = yzq(m, n)
+                  c(l, mn) = ${type2type("pw%array(gpt)", kind, "c3d")}$
+               END DO
 !$OMP END PARALLEL DO
 
             END ASSOCIATE
@@ -482,13 +482,13 @@ CONTAINS
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP             PRIVATE(l, m, mn, n) &
 !$OMP             SHARED(c, pw)
-                     DO gpt = 1, ngpts
-                        l = mapl(ghat(1, gpt)) + 1
-                        m = mapm(ghat(2, gpt)) + 1
-                        n = mapn(ghat(3, gpt)) + 1
-                        mn = yzq(m, n)
-                        c(l, mn) = #{if kind[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, "c3d")}$)
-                     END DO
+                  DO gpt = 1, ngpts
+                     l = mapl(ghat(1, gpt)) + 1
+                     m = mapm(ghat(2, gpt)) + 1
+                     n = mapn(ghat(3, gpt)) + 1
+                     mn = yzq(m, n)
+                     c(l, mn) = #{if kind[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, "c3d")}$)
+                  END DO
 !$OMP END PARALLEL DO
                END ASSOCIATE
             END IF
@@ -1404,12 +1404,12 @@ CONTAINS
                                       ngpts => SIZE(pw%pw_grid%gsq), ghat => pw%pw_grid%g_hat)
 
 !$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw)
-                                 DO gpt = 1, ngpts
-                                    l = mapl(ghat(1, gpt)) + 1
-                                    m = mapm(ghat(2, gpt)) + 1
-                                    n = mapn(ghat(3, gpt)) + 1
-                                    pw%array(gpt) = ${type2type("c(l, m, n)", kind2, kind)}$
-                                 END DO
+                              DO gpt = 1, ngpts
+                                 l = mapl(ghat(1, gpt)) + 1
+                                 m = mapm(ghat(2, gpt)) + 1
+                                 n = mapn(ghat(3, gpt)) + 1
+                                 pw%array(gpt) = ${type2type("c(l, m, n)", kind2, kind)}$
+                              END DO
 !$OMP END PARALLEL DO
                            END ASSOCIATE
 
@@ -1460,12 +1460,12 @@ CONTAINS
                               c = 0.0_dp
 
 !$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw)
-                                 DO gpt = 1, ngpts
-                                    l = mapl(ghat(1, gpt)) + 1
-                                    m = mapm(ghat(2, gpt)) + 1
-                                    n = mapn(ghat(3, gpt)) + 1
-                                    c(l, m, n) = ${type2type("pw%array(gpt)", kind, kind2)}$
-                                 END DO
+                              DO gpt = 1, ngpts
+                                 l = mapl(ghat(1, gpt)) + 1
+                                 m = mapm(ghat(2, gpt)) + 1
+                                 n = mapn(ghat(3, gpt)) + 1
+                                 c(l, m, n) = ${type2type("pw%array(gpt)", kind, kind2)}$
+                              END DO
 !$OMP END PARALLEL DO
 
                            END ASSOCIATE
@@ -1476,12 +1476,12 @@ CONTAINS
                                          ghat => pw%pw_grid%g_hat, ngpts => SIZE(pw%pw_grid%gsq))
 
 !$OMP PARALLEL DO PRIVATE(gpt, l, m, n) DEFAULT(NONE) SHARED(c, pw)
-                                    DO gpt = 1, ngpts
-                                       l = mapl(ghat(1, gpt)) + 1
-                                       m = mapm(ghat(2, gpt)) + 1
-                                       n = mapn(ghat(3, gpt)) + 1
-                                       c(l, m, n) = #{if kind[0]=="c" and kind2[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, kind2)}$)
-                                    END DO
+                                 DO gpt = 1, ngpts
+                                    l = mapl(ghat(1, gpt)) + 1
+                                    m = mapm(ghat(2, gpt)) + 1
+                                    n = mapn(ghat(3, gpt)) + 1
+                                    c(l, m, n) = #{if kind[0]=="c" and kind2[0]=="c"}#CONJG#{endif}#(${type2type("pw%array(gpt)", kind, kind2)}$)
+                                 END DO
 !$OMP END PARALLEL DO
                               END ASSOCIATE
 

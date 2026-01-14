@@ -809,11 +809,12 @@ if(CP2K_USE_FFTW3)
   endif()
 
   # Check for FFTW3-MPI
-  if (CP2K_USE_FFTW3_MPI)
-    if (NOT TARGET cp2k::FFTW3::fftw3_mpi)
+  if(CP2K_USE_FFTW3_MPI)
+    if(NOT TARGET cp2k::FFTW3::fftw3_mpi)
       message(
         FATAL_ERROR
-          "FFTW3was compiled without MPI support (--enable-mpi option in the FFTW3 build system).")
+          "FFTW3was compiled without MPI support (--enable-mpi option in the FFTW3 build system)."
+      )
     endif()
     set(CP2K_USE_FFTW3_MPI_ ON)
   endif()
@@ -1360,7 +1361,7 @@ if(NOT CP2K_USE_FFTW3)
   message("   - FFTW3")
 endif()
 
-if (CP2K_USE_MPI)
+if(CP2K_USE_MPI)
   if(NOT CP2K_USE_FFTW3_MPI)
     message("   - FFTW3_MPI")
   endif()

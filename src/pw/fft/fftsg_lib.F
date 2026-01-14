@@ -5,8 +5,6 @@
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
 MODULE fftsg_lib
-   USE fft_kinds,                       ONLY: dp
-
    IMPLICIT NONE
 
    PRIVATE
@@ -64,6 +62,6 @@ CONTAINS
       max_length = ndata
 
    END SUBROUTINE fftsg_get_lengths
-   
+
 END MODULE fftsg_lib
 

@@ -6,7 +6,6 @@
 !--------------------------------------------------------------------------------------------------!
 MODULE fft_lib_old
 
-   USE fft_kinds,                       ONLY: dp
    USE fft_plan,                        ONLY: fft_plan_type
    USE fftsg_lib,                       ONLY: fftsg_do_cleanup,&
                                               fftsg_do_init,&
@@ -125,8 +124,6 @@ CONTAINS
 !> \param fft_in_place ...
 !> \param fsign ...
 !> \param n ...
-!> \param zin ...
-!> \param zout ...
 !> \param plan_style ...
 ! **************************************************************************************************
    SUBROUTINE fft_create_plan_3d(plan, fft_type, fft_in_place, fsign, n, plan_style)
@@ -161,16 +158,13 @@ CONTAINS
 !> \param trans ...
 !> \param n ...
 !> \param m ...
-!> \param zin ...
-!> \param zout ...
 !> \param plan_style ...
 ! **************************************************************************************************
    SUBROUTINE fft_create_plan_1d(plan, fft_type, fsign, trans, n, m, plan_style)
       TYPE(fft_plan_type), INTENT(INOUT)                 :: plan
       INTEGER, INTENT(IN)                                :: fft_type, fsign
       LOGICAL, INTENT(IN)                                :: trans
-      INTEGER, INTENT(IN)                                :: n, m
-      INTEGER, INTENT(IN)                                :: plan_style
+      INTEGER, INTENT(IN)                                :: n, m, plan_style
 
       plan%fft_type = fft_type
       plan%fsign = fsign
@@ -203,4 +197,4 @@ CONTAINS
       END IF
 
    END SUBROUTINE fft_destroy_plan
-END MODULE
+END MODULE fft_lib_old
