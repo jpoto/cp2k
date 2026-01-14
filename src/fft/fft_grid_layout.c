@@ -81,7 +81,7 @@ void sort_g_vectors(fft_grid_layout *my_fft_grid) {
     shared(my_fft_grid, local_index2g_squared)
   for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
     local_index2g_squared[index] = squared_length_of_g_vector(
-        my_fft_grid->index_to_g[index], my_fft_grid->h_inv);
+        (const int[3]){convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][0], my_fft_grid->npts_global[0]), convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][1], my_fft_grid->npts_global[1]), convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][2], my_fft_grid->npts_global[2])}, my_fft_grid->h_inv);
   }
 
   // Sort the indices according to the length of the vectors
