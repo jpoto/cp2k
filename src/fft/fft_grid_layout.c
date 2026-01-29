@@ -572,32 +572,26 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
 
   setup_proc2local(my_fft_grid);
 
+  const int (*bounds_gs)[2] = my_fft_grid->proc2local_gs[my_process];
+
   int number_of_positive_gs_points =
-      my_fft_grid->proc2local_gs[my_process][0][1] *
-      my_fft_grid->proc2local_gs[my_process][1][1] *
-      my_fft_grid->proc2local_gs[my_process][2][1];
+      bounds_gs[0][1] * bounds_gs[1][1] * bounds_gs[2][1];
   int number_of_negative_gs_points = 0;
   if (use_halfspace) {
     // If this process carries data from the first element in x-direction,
     // we need to subtract the number of related elements
-    if (my_fft_grid->proc2local_gs[my_process][0][0] == 0) {
+    if (bounds_gs[0][0] == 0) {
       number_of_negative_gs_points =
-          (my_fft_grid->proc2local_gs[my_process][0][1] - 1) *
-          my_fft_grid->proc2local_gs[my_process][1][1] *
-          my_fft_grid->proc2local_gs[my_process][2][1];
+          (bounds_gs[0][1] - 1) * bounds_gs[1][1] * bounds_gs[2][1];
     } else {
       number_of_negative_gs_points =
-          my_fft_grid->proc2local_gs[my_process][0][1] *
-          my_fft_grid->proc2local_gs[my_process][1][1] *
-          my_fft_grid->proc2local_gs[my_process][2][1];
+          bounds_gs[0][1] * bounds_gs[1][1] * bounds_gs[2][1];
     }
   }
   my_fft_grid->number_of_positive_gs_points = number_of_positive_gs_points;
   my_fft_grid->number_of_negative_gs_points = number_of_negative_gs_points;
 
-  my_fft_grid->npts_gs_local = my_fft_grid->proc2local_gs[my_process][0][1] *
-                               my_fft_grid->proc2local_gs[my_process][1][1] *
-                               my_fft_grid->proc2local_gs[my_process][2][1];
+  my_fft_grid->npts_gs_local = number_of_positive_gs_points;
   my_fft_grid->buffer_size =
       imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
 
@@ -609,14 +603,14 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   if (use_halfspace) {
     my_fft_grid->index_to_cart = NULL;
     my_fft_grid->index_to_cart_pos =
-        calloc(number_of_negative_gs_points, sizeof(int[2]));
-    my_fft_grid->index_to_cart_neg =
         calloc(number_of_positive_gs_points, sizeof(int[2]));
+    my_fft_grid->index_to_cart_neg =
+        calloc(number_of_negative_gs_points, sizeof(int[2]));
     my_fft_grid->index_to_ray = NULL;
     my_fft_grid->index_to_ray_pos =
-        calloc(number_of_negative_gs_points, sizeof(int[2]));
-    my_fft_grid->index_to_ray_neg =
         calloc(number_of_positive_gs_points, sizeof(int[2]));
+    my_fft_grid->index_to_ray_neg =
+        calloc(number_of_negative_gs_points, sizeof(int[2]));
   } else {
     my_fft_grid->index_to_cart =
         calloc(number_of_positive_gs_points, sizeof(int));
@@ -630,19 +624,17 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->index_to_ray = NULL;
   my_fft_grid->index_to_ray_neg = NULL;
   my_fft_grid->index_to_ray_pos = NULL;
-  const int local_size_y = my_fft_grid->proc2local_gs[my_process][1][1];
-  const int local_size_z = my_fft_grid->proc2local_gs[my_process][2][1];
+  const int local_size_y = bounds_gs[1][1];
+  const int local_size_z = bounds_gs[2][1];
 #pragma omp parallel for default(none)                                         \
-    shared(my_fft_grid, my_process, local_size_y, local_size_z)
+    shared(my_fft_grid, bounds_gs, local_size_y, local_size_z)
   for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
     my_fft_grid->index_to_g[index][0] =
-        my_fft_grid->proc2local_gs[my_process][0][0] +
-        index / local_size_y / local_size_z;
+        bounds_gs[0][0] + index / local_size_y / local_size_z;
     my_fft_grid->index_to_g[index][1] =
-        my_fft_grid->proc2local_gs[my_process][1][0] +
-        (index / local_size_z) % local_size_y;
+        bounds_gs[1][0] + (index / local_size_z) % local_size_y;
     my_fft_grid->index_to_g[index][2] =
-        my_fft_grid->proc2local_gs[my_process][2][0] + index % local_size_z;
+        bounds_gs[2][0] + index % local_size_z;
   }
 
   my_fft_grid->local_index_to_ref_grid =
