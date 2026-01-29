@@ -10,8 +10,7 @@ MODULE fft_lib_old
    USE fftsg_lib,                       ONLY: fftsg_do_cleanup,&
                                               fftsg_do_init,&
                                               fftsg_get_lengths
-   USE fftw3_lib,                       ONLY: fftw3_destroy_plan,&
-                                              fftw3_do_cleanup,&
+   USE fftw3_lib,                       ONLY: fftw3_do_cleanup,&
                                               fftw3_do_init,&
                                               fftw3_get_lengths
 #include "../../base/base_uses.f90"
@@ -124,16 +123,14 @@ CONTAINS
 !> \param fft_in_place ...
 !> \param fsign ...
 !> \param n ...
-!> \param plan_style ...
 ! **************************************************************************************************
-   SUBROUTINE fft_create_plan_3d(plan, fft_type, fft_in_place, fsign, n, plan_style)
+   SUBROUTINE fft_create_plan_3d(plan, fft_type, fft_in_place, fsign, n)
 
       TYPE(fft_plan_type), INTENT(INOUT)                 :: plan
       INTEGER, INTENT(IN)                                :: fft_type
       LOGICAL, INTENT(IN)                                :: fft_in_place
       INTEGER, INTENT(IN)                                :: fsign
       INTEGER, DIMENSION(3), INTENT(IN)                  :: n
-      INTEGER, INTENT(IN)                                :: plan_style
 
       plan%fft_type = fft_type
       plan%fsign = fsign
@@ -158,13 +155,12 @@ CONTAINS
 !> \param trans ...
 !> \param n ...
 !> \param m ...
-!> \param plan_style ...
 ! **************************************************************************************************
-   SUBROUTINE fft_create_plan_1d(plan, fft_type, fsign, trans, n, m, plan_style)
+   SUBROUTINE fft_create_plan_1d(plan, fft_type, fsign, trans, n, m)
       TYPE(fft_plan_type), INTENT(INOUT)                 :: plan
       INTEGER, INTENT(IN)                                :: fft_type, fsign
       LOGICAL, INTENT(IN)                                :: trans
-      INTEGER, INTENT(IN)                                :: n, m, plan_style
+      INTEGER, INTENT(IN)                                :: n, m
 
       plan%fft_type = fft_type
       plan%fsign = fsign
@@ -192,7 +188,6 @@ CONTAINS
 ! Planning only needed for FFTW3
 
       IF (plan%valid .AND. plan%fft_type == 3) THEN
-         CALL fftw3_destroy_plan(plan)
          plan%valid = .FALSE.
       END IF
 

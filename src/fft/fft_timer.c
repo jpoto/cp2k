@@ -51,9 +51,6 @@ bool debug_mode = false;
  * \author Frederick Stein
  ******************************************************************************/
 inline char *strdup(const char *src) {
-  // Return directly if the source is empty
-  if (src == NULL)
-    return NULL;
   // Allocate memory for the length of the string +1 (for the Null character)
   char *dst = malloc(strlen(src) + 1);
   // Copy the data
