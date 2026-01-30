@@ -253,6 +253,23 @@ static inline void transpose_xyz2zyx_double(
   fft_stop_timer(handle);
 }
 
+/*******************************************************************************
+ * \brief Convert between C indices (0...n-1) and shifted indices (-n/2...n/2).
+ * \author Frederick Stein
+ ******************************************************************************/
+inline int convert_c_index_to_shifted_index(const int c_index, const int npts) {
+  return (c_index > npts / 2 ? c_index - npts : c_index);
+}
+
+/*******************************************************************************
+ * \brief Convert between shifted indices (-n/2...n/2) and C indices (0...n-1).
+ * \author Frederick Stein
+ ******************************************************************************/
+inline int convert_shifted_index_to_c_index(const int shifted_index,
+                                            const int npts) {
+  return (shifted_index < 0 ? npts + shifted_index : shifted_index);
+}
+
 void dscal_(const int *n, const double *da, double *dx, const int *incx);
 
 void zdscal_(const int *n, const double *da, double complex *za,

@@ -123,23 +123,6 @@ void grid_create_fft_grid_layout_from_reference(
 void grid_retain_fft_grid_layout(fft_grid_layout *fft_grid);
 
 /*******************************************************************************
- * \brief Convert between C indices (0...n-1) and shifted indices (-n/2...n/2).
- * \author Frederick Stein
- ******************************************************************************/
-inline int convert_c_index_to_shifted_index(const int c_index, const int npts) {
-  return (c_index > npts / 2 ? c_index - npts : c_index);
-}
-
-/*******************************************************************************
- * \brief Convert between shifted indices (-n/2...n/2) and C indices (0...n-1).
- * \author Frederick Stein
- ******************************************************************************/
-inline int convert_shifted_index_to_c_index(const int shifted_index,
-                                            const int npts) {
-  return (shifted_index < 0 ? npts + shifted_index : shifted_index);
-}
-
-/*******************************************************************************
  * \brief Check whether a shifted index is on the grid.
  * \author Frederick Stein
  ******************************************************************************/
