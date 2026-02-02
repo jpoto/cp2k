@@ -591,7 +591,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->number_of_positive_gs_points = number_of_positive_gs_points;
   my_fft_grid->number_of_negative_gs_points = number_of_negative_gs_points;
 
-  my_fft_grid->npts_gs_local = number_of_positive_gs_points;
+  my_fft_grid->npts_gs_local = number_of_positive_gs_points+number_of_negative_gs_points;
   my_fft_grid->buffer_size =
       imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
 
@@ -627,14 +627,28 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   const int local_size_y = bounds_gs[1][1];
   const int local_size_z = bounds_gs[2][1];
 #pragma omp parallel for default(none)                                         \
-    shared(my_fft_grid, bounds_gs, local_size_y, local_size_z)
-  for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+    shared(my_fft_grid, bounds_gs, local_size_y, local_size_z, number_of_positive_gs_points)
+  for (int index = 0; index < number_of_positive_gs_points; index++) {
     my_fft_grid->index_to_g[index][0] =
         bounds_gs[0][0] + index / local_size_y / local_size_z;
     my_fft_grid->index_to_g[index][1] =
         bounds_gs[1][0] + (index / local_size_z) % local_size_y;
     my_fft_grid->index_to_g[index][2] =
         bounds_gs[2][0] + index % local_size_z;
+  }
+  if (use_halfspace) {
+    int negative_index = number_of_positive_gs_points;
+    for (int index = 0; index < number_of_positive_gs_points; index++) {
+      const int index_x = my_fft_grid->index_to_g[index][0];
+      if (index_x == 0) continue;
+      my_fft_grid->index_to_g[negative_index][0] =
+          npts_global[0]-index_x;
+      my_fft_grid->index_to_g[negative_index][1] =
+          (npts_global[1]-my_fft_grid->index_to_g[index][1])%npts_global[1];
+      my_fft_grid->index_to_g[negative_index][2] =
+          (npts_global[2]-my_fft_grid->index_to_g[index][2])%npts_global[2];
+          negative_index++;
+    }
   }
 
   my_fft_grid->local_index_to_ref_grid =
@@ -680,7 +694,7 @@ void grid_create_fft_grid_layout_from_reference(
          "reference grid!");
 
   const int number_of_processes = cp_mpi_comm_size(fft_grid_ref->comm);
-  const int my_process = cp_mpi_comm_rank(fft_grid_ref->comm);
+  //const int my_process = cp_mpi_comm_rank(fft_grid_ref->comm);
 
   fft_grid_layout *my_fft_grid = NULL;
   if (*fft_grid != NULL) {
@@ -760,7 +774,7 @@ void grid_create_fft_grid_layout_from_reference(
   int total_number_of_rays = 0;
 #pragma omp parallel for default(none)                                         \
     shared(my_fft_grid, fft_grid_ref, npts_global, number_of_processes,        \
-               my_process, stdout) reduction(+ : total_number_of_rays)
+               stdout) reduction(+ : total_number_of_rays)
   for (int process = 0; process < number_of_processes; process++) {
     for (int index_x = fft_grid_ref->proc2local_gs[process][0][0];
          index_x <= fft_grid_ref->proc2local_gs[process][0][0] +
@@ -797,8 +811,25 @@ void grid_create_fft_grid_layout_from_reference(
       }
     }
   }
-  my_fft_grid->npts_gs_local = my_fft_grid->npts_global_gspace[2] *
-                               my_fft_grid->rays_per_process[my_process];
+  int own_index = 0;
+  for (int ref_index = 0; ref_index < fft_grid_ref->npts_gs_local;
+       ref_index++) {
+    const int shifted_indices[3] = {
+        convert_c_index_to_shifted_index(fft_grid_ref->index_to_g[ref_index][0],
+                                         fft_grid_ref->npts_global[0]),
+        convert_c_index_to_shifted_index(fft_grid_ref->index_to_g[ref_index][1],
+                                         fft_grid_ref->npts_global[1]),
+        convert_c_index_to_shifted_index(fft_grid_ref->index_to_g[ref_index][2],
+                                         fft_grid_ref->npts_global[2])};
+    if (is_on_grid(shifted_indices[0], my_fft_grid->npts_global[0]) &&
+        is_on_grid(shifted_indices[1], my_fft_grid->npts_global[1]) &&
+        is_on_grid(shifted_indices[2], my_fft_grid->npts_global[2])) {
+      my_fft_grid->npts_gs_local++;
+      my_fft_grid->number_of_positive_gs_points += shifted_indices[0] >= 0;
+      my_fft_grid->number_of_negative_gs_points += shifted_indices[0] < 0;
+    }
+  }
+  assert(my_fft_grid->npts_gs_local == my_fft_grid->number_of_positive_gs_points+my_fft_grid->number_of_negative_gs_points);
   my_fft_grid->buffer_size =
       imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
 
@@ -816,7 +847,7 @@ void grid_create_fft_grid_layout_from_reference(
   // for the mixed space
   my_fft_grid->ray_to_xy = malloc(total_number_of_rays * sizeof(int[2]));
   my_fft_grid->xy_to_ray =
-      malloc(npts_global[0] * npts_global[1] * sizeof(int[2]));
+      malloc(my_fft_grid->npts_global_gspace[0] * my_fft_grid->npts_global_gspace[1] * sizeof(int[2]));
   memset(my_fft_grid->ray_to_xy, -1, total_number_of_rays * sizeof(int[2]));
   for (int index_x = 0; index_x < fft_grid_ref->npts_global_gspace[0];
        index_x++) {
@@ -845,7 +876,7 @@ void grid_create_fft_grid_layout_from_reference(
           index_x_new;
       my_fft_grid->ray_to_xy[current_ray_offset + current_ray_index][1] =
           index_y_new;
-      my_fft_grid->xy_to_ray[index_x_new * npts_global[1] + index_y_new] =
+      my_fft_grid->xy_to_ray[index_x_new * my_fft_grid->npts_global_gspace[1] + index_y_new] =
           current_ray_index;
       ray_index_per_process[current_process]++;
     }
@@ -877,7 +908,7 @@ void grid_create_fft_grid_layout_from_reference(
   my_fft_grid->local_index_to_ref_grid =
       calloc(my_fft_grid->npts_gs_local, sizeof(int));
 
-  int own_index = 0;
+  own_index = 0;
   for (int ref_index = 0; ref_index < fft_grid_ref->npts_gs_local;
        ref_index++) {
     const int shifted_indices[3] = {

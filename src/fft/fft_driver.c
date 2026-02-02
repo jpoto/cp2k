@@ -416,10 +416,10 @@ void fft_3d_fw_r2c_blocked(
         } else {
         grid_gs[index] =
             scaling_factor *
-            conj(grid_buffer_2[((npts_global[0]-index_g[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
-                           (index_g[1] - my_bounds_gs[1][0])) *
+            conj(grid_buffer_2[(((npts_global[0]-index_g[0])%npts_global[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
+                           ((npts_global[1]-index_g[1])%npts_global[1] - my_bounds_gs[1][0])) *
                               fft_sizes_gs[2] +
-                          (index_g[2] - my_bounds_gs[2][0])]);
+                          ((npts_global[2]-index_g[2])%npts_global[2] - my_bounds_gs[2][0])]);
         }
       }
     } else {
@@ -458,11 +458,11 @@ void fft_3d_fw_r2c_blocked(
                             (index_g[0] - proc2local_gs[my_process][0][0])];
         } else {
           grid_gs[index] =
-              conj(grid_buffer_1[((index_g[1] - proc2local_gs[my_process][1][0]) *
+              conj(grid_buffer_1[(((npts_global[1]-index_g[1])%npts_global[1] - proc2local_gs[my_process][1][0]) *
                                  fft_sizes_gs[2] +
-                             (index_g[2] - proc2local_gs[my_process][2][0])) *
+                             ((npts_global[2]-index_g[2])%npts_global[2] - proc2local_gs[my_process][2][0])) *
                                 fft_sizes_gs[0] +
-                            (npts_global[0]-  index_g[0] - proc2local_gs[my_process][0][0])]);
+                            ((npts_global[0]-  index_g[0])%npts_global[0] - proc2local_gs[my_process][0][0])]);
                           }
                         }
       } else {
@@ -525,11 +525,11 @@ void fft_3d_fw_r2c_blocked(
                                          (index_g[2] - my_bounds_gs[2][0])];
           } else {
           grid_gs[index] = scaling_factor *
-                           conj(grid_buffer_2[((npts_global[0]- index_g[0] - my_bounds_gs[0][0]) *
+                           conj(grid_buffer_2[(((npts_global[0]- index_g[0])%npts_global[0] - my_bounds_gs[0][0]) *
                                               fft_sizes_gs[1] +
-                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                          ((npts_global[1]-index_g[1])%npts_global[1] - my_bounds_gs[1][0])) *
                                              fft_sizes_gs[2] +
-                                         (index_g[2] - my_bounds_gs[2][0])]);
+                                         ((npts_global[2]-index_g[2])%npts_global[2] - my_bounds_gs[2][0])]);
           }
         }
       } else {
@@ -570,11 +570,11 @@ void fft_3d_fw_r2c_blocked(
                                          (index_g[2] - my_bounds_gs[2][0])];
           } else {
           grid_gs[index] = scaling_factor *
-                           conj(grid_buffer_2[((npts_global[0]-index_g[0] - my_bounds_gs[0][0]) *
+                           conj(grid_buffer_2[(((npts_global[0]-index_g[0])%npts_global[0] - my_bounds_gs[0][0]) *
                                               fft_sizes_gs[1] +
-                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                          ((npts_global[1]-index_g[1])%npts_global[1] - my_bounds_gs[1][0])) *
                                              fft_sizes_gs[2] +
-                                         (index_g[2] - my_bounds_gs[2][0])]);
+                                         ((npts_global[2]-index_g[2])%npts_global[2] - my_bounds_gs[2][0])]);
           }
         }
       } else {
@@ -614,11 +614,11 @@ void fft_3d_fw_r2c_blocked(
                                          (index_g[2] - my_bounds_gs[2][0])];
         }else {
           grid_gs[index] = scaling_factor *
-                           conj(grid_buffer_2[((npts_global[0]-index_g[0] - my_bounds_gs[0][0]) *
+                           conj(grid_buffer_2[(((npts_global[0]-index_g[0])%npts_global[0] - my_bounds_gs[0][0]) *
                                               fft_sizes_gs[1] +
-                                          (index_g[1] - my_bounds_gs[1][0])) *
+                                          ((npts_global[1]-index_g[1])%npts_global[1] - my_bounds_gs[1][0])) *
                                              fft_sizes_gs[2] +
-                                         (index_g[2] - my_bounds_gs[2][0])]);
+                                         ((npts_global[2]-index_g[2])%npts_global[2] - my_bounds_gs[2][0])]);
         }
         }
       } else {
@@ -877,7 +877,7 @@ void fft_3d_bw_c2r_blocked(
     memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
     for (int i = 0; i < number_of_local_gpts; i++) {
       const int *index = index_to_g[i];
-        if (convert_c_index_to_shifted_index(index[0], npts_global[0]) >= 0) {
+        if (index[0] <= npts_global[0]/2) {
       grid_buffer_1[((index[0] - proc2local_gs[my_process][0][0]) *
                          fft_sizes_gs[1] +
                      index[1] - proc2local_gs[my_process][1][0]) *
@@ -1348,9 +1348,9 @@ void fft_3d_fw_r2c_ray(
         } else {
       grid_gs[index] =
           scaling_factor *
-          conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0]) * npts_global[1] + index_g[1]] *
-                            npts_global[2] +
-                        index_g[2]]);
+          conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0])%npts_global[0] * npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
+                            npts_global[2] +(npts_global[2]-
+                        index_g[2])%npts_global[2]]);
         }
     }
   } else if (proc_grid[0] > 1) {
@@ -1405,9 +1405,9 @@ void fft_3d_fw_r2c_ray(
         } else {
       grid_gs[index] =
           scaling_factor *
-          conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0]) * npts_global[1] + index_g[1]] *
-                            npts_global[2] +
-                        index_g[2]]);
+          conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0])%npts_global[0]* npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
+                            npts_global[2] +(npts_global[2]-
+                        index_g[2])%npts_global[2]]);
                       }
     }
   } else {
@@ -1443,7 +1443,8 @@ void fft_3d_fw_r2c_ray(
                scaling_factor)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
-        if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) >= 0) {
+      const int index_x_shifted = convert_c_index_to_shifted_index(index_g[0], npts_global[0]);
+        if (index_x_shifted >= 0) {
       grid_gs[index] =
           scaling_factor *
           grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
@@ -1452,9 +1453,9 @@ void fft_3d_fw_r2c_ray(
         } else {
       grid_gs[index] =
           scaling_factor *
-          conj(grid_buffer_1[((npts_global[0] -index_g[0]) * npts_global[1] + index_g[1]) *
-                            npts_global[2] +
-                        index_g[2]]);
+          conj(grid_buffer_1[((npts_global[0]-index_g[0]) * npts_global[1] +(npts_global[1]- index_g[1])%npts_global[1]) *
+                            npts_global[2] + (npts_global[2]-
+                        index_g[2])%npts_global[2]]);
         }
     }
   }

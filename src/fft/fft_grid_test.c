@@ -564,7 +564,7 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
     my_sizes_gs[dir] = my_bounds_gs[dir][1];
-  const int my_number_of_elements_gs = product3(my_sizes_gs);
+  const int my_number_of_elements_gs = imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
                        ((double)npts_global[1]) / ((double)npts_global[2]);
@@ -1113,7 +1113,7 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
   const int my_number_of_elements_gs =
-      fft_grid_layout->rays_per_process[my_process] * npts_global[2];
+      fft_grid_layout->npts_gs_local;
 
   int my_ray_offset = 0;
   for (int process = 0; process < my_process; process++)
