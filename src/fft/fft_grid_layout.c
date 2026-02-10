@@ -631,6 +631,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   for (int index = 0; index < number_of_positive_gs_points; index++) {
     my_fft_grid->index_to_g[index][0] =
         bounds_gs[0][0] + index / local_size_y / local_size_z;
+        assert(my_fft_grid->index_to_g[index][0] < my_fft_grid->npts_global_gspace[0] && my_fft_grid->index_to_g[index][0] >= 0);
     my_fft_grid->index_to_g[index][1] =
         bounds_gs[1][0] + (index / local_size_z) % local_size_y;
     my_fft_grid->index_to_g[index][2] =

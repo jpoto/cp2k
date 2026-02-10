@@ -192,6 +192,7 @@ void ensure_buffer_size(const int size) {
     fft_allocate_complex(size, &buffer_1);
     fft_allocate_complex(size, &buffer_2);
     buffer_size = size;
+    fprintf(stderr, "New buffer size: %i\n",size);
   }
 }
 
