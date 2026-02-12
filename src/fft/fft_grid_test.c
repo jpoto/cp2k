@@ -608,7 +608,7 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
           cp_mpi_barrier(comm);
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale)           \
+    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale, my_process)           \
     reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
@@ -620,7 +620,7 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
                             ((double)index_g[2]) * nz / npts_global[2]));
           double current_error = cabs(my_value - ref_value);
           if (current_error > 1e-12)
-            printf("ERROR %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n",
+            printf("ERROR (%i) %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", my_process,
                    index_g[0], index_g[1], index_g[2], nx, ny, nz, index,
                    creal(my_value), cimag(my_value), creal(ref_value),
                    cimag(ref_value));

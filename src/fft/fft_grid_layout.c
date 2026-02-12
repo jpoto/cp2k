@@ -578,15 +578,12 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
       bounds_gs[0][1] * bounds_gs[1][1] * bounds_gs[2][1];
   int number_of_negative_gs_points = 0;
   if (use_halfspace) {
-    // If this process carries data from the first element in x-direction,
+    // If this process carries data from the first element or independently the half index in x-direction,
     // we need to subtract the number of related elements
-    if (bounds_gs[0][0] == 0) {
-      number_of_negative_gs_points =
-          (bounds_gs[0][1] - 1) * bounds_gs[1][1] * bounds_gs[2][1];
-    } else {
-      number_of_negative_gs_points =
-          bounds_gs[0][1] * bounds_gs[1][1] * bounds_gs[2][1];
-    }
+    int number_of_x_elements = bounds_gs[0][1];
+    if (bounds_gs[0][0] == 0) number_of_x_elements--;
+    if (npts_global[0]%2 == 0 && bounds_gs[0][0]+bounds_gs[0][1]-1==npts_global[0]/2) number_of_x_elements--;
+    number_of_negative_gs_points = number_of_x_elements * bounds_gs[1][1] * bounds_gs[2][1];
   }
   my_fft_grid->number_of_positive_gs_points = number_of_positive_gs_points;
   my_fft_grid->number_of_negative_gs_points = number_of_negative_gs_points;
@@ -650,6 +647,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
           (npts_global[2]-my_fft_grid->index_to_g[index][2])%npts_global[2];
           negative_index++;
     }
+    assert(negative_index == my_fft_grid->npts_gs_local);
   }
 
   my_fft_grid->local_index_to_ref_grid =

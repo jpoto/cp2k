@@ -1404,9 +1404,14 @@ void fft_3d_fw_r2c_ray(
       fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                       grid_buffer_1, grid_buffer_2);
     }
+    for (int i = 0; i < npts_global[2]*number_of_local_xy_rays; i++) {
+      printf("Show %i %i: %i %i\n", my_process, i, i/npts_global[2], i%npts_global[2]);
+    }
+    fflush(stdout);
+    cp_mpi_barrier(comm);
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, npts_global, index_to_g, grid_gs, xy_to_ray,         \
-               grid_buffer_2, scaling_factor)
+               grid_buffer_2, scaling_factor, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
         if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) >= 0) {
@@ -1415,11 +1420,12 @@ void fft_3d_fw_r2c_ray(
           grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
                             npts_global[2] +
                         index_g[2]];
+          printf("Copy (+) %i %i: %i %i %i (%f %f)\n", my_process, index, index_g[0], index_g[1], index_g[2], creal(grid_gs[index]), cimag(grid_gs[index]));
         }
     }
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, npts_global, index_to_g, grid_gs, xy_to_ray,         \
-               grid_buffer_2, scaling_factor)
+               grid_buffer_2, scaling_factor, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
         if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) < 0) {
@@ -1428,8 +1434,11 @@ void fft_3d_fw_r2c_ray(
           conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0])%npts_global[0] * npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
                             npts_global[2] +(npts_global[2]-
                         index_g[2])%npts_global[2]]);
+          printf("Copy (-) %i %i: %i %i %i (%f %f)\n", my_process, index, index_g[0], index_g[1], index_g[2], creal(grid_gs[index]), cimag(grid_gs[index]));
         }
     }
+    fflush(stdout);
+    cp_mpi_barrier(comm);
   } else if (proc_grid[0] > 1) {
     if (fft_lib_has_guru_interface()) {
       memcpy((double *)grid_buffer_1, grid_rs,
@@ -1468,9 +1477,14 @@ void fft_3d_fw_r2c_ray(
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
+    for (int i = 0; i < npts_global[2]*number_of_local_xy_rays; i++) {
+      printf("Show %i %i: %i %i\n", my_process, i, i/npts_global[2], i%npts_global[2]);
+    }
+    fflush(stdout);
+    cp_mpi_barrier(comm);
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, xy_to_ray, npts_global, index_to_g, grid_gs,         \
-               grid_buffer_2, scaling_factor)
+               grid_buffer_2, scaling_factor, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
         if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) >= 0) {
@@ -1479,11 +1493,12 @@ void fft_3d_fw_r2c_ray(
           grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
                             npts_global[2] +
                         index_g[2]];
+          printf("Copy (+) %i %i: %i %i %i (%f %f)\n", my_process, index, index_g[0], index_g[1], index_g[2], creal(grid_gs[index]), cimag(grid_gs[index]));
                       }
     }
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, xy_to_ray, npts_global, index_to_g, grid_gs,         \
-               grid_buffer_2, scaling_factor)
+               grid_buffer_2, scaling_factor, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
       const int *index_g = index_to_g[index];
         if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) < 0) {
@@ -1492,8 +1507,11 @@ void fft_3d_fw_r2c_ray(
           conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0])%npts_global[0]* npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
                             npts_global[2] +(npts_global[2]-
                         index_g[2])%npts_global[2]]);
+          printf("Copy (-) %i %i: %i %i %i (%f %f)\n", my_process, index, index_g[0], index_g[1], index_g[2], creal(grid_gs[index]), cimag(grid_gs[index]));
                       }
     }
+    fflush(stdout);
+    cp_mpi_barrier(comm);
   } else {
     if (fft_lib_has_guru_interface()) {
       memcpy((double *)grid_buffer_2, grid_rs,
