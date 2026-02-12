@@ -141,15 +141,6 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
 
         fft_3d_bw_with_layout(gs_data, rs_data, fft_grid_layout);
 
-        if (my_process == 0) {
-          fprintf(stdout, "BW fft_test_3d_cartesian ");
-          for (int index = 0; index < my_number_of_elements_rs; index++) {
-            fprintf(stdout, "(%f %f) ", creal(rs_data[index]), cimag(rs_data[index]));
-          }
-          fprintf(stdout, "\n");
-          fflush(stdout);
-        }
-
 #pragma omp parallel for default(none)                                         \
     shared(rs_data, my_sizes_rs, my_number_of_elements_rs, nx, ny, nz,         \
                npts_global, my_bounds_rs, stdout) reduction(max : max_error)
@@ -163,7 +154,6 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
                   ? ((double)product3(npts_global))
                   : 0.0;
           double current_error = cabs(my_value - ref_value);
-          //if (my_process == 0) {printf("%i %i %i %i: (%f %f) (%f %f)\n", index, index_x, index_y, index_z);fflush(stdout);}
           if (current_error > 1e-12) {
             printf("ERROR %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", index_x,
                    index_y, index_z, nx, ny, nz, index, creal(my_value),
@@ -464,7 +454,7 @@ int fft_test_3d_r2c_cartesian(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw R2C 3D FFT (non-cartesian) does not work correctly (%i "
+      printf("The fw R2C 3D FFT (non-cartesian) to ordered layout does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -528,7 +518,7 @@ int fft_test_3d_r2c_cartesian(const int npts_global[3], const int test_every) {
   if (max_error > 1e-12) {
     if (my_process == 0)
       printf(
-          "The bw R2C 3D FFT (non-cartesian) to ordered layout does not work "
+          "The bw R2C 3D FFT (non-cartesian) from ordered layout does not work "
           "correctly "
           "(%i %i %i): %f!\n",
           npts_global[0], npts_global[1], npts_global[2], max_error);
@@ -611,6 +601,12 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
 
         fft_3d_fw_r2c_with_layout(rs_data, gs_data, fft_grid_layout);
 
+          for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
+            printf("Got %i %i/%i %i %i: (%f %f)\n", my_process, index, nx, ny, nz, creal(gs_data[index]), cimag(gs_data[index]));
+          }
+          fflush(stdout);
+          cp_mpi_barrier(comm);
+
 #pragma omp parallel for default(none)                                         \
     shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale)           \
     reduction(max : max_error)
@@ -630,6 +626,8 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
                    cimag(ref_value));
           max_error = fmax(max_error, current_error);
         }
+        fflush(stdout);
+        cp_mpi_barrier(comm);
       }
     }
   }
@@ -638,7 +636,7 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw R2C 3D FFT (non-cartesian, halfspace) does not work "
+      printf("The fw R2C 3D FFT (non-cartesian, halfspace) to ordered layout does not work "
              "correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
@@ -701,7 +699,7 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
   if (max_error > 1e-12) {
     if (my_process == 0)
       printf(
-          "The bw R2C 3D FFT (non-cartesian, halfspace) to ordered layout does "
+          "The bw R2C 3D FFT (non-cartesian, halfspace) from ordered layout does "
           "not work correctly (%i %i %i): %f!\n",
           npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;

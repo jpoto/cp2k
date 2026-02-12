@@ -469,8 +469,8 @@ void fft_3d_fw_r2c_blocked(
                              (index_g[2] - proc2local_gs[my_process][2][0])) *
                                 fft_sizes_gs[0] +
                             (index_g[0] - proc2local_gs[my_process][0][0])];
-                          }
-                        }
+            }
+          }
         #pragma omp parallel for default(none) shared(npts_gs_local, index_to_g, npts_global, grid_buffer_1, grid_gs, proc2local_gs, my_process, fft_sizes_gs, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
@@ -530,9 +530,15 @@ void fft_3d_fw_r2c_blocked(
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_buffer_2);
 
+        for (int i = 0; i < npts_global[2]*fft_sizes_gs[0] * fft_sizes_gs[1]; i++) {
+          printf("Show %i %i/%i %i %i: (%f %f)\n", my_process, i, i/npts_global[2]/fft_sizes_gs[1], i/npts_global[2]%fft_sizes_gs[1], i%npts_global[2], creal(grid_buffer_2[i]), cimag(grid_buffer_2[i]));
+        }
+        fflush(stdout);
+        cp_mpi_barrier(comm);
+
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
-               grid_buffer_2, scaling_factor, npts_global)
+               grid_buffer_2, scaling_factor, npts_global, my_process) if (false)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
           if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) >=0) {
@@ -542,12 +548,13 @@ void fft_3d_fw_r2c_blocked(
                                           (index_g[1] - my_bounds_gs[1][0])) *
                                              fft_sizes_gs[2] +
                                          (index_g[2] - my_bounds_gs[2][0])];
+            printf("Copy (+) %i %i/ %i %i %i: (%f %f)\n", my_process, index, index_g[0], index_g[1], index_g[2], creal(grid_gs[index]), cimag(grid_gs[index]));
           }
         }
 
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
-               grid_buffer_2, scaling_factor, npts_global)
+               grid_buffer_2, scaling_factor, npts_global, my_process)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
           if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) <0) {
@@ -557,13 +564,22 @@ void fft_3d_fw_r2c_blocked(
                                           ((npts_global[1]-index_g[1])%npts_global[1] - my_bounds_gs[1][0])) *
                                              fft_sizes_gs[2] +
                                          ((npts_global[2]-index_g[2])%npts_global[2] - my_bounds_gs[2][0])]);
+            printf("Copy (-) %i %i/ %i %i %i: (%f %f)\n", my_process, index, index_g[0], index_g[1], index_g[2], creal(grid_gs[index]), cimag(grid_gs[index]));
           }
         }
+        fflush(stdout);
+        cp_mpi_barrier(comm);
       } else {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_gs);
         zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
                 &stride_size);
+
+        for (int i = 0; i < npts_global[2]*fft_sizes_gs[0] * fft_sizes_gs[1]; i++) {
+          printf("Show %i %i/%i %i %i: (%f %f)\n", my_process, i, i/npts_global[2]/fft_sizes_gs[1], i/npts_global[2]%fft_sizes_gs[1], i%npts_global[2], creal(grid_gs[i]), cimag(grid_gs[i]));
+        }
+        fflush(stdout);
+        cp_mpi_barrier(comm);
       }
     }
   } else {
@@ -598,12 +614,10 @@ void fft_3d_fw_r2c_blocked(
         }
 #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
-               grid_buffer_2, scaling_factor, npts_global, stderr)
+               grid_buffer_2, scaling_factor, npts_global)
         for (int index = 0; index < npts_gs_local; index++) {
           const int *index_g = index_to_g[index];
           if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) <0) {
-            fprintf(stderr, "Copy %i (%i %i %i)\n", index, index_g[0], index_g[1], index_g[2]);
-            fflush(stderr);
           grid_gs[index] = scaling_factor *
                            conj(grid_buffer_2[(((npts_global[0]-index_g[0])%npts_global[0] - my_bounds_gs[0][0]) *
                                               fft_sizes_gs[1] +
@@ -722,7 +736,6 @@ void fft_3d_bw_blocked(
 
   if (index_to_g != NULL) {
     memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-    if (my_process == 0) fprintf(stdout, "fft_3d_bw_blocked in ");
     //#pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, grid_buffer_1, grid_gs, proc2local_gs, my_process, fft_sizes_gs, npts_global, stdout)
     for (int i = 0; i < number_of_local_gpts; i++) {
       const int *index = index_to_g[i];
@@ -730,14 +743,12 @@ void fft_3d_bw_blocked(
       assert (index[dir] < npts_global[dir]);
       assert (index[dir] >= 0);
     }
-    if (my_process == 0) fprintf(stdout, "(%f %f) ", creal(grid_gs[i]), cimag(grid_gs[i]));
       grid_buffer_1[((index[0] - proc2local_gs[my_process][0][0]) *
                          fft_sizes_gs[1] +
                      index[1] - proc2local_gs[my_process][1][0]) *
                         fft_sizes_gs[2] +
                     index[2] - proc2local_gs[my_process][2][0]] = grid_gs[i];
     }
-    if (my_process == 0) {fprintf(stdout, "\n"); fflush(stdout);}
   } else {
     memcpy(grid_buffer_1, grid_gs,
            product3(fft_sizes_gs) * sizeof(double complex));
@@ -879,17 +890,6 @@ void fft_3d_bw_blocked(
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_rs_double[i] = creal(grid_buffer_2[i]);
     }
-  }
-
-  if (my_process == 0) {
-    if (is_complex) {
-      fprintf(stdout, "fft_3d_bw_blocked out ");
-    for (int i = 0; i < product3(fft_sizes_rs); i++) {
-      fprintf(stdout, "(%f %f) ", creal(grid_rs[i]), cimag(grid_rs[i]));
-    }
-    fprintf(stdout, "\n");
-    fflush(stdout);
-  }
   }
 
   fft_stop_timer(handle2);
@@ -1867,14 +1867,10 @@ void fft_3d_bw_c2r_ray(
 
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, stderr, index_to_g, xy_to_ray, grid_buffer_1, npts_global, grid_gs)
+           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, xy_to_ray, grid_buffer_1, npts_global, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
       const int *index = index_to_g[i];
       if (index[0] > npts_global[0]/2) continue;
-      fprintf(stderr, "Try index %i %i %i %i\n", index[0], index[1], xy_to_ray[index[0] * npts_global[1] + index[1]], xy_to_ray[index[0] * npts_global[1] + index[1]] *
-                        npts_global[2] +
-                    index[2]);
-      fflush(stderr);
       grid_buffer_1[xy_to_ray[index[0] * npts_global[1] + index[1]] *
                         npts_global[2] +
                     index[2]] = grid_gs[i];
