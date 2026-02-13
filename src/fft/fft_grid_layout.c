@@ -452,7 +452,7 @@ void setup_proc2local(fft_grid_layout *my_fft_grid) {
                             my_fft_grid->npts_global_gspace[2]);
   my_fft_grid->buffer_size = buffer_size;
 
-  if (my_process == 0) {
+  if (false && my_process == 0) {
     printf("Proc2local RS\n");
     for (int process = 0; process < number_of_processes; process++) {
       printf("%i: %i %i / %i %i / %i %i\n", process,
@@ -664,10 +664,6 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
       my_fft_grid->proc2local_x_gs, my_fft_grid->proc2local_y_rs,
       my_fft_grid->proc2local_y_gs, my_fft_grid->proc2local_z_rs,
       my_fft_grid->sub_comm);
-
-      for (int i = 0; i < my_fft_grid->npts_gs_local; i++) {
-        printf("index_to_g %i %i: %i %i %i\n", my_process, i, my_fft_grid->index_to_g[i][0], my_fft_grid->index_to_g[i][1], my_fft_grid->index_to_g[i][2]);
-      }
 
   *fft_grid = my_fft_grid;
 

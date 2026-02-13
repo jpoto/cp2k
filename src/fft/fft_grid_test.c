@@ -601,12 +601,6 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
 
         fft_3d_fw_r2c_with_layout(rs_data, gs_data, fft_grid_layout);
 
-          for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
-            printf("Got %i %i/%i %i %i: (%f %f)\n", my_process, index, nx, ny, nz, creal(gs_data[index]), cimag(gs_data[index]));
-          }
-          fflush(stdout);
-          cp_mpi_barrier(comm);
-
 #pragma omp parallel for default(none)                                         \
     shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale, my_process)           \
     reduction(max : max_error)
@@ -626,8 +620,6 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
                    cimag(ref_value));
           max_error = fmax(max_error, current_error);
         }
-        fflush(stdout);
-        cp_mpi_barrier(comm);
       }
     }
   }
