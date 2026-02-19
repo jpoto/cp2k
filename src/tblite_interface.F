@@ -427,6 +427,25 @@ CONTAINS
       CALL cp_print_key_finished_output(iounit, logger, scf_section, &
                                         "PRINT%DETAILED_ENERGY")
 
+      WRITE (*, *) "eeeeeeeeeeeeeeeeeeeee comparing energies eeeeeeeeeeeeeeeeeeeeee"
+      WRITE (*, *) "eeeeeee  core:      ", energy%core 
+      WRITE (*, *) "eeeeeee  repulsive: ", energy%repulsive
+      WRITE (*, *) "eeeeeee  el_stat:   ", energy%el_stat
+      WRITE (*, *) "eeeeeee  disp.:     ", energy%dispersion
+      WRITE (*, *) "eeeeeee  sc. disp.: ", energy%dispersion_sc
+      WRITE (*, *) "eeeeeee  hal.:      ", energy%xtb_xb_inter
+      WRITE (*, *) "eeeeeee  kTS:       ", energy%kTS
+      WRITE (*, *) "eeeeeee  Spin       "
+      WRITE (*, *) "eeeeeee  ELS:       "
+      WRITE (*, *) "eeeeeee  bu:        "
+      WRITE (*, *) "eeeeeee  ext:       " 
+      WRITE (*, *) "eeeeeee  3rd:       "
+      WRITE (*, *) "eeeeeee  onsite:    "
+      WRITE (*, *) "eeeeeee  Solv:      "
+      WRITE (*, *) "eeeeeee  onsite:    "
+      WRITE (*, *) "eeeeeee  elec:      " 
+      WRITE (*, *) "eeeeeee  total:     ", energy%total
+
 #else
       MARK_USED(qs_env)
       MARK_USED(tb)
@@ -987,7 +1006,9 @@ CONTAINS
          CALL ao_charges(p_matrix, s_matrix, aocg, para_env)
          IF (do_dipole) THEN
             DO im = 1, dip_n
-               CALL contract_dens(p_matrix, tb%dipbra(im)%matrix, tb%dipket(im)%matrix, ao_dip(:, im), para_env)
+               write(*,*) "dadadada: ",ao_dip(:, im)
+               CALL contract_dens_p(p_matrix, tb%dipbra(im)%matrix, tb%dipket(im)%matrix, ao_dip(:, im), para_env)
+               write(*,*) "dfdfdfdf: ",ao_dip(:, im)
             END DO
          END IF
          IF (do_quadrupole) THEN
@@ -1051,6 +1072,16 @@ CONTAINS
          END DO
          DEALLOCATE (ao_quad)
       END IF
+
+    WRITE (*, *) 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq  qsh   qqqqqqqqqqqqqqqqqqqqqqqqqqqq '
+    write(*,'(6F18.9)') tb%wfn%qsh(:, 1)
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>  qat: '
+    write(*,'(1F18.9)') tb%wfn%qat(:, 1)
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>  dip: '
+    write(*,'(3F18.9)') tb%wfn%dpat(:, :, 1)
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>  quad:'
+    write(*,'(6F18.9)') tb%wfn%qpat(:, :, 1)
+
 
       IF (ALLOCATED(tb%calc%coulomb)) THEN
          CALL tb%calc%coulomb%get_potential(tb%mol, tb%cache, tb%wfn, tb%pot)
@@ -1515,9 +1546,11 @@ CONTAINS
       INTEGER                                     :: ikind, jkind, iatom, jatom, icol, irow, iset, jset, ityp, jtyp
       INTEGER                                     :: nkind, natom, handle, nimg, i, inda, indb
       INTEGER                                     :: atom_a, atom_b, nseta, nsetb, ia, ib, ij
+      INTEGER                                     :: inode, nnode
       LOGICAL                                     :: found
       REAL(KIND=dp)                               :: r2
       REAL(KIND=dp), DIMENSION(3)                 :: rij
+      INTEGER, DIMENSION(3)                       :: cellind
       INTEGER, DIMENSION(:), POINTER              :: la_max, lb_max
       INTEGER, DIMENSION(:), POINTER              :: nsgfa, nsgfb
       INTEGER, DIMENSION(:, :), POINTER           :: first_sgfa, first_sgfb
@@ -1600,7 +1633,11 @@ CONTAINS
       CALL neighbor_list_iterator_create(nl_iterator, sab_orb)
       DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
          CALL get_iterator_info(nl_iterator, ikind=ikind, jkind=jkind, &
-                                iatom=iatom, jatom=jatom, r=rij)
+                                inode=inode, nnode=nnode, &
+                                iatom=iatom, jatom=jatom, r=rij, cell=cellind)
+
+         write(*,*) "INFO : iatom, jatom, ikind, jkind, rij, cellind, inode, nnode"
+         write(*,*)  iatom, jatom, ikind, jkind, rij, cellind, inode, nnode
 
          r2 = NORM2(rij(:))**2
 
@@ -1627,6 +1664,8 @@ CONTAINS
          CALL dbcsr_get_block_p(matrix=tb%dipbra(3)%matrix, &
                                 row=irow, col=icol, BLOCK=dip_bra3, found=found)
          CPASSERT(found)
+         !write(*,*) "aaaaaaaaaaaaaaaaaaaaa  icol, irow = ", icol, irow
+         !write(*,*) "aaaaaa  dip_bra1 = ", dip_bra1
 
          NULLIFY (dip_ket1, dip_ket2, dip_ket3)
          CALL dbcsr_get_block_p(matrix=tb%dipket(1)%matrix, &
@@ -1698,11 +1737,18 @@ CONTAINS
          nsgfb => basis_set_b%nsgf_set
 
          ! --------- Hamiltonian
-         IF (icol == irow) THEN
+         !IF ( SUM(ABS(cellind)) < 1 ) THEN
+         IF ((icol == irow)) THEN
+         !IF ((icol == irow) .and. ( SUM(ABS(cellind)) < 1 )) THEN
             DO iset = 1, nseta
                DO jset = 1, nsetb
                   CALL multipole_cgto(tb%calc%bas%cgto(jset, ityp), tb%calc%bas%cgto(iset, ityp), &
                        & r2, -rij, tb%calc%bas%intcut, stmp, dtmp, qtmp)
+
+                  
+                  !write(*,*) "hhhhhhhh: bas1", tb%calc%bas%cgto(iset, ityp)
+                  !write(*,*) "hhhhhhhh: bas2", tb%calc%bas%cgto(jset, jtyp)
+                  !write(*,*) "iiiiii: r2, rij ", r2, rij
 
                   DO inda = 1, nsgfa(iset)
                      ia = first_sgfa(1, iset) - first_sgfa(1, 1) + inda
@@ -1724,6 +1770,8 @@ CONTAINS
                         dip_bra1(ib, ia) = dtmp(1, ij)
                         dip_bra2(ib, ia) = dtmp(2, ij)
                         dip_bra3(ib, ia) = dtmp(3, ij)
+                        !write(*,*) 'jjjjjjjjjj, i, j, dipole', inda, indb, ij
+                        !write(*,'(6F18.9)') dtmp(:, ij)
 
                         quad_bra1(ib, ia) = qtmp(1, ij)
                         quad_bra2(ib, ia) = qtmp(2, ij)
@@ -1731,17 +1779,24 @@ CONTAINS
                         quad_bra4(ib, ia) = qtmp(4, ij)
                         quad_bra5(ib, ia) = qtmp(5, ij)
                         quad_bra6(ib, ia) = qtmp(6, ij)
+                        !write(*,*) 'kkkkkkkkkk, i, j, quadrupole', inda, indb, ij
+                        !write(*,'(6F18.9)') qtmp(:, ij)
+
                      END DO
                   END DO
                END DO
             END DO
-         ELSE
+         ELSE !IF ( SUM(ABS(cellind)) < 1 ) THEN
             DO iset = 1, nseta
                DO jset = 1, nsetb
                   CALL multipole_cgto(tb%calc%bas%cgto(jset, jtyp), tb%calc%bas%cgto(iset, ityp), &
                       & r2, -rij, tb%calc%bas%intcut, stmp, dtmp, qtmp)
                   CALL multipole_cgto(tb%calc%bas%cgto(iset, ityp), tb%calc%bas%cgto(jset, jtyp), &
                       & r2, rij, tb%calc%bas%intcut, stmp, dtmpj, qtmpj)
+
+                  !write(*,*) "gggggggg: bas1", tb%calc%bas%cgto(iset, ityp)
+                  !write(*,*) "gggggggg: bas2", tb%calc%bas%cgto(jset, jtyp)
+                  !write(*,*) "lllllllllllll: r2, rij ", r2, rij
 
                   DO inda = 1, nsgfa(iset)
                      ia = first_sgfa(1, iset) - first_sgfa(1, 1) + inda
@@ -1766,6 +1821,8 @@ CONTAINS
                         dip_ket1(ib, ia) = dtmpj(1, ij)
                         dip_ket2(ib, ia) = dtmpj(2, ij)
                         dip_ket3(ib, ia) = dtmpj(3, ij)
+                        !write(*,*) 'mmmmmmmmmmmmmm, i, j, dipole', ia, ib, ij
+                        !write(*,'(6F18.9)') dtmpj(:, ij)
 
                         quad_ket1(ib, ia) = qtmpj(1, ij)
                         quad_ket2(ib, ia) = qtmpj(2, ij)
@@ -1773,13 +1830,21 @@ CONTAINS
                         quad_ket4(ib, ia) = qtmpj(4, ij)
                         quad_ket5(ib, ia) = qtmpj(5, ij)
                         quad_ket6(ib, ia) = qtmpj(6, ij)
+                        !write(*,*) 'nnnnnnnnnnn, i, j, quadrupole', ia, ib, ij
+                        !write(*,'(6F18.9)') qtmpj(:, ij)
+
                      END DO
                   END DO
                END DO
             END DO
          END IF
+         !END IF
+         write(*,*) "fffffffff BRA1, dipole "
+         write(*,'(16F15.7)') dip_bra2(:,:)
       END DO
       CALL neighbor_list_iterator_release(nl_iterator)
+
+      
 
       DO i = 1, dip_n
          CALL dbcsr_finalize(tb%dipbra(i)%matrix)
@@ -1865,6 +1930,65 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE contract_dens
+
+
+
+   SUBROUTINE contract_dens_p(p_matrix, bra_mat, ket_mat, output, para_env)
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: p_matrix
+      TYPE(dbcsr_type), POINTER                          :: bra_mat, ket_mat
+      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: output
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'contract_dens'
+
+      INTEGER                                            :: handle, i, iblock_col, iblock_row, &
+                                                            ispin, j, nspin
+      LOGICAL                                            :: found
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: bra, ket, p_block
+      TYPE(dbcsr_iterator_type)                          :: iter
+
+      CALL timeset(routineN, handle)
+
+      nspin = SIZE(p_matrix)
+      output = 0.0_dp
+      DO ispin = 1, nspin
+         CALL dbcsr_iterator_start(iter, bra_mat)
+         DO WHILE (dbcsr_iterator_blocks_left(iter))
+            NULLIFY (p_block, bra, ket)
+
+            CALL dbcsr_iterator_next_block(iter, iblock_row, iblock_col, bra)
+            write(*,*) "iiiii iblock_row, iblock_col :", iblock_row, iblock_col
+            IF (.NOT. ASSOCIATED(bra)) CYCLE
+            CALL dbcsr_get_block_p(matrix=p_matrix(ispin)%matrix, &
+                                   row=iblock_row, col=iblock_col, BLOCK=p_block, found=found)
+            IF (.NOT. found) CPABORT("missing d block")
+            CALL dbcsr_get_block_p(matrix=ket_mat, &
+                                   row=iblock_row, col=iblock_col, BLOCK=ket, found=found)
+            IF (.NOT. found) CPABORT("missing k block")
+
+            write(*,*) "XXXXX DENS:", p_block
+            write(*,*) "YYYYYYYYYYY BRA:", bra
+            DO j = 1, SIZE(p_block, 1)
+               DO i = 1, SIZE(p_block, 2)
+                  output(iblock_row) = output(iblock_row) + p_block(j, i)*ket(j, i)
+               END DO
+            END DO
+            IF (iblock_col /= iblock_row) THEN
+               DO j = 1, SIZE(p_block, 1)
+                  DO i = 1, SIZE(p_block, 2)
+                     output(iblock_col) = output(iblock_col) + p_block(j, i)*bra(j, i)
+                  END DO
+               END DO
+            END IF
+            write(*,*) "ZZZZZZZ CON:", output(iblock_row)
+         END DO
+         CALL dbcsr_iterator_stop(iter)
+      END DO
+
+      CALL para_env%sum(output)
+      CALL timestop(handle)
+
+   END SUBROUTINE contract_dens_p
 
 ! **************************************************************************************************
 !> \brief save gradient to force
