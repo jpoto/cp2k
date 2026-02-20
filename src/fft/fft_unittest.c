@@ -75,6 +75,8 @@ int main(int argc, char *argv[]) {
   } else {
     printf("\nFound %i errors :-(\n", errors);
   }
+  fflush(stdout);
+  cp_mpi_barrier(cp_mpi_get_comm_world());
 
   cp_mpi_finalize();
 

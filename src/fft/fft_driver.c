@@ -1078,8 +1078,7 @@ void fft_3d_bw_c2r_blocked(
  ******************************************************************************/
 void fft_3d_fw_ray(const double complex *restrict grid_rs,
                    const bool is_complex, double complex *restrict grid_gs,
-                   const int (*index_to_g)[3], const int *xy_to_ray,
-                   const int npts_gs_local, const int npts_global[3],
+                   const int npts_gs_local, const int npts_global[3], const int *index_to_ray, 
                    const int (*proc2local_rs)[3][2],
                    const int (*proc2local_ms)[3][2],
                    const int (*proc2local_x_gs)[2], const int *rays_per_process,
@@ -1109,10 +1108,6 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                          proc2local_ms[my_process][1][1],
                          proc2local_ms[my_process][2][1]};
   int number_of_local_xy_rays = rays_per_process[my_process];
-  const int(*my_ray_to_xy)[2] = ray_to_xy;
-  for (int process = 0; process < my_process; process++) {
-    my_ray_to_xy += rays_per_process[process];
-  }
 
   int proc_grid[2];
   int periods[2];
@@ -1202,15 +1197,9 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                     grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, xy_to_ray, grid_gs, npts_global,         \
-               grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, grid_gs, grid_buffer_2, scaling_factor, index_to_ray)
     for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-      grid_gs[index] =
-          scaling_factor *
-          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
-                            npts_global[2] +
-                        index_g[2]];
+      grid_gs[index] = scaling_factor * grid_buffer_2[index_to_ray[index]];
     }
   } else if (proc_grid[0] > 1) {
     if (is_complex) {
@@ -1236,17 +1225,18 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, xy_to_ray, grid_gs, npts_global,         \
-               grid_buffer_2, scaling_factor)
+                    printf("Start copying from buffer to gs grid\n");
+                    fflush(stdout);
+                    cp_mpi_barrier(comm);
+                    #pragma omp parallel for default(none)                                         \
+    shared(npts_gs_local, grid_gs, grid_buffer_2, scaling_factor, index_to_ray, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-      grid_gs[index] =
-          scaling_factor *
-          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
-                            npts_global[2] +
-                        index_g[2]];
+      printf("%i Copy %i to %i: (%f %f)\n", my_process, index, index_to_ray[index], creal(grid_buffer_2[index_to_ray[index]]), cimag(grid_buffer_2[index_to_ray[index]]));
+      grid_gs[index] = scaling_factor * grid_buffer_2[index_to_ray[index]];
     }
+                    printf("%i Done copying from buffer to gs grid\n", my_process);
+                    fflush(stdout);
+                    cp_mpi_barrier(comm);
   } else {
     if (is_complex) {
       memcpy(grid_buffer_2, grid_rs,
@@ -1260,15 +1250,9 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
 
     fft_3d_fw_local(npts_global, grid_buffer_2, grid_buffer_1);
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, npts_global, grid_buffer_1,     \
-               scaling_factor)
+    shared(npts_gs_local, grid_gs, grid_buffer_1, scaling_factor, index_to_ray)
     for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-      grid_gs[index] =
-          scaling_factor *
-          grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
-                            npts_global[2] +
-                        index_g[2]];
+      grid_gs[index] = scaling_factor * grid_buffer_1[index_to_ray[index]];
     }
   }
 
