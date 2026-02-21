@@ -24,7 +24,7 @@
  ******************************************************************************/
 void fft_3d_fw_blocked(
     const double complex *restrict grid_rs, const bool is_complex,
-    double complex *restrict grid_gs, const int (*index_to_g)[3],
+    double complex *restrict grid_gs, const int *index_to_cart,
     const int npts_gs_local, const int npts_global[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_gs)[3][2], const int (*proc2local_x_gs)[2],
@@ -70,7 +70,7 @@ void fft_3d_fw_blocked(
                                     ((long int)npts_global[2]);
   const double scaling_factor = 1.0 / ((double)number_of_points);
   const int number_of_points_to_scale =
-      index_to_g != NULL ? npts_gs_local : product3(fft_sizes_gs);
+      index_to_cart != NULL ? npts_gs_local : product3(fft_sizes_gs);
   const int stride_size = 1;
 
   // We use different data distribution schemes depending on the availability of
@@ -147,21 +147,14 @@ void fft_3d_fw_blocked(
                                             redistribution, sub_comm[0]);
 
     // Perform the third FFT
-    if (index_to_g != NULL) {
+    if (index_to_cart != NULL) {
       fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
-               grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
-        const int *index_g = index_to_g[index];
-        grid_gs[index] =
-            scaling_factor *
-            grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
-                           (index_g[1] - my_bounds_gs[1][0])) *
-                              fft_sizes_gs[2] +
-                          (index_g[2] - my_bounds_gs[2][0])];
+        grid_gs[index] = scaling_factor * grid_buffer_2[index_to_cart[index]];
       }
     } else {
       fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -191,15 +184,10 @@ void fft_3d_fw_blocked(
           (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
           sub_comm[0], grid_buffer_2, grid_buffer_1);
       // Transpose the data (y_D,z,x) -> (x,y_D,z)
-      if (index_to_g != NULL) {
-        #pragma omp parallel for default(none) shared(npts_gs_local, index_to_g, grid_buffer_1, grid_gs, my_bounds_gs, fft_sizes_gs, scaling_factor)
+      if (index_to_cart != NULL) {
+        #pragma omp parallel for default(none) shared(npts_gs_local, index_to_cart, grid_buffer_1, grid_gs, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
-          const int *index_g = index_to_g[index];
-          grid_gs[index] = scaling_factor*grid_buffer_1[((index_g[1] - my_bounds_gs[1][0]) *
-                                              fft_sizes_gs[2] +
-                                          (index_g[2] - my_bounds_gs[2][0])) *
-                                             fft_sizes_gs[0] +
-                                         (index_g[0] - my_bounds_gs[0][0])];
+          grid_gs[index] = scaling_factor*grid_buffer_1[index_to_cart[index]];
         }
       } else {
         transpose_local_complex(grid_buffer_1, grid_gs, fft_sizes_gs[0],
@@ -229,21 +217,15 @@ void fft_3d_fw_blocked(
                                               redistribution, sub_comm[0]);
 
       // Perform the third FFT
-      if (index_to_g != NULL) {
+      if (index_to_cart != NULL) {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
-               grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
-          const int *index_g = index_to_g[index];
           grid_gs[index] = scaling_factor *
-                           grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) *
-                                              fft_sizes_gs[1] +
-                                          (index_g[1] - my_bounds_gs[1][0])) *
-                                             fft_sizes_gs[2] +
-                                         (index_g[2] - my_bounds_gs[2][0])];
+                           grid_buffer_2[index_to_cart[index]];
         }
       } else {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -263,20 +245,13 @@ void fft_3d_fw_blocked(
         grid_buffer_1[i] = CMPLX(grid_rs_double[i], 0.0);
     }
 
-    if (index_to_g != NULL) {
+    if (index_to_cart != NULL) {
       fft_3d_fw_local(npts_global, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_g, grid_gs, my_bounds_gs, fft_sizes_gs,     \
-               grid_buffer_2, scaling_factor)
+    shared(npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
-        const int *index_g = index_to_g[index];
-        grid_gs[index] =
-            scaling_factor *
-            grid_buffer_2[((index_g[0] - my_bounds_gs[0][0]) * fft_sizes_gs[1] +
-                           (index_g[1] - my_bounds_gs[1][0])) *
-                              fft_sizes_gs[2] +
-                          (index_g[2] - my_bounds_gs[2][0])];
+        grid_gs[index] = scaling_factor * grid_buffer_2[index_to_cart[index]];
       }
     } else {
       fft_3d_fw_local(npts_global, grid_buffer_1, grid_gs);

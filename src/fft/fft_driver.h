@@ -18,7 +18,7 @@
  ******************************************************************************/
 void fft_3d_fw_blocked(
     const double complex *restrict grid_rs, const bool is_complex,
-    double complex *restrict grid_gs, const int (*index_to_g)[3],
+    double complex *restrict grid_gs, const int *index_to_cart,
     const int npts_gs_local, const int npts_global[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_gs)[3][2], const int (*proc2local_x_gs)[2],

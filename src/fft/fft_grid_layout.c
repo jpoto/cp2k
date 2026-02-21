@@ -676,12 +676,22 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
       }
     }
   } else {
+    if (fft_lib_use_mpi() && my_fft_grid->proc_grid[0] > 1 && my_fft_grid->proc_grid[1] == 1) {
+    for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+      int *index_g = my_fft_grid->index_to_g[index];
+      my_fft_grid->index_to_cart[index] = ((index_g[1] - bounds_gs[1][0]) * bounds_gs[0][1] +
+                           (index_g[0] - bounds_gs[0][0])) *
+                              bounds_gs[2][1] +
+                          (index_g[2] - bounds_gs[2][0]); 
+    }
+    } else {
     for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
       int *index_g = my_fft_grid->index_to_g[index];
       my_fft_grid->index_to_cart[index] = ((index_g[0] - bounds_gs[0][0]) * bounds_gs[1][1] +
                            (index_g[1] - bounds_gs[1][0])) *
                               bounds_gs[2][1] +
                           (index_g[2] - bounds_gs[2][0]);
+    }
     }
   }
 
@@ -1128,7 +1138,7 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
                   grid_layout->redistribution, grid_layout->comm,
                   grid_layout->sub_comm);
   } else {
-    fft_3d_fw_blocked(grid_rs, true, grid_gs, grid_layout->index_to_g,
+    fft_3d_fw_blocked(grid_rs, true, grid_gs, grid_layout->index_to_cart,
                       grid_layout->npts_gs_local, grid_layout->npts_global,
                       grid_layout->proc2local_rs, grid_layout->proc2local_ms,
                       grid_layout->proc2local_gs, grid_layout->proc2local_x_gs,
@@ -1238,7 +1248,7 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
                     grid_layout->comm, grid_layout->sub_comm);
     } else {
       fft_3d_fw_blocked((const double complex *)grid_rs, false, grid_gs,
-                        grid_layout->index_to_g, grid_layout->npts_gs_local,
+                        grid_layout->index_to_cart, grid_layout->npts_gs_local,
                         grid_layout->npts_global, grid_layout->proc2local_rs,
                         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
                         grid_layout->proc2local_x_gs,
