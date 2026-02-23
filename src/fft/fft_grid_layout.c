@@ -716,10 +716,10 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
     if (fft_lib_use_mpi() && my_fft_grid->proc_grid[0] > 1 && my_fft_grid->proc_grid[1] == 1) {
     for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
       int *index_g = my_fft_grid->index_to_g[index];
-      my_fft_grid->index_to_cart[index] = ((index_g[1] - bounds_gs[1][0]) * bounds_gs[0][1] +
-                           (index_g[0] - bounds_gs[0][0])) *
-                              bounds_gs[2][1] +
-                          (index_g[2] - bounds_gs[2][0]); 
+      my_fft_grid->index_to_cart[index] = ((index_g[1] - bounds_gs[1][0]) * bounds_gs[2][1] +
+                           (index_g[2] - bounds_gs[2][0])) *
+                              bounds_gs[0][1] +
+                          (index_g[0] - bounds_gs[0][0]); 
     }
     } else {
     for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {

@@ -421,18 +421,18 @@ void fft_3d_fw_r2c_blocked(
       // Transpose the data (y_D,z,x) -> (x,y_D,z)
       if (index_to_cart_neg != NULL && index_to_cart_pos != NULL) {
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2, scaling_factor)
+    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1, scaling_factor)
       for (int index = 0; index < number_of_positive_points; index++) {
         grid_gs[index_to_cart_pos[index][0]] =
             scaling_factor *
-            grid_buffer_2[index_to_cart_pos[index][1]];
+            grid_buffer_1[index_to_cart_pos[index][1]];
       }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_2, scaling_factor)
+    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_1, scaling_factor)
       for (int index = 0; index < number_of_negative_points; index++) {
         grid_gs[index_to_cart_neg[index][0]] =
             scaling_factor *
-            conj(grid_buffer_2[index_to_cart_neg[index][1]]);
+            conj(grid_buffer_1[index_to_cart_neg[index][1]]);
         }
       } else {
         transpose_local_complex(grid_buffer_1, grid_gs, fft_sizes_gs[0],
