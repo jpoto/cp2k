@@ -1324,7 +1324,7 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
                   grid_layout->sub_comm);
   } else {
     fft_3d_bw_blocked(
-        grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
+        grid_gs, grid_layout->index_to_cart, grid_layout->npts_gs_local, grid_rs,
         true, grid_layout->npts_global, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->proc2local_x_gs, grid_layout->proc2local_y_gs,
@@ -1385,7 +1385,7 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
           grid_layout->sub_comm);
     } else {
       fft_3d_bw_c2r_blocked(
-          grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local, grid_rs,
+          grid_gs, grid_layout->index_to_cart_pos, grid_layout->number_of_positive_gs_points, grid_rs,
           grid_layout->npts_global, grid_layout->npts_global_gspace,
           grid_layout->proc2local_rs, grid_layout->proc2local_ms,
           grid_layout->proc2local_gs, grid_layout->proc2local_x_gs,
@@ -1403,7 +1403,7 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
                     grid_layout->sub_comm);
     } else {
       fft_3d_bw_blocked(
-          grid_gs, grid_layout->index_to_g, grid_layout->npts_gs_local,
+          grid_gs, grid_layout->index_to_cart, grid_layout->npts_gs_local,
           (double complex *)grid_rs, false, grid_layout->npts_global,
           grid_layout->proc2local_rs, grid_layout->proc2local_ms,
           grid_layout->proc2local_gs, grid_layout->proc2local_x_gs,

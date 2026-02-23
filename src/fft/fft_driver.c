@@ -590,7 +590,7 @@ void fft_3d_fw_r2c_blocked(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_blocked(
-    const double complex *restrict grid_gs, const int (*index_to_g)[3],
+    const double complex *restrict grid_gs, const int *index_to_cart,
     const int number_of_local_gpts, double complex *restrict grid_rs,
     const bool is_complex, const int npts_global[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
@@ -628,26 +628,6 @@ void fft_3d_bw_blocked(
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
 
-  if (index_to_g != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-    //#pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, grid_buffer_1, grid_gs, proc2local_gs, my_process, fft_sizes_gs, npts_global, stdout)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      for (int dir = 0; dir < 3; dir++) {
-      assert (index[dir] < npts_global[dir]);
-      assert (index[dir] >= 0);
-    }
-      grid_buffer_1[((index[0] - proc2local_gs[my_process][0][0]) *
-                         fft_sizes_gs[1] +
-                     index[1] - proc2local_gs[my_process][1][0]) *
-                        fft_sizes_gs[2] +
-                    index[2] - proc2local_gs[my_process][2][0]] = grid_gs[i];
-    }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
-
   // We use different data distribution schemes depending on the availability of
   // a distributed FFT library because FFTW requires the data to the different
   // FFTs to be consecutively stored in memory. This is not possible without a
@@ -655,6 +635,17 @@ void fft_3d_bw_blocked(
   // the Guru interface which is not available with all implementations of the
   // FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
+  if (index_to_cart != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+    }
+  } else {
+    memcpy(grid_buffer_1, grid_gs,
+           product3(fft_sizes_gs) * sizeof(double complex));
+  }
+
     // Perform the first FFT in z-direction
     fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                     false, grid_buffer_1, grid_buffer_2);
@@ -724,10 +715,18 @@ void fft_3d_bw_blocked(
     }
   } else if (proc_grid[0] > 1) {
     if (fft_lib_use_mpi()) {
-      // Exchange the first two dimensions (x,y_D,z) -> (y_D,z,x)
+  if (index_to_cart != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_2, grid_gs)
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      grid_buffer_2[index_to_cart[i]] = grid_gs[i];
+    }
+  } else {
       transpose_local_complex(
-          grid_buffer_1, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
+          grid_gs, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
           fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
+  }
+
       // 3D FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed(
           (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
@@ -748,6 +747,17 @@ void fft_3d_bw_blocked(
           grid_rs_double[i] = creal(grid_buffer_2[i]);
       }
     } else {
+  if (index_to_cart != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+    }
+  } else {
+    memcpy(grid_buffer_1, grid_gs,
+           product3(fft_sizes_gs) * sizeof(double complex));
+  }
+
       // Perform the first FFT and one transposition (x,y_d,z)->(z,x,y_d)
       fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_buffer_2);
@@ -775,6 +785,17 @@ void fft_3d_bw_blocked(
       }
     }
   } else {
+  if (index_to_cart != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
+    for (int i = 0; i < number_of_local_gpts; i++) {
+      grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+    }
+  } else {
+    memcpy(grid_buffer_1, grid_gs,
+           product3(fft_sizes_gs) * sizeof(double complex));
+  }
+
     if (is_complex) {
       fft_3d_bw_local(npts_global, grid_buffer_1, grid_rs);
     } else {
@@ -795,8 +816,8 @@ void fft_3d_bw_blocked(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_c2r_blocked(
-    const double complex *restrict grid_gs, const int (*index_to_g)[3],
-    const int number_of_local_gpts, double *restrict grid_rs,
+    const double complex *restrict grid_gs, const int (*index_to_cart_pos)[2],
+    const int number_of_positive_points, double *restrict grid_rs,
     const int npts_global[3], const int npts_global_gspace[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_gs)[3][2], const int (*proc2local_x_gs)[2],
@@ -833,18 +854,11 @@ void fft_3d_bw_c2r_blocked(
   int my_coord[2];
   cp_mpi_cart_get(comm, 2, proc_grid, periods, my_coord);
 
-  if (index_to_g != NULL) {
+  if (index_to_cart_pos != NULL) {
     memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-          #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, fft_sizes_gs, proc2local_gs, my_process, grid_gs, grid_buffer_1, npts_global)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-        if (index[0] <= npts_global[0]/2) {
-      grid_buffer_1[((index[0] - proc2local_gs[my_process][0][0]) *
-                         fft_sizes_gs[1] +
-                     index[1] - proc2local_gs[my_process][1][0]) *
-                        fft_sizes_gs[2] +
-                    index[2] - proc2local_gs[my_process][2][0]] = grid_gs[i];
-        }
+          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
     }
   } else {
     memcpy(grid_buffer_1, grid_gs,
@@ -858,6 +872,17 @@ void fft_3d_bw_c2r_blocked(
   // the Guru interface which is not available with all implementations of the
   // FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
+  if (index_to_cart_pos != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
+    }
+  } else {
+    memcpy(grid_buffer_1, grid_gs,
+           product3(fft_sizes_gs) * sizeof(double complex));
+  }
+
     // Perform the first FFT in z-direction (x_d,y_d,z)->(z,x_d,y_d)
     fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                     false, grid_buffer_1, grid_buffer_2);
@@ -904,9 +929,18 @@ void fft_3d_bw_c2r_blocked(
   } else if (proc_grid[0] > 1) {
     if (fft_lib_use_mpi()) {
       // Exchange the first two dimensions (x,y_d,z) -> (y_d,z,x)
+  if (index_to_cart_pos != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_2[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
+    }
+  } else {
       transpose_local_complex(
-          grid_buffer_1, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
+          grid_gs, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
           fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
+  }
+
       // Distributed FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed_c2r(
           (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
@@ -917,6 +951,17 @@ void fft_3d_bw_c2r_blocked(
                                fft_sizes_rs[1], 2 * npts_global_gspace[0],
                                fft_sizes_rs[1], fft_sizes_rs[2]);
     } else {
+  if (index_to_cart_pos != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
+    }
+  } else {
+    memcpy(grid_buffer_1, grid_gs,
+           product3(fft_sizes_gs) * sizeof(double complex));
+  }
+
       // Perform the first FFT and one transposition (x,y_d,z)->(z,x,y_d)
       fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_buffer_2);
@@ -953,6 +998,17 @@ void fft_3d_bw_c2r_blocked(
       }
     }
   } else {
+  if (index_to_cart_pos != NULL) {
+    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
+    }
+  } else {
+    memcpy(grid_buffer_1, grid_gs,
+           product3(fft_sizes_gs) * sizeof(double complex));
+  }
+
     if (fft_lib_has_guru_interface()) {
       // Use the guru interface to merge both 1D FFTs into a single 2D FFT)
       const fft_iodim dims[3] = {

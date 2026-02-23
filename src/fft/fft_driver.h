@@ -44,7 +44,7 @@ void fft_3d_fw_r2c_blocked(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_blocked(
-    const double complex *restrict grid_gs, const int (*index_to_g)[3],
+    const double complex *restrict grid_gs, const int *index_to_cart,
     const int number_of_local_gpts, double complex *restrict grid_rs,
     const bool is_complex, const int npts_global[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
@@ -57,7 +57,7 @@ void fft_3d_bw_blocked(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_c2r_blocked(
-    const double complex *restrict grid_gs, const int (*index_to_g)[3],
+    const double complex *restrict grid_gs, const int (*index_to_cart_pos)[2],
     const int number_of_local_gpts, double *restrict grid_rs,
     const int npts_global[3], const int npts_global_gspace[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
