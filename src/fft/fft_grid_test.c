@@ -110,7 +110,7 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw 3D FFT (cartesian) does not work correctly (%i "
+      printf("The fw 3D FFT (non-cartesian) does not work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
