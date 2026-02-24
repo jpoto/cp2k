@@ -1191,18 +1191,11 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
-                    printf("Start copying from buffer to gs grid\n");
-                    fflush(stdout);
-                    cp_mpi_barrier(comm);
                     #pragma omp parallel for default(none)                                         \
     shared(npts_gs_local, grid_gs, grid_buffer_2, scaling_factor, index_to_ray, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
-      printf("%i Copy %i to %i: (%f %f)\n", my_process, index, index_to_ray[index], creal(grid_buffer_2[index_to_ray[index]]), cimag(grid_buffer_2[index_to_ray[index]]));
       grid_gs[index] = scaling_factor * grid_buffer_2[index_to_ray[index]];
     }
-                    printf("%i Done copying from buffer to gs grid\n", my_process);
-                    fflush(stdout);
-                    cp_mpi_barrier(comm);
   } else {
     if (is_complex) {
       memcpy(grid_buffer_2, grid_rs,
@@ -1232,7 +1225,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
  ******************************************************************************/
 void fft_3d_fw_r2c_ray(
     const double *restrict grid_rs, double complex *restrict grid_gs,
-    const int (*index_to_g)[3], const int *xy_to_ray, const int npts_gs_local,
+    const int (*index_to_ray_pos)[2], const int (*index_to_ray_neg)[2], 
+    const int number_of_positive_points,const int number_of_negative_points,
     const int npts_global[3], const int npts_global_gspace[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_x_gs)[2], const int *rays_per_process,
@@ -1340,30 +1334,18 @@ void fft_3d_fw_r2c_ray(
     }
 
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, npts_global, index_to_g, grid_gs, xy_to_ray,         \
-               grid_buffer_2, scaling_factor)
-    for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-        if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) >= 0) {
-      grid_gs[index] =
+    shared(number_of_positive_points, index_to_ray_pos, grid_gs, grid_buffer_2, scaling_factor)
+    for (int index = 0; index < number_of_positive_points; index++) {
+      grid_gs[index_to_ray_pos[index][0]] =
           scaling_factor *
-          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
-                            npts_global[2] +
-                        index_g[2]];
-        }
+          grid_buffer_2[index_to_ray_pos[index][1]];
     }
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, npts_global, index_to_g, grid_gs, xy_to_ray,         \
-               grid_buffer_2, scaling_factor, my_process)
-    for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-        if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) < 0) {
-      grid_gs[index] =
+    shared(number_of_negative_points, index_to_ray_neg, grid_gs, grid_buffer_2, scaling_factor)
+    for (int index = 0; index < number_of_negative_points; index++) {
+      grid_gs[index_to_ray_neg[index][0]] =
           scaling_factor *
-          conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0])%npts_global[0] * npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
-                            npts_global[2] +(npts_global[2]-
-                        index_g[2])%npts_global[2]]);
-        }
+          conj(grid_buffer_2[index_to_ray_neg[index][1]]);
     }
   } else if (proc_grid[0] > 1) {
     if (fft_lib_has_guru_interface()) {
@@ -1405,30 +1387,20 @@ void fft_3d_fw_r2c_ray(
                     grid_buffer_1, grid_buffer_2);
                     
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, xy_to_ray, npts_global, index_to_g, grid_gs,         \
+    shared(number_of_positive_points, index_to_ray_pos, grid_gs,         \
                grid_buffer_2, scaling_factor)
-    for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-        if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) >= 0) {
-      grid_gs[index] =
+    for (int index = 0; index < number_of_positive_points; index++) {
+      grid_gs[index_to_ray_pos[index][0]] =
           scaling_factor *
-          grid_buffer_2[xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
-                            npts_global[2] +
-                        index_g[2]];
-                      }
+          grid_buffer_2[index_to_ray_pos[index][1]];
     }
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, xy_to_ray, npts_global, index_to_g, grid_gs,         \
+    shared(number_of_negative_points, index_to_ray_neg, grid_gs,         \
                grid_buffer_2, scaling_factor)
-    for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-        if (convert_c_index_to_shifted_index(index_g[0], npts_global[0]) < 0) {
-      grid_gs[index] =
+    for (int index = 0; index < number_of_negative_points; index++) {
+      grid_gs[index_to_ray_neg[index][0]] =
           scaling_factor *
-          conj(grid_buffer_2[xy_to_ray[(npts_global[0]-index_g[0])%npts_global[0]* npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
-                            npts_global[2] +(npts_global[2]-
-                        index_g[2])%npts_global[2]]);
-                      }
+          conj(grid_buffer_2[index_to_ray_neg[index][1]]);
     }
   } else {
     if (fft_lib_has_guru_interface()) {
@@ -1459,32 +1431,20 @@ void fft_3d_fw_r2c_ray(
 
 // Copy to the ray format
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, npts_global, index_to_g, grid_gs, grid_buffer_1,     \
+    shared(number_of_positive_points, index_to_ray_pos, grid_gs, grid_buffer_1,     \
                scaling_factor)
-    for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-      const int index_x_shifted = convert_c_index_to_shifted_index(index_g[0], npts_global[0]);
-        if (index_x_shifted >= 0) {
-      grid_gs[index] =
+    for (int index = 0; index < number_of_positive_points; index++) {
+      grid_gs[index_to_ray_pos[index][0]] =
           scaling_factor *
-          grid_buffer_1[(index_g[0] * npts_global[1] + index_g[1]) *
-                            npts_global[2] +
-                        index_g[2]];
-        }
+          grid_buffer_1[index_to_ray_pos[index][1]];
     }
 #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, npts_global, index_to_g, grid_gs, grid_buffer_1,     \
+    shared(number_of_negative_points, index_to_ray_neg, grid_gs, grid_buffer_1,     \
                scaling_factor)
-    for (int index = 0; index < npts_gs_local; index++) {
-      const int *index_g = index_to_g[index];
-      const int index_x_shifted = convert_c_index_to_shifted_index(index_g[0], npts_global[0]);
-        if (index_x_shifted < 0) {
-      grid_gs[index] =
+    for (int index = 0; index < number_of_negative_points; index++) {
+      grid_gs[index_to_ray_neg[index][0]] =
           scaling_factor *
-          conj(grid_buffer_1[((npts_global[0]-index_g[0]) * npts_global[1] +(npts_global[1]- index_g[1])%npts_global[1]) *
-                            npts_global[2] + (npts_global[2]-
-                        index_g[2])%npts_global[2]]);
-        }
+          conj(grid_buffer_1[index_to_ray_neg[index][1]]);
     }
   }
 

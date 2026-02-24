@@ -1259,8 +1259,8 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
   if (grid_layout->use_halfspace) {
     if (grid_layout->ray_distribution) {
       fft_3d_fw_r2c_ray(
-          grid_rs, grid_gs, grid_layout->index_to_g, grid_layout->xy_to_ray,
-          grid_layout->npts_gs_local, grid_layout->npts_global,
+          grid_rs, grid_gs, grid_layout->index_to_ray_pos, grid_layout->index_to_ray_neg,
+          grid_layout->number_of_positive_gs_points, grid_layout->number_of_negative_gs_points, grid_layout->npts_global,
           grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
           grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
           grid_layout->rays_per_process, grid_layout->ray_to_xy,
