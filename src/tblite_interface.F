@@ -1072,8 +1072,8 @@ CONTAINS
          END DO
          DEALLOCATE (ao_quad)
       END IF
-
-    WRITE (*, *) 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq  qsh   qqqqqqqqqqqqqqqqqqqqqqqqqqqq '
+    WRITE (*, *) 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq  multipoles   qqqqqqqqqqqqqqqqqqqqqqqqqqqq '
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>>  qsh  '
     write(*,'(6F18.9)') tb%wfn%qsh(:, 1)
     WRITE (*, *) '>>>>>>>>>>>>>>>>>  qat: '
     write(*,'(1F18.9)') tb%wfn%qat(:, 1)
@@ -1756,29 +1756,29 @@ CONTAINS
                         ib = first_sgfb(1, jset) - first_sgfb(1, 1) + indb
                         ij = indb + nsgfb(jset)*(inda - 1)
 
-                        dip_ket1(ib, ia) = dtmp(1, ij)
-                        dip_ket2(ib, ia) = dtmp(2, ij)
-                        dip_ket3(ib, ia) = dtmp(3, ij)
+                        dip_ket1(ib, ia) = dip_ket1(ib, ia) + dtmp(1, ij)
+                        dip_ket2(ib, ia) = dip_ket2(ib, ia) + dtmp(2, ij)
+                        dip_ket3(ib, ia) = dip_ket3(ib, ia) + dtmp(3, ij)
 
-                        quad_ket1(ib, ia) = qtmp(1, ij)
-                        quad_ket2(ib, ia) = qtmp(2, ij)
-                        quad_ket3(ib, ia) = qtmp(3, ij)
-                        quad_ket4(ib, ia) = qtmp(4, ij)
-                        quad_ket5(ib, ia) = qtmp(5, ij)
-                        quad_ket6(ib, ia) = qtmp(6, ij)
+                        quad_ket1(ib, ia) = quad_ket1(ib, ia) + qtmp(1, ij)
+                        quad_ket2(ib, ia) = quad_ket2(ib, ia) + qtmp(2, ij)
+                        quad_ket3(ib, ia) = quad_ket3(ib, ia) + qtmp(3, ij)
+                        quad_ket4(ib, ia) = quad_ket4(ib, ia) + qtmp(4, ij)
+                        quad_ket5(ib, ia) = quad_ket5(ib, ia) + qtmp(5, ij)
+                        quad_ket6(ib, ia) = quad_ket6(ib, ia) + qtmp(6, ij)
 
-                        dip_bra1(ib, ia) = dtmp(1, ij)
-                        dip_bra2(ib, ia) = dtmp(2, ij)
-                        dip_bra3(ib, ia) = dtmp(3, ij)
+                        dip_bra1(ib, ia) = dip_bra1(ib, ia) + dtmp(1, ij)
+                        dip_bra2(ib, ia) = dip_bra2(ib, ia) + dtmp(2, ij)
+                        dip_bra3(ib, ia) = dip_bra3(ib, ia) + dtmp(3, ij)
                         !write(*,*) 'jjjjjjjjjj, i, j, dipole', inda, indb, ij
                         !write(*,'(6F18.9)') dtmp(:, ij)
 
-                        quad_bra1(ib, ia) = qtmp(1, ij)
-                        quad_bra2(ib, ia) = qtmp(2, ij)
-                        quad_bra3(ib, ia) = qtmp(3, ij)
-                        quad_bra4(ib, ia) = qtmp(4, ij)
-                        quad_bra5(ib, ia) = qtmp(5, ij)
-                        quad_bra6(ib, ia) = qtmp(6, ij)
+                        quad_bra1(ib, ia) = quad_bra1(ib, ia) + qtmp(1, ij)
+                        quad_bra2(ib, ia) = quad_bra2(ib, ia) + qtmp(2, ij)
+                        quad_bra3(ib, ia) = quad_bra3(ib, ia) + qtmp(3, ij)
+                        quad_bra4(ib, ia) = quad_bra4(ib, ia) + qtmp(4, ij)
+                        quad_bra5(ib, ia) = quad_bra5(ib, ia) + qtmp(5, ij)
+                        quad_bra6(ib, ia) = quad_bra6(ib, ia) + qtmp(6, ij)
                         !write(*,*) 'kkkkkkkkkk, i, j, quadrupole', inda, indb, ij
                         !write(*,'(6F18.9)') qtmp(:, ij)
 
@@ -1805,31 +1805,31 @@ CONTAINS
 
                         ij = indb + nsgfb(jset)*(inda - 1)
 
-                        dip_bra1(ib, ia) = dtmp(1, ij)
-                        dip_bra2(ib, ia) = dtmp(2, ij)
-                        dip_bra3(ib, ia) = dtmp(3, ij)
+                        dip_bra1(ib, ia) = dip_bra1(ib, ia) + dtmp(1, ij)
+                        dip_bra2(ib, ia) = dip_bra2(ib, ia) + dtmp(2, ij)
+                        dip_bra3(ib, ia) = dip_bra3(ib, ia) + dtmp(3, ij)
 
-                        quad_bra1(ib, ia) = qtmp(1, ij)
-                        quad_bra2(ib, ia) = qtmp(2, ij)
-                        quad_bra3(ib, ia) = qtmp(3, ij)
-                        quad_bra4(ib, ia) = qtmp(4, ij)
-                        quad_bra5(ib, ia) = qtmp(5, ij)
-                        quad_bra6(ib, ia) = qtmp(6, ij)
+                        quad_bra1(ib, ia) = quad_bra1(ib, ia) + qtmp(1, ij)
+                        quad_bra2(ib, ia) = quad_bra2(ib, ia) + qtmp(2, ij)
+                        quad_bra3(ib, ia) = quad_bra3(ib, ia) + qtmp(3, ij)
+                        quad_bra4(ib, ia) = quad_bra4(ib, ia) + qtmp(4, ij)
+                        quad_bra5(ib, ia) = quad_bra5(ib, ia) + qtmp(5, ij)
+                        quad_bra6(ib, ia) = quad_bra6(ib, ia) + qtmp(6, ij)
 
                         ij = inda + nsgfa(iset)*(indb - 1)
 
-                        dip_ket1(ib, ia) = dtmpj(1, ij)
-                        dip_ket2(ib, ia) = dtmpj(2, ij)
-                        dip_ket3(ib, ia) = dtmpj(3, ij)
+                        dip_ket1(ib, ia) = dip_ket1(ib, ia) + dtmpj(1, ij)
+                        dip_ket2(ib, ia) = dip_ket2(ib, ia) + dtmpj(2, ij)
+                        dip_ket3(ib, ia) = dip_ket3(ib, ia) + dtmpj(3, ij)
                         !write(*,*) 'mmmmmmmmmmmmmm, i, j, dipole', ia, ib, ij
                         !write(*,'(6F18.9)') dtmpj(:, ij)
 
-                        quad_ket1(ib, ia) = qtmpj(1, ij)
-                        quad_ket2(ib, ia) = qtmpj(2, ij)
-                        quad_ket3(ib, ia) = qtmpj(3, ij)
-                        quad_ket4(ib, ia) = qtmpj(4, ij)
-                        quad_ket5(ib, ia) = qtmpj(5, ij)
-                        quad_ket6(ib, ia) = qtmpj(6, ij)
+                        quad_ket1(ib, ia) = quad_ket1(ib, ia) + qtmpj(1, ij)
+                        quad_ket2(ib, ia) = quad_ket2(ib, ia) + qtmpj(2, ij)
+                        quad_ket3(ib, ia) = quad_ket3(ib, ia) + qtmpj(3, ij)
+                        quad_ket4(ib, ia) = quad_ket4(ib, ia) + qtmpj(4, ij)
+                        quad_ket5(ib, ia) = quad_ket5(ib, ia) + qtmpj(5, ij)
+                        quad_ket6(ib, ia) = quad_ket6(ib, ia) + qtmpj(6, ij)
                         !write(*,*) 'nnnnnnnnnnn, i, j, quadrupole', ia, ib, ij
                         !write(*,'(6F18.9)') qtmpj(:, ij)
 
@@ -1957,7 +1957,6 @@ CONTAINS
             NULLIFY (p_block, bra, ket)
 
             CALL dbcsr_iterator_next_block(iter, iblock_row, iblock_col, bra)
-            write(*,*) "iiiii iblock_row, iblock_col :", iblock_row, iblock_col
             IF (.NOT. ASSOCIATED(bra)) CYCLE
             CALL dbcsr_get_block_p(matrix=p_matrix(ispin)%matrix, &
                                    row=iblock_row, col=iblock_col, BLOCK=p_block, found=found)
@@ -1966,8 +1965,6 @@ CONTAINS
                                    row=iblock_row, col=iblock_col, BLOCK=ket, found=found)
             IF (.NOT. found) CPABORT("missing k block")
 
-            write(*,*) "XXXXX DENS:", p_block
-            write(*,*) "YYYYYYYYYYY BRA:", bra
             DO j = 1, SIZE(p_block, 1)
                DO i = 1, SIZE(p_block, 2)
                   output(iblock_row) = output(iblock_row) + p_block(j, i)*ket(j, i)
@@ -1980,7 +1977,6 @@ CONTAINS
                   END DO
                END DO
             END IF
-            write(*,*) "ZZZZZZZ CON:", output(iblock_row)
          END DO
          CALL dbcsr_iterator_stop(iter)
       END DO
