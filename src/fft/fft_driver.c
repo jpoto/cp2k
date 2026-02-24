@@ -116,7 +116,8 @@ void fft_3d_fw_blocked(
                  product3(fft_sizes_rs) * sizeof(double complex));
         } else {
           const double *grid_rs_double = (const double *)grid_rs;
-          #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_buffer_1, grid_rs_double)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_buffer_1, grid_rs_double)
           for (int i = 0; i < product3(fft_sizes_rs); i++)
             grid_buffer_1[i] = CMPLX(grid_rs_double[i], 0.0);
         }
@@ -151,8 +152,8 @@ void fft_3d_fw_blocked(
       fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_buffer_2);
 
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
+#pragma omp parallel for default(none) shared(                                 \
+        npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
         grid_gs[index] = scaling_factor * grid_buffer_2[index_to_cart[index]];
       }
@@ -185,9 +186,10 @@ void fft_3d_fw_blocked(
           sub_comm[0], grid_buffer_2, grid_buffer_1);
       // Transpose the data (y_D,z,x) -> (x,y_D,z)
       if (index_to_cart != NULL) {
-        #pragma omp parallel for default(none) shared(npts_gs_local, index_to_cart, grid_buffer_1, grid_gs, scaling_factor)
+#pragma omp parallel for default(none) shared(                                 \
+        npts_gs_local, index_to_cart, grid_buffer_1, grid_gs, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
-          grid_gs[index] = scaling_factor*grid_buffer_1[index_to_cart[index]];
+          grid_gs[index] = scaling_factor * grid_buffer_1[index_to_cart[index]];
         }
       } else {
         transpose_local_complex(grid_buffer_1, grid_gs, fft_sizes_gs[0],
@@ -201,7 +203,8 @@ void fft_3d_fw_blocked(
                product3(fft_sizes_rs) * sizeof(double complex));
       } else {
         const double *grid_rs_double = (const double *)grid_rs;
-        #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_buffer_2, grid_rs_double)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_buffer_2, grid_rs_double)
         for (int i = 0; i < product3(fft_sizes_rs); i++)
           grid_buffer_2[i] = CMPLX(grid_rs_double[i], 0.0);
       }
@@ -221,11 +224,10 @@ void fft_3d_fw_blocked(
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_buffer_2);
 
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
+#pragma omp parallel for default(none) shared(                                 \
+        npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
         for (int index = 0; index < npts_gs_local; index++) {
-          grid_gs[index] = scaling_factor *
-                           grid_buffer_2[index_to_cart[index]];
+          grid_gs[index] = scaling_factor * grid_buffer_2[index_to_cart[index]];
         }
       } else {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -240,7 +242,8 @@ void fft_3d_fw_blocked(
              product3(fft_sizes_rs) * sizeof(double complex));
     } else {
       const double *grid_rs_double = (const double *)grid_rs;
-        #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_buffer_1, grid_rs_double)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_buffer_1, grid_rs_double)
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_buffer_1[i] = CMPLX(grid_rs_double[i], 0.0);
     }
@@ -248,8 +251,8 @@ void fft_3d_fw_blocked(
     if (index_to_cart != NULL) {
       fft_3d_fw_local(npts_global, grid_buffer_1, grid_buffer_2);
 
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
+#pragma omp parallel for default(none) shared(                                 \
+        npts_gs_local, index_to_cart, grid_gs, grid_buffer_2, scaling_factor)
       for (int index = 0; index < npts_gs_local; index++) {
         grid_gs[index] = scaling_factor * grid_buffer_2[index_to_cart[index]];
       }
@@ -317,7 +320,9 @@ void fft_3d_fw_r2c_blocked(
                                     ((long int)npts_global[2]);
   const double scaling_factor = 1.0 / ((double)number_of_points);
   const int number_of_points_to_scale =
-      index_to_cart_pos != NULL ? number_of_negative_points+number_of_positive_points : product3(fft_sizes_gs);
+      index_to_cart_pos != NULL
+          ? number_of_negative_points + number_of_positive_points
+          : product3(fft_sizes_gs);
   const int stride_size = 1;
 
   // We use different data distribution schemes depending on the availability of
@@ -382,19 +387,19 @@ void fft_3d_fw_r2c_blocked(
                       false, grid_buffer_1, grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2, scaling_factor)
+    shared(number_of_positive_points, index_to_cart_pos, grid_gs,              \
+               grid_buffer_2, scaling_factor)
       for (int index = 0; index < number_of_positive_points; index++) {
         grid_gs[index_to_cart_pos[index][0]] =
-            scaling_factor *
-            grid_buffer_2[index_to_cart_pos[index][1]];
+            scaling_factor * grid_buffer_2[index_to_cart_pos[index][1]];
       }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_2, scaling_factor)
+    shared(number_of_negative_points, index_to_cart_neg, grid_gs,              \
+               grid_buffer_2, scaling_factor)
       for (int index = 0; index < number_of_negative_points; index++) {
         grid_gs[index_to_cart_neg[index][0]] =
-            scaling_factor *
-            conj(grid_buffer_2[index_to_cart_neg[index][1]]);
-        }
+            scaling_factor * conj(grid_buffer_2[index_to_cart_neg[index][1]]);
+      }
     } else {
       fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                       false, grid_buffer_1, grid_gs);
@@ -421,18 +426,18 @@ void fft_3d_fw_r2c_blocked(
       // Transpose the data (y_D,z,x) -> (x,y_D,z)
       if (index_to_cart_neg != NULL && index_to_cart_pos != NULL) {
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1, scaling_factor)
-      for (int index = 0; index < number_of_positive_points; index++) {
-        grid_gs[index_to_cart_pos[index][0]] =
-            scaling_factor *
-            grid_buffer_1[index_to_cart_pos[index][1]];
-      }
+    shared(number_of_positive_points, index_to_cart_pos, grid_gs,              \
+               grid_buffer_1, scaling_factor)
+        for (int index = 0; index < number_of_positive_points; index++) {
+          grid_gs[index_to_cart_pos[index][0]] =
+              scaling_factor * grid_buffer_1[index_to_cart_pos[index][1]];
+        }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_1, scaling_factor)
-      for (int index = 0; index < number_of_negative_points; index++) {
-        grid_gs[index_to_cart_neg[index][0]] =
-            scaling_factor *
-            conj(grid_buffer_1[index_to_cart_neg[index][1]]);
+    shared(number_of_negative_points, index_to_cart_neg, grid_gs,              \
+               grid_buffer_1, scaling_factor)
+        for (int index = 0; index < number_of_negative_points; index++) {
+          grid_gs[index_to_cart_neg[index][0]] =
+              scaling_factor * conj(grid_buffer_1[index_to_cart_neg[index][1]]);
         }
       } else {
         transpose_local_complex(grid_buffer_1, grid_gs, fft_sizes_gs[0],
@@ -480,20 +485,19 @@ void fft_3d_fw_r2c_blocked(
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
                         false, grid_buffer_1, grid_buffer_2);
 
-
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2, scaling_factor)
-      for (int index = 0; index < number_of_positive_points; index++) {
-        grid_gs[index_to_cart_pos[index][0]] =
-            scaling_factor *
-            grid_buffer_2[index_to_cart_pos[index][1]];
-      }
+    shared(number_of_positive_points, index_to_cart_pos, grid_gs,              \
+               grid_buffer_2, scaling_factor)
+        for (int index = 0; index < number_of_positive_points; index++) {
+          grid_gs[index_to_cart_pos[index][0]] =
+              scaling_factor * grid_buffer_2[index_to_cart_pos[index][1]];
+        }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_2, scaling_factor)
-      for (int index = 0; index < number_of_negative_points; index++) {
-        grid_gs[index_to_cart_neg[index][0]] =
-            scaling_factor *
-            conj(grid_buffer_2[index_to_cart_neg[index][1]]);
+    shared(number_of_negative_points, index_to_cart_neg, grid_gs,              \
+               grid_buffer_2, scaling_factor)
+        for (int index = 0; index < number_of_negative_points; index++) {
+          grid_gs[index_to_cart_neg[index][0]] =
+              scaling_factor * conj(grid_buffer_2[index_to_cart_neg[index][1]]);
         }
       } else {
         fft_1d_fw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -519,20 +523,21 @@ void fft_3d_fw_r2c_blocked(
 
       if (index_to_cart_neg != NULL && index_to_cart_pos != NULL) {
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2, scaling_factor)
-      for (int index = 0; index < number_of_positive_points; index++) {
-        grid_gs[index_to_cart_pos[index][0]] =
-            scaling_factor *
-            grid_buffer_2[index_to_cart_pos[index][1]];
-      }
+    shared(number_of_positive_points, index_to_cart_pos, grid_gs,              \
+               grid_buffer_2, scaling_factor)
+        for (int index = 0; index < number_of_positive_points; index++) {
+          grid_gs[index_to_cart_pos[index][0]] =
+              scaling_factor * grid_buffer_2[index_to_cart_pos[index][1]];
+        }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_2, scaling_factor, stderr)
-      for (int index = 0; index < number_of_negative_points; index++) {
-        fprintf(stderr, "%i %i %i\n", index, index_to_cart_neg[index][0], index_to_cart_neg[index][1]);
-        fflush(stderr);
-        grid_gs[index_to_cart_neg[index][0]] =
-            scaling_factor *
-            conj(grid_buffer_2[index_to_cart_neg[index][1]]);
+    shared(number_of_negative_points, index_to_cart_neg, grid_gs,              \
+               grid_buffer_2, scaling_factor, stderr)
+        for (int index = 0; index < number_of_negative_points; index++) {
+          fprintf(stderr, "%i %i %i\n", index, index_to_cart_neg[index][0],
+                  index_to_cart_neg[index][1]);
+          fflush(stderr);
+          grid_gs[index_to_cart_neg[index][0]] =
+              scaling_factor * conj(grid_buffer_2[index_to_cart_neg[index][1]]);
         }
       } else {
         memcpy(grid_gs, grid_buffer_2,
@@ -558,18 +563,18 @@ void fft_3d_fw_r2c_blocked(
                         grid_buffer_2);
 
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2, scaling_factor)
-      for (int index = 0; index < number_of_positive_points; index++) {
-        grid_gs[index_to_cart_pos[index][0]] =
-            scaling_factor *
-            grid_buffer_2[index_to_cart_pos[index][1]];
-      }
+    shared(number_of_positive_points, index_to_cart_pos, grid_gs,              \
+               grid_buffer_2, scaling_factor)
+        for (int index = 0; index < number_of_positive_points; index++) {
+          grid_gs[index_to_cart_pos[index][0]] =
+              scaling_factor * grid_buffer_2[index_to_cart_pos[index][1]];
+        }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_cart_neg, grid_gs, grid_buffer_2, scaling_factor)
-      for (int index = 0; index < number_of_negative_points; index++) {
-        grid_gs[index_to_cart_neg[index][0]] =
-            scaling_factor *
-            conj(grid_buffer_2[index_to_cart_neg[index][1]]);
+    shared(number_of_negative_points, index_to_cart_neg, grid_gs,              \
+               grid_buffer_2, scaling_factor)
+        for (int index = 0; index < number_of_negative_points; index++) {
+          grid_gs[index_to_cart_neg[index][0]] =
+              scaling_factor * conj(grid_buffer_2[index_to_cart_neg[index][1]]);
         }
       } else {
         fft_2d_fw_local((const int[2]){npts_global[1], npts_global[2]},
@@ -635,16 +640,17 @@ void fft_3d_bw_blocked(
   // the Guru interface which is not available with all implementations of the
   // FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
-  if (index_to_cart != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+    if (index_to_cart != NULL) {
+      memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
+      for (int i = 0; i < number_of_local_gpts; i++) {
+        grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+      }
+    } else {
+      memcpy(grid_buffer_1, grid_gs,
+             product3(fft_sizes_gs) * sizeof(double complex));
     }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
 
     // Perform the first FFT in z-direction
     fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -678,7 +684,8 @@ void fft_3d_bw_blocked(
               fft_sizes_rs[1], fft_sizes_rs[2]);
 
           double *grid_rs_double = (double *)grid_rs;
-          #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
           for (int i = 0; i < product3(fft_sizes_rs); i++)
             grid_rs_double[i] = creal(grid_buffer_2[i]);
         }
@@ -707,7 +714,8 @@ void fft_3d_bw_blocked(
           fft_1d_bw_local(npts_global[0], fft_sizes_rs[1] * fft_sizes_rs[2],
                           true, false, grid_buffer_1, grid_buffer_2);
           double *grid_rs_double = (double *)grid_rs;
-          #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
           for (int i = 0; i < product3(fft_sizes_rs); i++)
             grid_rs_double[i] = creal(grid_buffer_2[i]);
         }
@@ -715,17 +723,20 @@ void fft_3d_bw_blocked(
     }
   } else if (proc_grid[0] > 1) {
     if (fft_lib_use_mpi()) {
-  if (index_to_cart != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_2, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      grid_buffer_2[index_to_cart[i]] = grid_gs[i];
-    }
-  } else {
-      transpose_local_complex(
-          grid_gs, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
-          fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
-  }
+      if (index_to_cart != NULL) {
+        memset(grid_buffer_1, 0,
+               product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_cart, grid_buffer_2, grid_gs)
+        for (int i = 0; i < number_of_local_gpts; i++) {
+          grid_buffer_2[index_to_cart[i]] = grid_gs[i];
+        }
+      } else {
+        transpose_local_complex(
+            grid_gs, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
+            fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2],
+            fft_sizes_gs[0]);
+      }
 
       // 3D FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed(
@@ -742,21 +753,24 @@ void fft_3d_bw_blocked(
                           fft_sizes_rs[1], fft_sizes_rs[0], fft_sizes_rs[1],
                           fft_sizes_rs[0], fft_sizes_rs[1], fft_sizes_rs[2]);
         double *grid_rs_double = (double *)grid_rs;
-          #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
         for (int i = 0; i < product3(fft_sizes_rs); i++)
           grid_rs_double[i] = creal(grid_buffer_2[i]);
       }
     } else {
-  if (index_to_cart != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      grid_buffer_1[index_to_cart[i]] = grid_gs[i];
-    }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
+      if (index_to_cart != NULL) {
+        memset(grid_buffer_1, 0,
+               product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
+        for (int i = 0; i < number_of_local_gpts; i++) {
+          grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+        }
+      } else {
+        memcpy(grid_buffer_1, grid_gs,
+               product3(fft_sizes_gs) * sizeof(double complex));
+      }
 
       // Perform the first FFT and one transposition (x,y_d,z)->(z,x,y_d)
       fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -779,29 +793,32 @@ void fft_3d_bw_blocked(
                         fft_sizes_ms[2], true, false, grid_buffer_2,
                         grid_buffer_1);
         double *grid_rs_double = (double *)grid_rs;
-          #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
         for (int i = 0; i < product3(fft_sizes_rs); i++)
           grid_rs_double[i] = creal(grid_buffer_1[i]);
       }
     }
   } else {
-  if (index_to_cart != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-    #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+    if (index_to_cart != NULL) {
+      memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_cart, grid_buffer_1, grid_gs)
+      for (int i = 0; i < number_of_local_gpts; i++) {
+        grid_buffer_1[index_to_cart[i]] = grid_gs[i];
+      }
+    } else {
+      memcpy(grid_buffer_1, grid_gs,
+             product3(fft_sizes_gs) * sizeof(double complex));
     }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
 
     if (is_complex) {
       fft_3d_bw_local(npts_global, grid_buffer_1, grid_rs);
     } else {
       fft_3d_bw_local(npts_global, grid_buffer_1, grid_buffer_2);
       double *grid_rs_double = (double *)grid_rs;
-          #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_rs_double[i] = creal(grid_buffer_2[i]);
     }
@@ -856,7 +873,8 @@ void fft_3d_bw_c2r_blocked(
 
   if (index_to_cart_pos != NULL) {
     memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
     for (int i = 0; i < number_of_positive_points; i++) {
       grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
     }
@@ -872,16 +890,18 @@ void fft_3d_bw_c2r_blocked(
   // the Guru interface which is not available with all implementations of the
   // FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
-  if (index_to_cart_pos != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
-    for (int i = 0; i < number_of_positive_points; i++) {
-      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
+    if (index_to_cart_pos != NULL) {
+      memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+      for (int i = 0; i < number_of_positive_points; i++) {
+        grid_buffer_1[index_to_cart_pos[i][1]] =
+            grid_gs[index_to_cart_pos[i][0]];
+      }
+    } else {
+      memcpy(grid_buffer_1, grid_gs,
+             product3(fft_sizes_gs) * sizeof(double complex));
     }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
 
     // Perform the first FFT in z-direction (x_d,y_d,z)->(z,x_d,y_d)
     fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -929,17 +949,21 @@ void fft_3d_bw_c2r_blocked(
   } else if (proc_grid[0] > 1) {
     if (fft_lib_use_mpi()) {
       // Exchange the first two dimensions (x,y_d,z) -> (y_d,z,x)
-  if (index_to_cart_pos != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2)
-    for (int i = 0; i < number_of_positive_points; i++) {
-      grid_buffer_2[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
-    }
-  } else {
-      transpose_local_complex(
-          grid_gs, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
-          fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2], fft_sizes_gs[0]);
-  }
+      if (index_to_cart_pos != NULL) {
+        memset(grid_buffer_1, 0,
+               product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_2)
+        for (int i = 0; i < number_of_positive_points; i++) {
+          grid_buffer_2[index_to_cart_pos[i][1]] =
+              grid_gs[index_to_cart_pos[i][0]];
+        }
+      } else {
+        transpose_local_complex(
+            grid_gs, grid_buffer_2, fft_sizes_gs[1] * fft_sizes_gs[2],
+            fft_sizes_gs[0], fft_sizes_gs[1] * fft_sizes_gs[2],
+            fft_sizes_gs[0]);
+      }
 
       // Distributed FFT (y_d,z,x) -> (z_d,y,x)
       fft_3d_bw_distributed_c2r(
@@ -951,16 +975,19 @@ void fft_3d_bw_c2r_blocked(
                                fft_sizes_rs[1], 2 * npts_global_gspace[0],
                                fft_sizes_rs[1], fft_sizes_rs[2]);
     } else {
-  if (index_to_cart_pos != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
-    for (int i = 0; i < number_of_positive_points; i++) {
-      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
-    }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
+      if (index_to_cart_pos != NULL) {
+        memset(grid_buffer_1, 0,
+               product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+        for (int i = 0; i < number_of_positive_points; i++) {
+          grid_buffer_1[index_to_cart_pos[i][1]] =
+              grid_gs[index_to_cart_pos[i][0]];
+        }
+      } else {
+        memcpy(grid_buffer_1, grid_gs,
+               product3(fft_sizes_gs) * sizeof(double complex));
+      }
 
       // Perform the first FFT and one transposition (x,y_d,z)->(z,x,y_d)
       fft_1d_bw_local(npts_global[2], fft_sizes_gs[0] * fft_sizes_gs[1], true,
@@ -998,16 +1025,18 @@ void fft_3d_bw_c2r_blocked(
       }
     }
   } else {
-  if (index_to_cart_pos != NULL) {
-    memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
-          #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
-    for (int i = 0; i < number_of_positive_points; i++) {
-      grid_buffer_1[index_to_cart_pos[i][1]] = grid_gs[index_to_cart_pos[i][0]];
+    if (index_to_cart_pos != NULL) {
+      memset(grid_buffer_1, 0, product3(fft_sizes_gs) * sizeof(double complex));
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_cart_pos, grid_gs, grid_buffer_1)
+      for (int i = 0; i < number_of_positive_points; i++) {
+        grid_buffer_1[index_to_cart_pos[i][1]] =
+            grid_gs[index_to_cart_pos[i][0]];
+      }
+    } else {
+      memcpy(grid_buffer_1, grid_gs,
+             product3(fft_sizes_gs) * sizeof(double complex));
     }
-  } else {
-    memcpy(grid_buffer_1, grid_gs,
-           product3(fft_sizes_gs) * sizeof(double complex));
-  }
 
     if (fft_lib_has_guru_interface()) {
       // Use the guru interface to merge both 1D FFTs into a single 2D FFT)
@@ -1044,8 +1073,8 @@ void fft_3d_bw_c2r_blocked(
  ******************************************************************************/
 void fft_3d_fw_ray(const double complex *restrict grid_rs,
                    const bool is_complex, double complex *restrict grid_gs,
-                   const int npts_gs_local, const int npts_global[3], const int *index_to_ray, 
-                   const int (*proc2local_rs)[3][2],
+                   const int npts_gs_local, const int npts_global[3],
+                   const int *index_to_ray, const int (*proc2local_rs)[3][2],
                    const int (*proc2local_ms)[3][2],
                    const int (*proc2local_x_gs)[2], const int *rays_per_process,
                    const int (*ray_to_xy)[2],
@@ -1131,7 +1160,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                product3(fft_sizes_rs) * sizeof(double complex));
       } else {
         const double *grid_rs_double = (const double *)grid_rs;
-        #pragma omp parallel for default(none) shared(fft_sizes_rs,grid_buffer_2,grid_rs_double  )
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_buffer_2, grid_rs_double)
         for (int i = 0; i < product3(fft_sizes_rs); i++)
           grid_buffer_2[i] = CMPLX(grid_rs_double[i], 0.0);
       }
@@ -1162,8 +1192,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, grid_gs, grid_buffer_2, scaling_factor, index_to_ray)
+#pragma omp parallel for default(none) shared(                                 \
+        npts_gs_local, grid_gs, grid_buffer_2, scaling_factor, index_to_ray)
     for (int index = 0; index < npts_gs_local; index++) {
       grid_gs[index] = scaling_factor * grid_buffer_2[index_to_ray[index]];
     }
@@ -1173,7 +1203,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
              product3(fft_sizes_rs) * sizeof(double complex));
     } else {
       const double *grid_rs_double = (const double *)grid_rs;
-      #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_buffer_1, grid_rs_double)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_buffer_1, grid_rs_double)
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_buffer_1[i] = CMPLX(grid_rs_double[i], 0.0);
     }
@@ -1191,8 +1222,9 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
 
-                    #pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, grid_gs, grid_buffer_2, scaling_factor, index_to_ray, my_process)
+#pragma omp parallel for default(none)                                         \
+    shared(npts_gs_local, grid_gs, grid_buffer_2, scaling_factor,              \
+               index_to_ray, my_process)
     for (int index = 0; index < npts_gs_local; index++) {
       grid_gs[index] = scaling_factor * grid_buffer_2[index_to_ray[index]];
     }
@@ -1202,14 +1234,15 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
              product3(fft_sizes_rs) * sizeof(double complex));
     } else {
       const double *grid_rs_double = (const double *)grid_rs;
-      #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_buffer_2, grid_rs_double)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_buffer_2, grid_rs_double)
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_buffer_2[i] = CMPLX(grid_rs_double[i], 0.0);
     }
 
     fft_3d_fw_local(npts_global, grid_buffer_2, grid_buffer_1);
-#pragma omp parallel for default(none)                                         \
-    shared(npts_gs_local, grid_gs, grid_buffer_1, scaling_factor, index_to_ray)
+#pragma omp parallel for default(none) shared(                                 \
+        npts_gs_local, grid_gs, grid_buffer_1, scaling_factor, index_to_ray)
     for (int index = 0; index < npts_gs_local; index++) {
       grid_gs[index] = scaling_factor * grid_buffer_1[index_to_ray[index]];
     }
@@ -1225,8 +1258,8 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
  ******************************************************************************/
 void fft_3d_fw_r2c_ray(
     const double *restrict grid_rs, double complex *restrict grid_gs,
-    const int (*index_to_ray_pos)[2], const int (*index_to_ray_neg)[2], 
-    const int number_of_positive_points,const int number_of_negative_points,
+    const int (*index_to_ray_pos)[2], const int (*index_to_ray_neg)[2],
+    const int number_of_positive_points, const int number_of_negative_points,
     const int npts_global[3], const int npts_global_gspace[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_x_gs)[2], const int *rays_per_process,
@@ -1334,18 +1367,18 @@ void fft_3d_fw_r2c_ray(
     }
 
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_ray_pos, grid_gs, grid_buffer_2, scaling_factor)
+    shared(number_of_positive_points, index_to_ray_pos, grid_gs,               \
+               grid_buffer_2, scaling_factor)
     for (int index = 0; index < number_of_positive_points; index++) {
       grid_gs[index_to_ray_pos[index][0]] =
-          scaling_factor *
-          grid_buffer_2[index_to_ray_pos[index][1]];
+          scaling_factor * grid_buffer_2[index_to_ray_pos[index][1]];
     }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_ray_neg, grid_gs, grid_buffer_2, scaling_factor)
+    shared(number_of_negative_points, index_to_ray_neg, grid_gs,               \
+               grid_buffer_2, scaling_factor)
     for (int index = 0; index < number_of_negative_points; index++) {
       grid_gs[index_to_ray_neg[index][0]] =
-          scaling_factor *
-          conj(grid_buffer_2[index_to_ray_neg[index][1]]);
+          scaling_factor * conj(grid_buffer_2[index_to_ray_neg[index][1]]);
     }
   } else if (proc_grid[0] > 1) {
     if (fft_lib_has_guru_interface()) {
@@ -1385,22 +1418,20 @@ void fft_3d_fw_r2c_ray(
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
                     grid_buffer_1, grid_buffer_2);
-                    
+
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_ray_pos, grid_gs,         \
+    shared(number_of_positive_points, index_to_ray_pos, grid_gs,               \
                grid_buffer_2, scaling_factor)
     for (int index = 0; index < number_of_positive_points; index++) {
       grid_gs[index_to_ray_pos[index][0]] =
-          scaling_factor *
-          grid_buffer_2[index_to_ray_pos[index][1]];
+          scaling_factor * grid_buffer_2[index_to_ray_pos[index][1]];
     }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_ray_neg, grid_gs,         \
+    shared(number_of_negative_points, index_to_ray_neg, grid_gs,               \
                grid_buffer_2, scaling_factor)
     for (int index = 0; index < number_of_negative_points; index++) {
       grid_gs[index_to_ray_neg[index][0]] =
-          scaling_factor *
-          conj(grid_buffer_2[index_to_ray_neg[index][1]]);
+          scaling_factor * conj(grid_buffer_2[index_to_ray_neg[index][1]]);
     }
   } else {
     if (fft_lib_has_guru_interface()) {
@@ -1431,20 +1462,18 @@ void fft_3d_fw_r2c_ray(
 
 // Copy to the ray format
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_positive_points, index_to_ray_pos, grid_gs, grid_buffer_1,     \
-               scaling_factor)
+    shared(number_of_positive_points, index_to_ray_pos, grid_gs,               \
+               grid_buffer_1, scaling_factor)
     for (int index = 0; index < number_of_positive_points; index++) {
       grid_gs[index_to_ray_pos[index][0]] =
-          scaling_factor *
-          grid_buffer_1[index_to_ray_pos[index][1]];
+          scaling_factor * grid_buffer_1[index_to_ray_pos[index][1]];
     }
 #pragma omp parallel for default(none)                                         \
-    shared(number_of_negative_points, index_to_ray_neg, grid_gs, grid_buffer_1,     \
-               scaling_factor)
+    shared(number_of_negative_points, index_to_ray_neg, grid_gs,               \
+               grid_buffer_1, scaling_factor)
     for (int index = 0; index < number_of_negative_points; index++) {
       grid_gs[index_to_ray_neg[index][0]] =
-          scaling_factor *
-          conj(grid_buffer_1[index_to_ray_neg[index][1]]);
+          scaling_factor * conj(grid_buffer_1[index_to_ray_neg[index][1]]);
     }
   }
 
@@ -1503,7 +1532,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
       grid_buffer_1[index_to_ray[i]] = grid_gs[i];
     }
@@ -1538,7 +1568,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
               fft_sizes_rs[1], fft_sizes_rs[2]);
 
           double *grid_rs_double = (double *)grid_rs;
-           #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
           for (int i = 0; i < product3(fft_sizes_rs); i++)
             grid_rs_double[i] = creal(grid_buffer_1[i]);
         }
@@ -1574,7 +1605,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                         false, grid_buffer_2, grid_buffer_1);
 
         double *grid_rs_double = (double *)grid_rs;
-           #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
         for (int i = 0; i < product3(fft_sizes_rs); i++)
           grid_rs_double[i] = creal(grid_buffer_1[i]);
       }
@@ -1585,7 +1617,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
     const int(*my_ray_to_xy)[2] = ray_to_xy;
     for (int process = 0; process < my_process; process++)
       my_ray_to_xy += rays_per_process[process];
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
       grid_buffer_1[index_to_ray[i]] = grid_gs[i];
     }
@@ -1608,7 +1641,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                       grid_buffer_2);
 
       double *grid_rs_double = (double *)grid_rs;
-           #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_2)
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_rs_double[i] = creal(grid_buffer_2[i]);
     }
@@ -1618,7 +1652,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
     const int(*my_ray_to_xy)[2] = ray_to_xy;
     for (int process = 0; process < my_process; process++)
       my_ray_to_xy += rays_per_process[process];
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_ray, grid_buffer_2, grid_gs)
+#pragma omp parallel for default(none)                                         \
+    shared(number_of_local_gpts, index_to_ray, grid_buffer_2, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
       grid_buffer_2[index_to_ray[i]] = grid_gs[i];
     }
@@ -1629,7 +1664,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
       fft_3d_bw_local(npts_global, grid_buffer_2, grid_buffer_1);
 
       double *grid_rs_double = (double *)grid_rs;
-           #pragma omp parallel for default(none) shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
+#pragma omp parallel for default(none)                                         \
+    shared(fft_sizes_rs, grid_rs_double, grid_buffer_1)
       for (int i = 0; i < product3(fft_sizes_rs); i++)
         grid_rs_double[i] = creal(grid_buffer_1[i]);
     }
@@ -1645,13 +1681,12 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
  ******************************************************************************/
 void fft_3d_bw_c2r_ray(
     const double complex *restrict grid_gs, const int (*index_to_ray_pos)[2],
-    const int number_of_positive_points,
-    double *restrict grid_rs, const int npts_global[3],
-    const int npts_global_gspace[3], const int (*proc2local_rs)[3][2],
-    const int (*proc2local_ms)[3][2], const int (*proc2local_x_gs)[2],
-    const int *rays_per_process, const int (*ray_to_xy)[2],
-    const fft_redistribution_t *redistribution, const cp_mpi_comm_t comm,
-    const cp_mpi_comm_t sub_comm[2]) {
+    const int number_of_positive_points, double *restrict grid_rs,
+    const int npts_global[3], const int npts_global_gspace[3],
+    const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
+    const int (*proc2local_x_gs)[2], const int *rays_per_process,
+    const int (*ray_to_xy)[2], const fft_redistribution_t *redistribution,
+    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_3d_bw_c2r_r");
@@ -1690,7 +1725,8 @@ void fft_3d_bw_c2r_ray(
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_ray_pos, grid_buffer_1, grid_gs)
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_ray_pos, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_positive_points; i++) {
       grid_buffer_1[index_to_ray_pos[i][1]] = grid_gs[index_to_ray_pos[i][0]];
     }
@@ -1746,7 +1782,8 @@ void fft_3d_bw_c2r_ray(
 
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_ray_pos, grid_buffer_1, grid_gs)
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_ray_pos, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_positive_points; i++) {
       grid_buffer_1[index_to_ray_pos[i][1]] = grid_gs[index_to_ray_pos[i][0]];
     }
@@ -1788,7 +1825,8 @@ void fft_3d_bw_c2r_ray(
 
     memset(grid_buffer_2, 0,
            product3(npts_global_gspace) * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_ray_pos, grid_buffer_2, grid_gs)
+#pragma omp parallel for default(none) shared(                                 \
+        number_of_positive_points, index_to_ray_pos, grid_buffer_2, grid_gs)
     for (int i = 0; i < number_of_positive_points; i++) {
       grid_buffer_2[index_to_ray_pos[i][1]] = grid_gs[index_to_ray_pos[i][0]];
     }

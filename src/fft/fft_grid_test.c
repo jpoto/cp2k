@@ -48,7 +48,8 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
     my_sizes_gs[dir] = my_bounds_gs[dir][1];
-  const int my_number_of_elements_gs = imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
+  const int my_number_of_elements_gs =
+      imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
                        ((double)npts_global[1]) / ((double)npts_global[2]);
@@ -146,9 +147,11 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
                npts_global, my_bounds_rs, stdout) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_rs; index++) {
           const double complex my_value = rs_data[index];
-          const int index_z = index % my_sizes_rs[2]+my_bounds_rs[2][0];
-          const int index_y = index / my_sizes_rs[2] % my_sizes_rs[1]+my_bounds_rs[1][0];
-          const int index_x = index / my_sizes_rs[2] / my_sizes_rs[1]+my_bounds_rs[0][0];
+          const int index_z = index % my_sizes_rs[2] + my_bounds_rs[2][0];
+          const int index_y =
+              index / my_sizes_rs[2] % my_sizes_rs[1] + my_bounds_rs[1][0];
+          const int index_x =
+              index / my_sizes_rs[2] / my_sizes_rs[1] + my_bounds_rs[0][0];
           const double complex ref_value =
               index_x == nx && index_y == ny && index_z == nz
                   ? ((double)product3(npts_global))
@@ -158,7 +161,8 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
             printf("ERROR %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", index_x,
                    index_y, index_z, nx, ny, nz, index, creal(my_value),
                    cimag(my_value), creal(ref_value), cimag(ref_value));
-                   fflush(stdout);}
+            fflush(stdout);
+          }
           max_error = fmax(max_error, current_error);
         }
       }
@@ -322,13 +326,15 @@ int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
         fft_3d_bw_with_layout_from_cart(gs_data, rs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(rs_data, my_sizes_rs, my_number_of_elements_rs, nx, ny, nz, my_bounds_rs)         \
-    reduction(max : max_error)
+    shared(rs_data, my_sizes_rs, my_number_of_elements_rs, nx, ny, nz,         \
+               my_bounds_rs) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_rs; index++) {
           const double complex my_value = rs_data[index];
-          const int index_x = index % my_sizes_rs[2]+my_bounds_rs[2][0];
-          const int index_y = index / my_sizes_rs[2] % my_sizes_rs[1]+my_bounds_rs[1][0];
-          const int index_z = index / my_sizes_rs[2] / my_sizes_rs[1]+my_bounds_rs[0][0];
+          const int index_x = index % my_sizes_rs[2] + my_bounds_rs[2][0];
+          const int index_y =
+              index / my_sizes_rs[2] % my_sizes_rs[1] + my_bounds_rs[1][0];
+          const int index_z =
+              index / my_sizes_rs[2] / my_sizes_rs[1] + my_bounds_rs[0][0];
           const double complex ref_value =
               index_x == nx && index_y == ny && index_z == nz ? 1.0 : 0.0;
           double current_error = cabs(my_value - ref_value);
@@ -392,7 +398,8 @@ int fft_test_3d_r2c_cartesian(const int npts_global[3], const int test_every) {
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
     my_sizes_gs[dir] = my_bounds_gs[dir][1];
-  const int my_number_of_elements_gs = imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
+  const int my_number_of_elements_gs =
+      imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
                        ((double)npts_global[1]) / ((double)npts_global[2]);
@@ -454,7 +461,8 @@ int fft_test_3d_r2c_cartesian(const int npts_global[3], const int test_every) {
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw R2C 3D FFT (non-cartesian) to ordered layout does not work correctly (%i "
+      printf("The fw R2C 3D FFT (non-cartesian) to ordered layout does not "
+             "work correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
@@ -566,7 +574,8 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
     my_sizes_gs[dir] = my_bounds_gs[dir][1];
-  const int my_number_of_elements_gs = imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
+  const int my_number_of_elements_gs =
+      imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
                        ((double)npts_global[1]) / ((double)npts_global[2]);
@@ -602,8 +611,8 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
         fft_3d_fw_r2c_with_layout(rs_data, gs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale, my_process)           \
-    reduction(max : max_error)
+    shared(gs_data, fft_grid_layout, nx, ny, nz, npts_global, scale,           \
+               my_process) reduction(max : max_error)
         for (int index = 0; index < fft_grid_layout->npts_gs_local; index++) {
           const int *index_g = fft_grid_layout->index_to_g[index];
           const double complex my_value = gs_data[index];
@@ -614,9 +623,9 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
                             ((double)index_g[2]) * nz / npts_global[2]));
           double current_error = cabs(my_value - ref_value);
           if (current_error > 1e-12)
-            printf("ERROR (%i) %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", my_process,
-                   index_g[0], index_g[1], index_g[2], nx, ny, nz, index,
-                   creal(my_value), cimag(my_value), creal(ref_value),
+            printf("ERROR (%i) %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n",
+                   my_process, index_g[0], index_g[1], index_g[2], nx, ny, nz,
+                   index, creal(my_value), cimag(my_value), creal(ref_value),
                    cimag(ref_value));
           max_error = fmax(max_error, current_error);
         }
@@ -628,7 +637,8 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf("The fw R2C 3D FFT (non-cartesian, halfspace) to ordered layout does not work "
+      printf("The fw R2C 3D FFT (non-cartesian, halfspace) to ordered layout "
+             "does not work "
              "correctly (%i "
              "%i %i): %f!\n",
              npts_global[0], npts_global[1], npts_global[2], max_error);
@@ -690,10 +700,10 @@ int fft_test_3d_r2c_cartesian_halfspace(const int npts_global[3],
 
   if (max_error > 1e-12) {
     if (my_process == 0)
-      printf(
-          "The bw R2C 3D FFT (non-cartesian, halfspace) from ordered layout does "
-          "not work correctly (%i %i %i): %f!\n",
-          npts_global[0], npts_global[1], npts_global[2], max_error);
+      printf("The bw R2C 3D FFT (non-cartesian, halfspace) from ordered layout "
+             "does "
+             "not work correctly (%i %i %i): %f!\n",
+             npts_global[0], npts_global[1], npts_global[2], max_error);
     errors++;
   }
 
@@ -1114,8 +1124,7 @@ int fft_test_3d_r2c_ray_halfspace(const int npts_global[3],
     my_sizes_rs[dir] = my_bounds_rs[dir][1];
   const int my_number_of_elements_rs = product3(my_sizes_rs);
 
-  const int my_number_of_elements_gs =
-      fft_grid_layout->npts_gs_local;
+  const int my_number_of_elements_gs = fft_grid_layout->npts_gs_local;
 
   int my_ray_offset = 0;
   for (int process = 0; process < my_process; process++)

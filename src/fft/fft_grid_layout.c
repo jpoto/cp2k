@@ -572,23 +572,29 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
 
   setup_proc2local(my_fft_grid);
 
-  const int (*bounds_gs)[2] = my_fft_grid->proc2local_gs[my_process];
+  const int(*bounds_gs)[2] = my_fft_grid->proc2local_gs[my_process];
 
   int number_of_positive_gs_points =
       bounds_gs[0][1] * bounds_gs[1][1] * bounds_gs[2][1];
   int number_of_negative_gs_points = 0;
   if (use_halfspace) {
-    // If this process carries data from the first element or independently the half index in x-direction,
-    // we need to subtract the number of related elements
+    // If this process carries data from the first element or independently the
+    // half index in x-direction, we need to subtract the number of related
+    // elements
     int number_of_x_elements = bounds_gs[0][1];
-    if (bounds_gs[0][0] == 0) number_of_x_elements--;
-    if (npts_global[0]%2 == 0 && bounds_gs[0][0]+bounds_gs[0][1]-1==npts_global[0]/2) number_of_x_elements--;
-    number_of_negative_gs_points = number_of_x_elements * bounds_gs[1][1] * bounds_gs[2][1];
+    if (bounds_gs[0][0] == 0)
+      number_of_x_elements--;
+    if (npts_global[0] % 2 == 0 &&
+        bounds_gs[0][0] + bounds_gs[0][1] - 1 == npts_global[0] / 2)
+      number_of_x_elements--;
+    number_of_negative_gs_points =
+        number_of_x_elements * bounds_gs[1][1] * bounds_gs[2][1];
   }
   my_fft_grid->number_of_positive_gs_points = number_of_positive_gs_points;
   my_fft_grid->number_of_negative_gs_points = number_of_negative_gs_points;
 
-  my_fft_grid->npts_gs_local = number_of_positive_gs_points+number_of_negative_gs_points;
+  my_fft_grid->npts_gs_local =
+      number_of_positive_gs_points + number_of_negative_gs_points;
   my_fft_grid->buffer_size =
       imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
 
@@ -624,28 +630,31 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   const int local_size_y = bounds_gs[1][1];
   const int local_size_z = bounds_gs[2][1];
 #pragma omp parallel for default(none)                                         \
-    shared(my_fft_grid, bounds_gs, local_size_y, local_size_z, number_of_positive_gs_points)
+    shared(my_fft_grid, bounds_gs, local_size_y, local_size_z,                 \
+               number_of_positive_gs_points)
   for (int index = 0; index < number_of_positive_gs_points; index++) {
     my_fft_grid->index_to_g[index][0] =
         bounds_gs[0][0] + index / local_size_y / local_size_z;
-        assert(my_fft_grid->index_to_g[index][0] < my_fft_grid->npts_global_gspace[0] && my_fft_grid->index_to_g[index][0] >= 0);
+    assert(my_fft_grid->index_to_g[index][0] <
+               my_fft_grid->npts_global_gspace[0] &&
+           my_fft_grid->index_to_g[index][0] >= 0);
     my_fft_grid->index_to_g[index][1] =
         bounds_gs[1][0] + (index / local_size_z) % local_size_y;
-    my_fft_grid->index_to_g[index][2] =
-        bounds_gs[2][0] + index % local_size_z;
+    my_fft_grid->index_to_g[index][2] = bounds_gs[2][0] + index % local_size_z;
   }
   if (use_halfspace) {
     int negative_index = number_of_positive_gs_points;
     for (int index = 0; index < number_of_positive_gs_points; index++) {
       const int index_x = my_fft_grid->index_to_g[index][0];
-      if (index_x == 0 || (npts_global[0]%2 == 0 && index_x ==npts_global[0]/2)) continue;
-      my_fft_grid->index_to_g[negative_index][0] =
-          npts_global[0]-index_x;
+      if (index_x == 0 ||
+          (npts_global[0] % 2 == 0 && index_x == npts_global[0] / 2))
+        continue;
+      my_fft_grid->index_to_g[negative_index][0] = npts_global[0] - index_x;
       my_fft_grid->index_to_g[negative_index][1] =
-          (npts_global[1]-my_fft_grid->index_to_g[index][1])%npts_global[1];
+          (npts_global[1] - my_fft_grid->index_to_g[index][1]) % npts_global[1];
       my_fft_grid->index_to_g[negative_index][2] =
-          (npts_global[2]-my_fft_grid->index_to_g[index][2])%npts_global[2];
-          negative_index++;
+          (npts_global[2] - my_fft_grid->index_to_g[index][2]) % npts_global[2];
+      negative_index++;
     }
     assert(negative_index == my_fft_grid->npts_gs_local);
   }
@@ -657,78 +666,94 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   }
 
   sort_g_vectors(my_fft_grid);
-  
+
   if (use_halfspace) {
     int positive_index = 0;
     int negative_index = 0;
-    if (fft_lib_use_mpi() && my_fft_grid->proc_grid[0] > 1 && my_fft_grid->proc_grid[1] == 1) {
-    for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
-      int *index_g = my_fft_grid->index_to_g[index];
-      if (index_g[0] < my_fft_grid->npts_global_gspace[0]) {
-        my_fft_grid->index_to_cart_pos[positive_index][0] = index;
-        my_fft_grid->index_to_cart_pos[positive_index][1] = ((index_g[1] - bounds_gs[1][0]) *
-                                           bounds_gs[2][1] +
-                                          (index_g[2] - bounds_gs[2][0])) *
-                                             bounds_gs[0][1] +
-                                         (index_g[0] - bounds_gs[0][0]);
-        printf("%i (+) %i %i %i\n", my_process, index, positive_index, my_fft_grid->index_to_cart_pos[positive_index][1]);
-        positive_index++;
-      } else {
-        my_fft_grid->index_to_cart_neg[negative_index][0] = index;
-        my_fft_grid->index_to_cart_neg[negative_index][1] = (((npts_global[1]-index_g[1])%npts_global[1] - bounds_gs[1][0]) *
-                                              bounds_gs[2][1] +
-                                          ((npts_global[2]-index_g[2])%npts_global[2] - bounds_gs[2][0])) *
-                                             bounds_gs[0][1] +
-                                         ((npts_global[0]-index_g[0])%npts_global[0] - bounds_gs[0][0]);
-        printf("%i (-) %i %i %i\n", my_process, index, negative_index, my_fft_grid->index_to_cart_neg[negative_index][1]);
-        negative_index++;
+    if (fft_lib_use_mpi() && my_fft_grid->proc_grid[0] > 1 &&
+        my_fft_grid->proc_grid[1] == 1) {
+      for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+        int *index_g = my_fft_grid->index_to_g[index];
+        if (index_g[0] < my_fft_grid->npts_global_gspace[0]) {
+          my_fft_grid->index_to_cart_pos[positive_index][0] = index;
+          my_fft_grid->index_to_cart_pos[positive_index][1] =
+              ((index_g[1] - bounds_gs[1][0]) * bounds_gs[2][1] +
+               (index_g[2] - bounds_gs[2][0])) *
+                  bounds_gs[0][1] +
+              (index_g[0] - bounds_gs[0][0]);
+          printf("%i (+) %i %i %i\n", my_process, index, positive_index,
+                 my_fft_grid->index_to_cart_pos[positive_index][1]);
+          positive_index++;
+        } else {
+          my_fft_grid->index_to_cart_neg[negative_index][0] = index;
+          my_fft_grid->index_to_cart_neg[negative_index][1] =
+              (((npts_global[1] - index_g[1]) % npts_global[1] -
+                bounds_gs[1][0]) *
+                   bounds_gs[2][1] +
+               ((npts_global[2] - index_g[2]) % npts_global[2] -
+                bounds_gs[2][0])) *
+                  bounds_gs[0][1] +
+              ((npts_global[0] - index_g[0]) % npts_global[0] -
+               bounds_gs[0][0]);
+          printf("%i (-) %i %i %i\n", my_process, index, negative_index,
+                 my_fft_grid->index_to_cart_neg[negative_index][1]);
+          negative_index++;
+        }
       }
-    }
     } else {
-    for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
-      int *index_g = my_fft_grid->index_to_g[index];
-      if (index_g[0] < my_fft_grid->npts_global_gspace[0]) {
-        my_fft_grid->index_to_cart_pos[positive_index][0] = index;
-        my_fft_grid->index_to_cart_pos[positive_index][1] = ((index_g[0] - bounds_gs[0][0]) *
-                                           bounds_gs[1][1] +
-                                          (index_g[1] - bounds_gs[1][0])) *
-                                             bounds_gs[2][1] +
-                                         (index_g[2] - bounds_gs[2][0]);
-        printf("%i (+) %i %i %i\n", my_process, index, positive_index, my_fft_grid->index_to_cart_pos[positive_index][1]);
-        positive_index++;
-      } else {
-        my_fft_grid->index_to_cart_neg[negative_index][0] = index;
-        my_fft_grid->index_to_cart_neg[negative_index][1] = (((npts_global[0]-index_g[0])%npts_global[0] - bounds_gs[0][0]) *
-                                              bounds_gs[1][1] +
-                                          ((npts_global[1]-index_g[1])%npts_global[1] - bounds_gs[1][0])) *
-                                             bounds_gs[2][1] +
-                                         ((npts_global[2]-index_g[2])%npts_global[2] - bounds_gs[2][0]);
-        printf("%i (-) %i %i %i\n", my_process, index, negative_index, my_fft_grid->index_to_cart_neg[negative_index][1]);
-        negative_index++;
+      for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+        int *index_g = my_fft_grid->index_to_g[index];
+        if (index_g[0] < my_fft_grid->npts_global_gspace[0]) {
+          my_fft_grid->index_to_cart_pos[positive_index][0] = index;
+          my_fft_grid->index_to_cart_pos[positive_index][1] =
+              ((index_g[0] - bounds_gs[0][0]) * bounds_gs[1][1] +
+               (index_g[1] - bounds_gs[1][0])) *
+                  bounds_gs[2][1] +
+              (index_g[2] - bounds_gs[2][0]);
+          printf("%i (+) %i %i %i\n", my_process, index, positive_index,
+                 my_fft_grid->index_to_cart_pos[positive_index][1]);
+          positive_index++;
+        } else {
+          my_fft_grid->index_to_cart_neg[negative_index][0] = index;
+          my_fft_grid->index_to_cart_neg[negative_index][1] =
+              (((npts_global[0] - index_g[0]) % npts_global[0] -
+                bounds_gs[0][0]) *
+                   bounds_gs[1][1] +
+               ((npts_global[1] - index_g[1]) % npts_global[1] -
+                bounds_gs[1][0])) *
+                  bounds_gs[2][1] +
+              ((npts_global[2] - index_g[2]) % npts_global[2] -
+               bounds_gs[2][0]);
+          printf("%i (-) %i %i %i\n", my_process, index, negative_index,
+                 my_fft_grid->index_to_cart_neg[negative_index][1]);
+          negative_index++;
+        }
       }
-    }
     }
     assert(positive_index == my_fft_grid->number_of_positive_gs_points);
     assert(negative_index == my_fft_grid->number_of_negative_gs_points);
     fflush(stdout);
     cp_mpi_barrier(comm);
   } else {
-    if (fft_lib_use_mpi() && my_fft_grid->proc_grid[0] > 1 && my_fft_grid->proc_grid[1] == 1) {
-    for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
-      int *index_g = my_fft_grid->index_to_g[index];
-      my_fft_grid->index_to_cart[index] = ((index_g[1] - bounds_gs[1][0]) * bounds_gs[2][1] +
-                           (index_g[2] - bounds_gs[2][0])) *
-                              bounds_gs[0][1] +
-                          (index_g[0] - bounds_gs[0][0]); 
-    }
+    if (fft_lib_use_mpi() && my_fft_grid->proc_grid[0] > 1 &&
+        my_fft_grid->proc_grid[1] == 1) {
+      for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+        int *index_g = my_fft_grid->index_to_g[index];
+        my_fft_grid->index_to_cart[index] =
+            ((index_g[1] - bounds_gs[1][0]) * bounds_gs[2][1] +
+             (index_g[2] - bounds_gs[2][0])) *
+                bounds_gs[0][1] +
+            (index_g[0] - bounds_gs[0][0]);
+      }
     } else {
-    for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
-      int *index_g = my_fft_grid->index_to_g[index];
-      my_fft_grid->index_to_cart[index] = ((index_g[0] - bounds_gs[0][0]) * bounds_gs[1][1] +
-                           (index_g[1] - bounds_gs[1][0])) *
-                              bounds_gs[2][1] +
-                          (index_g[2] - bounds_gs[2][0]);
-    }
+      for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+        int *index_g = my_fft_grid->index_to_g[index];
+        my_fft_grid->index_to_cart[index] =
+            ((index_g[0] - bounds_gs[0][0]) * bounds_gs[1][1] +
+             (index_g[1] - bounds_gs[1][0])) *
+                bounds_gs[2][1] +
+            (index_g[2] - bounds_gs[2][0]);
+      }
     }
   }
 
@@ -767,7 +792,7 @@ void grid_create_fft_grid_layout_from_reference(
          "reference grid!");
 
   const int number_of_processes = cp_mpi_comm_size(fft_grid_ref->comm);
-  //const int my_process = cp_mpi_comm_rank(fft_grid_ref->comm);
+  // const int my_process = cp_mpi_comm_rank(fft_grid_ref->comm);
 
   fft_grid_layout *my_fft_grid = NULL;
   if (*fft_grid != NULL) {
@@ -902,7 +927,9 @@ void grid_create_fft_grid_layout_from_reference(
       my_fft_grid->number_of_negative_gs_points += shifted_indices[0] < 0;
     }
   }
-  assert(my_fft_grid->npts_gs_local == my_fft_grid->number_of_positive_gs_points+my_fft_grid->number_of_negative_gs_points);
+  assert(my_fft_grid->npts_gs_local ==
+         my_fft_grid->number_of_positive_gs_points +
+             my_fft_grid->number_of_negative_gs_points);
   my_fft_grid->buffer_size =
       imax(my_fft_grid->buffer_size, my_fft_grid->npts_gs_local);
 
@@ -920,7 +947,8 @@ void grid_create_fft_grid_layout_from_reference(
   // for the mixed space
   my_fft_grid->ray_to_xy = malloc(total_number_of_rays * sizeof(int[2]));
   my_fft_grid->xy_to_ray =
-      malloc(my_fft_grid->npts_global_gspace[0] * my_fft_grid->npts_global_gspace[1] * sizeof(int[2]));
+      malloc(my_fft_grid->npts_global_gspace[0] *
+             my_fft_grid->npts_global_gspace[1] * sizeof(int[2]));
   memset(my_fft_grid->ray_to_xy, -1, total_number_of_rays * sizeof(int[2]));
   for (int index_x = 0; index_x < fft_grid_ref->npts_global_gspace[0];
        index_x++) {
@@ -949,8 +977,8 @@ void grid_create_fft_grid_layout_from_reference(
           index_x_new;
       my_fft_grid->ray_to_xy[current_ray_offset + current_ray_index][1] =
           index_y_new;
-      my_fft_grid->xy_to_ray[index_x_new * my_fft_grid->npts_global_gspace[1] + index_y_new] =
-          current_ray_index;
+      my_fft_grid->xy_to_ray[index_x_new * my_fft_grid->npts_global_gspace[1] +
+                             index_y_new] = current_ray_index;
       ray_index_per_process[current_process]++;
     }
   }
@@ -1004,7 +1032,7 @@ void grid_create_fft_grid_layout_from_reference(
     }
   }
   assert(own_index == my_fft_grid->npts_gs_local);
-  
+
   if (my_fft_grid->use_halfspace) {
     my_fft_grid->index_to_ray = NULL;
     my_fft_grid->index_to_ray_pos =
@@ -1017,8 +1045,7 @@ void grid_create_fft_grid_layout_from_reference(
     my_fft_grid->index_to_cart_neg =
         calloc(my_fft_grid->number_of_negative_gs_points, sizeof(int[2]));
   } else {
-    my_fft_grid->index_to_ray =
-        calloc(my_fft_grid->npts_gs_local, sizeof(int));
+    my_fft_grid->index_to_ray = calloc(my_fft_grid->npts_gs_local, sizeof(int));
     my_fft_grid->index_to_ray_pos = NULL;
     my_fft_grid->index_to_ray_neg = NULL;
     my_fft_grid->index_to_cart =
@@ -1036,21 +1063,30 @@ void grid_create_fft_grid_layout_from_reference(
       int *index_g = my_fft_grid->index_to_g[index];
       if (index_g[0] < my_fft_grid->npts_global_gspace[0]) {
         my_fft_grid->index_to_ray_pos[positive_index][0] = index;
-        my_fft_grid->index_to_ray_pos[positive_index][1] = my_fft_grid->xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
-                            npts_global[2] + index_g[2];
+        my_fft_grid->index_to_ray_pos[positive_index][1] =
+            my_fft_grid->xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
+                npts_global[2] +
+            index_g[2];
         positive_index++;
       } else {
         my_fft_grid->index_to_ray_neg[negative_index][0] = index;
-        my_fft_grid->index_to_ray_neg[negative_index][1] = my_fft_grid->xy_to_ray[(npts_global[0]-index_g[0]) * npts_global[1] + (npts_global[1]-index_g[1])%npts_global[1]] *
-                            npts_global[2] + (npts_global[2]-index_g[2])%npts_global[2];
+        my_fft_grid->index_to_ray_neg[negative_index][1] =
+            my_fft_grid
+                    ->xy_to_ray[(npts_global[0] - index_g[0]) * npts_global[1] +
+                                (npts_global[1] - index_g[1]) %
+                                    npts_global[1]] *
+                npts_global[2] +
+            (npts_global[2] - index_g[2]) % npts_global[2];
         negative_index++;
       }
     }
   } else {
     for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
       int *index_g = my_fft_grid->index_to_g[index];
-      my_fft_grid->index_to_ray[index] = my_fft_grid->xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
-                            npts_global[2] + index_g[2];
+      my_fft_grid->index_to_ray[index] =
+          my_fft_grid->xy_to_ray[index_g[0] * npts_global[1] + index_g[1]] *
+              npts_global[2] +
+          index_g[2];
     }
   }
 
@@ -1169,11 +1205,11 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
 
   if (grid_layout->ray_distribution) {
     fft_3d_fw_ray(grid_rs, true, grid_gs, grid_layout->npts_gs_local,
-                  grid_layout->npts_global, grid_layout->index_to_ray, grid_layout->proc2local_rs,
-                  grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
-                  grid_layout->rays_per_process, grid_layout->ray_to_xy,
-                  grid_layout->redistribution, grid_layout->comm,
-                  grid_layout->sub_comm);
+                  grid_layout->npts_global, grid_layout->index_to_ray,
+                  grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+                  grid_layout->proc2local_x_gs, grid_layout->rays_per_process,
+                  grid_layout->ray_to_xy, grid_layout->redistribution,
+                  grid_layout->comm, grid_layout->sub_comm);
   } else {
     fft_3d_fw_blocked(grid_rs, true, grid_gs, grid_layout->index_to_cart,
                       grid_layout->npts_gs_local, grid_layout->npts_global,
@@ -1259,8 +1295,10 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
   if (grid_layout->use_halfspace) {
     if (grid_layout->ray_distribution) {
       fft_3d_fw_r2c_ray(
-          grid_rs, grid_gs, grid_layout->index_to_ray_pos, grid_layout->index_to_ray_neg,
-          grid_layout->number_of_positive_gs_points, grid_layout->number_of_negative_gs_points, grid_layout->npts_global,
+          grid_rs, grid_gs, grid_layout->index_to_ray_pos,
+          grid_layout->index_to_ray_neg,
+          grid_layout->number_of_positive_gs_points,
+          grid_layout->number_of_negative_gs_points, grid_layout->npts_global,
           grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
           grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
           grid_layout->rays_per_process, grid_layout->ray_to_xy,
@@ -1268,22 +1306,25 @@ void fft_3d_fw_r2c_with_layout(const double *restrict grid_rs,
           grid_layout->sub_comm);
     } else {
       fft_3d_fw_r2c_blocked(
-          grid_rs, grid_gs, grid_layout->index_to_cart_pos, grid_layout->index_to_cart_neg,
-          grid_layout->number_of_positive_gs_points,grid_layout->number_of_negative_gs_points,
-          grid_layout->npts_global, grid_layout->npts_global_gspace,
-          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-          grid_layout->proc2local_gs, grid_layout->proc2local_x_gs,
-          grid_layout->proc2local_y_gs, grid_layout->redistribution,
-          grid_layout->comm, grid_layout->sub_comm);
+          grid_rs, grid_gs, grid_layout->index_to_cart_pos,
+          grid_layout->index_to_cart_neg,
+          grid_layout->number_of_positive_gs_points,
+          grid_layout->number_of_negative_gs_points, grid_layout->npts_global,
+          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
+          grid_layout->proc2local_ms, grid_layout->proc2local_gs,
+          grid_layout->proc2local_x_gs, grid_layout->proc2local_y_gs,
+          grid_layout->redistribution, grid_layout->comm,
+          grid_layout->sub_comm);
     }
   } else {
     if (grid_layout->ray_distribution) {
       fft_3d_fw_ray((const double complex *)grid_rs, false, grid_gs,
-                    grid_layout->npts_gs_local, grid_layout->npts_global,grid_layout->index_to_ray, 
-                    grid_layout->proc2local_rs, grid_layout->proc2local_ms,
-                    grid_layout->proc2local_x_gs, grid_layout->rays_per_process,
-                    grid_layout->ray_to_xy, grid_layout->redistribution,
-                    grid_layout->comm, grid_layout->sub_comm);
+                    grid_layout->npts_gs_local, grid_layout->npts_global,
+                    grid_layout->index_to_ray, grid_layout->proc2local_rs,
+                    grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
+                    grid_layout->rays_per_process, grid_layout->ray_to_xy,
+                    grid_layout->redistribution, grid_layout->comm,
+                    grid_layout->sub_comm);
     } else {
       fft_3d_fw_blocked((const double complex *)grid_rs, false, grid_gs,
                         grid_layout->index_to_cart, grid_layout->npts_gs_local,
@@ -1315,17 +1356,16 @@ void fft_3d_bw_with_layout(const double complex *restrict grid_gs,
   ensure_buffer_size(grid_layout->buffer_size);
 
   if (grid_layout->ray_distribution) {
-    fft_3d_bw_ray(grid_gs, grid_layout->index_to_ray,
-                  grid_layout->npts_gs_local, grid_rs, true,
-                  grid_layout->npts_global, grid_layout->proc2local_rs,
-                  grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
-                  grid_layout->rays_per_process, grid_layout->ray_to_xy,
-                  grid_layout->redistribution, grid_layout->comm,
-                  grid_layout->sub_comm);
+    fft_3d_bw_ray(
+        grid_gs, grid_layout->index_to_ray, grid_layout->npts_gs_local, grid_rs,
+        true, grid_layout->npts_global, grid_layout->proc2local_rs,
+        grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
+        grid_layout->rays_per_process, grid_layout->ray_to_xy,
+        grid_layout->redistribution, grid_layout->comm, grid_layout->sub_comm);
   } else {
     fft_3d_bw_blocked(
-        grid_gs, grid_layout->index_to_cart, grid_layout->npts_gs_local, grid_rs,
-        true, grid_layout->npts_global, grid_layout->proc2local_rs,
+        grid_gs, grid_layout->index_to_cart, grid_layout->npts_gs_local,
+        grid_rs, true, grid_layout->npts_global, grid_layout->proc2local_rs,
         grid_layout->proc2local_ms, grid_layout->proc2local_gs,
         grid_layout->proc2local_x_gs, grid_layout->proc2local_y_gs,
         grid_layout->redistribution, grid_layout->comm, grid_layout->sub_comm);
@@ -1376,15 +1416,17 @@ void fft_3d_bw_c2r_with_layout(const double complex *restrict grid_gs,
   if (grid_layout->use_halfspace) {
     if (grid_layout->ray_distribution) {
       fft_3d_bw_c2r_ray(
-          grid_gs, grid_layout->index_to_ray_pos, grid_layout->number_of_positive_gs_points, grid_rs, grid_layout->npts_global,
-          grid_layout->npts_global_gspace, grid_layout->proc2local_rs,
-          grid_layout->proc2local_ms, grid_layout->proc2local_x_gs,
-          grid_layout->rays_per_process, grid_layout->ray_to_xy,
-          grid_layout->redistribution, grid_layout->comm,
-          grid_layout->sub_comm);
+          grid_gs, grid_layout->index_to_ray_pos,
+          grid_layout->number_of_positive_gs_points, grid_rs,
+          grid_layout->npts_global, grid_layout->npts_global_gspace,
+          grid_layout->proc2local_rs, grid_layout->proc2local_ms,
+          grid_layout->proc2local_x_gs, grid_layout->rays_per_process,
+          grid_layout->ray_to_xy, grid_layout->redistribution,
+          grid_layout->comm, grid_layout->sub_comm);
     } else {
       fft_3d_bw_c2r_blocked(
-          grid_gs, grid_layout->index_to_cart_pos, grid_layout->number_of_positive_gs_points, grid_rs,
+          grid_gs, grid_layout->index_to_cart_pos,
+          grid_layout->number_of_positive_gs_points, grid_rs,
           grid_layout->npts_global, grid_layout->npts_global_gspace,
           grid_layout->proc2local_rs, grid_layout->proc2local_ms,
           grid_layout->proc2local_gs, grid_layout->proc2local_x_gs,

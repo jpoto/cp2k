@@ -11,8 +11,8 @@
 ! **************************************************************************************************
 MODULE fft_api
    USE ISO_C_BINDING,                   ONLY: &
-        C_ASSOCIATED, C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, &
-        C_NULL_CHAR, C_NULL_PTR, C_PTR
+        C_ASSOCIATED, C_BOOL, C_CHAR, C_DOUBLE, C_DOUBLE_COMPLEX, C_F_POINTER, C_INT, C_LOC, C_NULL_CHAR, &
+        C_NULL_PTR, C_PTR
    USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_comm_type
 #include "../base/base_uses.f90"
