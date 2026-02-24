@@ -1072,8 +1072,8 @@ CONTAINS
          END DO
          DEALLOCATE (ao_quad)
       END IF
-
-    WRITE (*, *) 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq  qsh   qqqqqqqqqqqqqqqqqqqqqqqqqqqq '
+    WRITE (*, *) 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq  multipoles   qqqqqqqqqqqqqqqqqqqqqqqqqqqq '
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>>  qsh  '
     write(*,'(6F18.9)') tb%wfn%qsh(:, 1)
     WRITE (*, *) '>>>>>>>>>>>>>>>>>  qat: '
     write(*,'(1F18.9)') tb%wfn%qat(:, 1)
@@ -1773,7 +1773,6 @@ CONTAINS
                         !write(*,*) 'jjjjjjjjjj, i, j, dipole', inda, indb, ij
                         !write(*,'(6F18.9)') dtmp(:, ij)
 
-
                         quad_bra1(ib, ia) = quad_bra1(ib, ia) + qtmp(1, ij)
                         quad_bra2(ib, ia) = quad_bra2(ib, ia) + qtmp(2, ij)
                         quad_bra3(ib, ia) = quad_bra3(ib, ia) + qtmp(3, ij)
@@ -1824,7 +1823,6 @@ CONTAINS
                         dip_ket3(ib, ia) = dip_ket3(ib, ia) + dtmpj(3, ij)
                         !write(*,*) 'mmmmmmmmmmmmmm, i, j, dipole', ia, ib, ij
                         !write(*,'(6F18.9)') dtmpj(:, ij)
-
 
                         quad_ket1(ib, ia) = quad_ket1(ib, ia) + qtmpj(1, ij)
                         quad_ket2(ib, ia) = quad_ket2(ib, ia) + qtmpj(2, ij)
@@ -1959,7 +1957,6 @@ CONTAINS
             NULLIFY (p_block, bra, ket)
 
             CALL dbcsr_iterator_next_block(iter, iblock_row, iblock_col, bra)
-            write(*,*) "iiiii iblock_row, iblock_col :", iblock_row, iblock_col
             IF (.NOT. ASSOCIATED(bra)) CYCLE
             CALL dbcsr_get_block_p(matrix=p_matrix(ispin)%matrix, &
                                    row=iblock_row, col=iblock_col, BLOCK=p_block, found=found)
@@ -1968,8 +1965,6 @@ CONTAINS
                                    row=iblock_row, col=iblock_col, BLOCK=ket, found=found)
             IF (.NOT. found) CPABORT("missing k block")
 
-            write(*,*) "XXXXX DENS:", p_block
-            write(*,*) "YYYYYYYYYYY BRA:", bra
             DO j = 1, SIZE(p_block, 1)
                DO i = 1, SIZE(p_block, 2)
                   output(iblock_row) = output(iblock_row) + p_block(j, i)*ket(j, i)
@@ -1982,7 +1977,6 @@ CONTAINS
                   END DO
                END DO
             END IF
-            write(*,*) "ZZZZZZZ CON:", output(iblock_row)
          END DO
          CALL dbcsr_iterator_stop(iter)
       END DO
