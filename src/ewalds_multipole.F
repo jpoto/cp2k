@@ -61,7 +61,7 @@ MODULE ewalds_multipole
    IMPLICIT NONE
    PRIVATE
 
-   LOGICAL, PRIVATE, PARAMETER :: debug_this_module = .FALSE.
+   LOGICAL, PRIVATE, PARAMETER :: debug_this_module = .TRUE.
    LOGICAL, PRIVATE, PARAMETER :: debug_r_space = .FALSE.
    LOGICAL, PRIVATE, PARAMETER :: debug_g_space = .FALSE.
    LOGICAL, PRIVATE, PARAMETER :: debug_e_field = .FALSE.
@@ -164,6 +164,17 @@ CONTAINS
       CALL cite_reference(Aguado2003)
       CALL cite_reference(Laino2008)
       CALL timeset(routineN, handle)
+
+    WRITE (*, *) 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq  multipoles   qqqqqqqqqqqqqqqqqqqqqqqqqqqq '
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>  qat: '
+    write(*,'(1F18.9)') charges
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>  dip: '
+    write(*,'(3F18.9)') dipoles
+    WRITE (*, *) '>>>>>>>>>>>>>>>>>  quad:'
+    write(*,'(6F18.9)') quadrupoles
+
+
+
       CPASSERT(ASSOCIATED(nonbond_env))
       check_debug = (debug_this_module .OR. debug_r_space .OR. debug_g_space .OR. debug_e_field .OR. debug_e_field_en) &
                     .EQV. debug_this_module
@@ -296,7 +307,7 @@ CONTAINS
       CALL group%sum(e_rspace_t)
       CALL group%sum(e_bonded_t)
       ! Print some info about energetics
-      CALL ewald_multipole_print(iw, energy_local, e_rspace_t, e_bonded_t, e_self, e_neut)
+      CALL ewald_multipole_print(6, energy_local, e_rspace_t, e_bonded_t, e_self, e_neut)
 
       ! Gather the components of the potential, fields and electrostatic field gradients
       IF (do_efield) THEN
