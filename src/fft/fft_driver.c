@@ -1457,8 +1457,7 @@ void fft_3d_fw_r2c_ray(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_ray(const double complex *restrict grid_gs,
-                   const int (*index_to_g)[3], const int *xy_to_ray,
-                   const int number_of_local_gpts,
+                   const int *index_to_ray, const int number_of_local_gpts,
                    double complex *restrict grid_rs, const bool is_complex,
                    const int npts_global[3], const int (*proc2local_rs)[3][2],
                    const int (*proc2local_ms)[3][2],
@@ -1502,15 +1501,11 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
   // require the implementation of the Guru interface which is not available
   // with all implementations of the FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
-
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, grid_buffer_1, xy_to_ray, npts_global, grid_gs)
+           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      grid_buffer_1[xy_to_ray[index[0] * npts_global[1] + index[1]] *
-                        npts_global[2] +
-                    index[2]] = grid_gs[i];
+      grid_buffer_1[index_to_ray[i]] = grid_gs[i];
     }
     if (fft_lib_use_mpi()) {
       // Perform the first FFT in z-direction
@@ -1585,18 +1580,14 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
       }
     }
   } else if (proc_grid[0] > 1) {
-
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
     const int(*my_ray_to_xy)[2] = ray_to_xy;
     for (int process = 0; process < my_process; process++)
       my_ray_to_xy += rays_per_process[process];
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, grid_buffer_1, xy_to_ray, npts_global, grid_gs)
+           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      grid_buffer_1[xy_to_ray[index[0] * npts_global[1] + index[1]] *
-                        npts_global[2] +
-                    index[2]] = grid_gs[i];
+      grid_buffer_1[index_to_ray[i]] = grid_gs[i];
     }
     // Perform the first FFT (xy_d,z) -> (z,xy_d)
     fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1622,17 +1613,14 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
         grid_rs_double[i] = creal(grid_buffer_2[i]);
     }
   } else {
-
     // Ray distribution
     memset(grid_buffer_2, 0, product3(npts_global) * sizeof(double complex));
     const int(*my_ray_to_xy)[2] = ray_to_xy;
     for (int process = 0; process < my_process; process++)
       my_ray_to_xy += rays_per_process[process];
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, grid_buffer_2, xy_to_ray, npts_global, grid_gs)
+           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_ray, grid_buffer_2, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      grid_buffer_2[(index[0] * npts_global[1] + index[1]) * npts_global[2] +
-                    index[2]] = grid_gs[i];
+      grid_buffer_2[index_to_ray[i]] = grid_gs[i];
     }
 
     if (is_complex) {
@@ -1656,8 +1644,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_c2r_ray(
-    const double complex *restrict grid_gs, const int (*index_to_g)[3],
-    const int *xy_to_ray, const int number_of_local_gpts,
+    const double complex *restrict grid_gs, const int (*index_to_ray_pos)[2],
+    const int number_of_positive_points,
     double *restrict grid_rs, const int npts_global[3],
     const int npts_global_gspace[3], const int (*proc2local_rs)[3][2],
     const int (*proc2local_ms)[3][2], const int (*proc2local_x_gs)[2],
@@ -1700,16 +1688,11 @@ void fft_3d_bw_c2r_ray(
   // require the implementation of the Guru interface which is not available
   // with all implementations of the FFTW interface
   if (proc_grid[0] > 1 && proc_grid[1] > 1) {
-
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, xy_to_ray, grid_buffer_1, npts_global, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      if (index[0] > npts_global[0]/2) continue;
-      grid_buffer_1[xy_to_ray[index[0] * npts_global[1] + index[1]] *
-                        npts_global[2] +
-                    index[2]] = grid_gs[i];
+           #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_ray_pos, grid_buffer_1, grid_gs)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_1[index_to_ray_pos[i][1]] = grid_gs[index_to_ray_pos[i][0]];
     }
     if (fft_lib_use_mpi()) {
       // Perform the first FFT in x-direction
@@ -1763,13 +1746,9 @@ void fft_3d_bw_c2r_ray(
 
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, xy_to_ray, grid_buffer_1, npts_global, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      if (index[0] > npts_global[0]/2) continue;
-      grid_buffer_1[xy_to_ray[index[0] * npts_global[1] + index[1]] *
-                        npts_global[2] +
-                    index[2]] = grid_gs[i];
+           #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_ray_pos, grid_buffer_1, grid_gs)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_1[index_to_ray_pos[i][1]] = grid_gs[index_to_ray_pos[i][0]];
     }
     // Perform the first FFT (xy_d,z) -> (z,xy_d)
     fft_1d_bw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1809,12 +1788,9 @@ void fft_3d_bw_c2r_ray(
 
     memset(grid_buffer_2, 0,
            product3(npts_global_gspace) * sizeof(double complex));
-           #pragma omp parallel for default(none) shared(number_of_local_gpts, index_to_g, grid_buffer_2, npts_global, grid_gs)
-    for (int i = 0; i < number_of_local_gpts; i++) {
-      const int *index = index_to_g[i];
-      if (index[0] > npts_global[0]/2) continue;
-      grid_buffer_2[(index[0] * npts_global[1] + index[1]) * npts_global[2] +
-                    index[2]] = grid_gs[i];
+           #pragma omp parallel for default(none) shared(number_of_positive_points, index_to_ray_pos, grid_buffer_2, grid_gs)
+    for (int i = 0; i < number_of_positive_points; i++) {
+      grid_buffer_2[index_to_ray_pos[i][1]] = grid_gs[index_to_ray_pos[i][0]];
     }
     if (fft_lib_has_guru_interface()) {
       // Use the guru interface to merge both 1D FFTs into a single 2D FFT)

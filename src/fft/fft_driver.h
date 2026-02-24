@@ -98,8 +98,7 @@ void fft_3d_fw_r2c_ray(
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_ray(const double complex *restrict grid_gs,
-                   const int (*index_to_g)[3], const int *xy_to_ray,
-                   const int number_of_local_gpts,
+                   const int *index_to_g, const int number_of_local_gpts,
                    double complex *restrict grid_rs, const bool is_complex,
                    const int npts_global[3], const int (*proc2local_rs)[3][2],
                    const int (*proc2local_ms)[3][2],
@@ -113,8 +112,8 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
  * \author Frederick Stein
  ******************************************************************************/
 void fft_3d_bw_c2r_ray(
-    const double complex *restrict grid_gs, const int (*index_to_g)[3],
-    const int *xy_to_ray, const int number_of_local_gpts,
+    const double complex *restrict grid_gs, const int (*index_to_ray_pos)[2],
+    const int number_of_positive_points,
     double *restrict grid_rs, const int npts_global[3],
     const int npts_global_gspace[3], const int (*proc2local_rs)[3][2],
     const int (*proc2local_ms)[3][2], const int (*proc2local_x_gs)[2],
