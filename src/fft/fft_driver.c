@@ -1185,7 +1185,7 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
       // Perform second redistribution (z_d,x_d,y) -> (z,xy_d)
       collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1, npts_global,
                                       proc2local_ms, rays_per_process,
-                                      ray_to_xy, comm);
+                                      ray_to_xy, redistribution, comm);
     }
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
@@ -1216,7 +1216,7 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
     // Perform second transpose (z_d,x,y) -> (z,xy_d)
     collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1, npts_global,
                                     proc2local_ms, rays_per_process, ray_to_xy,
-                                    comm);
+                                    redistribution, comm);
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1359,7 +1359,7 @@ void fft_3d_fw_r2c_ray(
       // Perform second redistribution (z_d,x_d,y) -> (z,xy_d)
       collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1,
                                       npts_global_gspace, proc2local_ms,
-                                      rays_per_process, ray_to_xy, comm);
+                                      rays_per_process, ray_to_xy, redistribution, comm);
 
       // Perform the third FFT (z,xy_d) -> (xy_d,z)
       fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1413,7 +1413,7 @@ void fft_3d_fw_r2c_ray(
     // but we need to redistribute to rays (z_d,x,y) -> (z,xy_d)
     collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1,
                                     npts_global_gspace, proc2local_ms,
-                                    rays_per_process, ray_to_xy, comm);
+                                    rays_per_process, ray_to_xy, redistribution, comm);
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,

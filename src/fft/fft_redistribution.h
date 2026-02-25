@@ -30,14 +30,21 @@ typedef struct {
   int *counts_yz_y;
   int *displacements_yz_z;
   int *counts_yz_z;
+  // y<->z (ray-based)
+  int *counts_yz_ray_z;
+  int *counts_yz_ray_y;
 } fft_redistribution_t;
 
 void prepare_redistribution(fft_redistribution_t *redistribution,
                             const int npts_global_gspace[3],
+                            const int (*proc2local_ms)[3][2],
                             const int (*proc2local_x_gs)[2],
                             const int (*proc2local_y_rs)[2],
                             const int (*proc2local_y_gs)[2],
                             const int (*proc2local_z_rs)[2],
+                            const int *rays_per_process,
+                   const int (*ray_to_xy)[2],
+                            const cp_mpi_comm_t comm,
                             const cp_mpi_comm_t sub_comm[2]);
 
 void cleanup_redistribution(fft_redistribution_t *redistribution);
@@ -134,6 +141,7 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
                                      const int (*proc2local)[3][2],
                                      const int *number_of_rays,
                                      const int (*ray_to_xy)[2],
+    const fft_redistribution_t *redistribution,
                                      const cp_mpi_comm_t comm);
 
 void collect_xy_and_distribute_z_ray(double complex *restrict grid,

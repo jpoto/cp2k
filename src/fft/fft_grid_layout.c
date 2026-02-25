@@ -681,8 +681,6 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                (index_g[2] - bounds_gs[2][0])) *
                   bounds_gs[0][1] +
               (index_g[0] - bounds_gs[0][0]);
-          printf("%i (+) %i %i %i\n", my_process, index, positive_index,
-                 my_fft_grid->index_to_cart_pos[positive_index][1]);
           positive_index++;
         } else {
           my_fft_grid->index_to_cart_neg[negative_index][0] = index;
@@ -695,8 +693,6 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                   bounds_gs[0][1] +
               ((npts_global[0] - index_g[0]) % npts_global[0] -
                bounds_gs[0][0]);
-          printf("%i (-) %i %i %i\n", my_process, index, negative_index,
-                 my_fft_grid->index_to_cart_neg[negative_index][1]);
           negative_index++;
         }
       }
@@ -710,8 +706,6 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                (index_g[1] - bounds_gs[1][0])) *
                   bounds_gs[2][1] +
               (index_g[2] - bounds_gs[2][0]);
-          printf("%i (+) %i %i %i\n", my_process, index, positive_index,
-                 my_fft_grid->index_to_cart_pos[positive_index][1]);
           positive_index++;
         } else {
           my_fft_grid->index_to_cart_neg[negative_index][0] = index;
@@ -724,8 +718,6 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                   bounds_gs[2][1] +
               ((npts_global[2] - index_g[2]) % npts_global[2] -
                bounds_gs[2][0]);
-          printf("%i (-) %i %i %i\n", my_process, index, negative_index,
-                 my_fft_grid->index_to_cart_neg[negative_index][1]);
           negative_index++;
         }
       }
@@ -760,9 +752,11 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->redistribution = calloc(1, sizeof(fft_redistribution_t));
   prepare_redistribution(
       my_fft_grid->redistribution, my_fft_grid->npts_global_gspace,
+      my_fft_grid->proc2local_ms,
       my_fft_grid->proc2local_x_gs, my_fft_grid->proc2local_y_rs,
       my_fft_grid->proc2local_y_gs, my_fft_grid->proc2local_z_rs,
-      my_fft_grid->sub_comm);
+      my_fft_grid->rays_per_process, my_fft_grid->ray_to_xy,
+      my_fft_grid->comm, my_fft_grid->sub_comm);
 
   *fft_grid = my_fft_grid;
 
@@ -1093,9 +1087,11 @@ void grid_create_fft_grid_layout_from_reference(
   my_fft_grid->redistribution = calloc(1, sizeof(fft_redistribution_t));
   prepare_redistribution(
       my_fft_grid->redistribution, my_fft_grid->npts_global_gspace,
+      my_fft_grid->proc2local_ms,
       my_fft_grid->proc2local_x_gs, my_fft_grid->proc2local_y_rs,
       my_fft_grid->proc2local_y_gs, my_fft_grid->proc2local_z_rs,
-      my_fft_grid->sub_comm);
+      my_fft_grid->rays_per_process, my_fft_grid->ray_to_xy,
+      my_fft_grid->comm, my_fft_grid->sub_comm);
 
   *fft_grid = my_fft_grid;
   fft_stop_timer(handle);
