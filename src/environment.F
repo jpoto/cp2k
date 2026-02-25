@@ -525,7 +525,7 @@ CONTAINS
          MemTotal_max, MemTotal_min, Slab, Slab_avr, Slab_max, Slab_min, SReclaimable, &
          SReclaimable_avr, SReclaimable_max, SReclaimable_min
       INTEGER, DIMENSION(:), POINTER                     :: i_force_eval
-      LOGICAL                                            :: ata, do_echo_all_hosts, efl, explicit, &
+      LOGICAL                                            :: do_echo_all_hosts, efl, explicit, &
                                                             flag, report_maxloc, trace, &
                                                             trace_master
       TYPE(cp_logger_type), POINTER                      :: logger
@@ -881,9 +881,6 @@ CONTAINS
                start_section_label//"| Matrix multiplication library", "COSMA"
          END SELECT
 
-         CALL section_vals_val_get(global_section, "ALLTOALL_SGL", l_val=ata)
-         WRITE (UNIT=output_unit, FMT="(T2,A,T80,L1)") &
-            start_section_label//"| All-to-all communication in single precision", ata
          CALL section_vals_val_get(global_section, "EXTENDED_FFT_LENGTHS", l_val=efl)
          WRITE (UNIT=output_unit, FMT="(T2,A,T80,L1)") &
             start_section_label//"| FFTs using library dependent lengths", efl
@@ -1065,7 +1062,6 @@ CONTAINS
 
       ! Initialize FFT library with the user's preferred FFT library
       CALL init_fft(fftlib=TRIM(globenv%default_fft_library), &
-                    alltoall=section_get_lval(global_section, "ALLTOALL_SGL"), &
                     fftsg_sizes=.NOT. section_get_lval(global_section, "EXTENDED_FFT_LENGTHS"), &
                     pool_limit=globenv%fft_pool_scratch_limit, &
                     wisdom_file=globenv%fftw_wisdom_file_name, &
@@ -1078,7 +1074,6 @@ CONTAINS
             CPWARN(TRIM(message))
             globenv%default_fft_library = "FFTW3"
             CALL init_fft(fftlib=TRIM(globenv%default_fft_library), &
-                          alltoall=section_get_lval(global_section, "ALLTOALL_SGL"), &
                           fftsg_sizes=.NOT. section_get_lval(global_section, "EXTENDED_FFT_LENGTHS"), &
                           pool_limit=globenv%fft_pool_scratch_limit, &
                           wisdom_file=globenv%fftw_wisdom_file_name, &
@@ -1091,7 +1086,6 @@ CONTAINS
             CPWARN(TRIM(message))
             globenv%default_fft_library = "FFTSG"
             CALL init_fft(fftlib=TRIM(globenv%default_fft_library), &
-                          alltoall=section_get_lval(global_section, "ALLTOALL_SGL"), &
                           fftsg_sizes=.NOT. section_get_lval(global_section, "EXTENDED_FFT_LENGTHS"), &
                           pool_limit=globenv%fft_pool_scratch_limit, &
                           wisdom_file=globenv%fftw_wisdom_file_name, &

@@ -42,8 +42,7 @@ MODULE fft_tools
                                               fft_get_lengths,&
                                               fft_library
    USE fft_plan,                        ONLY: fft_plan_type
-   USE kinds,                           ONLY: dp,&
-                                              sp
+   USE kinds,                           ONLY: dp
    USE mathconstants,                   ONLY: z_zero
    USE message_passing,                 ONLY: mp_cart_type,&
                                               mp_comm_null,&
@@ -110,13 +109,9 @@ MODULE fft_tools
       REAL(KIND=dp)                                 :: rsratio = 1.0_dp
       COMPLEX(KIND=dp), DIMENSION(:), POINTER, CONTIGUOUS &
          :: xzbuf => NULL(), yzbuf => NULL()
-      COMPLEX(KIND=sp), DIMENSION(:), POINTER, CONTIGUOUS &
-         :: xzbuf_sgl => NULL(), yzbuf_sgl => NULL()
       COMPLEX(KIND=dp), DIMENSION(:, :), POINTER, CONTIGUOUS &
          :: rbuf1 => NULL(), rbuf2 => NULL(), rbuf3 => NULL(), rbuf4 => NULL(), &
             rbuf5 => NULL(), rbuf6 => NULL(), rr => NULL()
-      COMPLEX(KIND=sp), DIMENSION(:, :), POINTER, CONTIGUOUS &
-         :: ss => NULL(), tt => NULL()
       INTEGER, DIMENSION(:, :), POINTER, CONTIGUOUS :: pgrid => NULL()
       INTEGER, DIMENSION(:), POINTER, CONTIGUOUS    :: xcor => NULL(), zcor => NULL(), pzcoord => NULL()
       TYPE(fft_scratch_sizes)                       :: sizes = fft_scratch_sizes()
@@ -157,11 +152,8 @@ MODULE fft_tools
    INTEGER, PARAMETER :: FFT_RADIX_ALLOWED = 495, FFT_RADIX_DISALLOWED = 496
    INTEGER, PARAMETER :: FFT_RADIX_NEXT_ODD = 497
 
-   REAL(KIND=dp), PARAMETER :: ratio_sparse_alltoall = 0.5_dp
-
    ! these saved variables are FFT globals
    INTEGER, SAVE :: fft_type = 0
-   LOGICAL, SAVE :: alltoall_sgl = .FALSE.
    LOGICAL, SAVE :: use_fftsg_sizes = .TRUE.
    INTEGER, SAVE :: fft_plan_style = 1
 
@@ -176,24 +168,22 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param fftlib ...
-!> \param alltoall ...
 !> \param fftsg_sizes ...
 !> \param pool_limit ...
 !> \param wisdom_file ...
 !> \param plan_style ...
 !> \author JGH
 ! **************************************************************************************************
-   SUBROUTINE init_fft(fftlib, alltoall, fftsg_sizes, pool_limit, wisdom_file, &
+   SUBROUTINE init_fft(fftlib, fftsg_sizes, pool_limit, wisdom_file, &
                        plan_style)
 
       CHARACTER(LEN=*), INTENT(IN)                       :: fftlib
-      LOGICAL, INTENT(IN)                                :: alltoall, fftsg_sizes
+      LOGICAL, INTENT(IN)                                :: fftsg_sizes
       INTEGER, INTENT(IN)                                :: pool_limit
       CHARACTER(LEN=*), INTENT(IN)                       :: wisdom_file
       INTEGER, INTENT(IN)                                :: plan_style
 
       use_fftsg_sizes = fftsg_sizes
-      alltoall_sgl = alltoall
       fft_pool_scratch_limit = pool_limit
       fft_type = fft_library(fftlib)
       fft_plan_style = plan_style
@@ -1369,8 +1359,6 @@ CONTAINS
 
       COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
          POINTER                                         :: rr
-      COMPLEX(KIND=sp), CONTIGUOUS, DIMENSION(:, :), &
-         POINTER                                         :: ss, tt
       INTEGER                                            :: handle, ip, ir, ix, ixx, iy, iz, mpr, &
                                                             nm, np, nr, nx
       INTEGER, CONTIGUOUS, DIMENSION(:), POINTER         :: rcount, rdispl, scount, sdispl
@@ -1382,15 +1370,7 @@ CONTAINS
       rcount => fft_scratch%rcount
       sdispl => fft_scratch%sdispl
       rdispl => fft_scratch%rdispl
-
-      IF (alltoall_sgl) THEN
-         ss => fft_scratch%ss
-         tt => fft_scratch%tt
-         ss(:, :) = CMPLX(sb(:, :), KIND=sp)
-         tt(:, :) = 0._sp
-      ELSE
-         rr => fft_scratch%rr
-      END IF
+      rr => fft_scratch%rr
 
       mpr = p2p(my_pos)
       nm = MAXVAL(nray(0:np - 1))
@@ -1415,32 +1395,20 @@ CONTAINS
          rdispl(ip) = nm*nx*ip
       END DO
 !$OMP END PARALLEL DO
-      IF (alltoall_sgl) THEN
-         CALL group%alltoall(ss, scount, sdispl, tt, rcount, rdispl)
-      ELSE
-         CALL group%alltoall(sb, scount, sdispl, rr, rcount, rdispl)
-      END IF
+      CALL group%alltoall(sb, scount, sdispl, rr, rcount, rdispl)
 
       nx = bo(2, 1, mpr) - bo(1, 1, mpr) + 1
 !$OMP PARALLEL DO DEFAULT(NONE) COLLAPSE(2) &
 !$OMP             PRIVATE(ixx,ir,iy,iz,ix) &
-!$OMP             SHARED(np,nray,nx,alltoall_sgl,yzp,tt,rr,tb)
+!$OMP             SHARED(np,nray,nx,yzp,rr,tb)
       DO ip = 0, np - 1
          DO ix = 1, nx
             ixx = nray(ip)*(ix - 1)
-            IF (alltoall_sgl) THEN
-               DO ir = 1, nray(ip)
-                  iy = yzp(1, ir, ip)
-                  iz = yzp(2, ir, ip)
-                  tb(iy, iz, ix) = tt(ir + ixx, ip)
-               END DO
-            ELSE
-               DO ir = 1, nray(ip)
-                  iy = yzp(1, ir, ip)
-                  iz = yzp(2, ir, ip)
-                  tb(iy, iz, ix) = rr(ir + ixx, ip)
-               END DO
-            END IF
+            DO ir = 1, nray(ip)
+               iy = yzp(1, ir, ip)
+               iz = yzp(2, ir, ip)
+               tb(iy, iz, ix) = rr(ir + ixx, ip)
+            END DO
          END DO
       END DO
 !$OMP END PARALLEL DO
@@ -1484,8 +1452,6 @@ CONTAINS
 
       COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
          POINTER                                         :: rr
-      COMPLEX(KIND=sp), CONTIGUOUS, DIMENSION(:, :), &
-         POINTER                                         :: ss, tt
       INTEGER                                            :: handle, ip, ir, ix, ixx, iy, iz, mpr, &
                                                             nm, np, nr, nx
       INTEGER, CONTIGUOUS, DIMENSION(:), POINTER         :: rcount, rdispl, scount, sdispl
@@ -1498,36 +1464,20 @@ CONTAINS
       rcount => fft_scratch%rcount
       sdispl => fft_scratch%sdispl
       rdispl => fft_scratch%rdispl
-
-      IF (alltoall_sgl) THEN
-         ss => fft_scratch%ss
-         tt => fft_scratch%tt
-         ss = 0._sp
-         tt = 0._sp
-      ELSE
-         rr => fft_scratch%rr
-      END IF
+      rr => fft_scratch%rr
 
       nx = bo(2, 1, mpr) - bo(1, 1, mpr) + 1
 !$OMP PARALLEL DO DEFAULT(NONE) COLLAPSE(2) &
 !$OMP             PRIVATE(ip, ixx, ir, iy, iz, ix) &
-!$OMP             SHARED(np,nray,nx,alltoall_sgl,yzp,tb,tt,rr)
+!$OMP             SHARED(np,nray,nx,yzp,tb,rr)
       DO ip = 0, np - 1
          DO ix = 1, nx
             ixx = nray(ip)*(ix - 1)
-            IF (alltoall_sgl) THEN
-               DO ir = 1, nray(ip)
-                  iy = yzp(1, ir, ip)
-                  iz = yzp(2, ir, ip)
-                  tt(ir + ixx, ip) = CMPLX(tb(iy, iz, ix), KIND=sp)
-               END DO
-            ELSE
-               DO ir = 1, nray(ip)
-                  iy = yzp(1, ir, ip)
-                  iz = yzp(2, ir, ip)
-                  rr(ir + ixx, ip) = tb(iy, iz, ix)
-               END DO
-            END IF
+            DO ir = 1, nray(ip)
+               iy = yzp(1, ir, ip)
+               iz = yzp(2, ir, ip)
+               rr(ir + ixx, ip) = tb(iy, iz, ix)
+            END DO
          END DO
       END DO
 !$OMP END PARALLEL DO
@@ -1554,12 +1504,7 @@ CONTAINS
       END DO
 !$OMP END PARALLEL DO
 
-      IF (alltoall_sgl) THEN
-         CALL group%alltoall(tt, scount, sdispl, ss, rcount, rdispl)
-         sb = ss
-      ELSE
-         CALL group%alltoall(rr, scount, sdispl, sb, rcount, rdispl)
-      END IF
+      CALL group%alltoall(rr, scount, sdispl, sb, rcount, rdispl)
 
       CALL timestop(handle)
 
@@ -1599,7 +1544,6 @@ CONTAINS
       CHARACTER(len=*), PARAMETER                        :: routineN = 'yz_to_xz'
 
       COMPLEX(KIND=dp), DIMENSION(:), POINTER, CONTIGUOUS            :: xzbuf, yzbuf
-      COMPLEX(KIND=sp), DIMENSION(:), POINTER, CONTIGUOUS            :: xzbuf_sgl, yzbuf_sgl
       INTEGER                                            :: handle, icrs, ip, ipl, ipr, ir, ix, iz, &
                                                             jj, jx, jy, jz, myx, myz, np, npx, &
                                                             npz, nx, nz, rs_pos
@@ -1613,13 +1557,8 @@ CONTAINS
 
       rs_pos = p2p(my_pos)
 
-      IF (alltoall_sgl) THEN
-         yzbuf_sgl => fft_scratch%yzbuf_sgl
-         xzbuf_sgl => fft_scratch%xzbuf_sgl
-      ELSE
-         yzbuf => fft_scratch%yzbuf
-         xzbuf => fft_scratch%xzbuf
-      END IF
+      yzbuf => fft_scratch%yzbuf
+      xzbuf => fft_scratch%xzbuf
       npx = dims(1)
       npz = dims(2)
       pgrid => fft_scratch%pgrid
@@ -1648,21 +1587,12 @@ CONTAINS
             zcor(bo(1, 3, ip):bo(2, 3, ip)) = iz
          END DO
          DO jx = 1, nx
-            IF (alltoall_sgl) THEN
-               DO ir = 1, nray(my_pos)
-                  jy = yzp(1, ir, my_pos)
-                  jz = yzp(2, ir, my_pos)
-                  ip = pgrid(xcor(jx), zcor(jz))
-                  scount(ip) = scount(ip) + 1
-               END DO
-            ELSE
-               DO ir = 1, nray(my_pos)
-                  jy = yzp(1, ir, my_pos)
-                  jz = yzp(2, ir, my_pos)
-                  ip = pgrid(xcor(jx), zcor(jz))
-                  scount(ip) = scount(ip) + 1
-               END DO
-            END IF
+            DO ir = 1, nray(my_pos)
+               jy = yzp(1, ir, my_pos)
+               jz = yzp(2, ir, my_pos)
+               ip = pgrid(xcor(jx), zcor(jz))
+               scount(ip) = scount(ip) + 1
+            END DO
          END DO
 
          CALL group%alltoall(scount, rcount, 1)
@@ -1700,8 +1630,7 @@ CONTAINS
 !$OMP PARALLEL DO DEFAULT(NONE), &
 !$OMP             PRIVATE(ipl,jj,nx,ir,jx,jy,jz),&
 !$OMP             SHARED(np,p2p,pzcoord,bo,nray,yzp,zcor),&
-!$OMP             SHARED(yzbuf,sb,scount,sdispl,my_pos),&
-!$OMP             SHARED(yzbuf_sgl,alltoall_sgl)
+!$OMP             SHARED(yzbuf,sb,scount,sdispl,my_pos)
       DO ip = 0, np - 1
          IF (scount(ip) == 0) CYCLE
          ipl = p2p(ip)
@@ -1712,29 +1641,15 @@ CONTAINS
             IF (zcor(jz) == pzcoord(ipl)) THEN
                jj = jj + 1
                jy = yzp(1, ir, my_pos)
-               IF (alltoall_sgl) THEN
-                  DO jx = 0, nx - 1
-                     yzbuf_sgl(sdispl(ip) + jj + jx*scount(ip)/nx) = CMPLX(sb(ir, jx + bo(1, 1, ipl)), KIND=sp)
-                  END DO
-               ELSE
-                  DO jx = 0, nx - 1
-                     yzbuf(sdispl(ip) + jj + jx*scount(ip)/nx) = sb(ir, jx + bo(1, 1, ipl))
-                  END DO
-               END IF
+               DO jx = 0, nx - 1
+                  yzbuf(sdispl(ip) + jj + jx*scount(ip)/nx) = sb(ir, jx + bo(1, 1, ipl))
+               END DO
             END IF
          END DO
       END DO
 !$OMP END PARALLEL DO
 
-      IF (alltoall_sgl) THEN
-         CALL group%alltoall(yzbuf_sgl, scount, sdispl, xzbuf_sgl, rcount, rdispl)
-      ELSE
-         IF (fft_scratch%rsratio < ratio_sparse_alltoall) THEN
-            CALL sparse_alltoall(yzbuf, scount, sdispl, xzbuf, rcount, rdispl, group)
-         ELSE
-            CALL group%alltoall(yzbuf, scount, sdispl, xzbuf, rcount, rdispl)
-         END IF
-      END IF
+      CALL group%alltoall(yzbuf, scount, sdispl, xzbuf, rcount, rdispl)
 
       myx = fft_scratch%sizes%r_pos(1)
       myz = fft_scratch%sizes%r_pos(2)
@@ -1743,28 +1658,19 @@ CONTAINS
 !$OMP PARALLEL DO DEFAULT(NONE), &
 !$OMP             PRIVATE(ipr,jj,ir,jx,jy,jz),&
 !$OMP             SHARED(tb,np,p2p,bo,rs_pos,nray),&
-!$OMP             SHARED(yzp,alltoall_sgl,zcor,myz),&
-!$OMP             SHARED(xzbuf,xzbuf_sgl,nz,rdispl)
+!$OMP             SHARED(yzp,zcor,myz),&
+!$OMP             SHARED(xzbuf,nz,rdispl)
       DO ip = 0, np - 1
          ipr = p2p(ip)
          jj = 0
          DO jx = 0, bo(2, 1, rs_pos) - bo(1, 1, rs_pos)
             DO ir = 1, nray(ip)
                jz = yzp(2, ir, ip)
-               IF (alltoall_sgl) THEN
-                  IF (zcor(jz) == myz) THEN
-                     jj = jj + 1
-                     jy = yzp(1, ir, ip)
-                     jz = jz - bo(1, 3, rs_pos) + 1
-                     tb(jy, jz + jx*nz) = xzbuf_sgl(jj + rdispl(ipr))
-                  END IF
-               ELSE
-                  IF (zcor(jz) == myz) THEN
-                     jj = jj + 1
-                     jy = yzp(1, ir, ip)
-                     jz = jz - bo(1, 3, rs_pos) + 1
-                     tb(jy, jz + jx*nz) = xzbuf(jj + rdispl(ipr))
-                  END IF
+               IF (zcor(jz) == myz) THEN
+                  jj = jj + 1
+                  jy = yzp(1, ir, ip)
+                  jz = jz - bo(1, 3, rs_pos) + 1
+                  tb(jy, jz + jx*nz) = xzbuf(jj + rdispl(ipr))
                END IF
             END DO
          END DO
@@ -1809,7 +1715,6 @@ CONTAINS
       CHARACTER(len=*), PARAMETER                        :: routineN = 'xz_to_yz'
 
       COMPLEX(KIND=dp), DIMENSION(:), POINTER, CONTIGUOUS            :: xzbuf, yzbuf
-      COMPLEX(KIND=sp), DIMENSION(:), POINTER, CONTIGUOUS            :: xzbuf_sgl, yzbuf_sgl
       INTEGER                                            :: handle, icrs, ip, ipl, ir, ix, ixx, iz, &
                                                             jj, jx, jy, jz, mp, myx, myz, np, npx, &
                                                             npz, nx, nz
@@ -1821,13 +1726,8 @@ CONTAINS
 
       np = SIZE(p2p)
 
-      IF (alltoall_sgl) THEN
-         yzbuf_sgl => fft_scratch%yzbuf_sgl
-         xzbuf_sgl => fft_scratch%xzbuf_sgl
-      ELSE
-         yzbuf => fft_scratch%yzbuf
-         xzbuf => fft_scratch%xzbuf
-      END IF
+      yzbuf => fft_scratch%yzbuf
+      xzbuf => fft_scratch%xzbuf
       npx = dims(1)
       npz = dims(2)
       pgrid => fft_scratch%pgrid
@@ -1904,8 +1804,8 @@ CONTAINS
 !$OMP PARALLEL DO DEFAULT(NONE), &
 !$OMP             PRIVATE(jj,ipl,ir,jx,jy,jz,ixx),&
 !$OMP             SHARED(np,p2p,nray,yzp,zcor,myz,bo,mp),&
-!$OMP             SHARED(alltoall_sgl,nx,scount,sdispl),&
-!$OMP             SHARED(xzbuf,xzbuf_sgl,sb,nz)
+!$OMP             SHARED(nx,scount,sdispl),&
+!$OMP             SHARED(xzbuf,sb,nz)
       DO ip = 0, np - 1
          jj = 0
          ipl = p2p(ip)
@@ -1915,37 +1815,22 @@ CONTAINS
                jj = jj + 1
                jy = yzp(1, ir, ip)
                jz = yzp(2, ir, ip) - bo(1, 3, mp) + 1
-               IF (alltoall_sgl) THEN
-                  DO jx = 0, nx - 1
-                     ixx = jj + jx*scount(ipl)/nx
-                     xzbuf_sgl(ixx + sdispl(ipl)) = CMPLX(sb(jy, jz + jx*nz), KIND=sp)
-                  END DO
-               ELSE
-                  DO jx = 0, nx - 1
-                     ixx = jj + jx*scount(ipl)/nx
-                     xzbuf(ixx + sdispl(ipl)) = sb(jy, jz + jx*nz)
-                  END DO
-               END IF
+               DO jx = 0, nx - 1
+                  ixx = jj + jx*scount(ipl)/nx
+                  xzbuf(ixx + sdispl(ipl)) = sb(jy, jz + jx*nz)
+               END DO
             END IF
          END DO
       END DO
 !$OMP END PARALLEL DO
 
-      IF (alltoall_sgl) THEN
-         CALL group%alltoall(xzbuf_sgl, scount, sdispl, yzbuf_sgl, rcount, rdispl)
-      ELSE
-         IF (fft_scratch%rsratio < ratio_sparse_alltoall) THEN
-            CALL sparse_alltoall(xzbuf, scount, sdispl, yzbuf, rcount, rdispl, group)
-         ELSE
-            CALL group%alltoall(xzbuf, scount, sdispl, yzbuf, rcount, rdispl)
-         END IF
-      END IF
-
+      CALL group%alltoall(xzbuf, scount, sdispl, yzbuf, rcount, rdispl)
+      
 !$OMP PARALLEL DO DEFAULT(NONE), &
 !$OMP             PRIVATE(ipl,jj,nx,ir,jx,jy,jz),&
 !$OMP             SHARED(p2p,pzcoord,bo,nray,my_pos,yzp),&
 !$OMP             SHARED(rcount,rdispl,tb,yzbuf,zcor),&
-!$OMP             SHARED(yzbuf_sgl,alltoall_sgl,np)
+!$OMP             SHARED(np)
       DO ip = 0, np - 1
          IF (rcount(ip) == 0) CYCLE
          ipl = p2p(ip)
@@ -1956,15 +1841,9 @@ CONTAINS
             IF (zcor(jz) == pzcoord(ipl)) THEN
                jj = jj + 1
                jy = yzp(1, ir, my_pos)
-               IF (alltoall_sgl) THEN
-                  DO jx = 0, nx - 1
-                     tb(ir, jx + bo(1, 1, ipl)) = yzbuf_sgl(rdispl(ip) + jj + jx*rcount(ip)/nx)
-                  END DO
-               ELSE
-                  DO jx = 0, nx - 1
-                     tb(ir, jx + bo(1, 1, ipl)) = yzbuf(rdispl(ip) + jj + jx*rcount(ip)/nx)
-                  END DO
-               END IF
+               DO jx = 0, nx - 1
+                  tb(ir, jx + bo(1, 1, ipl)) = yzbuf(rdispl(ip) + jj + jx*rcount(ip)/nx)
+               END DO
             END IF
          END DO
       END DO
@@ -2640,18 +2519,6 @@ CONTAINS
       IF (ASSOCIATED(fft_scratch%yzbuf)) THEN
          DEALLOCATE (fft_scratch%yzbuf)
       END IF
-      IF (ASSOCIATED(fft_scratch%xzbuf_sgl)) THEN
-         DEALLOCATE (fft_scratch%xzbuf_sgl)
-      END IF
-      IF (ASSOCIATED(fft_scratch%yzbuf_sgl)) THEN
-         DEALLOCATE (fft_scratch%yzbuf_sgl)
-      END IF
-      IF (ASSOCIATED(fft_scratch%ss)) THEN
-         DEALLOCATE (fft_scratch%ss)
-      END IF
-      IF (ASSOCIATED(fft_scratch%tt)) THEN
-         DEALLOCATE (fft_scratch%tt)
-      END IF
       IF (ASSOCIATED(fft_scratch%pgrid)) THEN
          DEALLOCATE (fft_scratch%pgrid)
       END IF
@@ -2986,12 +2853,7 @@ CONTAINS
                fft_scratch_new%fft_scratch%group = fft_sizes%rs_group
                CALL fft_allocate(fft_scratch_new%fft_scratch%r2buf, [lg, mg])
                nm = nmray*mx2
-               IF (alltoall_sgl) THEN
-                  ALLOCATE (fft_scratch_new%fft_scratch%ss(mmax, lmax))
-                  ALLOCATE (fft_scratch_new%fft_scratch%tt(nm, 0:np - 1))
-               ELSE
-                  ALLOCATE (fft_scratch_new%fft_scratch%rr(nm, 0:np - 1))
-               END IF
+               ALLOCATE (fft_scratch_new%fft_scratch%rr(nm, 0:np - 1))
 
                !set up fft plans
                CALL fft_create_plan_1d(fft_scratch_new%fft_scratch%fft_plan(1), fft_type, FWFFT, .TRUE., nz, nx*ny)
@@ -3024,13 +2886,8 @@ CONTAINS
                CALL fft_allocate(fft_scratch_new%fft_scratch%p4buf, [n(2), mx2*mz2])
                CALL fft_allocate(fft_scratch_new%fft_scratch%p5buf, [nyzray, n(1)])
                CALL fft_allocate(fft_scratch_new%fft_scratch%p7buf, [mg, lg])
-               IF (alltoall_sgl) THEN
-                  ALLOCATE (fft_scratch_new%fft_scratch%yzbuf_sgl(mg*lg))
-                  ALLOCATE (fft_scratch_new%fft_scratch%xzbuf_sgl(n(2)*mx2*mz2))
-               ELSE
-                  ALLOCATE (fft_scratch_new%fft_scratch%yzbuf(mg*lg))
-                  ALLOCATE (fft_scratch_new%fft_scratch%xzbuf(n(2)*mx2*mz2))
-               END IF
+               ALLOCATE (fft_scratch_new%fft_scratch%yzbuf(mg*lg))
+               ALLOCATE (fft_scratch_new%fft_scratch%xzbuf(n(2)*mx2*mz2))
                ALLOCATE (fft_scratch_new%fft_scratch%pgrid(0:m1 - 1, 0:m2 - 1))
                ALLOCATE (fft_scratch_new%fft_scratch%xcor(nbx))
                ALLOCATE (fft_scratch_new%fft_scratch%zcor(nbz))
@@ -3146,61 +3003,6 @@ CONTAINS
       END DO
 
    END SUBROUTINE release_fft_scratch
-
-! **************************************************************************************************
-!> \brief ...
-!> \param rs ...
-!> \param scount ...
-!> \param sdispl ...
-!> \param rq ...
-!> \param rcount ...
-!> \param rdispl ...
-!> \param group ...
-! **************************************************************************************************
-   SUBROUTINE sparse_alltoall(rs, scount, sdispl, rq, rcount, rdispl, group)
-      COMPLEX(KIND=dp), DIMENSION(:), POINTER            :: rs
-      INTEGER, DIMENSION(:), POINTER                     :: scount, sdispl
-      COMPLEX(KIND=dp), DIMENSION(:), POINTER            :: rq
-      INTEGER, DIMENSION(:), POINTER                     :: rcount, rdispl
-
-      CLASS(mp_comm_type), INTENT(IN)                    :: group
-
-      COMPLEX(KIND=dp), DIMENSION(:), POINTER            :: msgin, msgout
-      INTEGER                                            :: ip, n, nr, ns, pos
-      TYPE(mp_request_type), ALLOCATABLE, DIMENSION(:)   :: rreq, sreq
-
-      CALL group%sync()
-      n = group%num_pe
-      pos = group%mepos
-      ALLOCATE (sreq(0:n - 1))
-      ALLOCATE (rreq(0:n - 1))
-      nr = 0
-      DO ip = 0, n - 1
-         IF (rcount(ip) == 0) CYCLE
-         IF (ip == pos) CYCLE
-         msgout => rq(rdispl(ip) + 1:rdispl(ip) + rcount(ip))
-         CALL group%irecv(msgout, ip, rreq(nr))
-         nr = nr + 1
-      END DO
-      ns = 0
-      DO ip = 0, n - 1
-         IF (scount(ip) == 0) CYCLE
-         IF (ip == pos) CYCLE
-         msgin => rs(sdispl(ip) + 1:sdispl(ip) + scount(ip))
-         CALL group%isend(msgin, ip, sreq(ns))
-         ns = ns + 1
-      END DO
-      IF (rcount(pos) /= 0) THEN
-         IF (rcount(pos) /= scount(pos)) CPABORT("Invalid count.")
-         rq(rdispl(pos) + 1:rdispl(pos) + rcount(pos)) = rs(sdispl(pos) + 1:sdispl(pos) + scount(pos))
-      END IF
-      CALL mp_waitall(sreq(0:ns - 1))
-      CALL mp_waitall(rreq(0:nr - 1))
-      DEALLOCATE (sreq)
-      DEALLOCATE (rreq)
-      CALL group%sync()
-
-   END SUBROUTINE sparse_alltoall
 
 ! **************************************************************************************************
 !> \brief  test data structures for equality. It is assumed that if they are

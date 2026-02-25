@@ -329,13 +329,6 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
-      CALL keyword_create(keyword, __LOCATION__, name="ALLTOALL_SGL", &
-                          description="All-to-all communication (FFT) should use single precision", &
-                          usage="ALLTOALL_SGL YES", &
-                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
-      CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)
-
       CALL keyword_create(keyword, __LOCATION__, name="PRINT_LEVEL", &
                           variants=["IOLEVEL"], &
                           description="How much output is written out.", &
