@@ -32,6 +32,8 @@ void cleanup_redistribution(fft_redistribution_t *redistribution) {
   free(redistribution->counts_yz_z);
   free(redistribution->counts_yz_ray_y);
   free(redistribution->counts_yz_ray_z);
+  free(redistribution->displacements_yz_ray_y);
+  free(redistribution->displacements_yz_ray_z);
 }
 
 /*******************************************************************************
@@ -126,56 +128,62 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
   
   // Prepare Ray-based distribution
   if (rays_per_process != NULL && ray_to_xy != NULL) {
-  const int number_of_processes = cp_mpi_comm_size(comm);
-  const int my_process = cp_mpi_comm_rank(comm);
-  const int (*my_bounds)[2] = proc2local_ms[my_process];
-  const int my_number_of_rays = rays_per_process[my_process];
-  const int (*my_rays)[2] = ray_to_xy;
-  for (int process = 0; process < my_process; process++) my_rays += rays_per_process[process];
+    const int number_of_processes = cp_mpi_comm_size(comm);
+    const int my_process = cp_mpi_comm_rank(comm);
+    const int (*my_bounds)[2] = proc2local_ms[my_process];
+    const int my_number_of_rays = rays_per_process[my_process];
+    const int (*my_rays)[2] = ray_to_xy;
+    for (int process = 0; process < my_process; process++) my_rays += rays_per_process[process];
 
-  // Allocate buffers
-  redistribution->counts_yz_ray_y = calloc(number_of_processes, sizeof(int));
-  redistribution->counts_yz_ray_z = calloc(number_of_processes, sizeof(int));
-  for (int process_shift = 1; process_shift < number_of_processes;
-       process_shift++) {
-    const int send_process =
-        modulo(my_process + process_shift, number_of_processes);
-    const int recv_process =
-        modulo(my_process - process_shift, number_of_processes);
+    // Allocate buffers
+    redistribution->counts_yz_ray_y = calloc(number_of_processes, sizeof(int));
+    redistribution->counts_yz_ray_z = calloc(number_of_processes, sizeof(int));
+    redistribution->displacements_yz_ray_y = calloc(number_of_processes, sizeof(int));
+    redistribution->displacements_yz_ray_z = calloc(number_of_processes, sizeof(int));
+    for (int process_shift = 0; process_shift < number_of_processes;
+        process_shift++) {
+      const int send_process =
+          modulo(my_process + process_shift, number_of_processes);
+      const int recv_process =
+          modulo(my_process - process_shift, number_of_processes);
 
-    const int(*proc2local_recv)[2] = proc2local_ms[recv_process];
+      const int(*proc2local_recv)[2] = proc2local_ms[recv_process];
 
-    // Determine the number of rays to receive from the given process
-    int number_of_rays_to_recv = 0;
-#pragma omp parallel for default(none)                                         \
-    shared(my_number_of_rays, my_rays, proc2local_recv)                        \
-    reduction(+ : number_of_rays_to_recv)
-    for (int ray = 0; ray < my_number_of_rays; ray++) {
-      const int index_x = my_rays[ray][0];
-      if (index_x >= proc2local_recv[0][0] &&
-          index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
-        number_of_rays_to_recv++;
+      // Determine the number of rays to receive from the given process
+      int number_of_rays_to_recv = 0;
+  #pragma omp parallel for default(none)                                         \
+      shared(my_number_of_rays, my_rays, proc2local_recv)                        \
+      reduction(+ : number_of_rays_to_recv)
+      for (int ray = 0; ray < my_number_of_rays; ray++) {
+        const int index_x = my_rays[ray][0];
+        if (index_x >= proc2local_recv[0][0] &&
+            index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
+          number_of_rays_to_recv++;
+        }
       }
-    }
-    redistribution->counts_yz_ray_z[recv_process] =
-        number_of_rays_to_recv * proc2local_recv[2][1];
+      redistribution->counts_yz_ray_z[recv_process] =
+          number_of_rays_to_recv * proc2local_recv[2][1];
 
-    // Determine the number of rays to send to the given process
-    const int number_of_rays_send = rays_per_process[send_process];
-    const int(*send_rays)[2] = ray_to_xy;
-    for (int process = 0; process < send_process; process++)
-      send_rays += rays_per_process[process];
-    int number_of_rays_to_send = 0;
-    for (int ray = 0; ray < number_of_rays_send; ray++) {
-      const int index_x = send_rays[ray][0];
-      if (index_x >= my_bounds[0][0] &&
-          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
-        number_of_rays_to_send++;
+      // Determine the number of rays to send to the given process
+      const int number_of_rays_send = rays_per_process[send_process];
+      const int(*send_rays)[2] = ray_to_xy;
+      for (int process = 0; process < send_process; process++)
+        send_rays += rays_per_process[process];
+      int number_of_rays_to_send = 0;
+      for (int ray = 0; ray < number_of_rays_send; ray++) {
+        const int index_x = send_rays[ray][0];
+        if (index_x >= my_bounds[0][0] &&
+            index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
+          number_of_rays_to_send++;
+        }
       }
+      redistribution->counts_yz_ray_y[send_process] = number_of_rays_to_send * my_bounds[2][1];
     }
-    redistribution->counts_yz_ray_y[send_process] = number_of_rays_to_send * my_bounds[2][1];
+    for (int process = 1; process < number_of_processes; process++) {
+          redistribution->displacements_yz_ray_y[process] = redistribution->displacements_yz_ray_y[process-1]+redistribution->counts_yz_ray_y[process-1];
+          redistribution->displacements_yz_ray_z[process] = redistribution->displacements_yz_ray_z[process-1]+redistribution->counts_yz_ray_z[process-1];
+    }
   }
-}
 }
 
 /*******************************************************************************
@@ -487,98 +495,20 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
   const int my_sizes[3] = {my_bounds[0][1], my_bounds[1][1], my_bounds[2][1]};
   assert(my_sizes[1] == npts_global[1]);
 
-  double complex *recv_buffer =
-      malloc(my_number_of_rays * npts_global[2] * sizeof(double complex));
-  double complex *send_buffer =
-      malloc(product3(my_sizes) * sizeof(double complex));
-  cp_mpi_request_t recv_request = cp_mpi_get_request_null(),
-                   send_request = cp_mpi_get_request_null();
   const int(*my_rays)[2] = ray_to_xy;
   for (int process = 0; process < my_process; process++)
     my_rays += number_of_rays[process];
 
-  memset(transposed, 0,
-         my_number_of_rays * npts_global[2] * sizeof(double complex));
+  memset(transposed, 0, product3(my_sizes) * sizeof(double complex));
 
-  // Copy and transpose the local data
-  int number_of_local_rays_to_recv = 0;
-#pragma omp parallel for default(none)                                         \
-    shared(my_bounds, my_number_of_rays, my_rays)                              \
-    reduction(+ : number_of_local_rays_to_recv)
-  for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-    const int index_x = my_rays[xy_ray][0];
-
-    // Check whether we carry that ray before the transposition
-    if (index_x >= my_bounds[0][0] &&
-        index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
-      number_of_local_rays_to_recv++;
-    }
-  }
-  // Copy and transpose the local data
-  int number_of_copied_rays = 0;
-  for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-    const int index_x = my_rays[xy_ray][0];
-    const int index_y = my_rays[xy_ray][1];
-
-    // Check whether we carry that ray before the transposition
-    if (index_x >= my_bounds[0][0] &&
-        index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
-      // Copy the data
-      for (int index_z = my_bounds[2][0];
-           index_z <= my_bounds[2][0] + my_bounds[2][1] - 1; index_z++) {
-        transposed[xy_ray * npts_global[2] + index_z] =
-            grid[((index_z - my_bounds[2][0]) * my_sizes[0] +
-                  (index_x - my_bounds[0][0])) *
-                     my_sizes[1] +
-                 index_y - my_bounds[1][0]];
-      }
-      number_of_copied_rays++;
-    }
-  }
-  assert(number_of_local_rays_to_recv == number_of_copied_rays);
-
-  for (int process_shift = 1; process_shift < number_of_processes;
-       process_shift++) {
-    const int send_process =
-        modulo(my_process + process_shift, number_of_processes);
-    const int recv_process =
-        modulo(my_process - process_shift, number_of_processes);
-
-    const int(*proc2local_recv)[2] = proc2local[recv_process];
-
-    // Determine the number of rays to receive from the given process
-    int number_of_rays_to_recv = 0;
-#pragma omp parallel for default(none)                                         \
-    shared(my_number_of_rays, my_rays, proc2local_recv)                        \
-    reduction(+ : number_of_rays_to_recv)
-    for (int ray = 0; ray < my_number_of_rays; ray++) {
-      const int index_x = my_rays[ray][0];
-      if (index_x >= proc2local_recv[0][0] &&
-          index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
-        number_of_rays_to_recv++;
-      }
-    }
-    memset(recv_buffer, 0, redistribution->counts_yz_ray_z[recv_process] * sizeof(double complex));
-
-    // Post receive request
-    recv_request = cp_mpi_irecv_double_complex(
-        recv_buffer, redistribution->counts_yz_ray_z[recv_process], recv_process, 1, comm);
-
+  for (int send_process = 0; send_process < number_of_processes;
+       send_process++) {
     // Determine the number of rays to send to the given process
     const int number_of_rays_send = number_of_rays[send_process];
     const int(*send_rays)[2] = ray_to_xy;
     for (int process = 0; process < send_process; process++)
       send_rays += number_of_rays[process];
-    int number_of_rays_to_send = 0;
-    for (int ray = 0; ray < number_of_rays_send; ray++) {
-      const int index_x = send_rays[ray][0];
-      if (index_x >= my_bounds[0][0] &&
-          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
-        number_of_rays_to_send++;
-      }
-    }
     // Pack the send buffer
-    memset(send_buffer, 0, redistribution->counts_yz_ray_y[send_process] * sizeof(double complex));
     int ray_position = 0;
     for (int ray = 0; ray < number_of_rays_send; ray++) {
       const int index_x = send_rays[ray][0];
@@ -586,7 +516,7 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
       if (index_x >= my_bounds[0][0] &&
           index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
         for (int index_z = 0; index_z < my_sizes[2]; index_z++) {
-          send_buffer[ray_position * my_sizes[2] + index_z] =
+          transposed[redistribution->displacements_yz_ray_y[send_process]+ray_position * my_sizes[2] + index_z] =
               grid[(index_z * my_sizes[0] + (index_x - my_bounds[0][0])) *
                        my_sizes[1] +
                    index_y];
@@ -594,41 +524,30 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
         ray_position++;
       }
     }
+    assert(ray_position*my_sizes[2] == redistribution->counts_yz_ray_y[send_process]);
+  }
+    
+  cp_mpi_alltoallv_double_complex(transposed, redistribution->counts_yz_ray_y, redistribution->displacements_yz_ray_y, grid, redistribution->counts_yz_ray_z, redistribution->displacements_yz_ray_z, comm);
 
-    // Post send request
-    send_request = cp_mpi_isend_double_complex(
-        send_buffer, redistribution->counts_yz_ray_y[send_process], send_process, 1, comm);
-
-    // Wait for the receive process and copy the data
-    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_recv");
-    const int handle2 = fft_start_timer(routine_name);
-    cp_mpi_wait(&recv_request);
-    fft_stop_timer(handle2);
+  for (int recv_process = 0; recv_process < number_of_processes;
+       recv_process++) {
+    const int(*proc2local_recv)[2] = proc2local[recv_process];
 
     // Unpack the received data
-    ray_position = 0;
+    int ray_position = 0;
     for (int ray = 0; ray < my_number_of_rays; ray++) {
       const int index_x = my_rays[ray][0];
       if (index_x >= proc2local_recv[0][0] &&
           index_x <= proc2local_recv[0][0] + proc2local_recv[0][1] - 1) {
         memcpy(transposed + ray * npts_global[2] + proc2local_recv[2][0],
-               recv_buffer + ray_position * proc2local_recv[2][1],
+               grid + redistribution->displacements_yz_ray_z[recv_process] + ray_position * proc2local_recv[2][1],
                proc2local_recv[2][1] * sizeof(double complex));
         ray_position++;
       }
     }
-
-    // Wait for the send request
-    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_send");
-    const int handle3 = fft_start_timer(routine_name);
-    cp_mpi_wait(&send_request);
-    fft_stop_timer(handle3);
+    assert(ray_position*proc2local_recv[2][1] == redistribution->counts_yz_ray_z[recv_process]);
   }
 
-  free(recv_buffer);
-  free(send_buffer);
   fft_stop_timer(handle);
 }
 

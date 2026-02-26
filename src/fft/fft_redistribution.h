@@ -31,8 +31,10 @@ typedef struct {
   int *displacements_yz_z;
   int *counts_yz_z;
   // y<->z (ray-based)
-  int *counts_yz_ray_z;
+  int *displacements_yz_ray_y;
   int *counts_yz_ray_y;
+  int *displacements_yz_ray_z;
+  int *counts_yz_ray_z;
 } fft_redistribution_t;
 
 void prepare_redistribution(fft_redistribution_t *redistribution,
