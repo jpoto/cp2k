@@ -34,6 +34,8 @@ void cleanup_redistribution(fft_redistribution_t *redistribution) {
   free(redistribution->counts_yz_ray_z);
   free(redistribution->displacements_yz_ray_y);
   free(redistribution->displacements_yz_ray_z);
+  free(redistribution->xy_to_proc_ray_y);
+  free(redistribution->xy_to_proc_ray_z);
 }
 
 /*******************************************************************************
@@ -140,6 +142,8 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
     redistribution->counts_yz_ray_z = calloc(number_of_processes, sizeof(int));
     redistribution->displacements_yz_ray_y = calloc(number_of_processes, sizeof(int));
     redistribution->displacements_yz_ray_z = calloc(number_of_processes, sizeof(int));
+    redistribution->xy_to_proc_ray_y = calloc(my_bounds[0][1]*my_bounds[1][1], sizeof(int));
+    redistribution->xy_to_proc_ray_z = calloc(my_number_of_rays, sizeof(int));
     for (int process_shift = 0; process_shift < number_of_processes;
         process_shift++) {
       const int send_process =
@@ -182,6 +186,42 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
     for (int process = 1; process < number_of_processes; process++) {
           redistribution->displacements_yz_ray_y[process] = redistribution->displacements_yz_ray_y[process-1]+redistribution->counts_yz_ray_y[process-1];
           redistribution->displacements_yz_ray_z[process] = redistribution->displacements_yz_ray_z[process-1]+redistribution->counts_yz_ray_z[process-1];
+    }
+    for (int process_shift = 0; process_shift < number_of_processes;
+        process_shift++) {
+      const int send_process =
+          modulo(my_process + process_shift, number_of_processes);
+
+      // Determine the number of rays to send to the given process
+      const int number_of_rays_send = rays_per_process[send_process];
+      const int(*send_rays)[2] = ray_to_xy;
+      for (int process = 0; process < send_process; process++)
+        send_rays += rays_per_process[process];
+      int number_of_rays_to_send = 0;
+      for (int ray = 0; ray < number_of_rays_send; ray++) {
+        const int index_x = send_rays[ray][0];
+        if (index_x >= my_bounds[0][0] &&
+            index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
+          number_of_rays_to_send++;
+        }
+      }
+      redistribution->counts_yz_ray_y[send_process] = number_of_rays_to_send * my_bounds[2][1];
+    // Determine the index map for the xy-pairs
+    int ray_position = 0;
+    for (int ray = 0; ray < number_of_rays_send; ray++) {
+      const int index_x = send_rays[ray][0];
+      const int index_y = send_rays[ray][1];
+      if (index_x >= my_bounds[0][0] &&
+          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
+        for (int index_z = 0; index_z < my_bounds[2][1]; index_z++) {
+          redistribution->xy_to_proc_ray_y[(index_x - my_bounds[0][0]) *
+                       my_bounds[1][1] +
+                   index_y] = redistribution->displacements_yz_ray_y[send_process]/my_bounds[2][1]+ray_position;
+        }
+        ray_position++;
+      }
+    }
+    assert(ray_position*my_bounds[2][1] == redistribution->counts_yz_ray_y[send_process]);
     }
   }
 }
@@ -501,30 +541,13 @@ void collect_z_and_distribute_xy_ray(double complex *restrict grid,
 
   memset(transposed, 0, product3(my_sizes) * sizeof(double complex));
 
-  for (int send_process = 0; send_process < number_of_processes;
-       send_process++) {
-    // Determine the number of rays to send to the given process
-    const int number_of_rays_send = number_of_rays[send_process];
-    const int(*send_rays)[2] = ray_to_xy;
-    for (int process = 0; process < send_process; process++)
-      send_rays += number_of_rays[process];
-    // Pack the send buffer
-    int ray_position = 0;
-    for (int ray = 0; ray < number_of_rays_send; ray++) {
-      const int index_x = send_rays[ray][0];
-      const int index_y = send_rays[ray][1];
-      if (index_x >= my_bounds[0][0] &&
-          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
+  for (int xy_pair = 0; xy_pair < my_bounds[0][1]*my_bounds[1][1]; xy_pair++) {
+    const int new_xy_index = redistribution->xy_to_proc_ray_y[xy_pair];
         for (int index_z = 0; index_z < my_sizes[2]; index_z++) {
-          transposed[redistribution->displacements_yz_ray_y[send_process]+ray_position * my_sizes[2] + index_z] =
-              grid[(index_z * my_sizes[0] + (index_x - my_bounds[0][0])) *
-                       my_sizes[1] +
-                   index_y];
+          transposed[new_xy_index * my_sizes[2] + index_z] =
+              grid[index_z * my_sizes[0] *
+                       my_sizes[1] +xy_pair];
         }
-        ray_position++;
-      }
-    }
-    assert(ray_position*my_sizes[2] == redistribution->counts_yz_ray_y[send_process]);
   }
     
   cp_mpi_alltoallv_double_complex(transposed, redistribution->counts_yz_ray_y, redistribution->displacements_yz_ray_y, grid, redistribution->counts_yz_ray_z, redistribution->displacements_yz_ray_z, comm);
