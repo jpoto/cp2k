@@ -1592,9 +1592,12 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                       grid_buffer_1, grid_buffer_2);
 
       // Perform transpose (z,xy_d) -> (z_d,x_d,y)
-      collect_xy_and_distribute_z_ray(grid_buffer_2, grid_buffer_1, npts_global,
-                                      proc2local_ms, rays_per_process,
-                                      ray_to_xy, comm);
+    collect_xy_and_distribute_z_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_xy_and_distribute_z_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
       // Perform the second FFT (z_d,x_d,y) -> (y,z_d,x_d)
       fft_1d_bw_local(npts_global[1], fft_sizes_ms[0] * fft_sizes_ms[2], true,
@@ -1639,9 +1642,12 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                     grid_buffer_1, grid_buffer_2);
 
     // Perform transpose (z,xy_d) -> (z_d,x,y)
-    collect_xy_and_distribute_z_ray(grid_buffer_2, grid_buffer_1, npts_global,
-                                    proc2local_ms, rays_per_process, ray_to_xy,
-                                    comm);
+    collect_xy_and_distribute_z_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_xy_and_distribute_z_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
     // Perform the second FFT
     if (is_complex) {
@@ -1771,9 +1777,12 @@ void fft_3d_bw_c2r_ray(
                       grid_buffer_1, grid_buffer_2);
 
       // Perform transpose (z,xy_d) -> (z_d,x_d,y)
-      collect_xy_and_distribute_z_ray(grid_buffer_2, grid_buffer_1,
-                                      npts_global_gspace, proc2local_ms,
-                                      rays_per_process, ray_to_xy, comm);
+    collect_xy_and_distribute_z_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_xy_and_distribute_z_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
       // Perform the second FFT (z_d,x_d,y) -> (y,z_d,x_d)
       fft_1d_bw_local(npts_global[1], fft_sizes_ms[0] * fft_sizes_ms[2], true,
@@ -1804,9 +1813,12 @@ void fft_3d_bw_c2r_ray(
                     grid_buffer_1, grid_buffer_2);
 
     // Perform transpose (z,xy_d) -> (z_d,x,y)
-    collect_xy_and_distribute_z_ray(grid_buffer_2, grid_buffer_1,
-                                    npts_global_gspace, proc2local_ms,
-                                    rays_per_process, ray_to_xy, comm);
+    collect_xy_and_distribute_z_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_xy_and_distribute_z_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
     if (fft_lib_has_guru_interface()) {
       // Use the guru interface to merge both 1D FFTs into a single 2D FFT)

@@ -707,10 +707,15 @@ int fft_test_transpose_ray(const int npts_global[3],
           I * index_x;
     }
   }
-  collect_xy_and_distribute_z_ray(
-      buffer_1, buffer_2, fft_grid_ray_layout->npts_global_gspace,
-      fft_grid_ray_layout->proc2local_ms, fft_grid_ray_layout->rays_per_process,
-      fft_grid_ray_layout->ray_to_xy, fft_grid_ray_layout->comm);
+
+  collect_xy_and_distribute_z_ray_pack(
+      buffer_1, buffer_2, fft_grid_ray_layout->redistribution);
+
+  collect_xy_and_distribute_z_ray_comm(
+      buffer_2, buffer_1, fft_grid_ray_layout->redistribution, fft_grid_ray_layout->comm);
+
+  collect_xy_and_distribute_z_ray_unpack(
+      buffer_1, buffer_2, fft_grid_ray_layout->redistribution);
 
   max_error = 0.0;
 #pragma omp parallel for default(none)                                         \

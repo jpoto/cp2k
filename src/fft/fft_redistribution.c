@@ -588,169 +588,63 @@ void collect_z_and_distribute_xy_ray_unpack(const double complex *restrict recv_
 }
 
 /*******************************************************************************
- * \brief Performs a transposition of (z, xy_D) -> (z_D, x_D, y).
+ * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_xy_and_distribute_z_ray(double complex *restrict grid,
-                                     double complex *restrict transposed,
-                                     const int npts_global[3],
-                                     const int (*proc2local_transposed)[3][2],
-                                     const int *number_of_rays,
-                                     const int (*ray_to_xy)[2],
+void collect_xy_and_distribute_z_ray_pack(const double complex *restrict grid,
+                                     double complex *restrict send_buffer,
+    const fft_redistribution_t *redistribution) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_pack");
+  const int handle = fft_start_timer(routine_name);
+
+  for (int ray_position = 0; ray_position < redistribution->rays_z; ray_position++) {
+        memcpy(send_buffer + redistribution->xy_to_proc_ray_z[ray_position][1],
+               grid + redistribution->xy_to_proc_ray_z[ray_position][0],
+               redistribution->xy_to_proc_ray_z[ray_position][2] * sizeof(double complex));
+  }
+
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_xy_and_distribute_z_ray_comm(const double complex *restrict send_buffer,
+                                     double complex *restrict recv_buffer,
+    const fft_redistribution_t *redistribution,
                                      const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_comm");
   const int handle = fft_start_timer(routine_name);
-  const int number_of_processes = cp_mpi_comm_size(comm);
-  const int my_process = cp_mpi_comm_rank(comm);
+    
+  cp_mpi_alltoallv_double_complex(send_buffer, redistribution->counts_yz_ray_z, redistribution->displacements_yz_ray_z, recv_buffer, redistribution->counts_yz_ray_y, redistribution->displacements_yz_ray_y, comm);
 
-  int max_number_of_rays = 0;
-  for (int process = 0; process < number_of_processes; process++)
-    max_number_of_rays = imax(max_number_of_rays, number_of_rays[process]);
+  fft_stop_timer(handle);
+}
 
-  const int(*my_bounds)[2] = proc2local_transposed[my_process];
-  int my_transposed_sizes[3];
-  for (int dir = 0; dir < 3; dir++)
-    my_transposed_sizes[dir] = my_bounds[dir][1];
-  assert(my_transposed_sizes[1] == npts_global[1]);
-  const int max_number_of_elements =
-      imax(max_number_of_rays * npts_global[2], product3(my_transposed_sizes));
-  const int my_number_of_rays = number_of_rays[my_process];
+/*******************************************************************************
+ * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_xy_and_distribute_z_ray_unpack(const double complex *restrict recv_buffer,
+                                     double complex *restrict transposed,
+    const fft_redistribution_t *redistribution) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_unpack");
+  const int handle = fft_start_timer(routine_name);
 
-  double complex *recv_buffer =
-      malloc(max_number_of_elements * sizeof(double complex));
-  double complex *send_buffer =
-      malloc(max_number_of_elements * sizeof(double complex));
-  cp_mpi_request_t recv_request = cp_mpi_get_request_null(),
-                   send_request = cp_mpi_get_request_null();
-
-  memset(transposed, 0, product3(my_transposed_sizes) * sizeof(double complex));
-
-  // Copy and transpose the local data
-  int number_of_received_rays = 0;
-  const int(*my_rays)[2] = ray_to_xy;
-  for (int process = 0; process < my_process; process++)
-    my_rays += number_of_rays[process];
-#pragma omp parallel for default(none)                                         \
-    shared(my_transposed_sizes, my_bounds, my_rays, my_number_of_rays, grid,   \
-               transposed, npts_global) reduction(+ : number_of_received_rays)
-  for (int xy_ray = 0; xy_ray < my_number_of_rays; xy_ray++) {
-    const int index_x = my_rays[xy_ray][0];
-    const int index_y = my_rays[xy_ray][1];
-
-    // Check whether we carry that ray after the transposition
-    if (index_x < my_bounds[0][0] ||
-        index_x > my_bounds[0][0] + my_bounds[0][1] - 1)
-      continue;
-
-    // Copy the data
-    for (int index_z = my_bounds[2][0];
-         index_z <= my_bounds[2][0] + my_bounds[2][1] - 1; index_z++) {
-      transposed[((index_z - my_bounds[2][0]) * my_transposed_sizes[0] +
-                  (index_x - my_bounds[0][0])) *
-                     my_transposed_sizes[1] +
-                 (index_y - my_bounds[1][0])] =
-          grid[xy_ray * npts_global[2] + index_z];
-    }
-    number_of_received_rays++;
-  }
-
-  for (int process_shift = 1; process_shift < number_of_processes;
-       process_shift++) {
-    const int send_process =
-        modulo(my_process + process_shift, number_of_processes);
-    const int recv_process =
-        modulo(my_process - process_shift, number_of_processes);
-
-    int number_of_rays_to_recv = 0;
-    const int(*recv_rays)[2] = ray_to_xy;
-    const int number_of_rays_recv = number_of_rays[recv_process];
-    for (int process = 0; process < recv_process; process++)
-      recv_rays += number_of_rays[process];
-#pragma omp parallel for default(none)                                         \
-    shared(number_of_rays_recv, recv_rays, proc2local_transposed, my_bounds)   \
-    reduction(+ : number_of_rays_to_recv)
-    for (int ray = 0; ray < number_of_rays_recv; ray++) {
-      const int index_x = recv_rays[ray][0];
-      if (index_x >= my_bounds[0][0] &&
-          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
-        number_of_rays_to_recv++;
-      }
-    }
-    memset(recv_buffer, 0, max_number_of_elements * sizeof(double complex));
-
-    // Post receive request
-    recv_request = cp_mpi_irecv_double_complex(
-        recv_buffer, my_transposed_sizes[2] * number_of_rays_to_recv,
-        recv_process, 1, comm);
-
-    memset(send_buffer, 0, max_number_of_elements * sizeof(double complex));
-    const int(*proc2local_send)[2] = proc2local_transposed[send_process];
-    int number_of_rays_to_send = 0;
-#pragma omp parallel for default(none)                                         \
-    shared(my_number_of_rays, my_rays, proc2local_send)                        \
-    reduction(+ : number_of_rays_to_send)
-    for (int ray = 0; ray < my_number_of_rays; ray++) {
-      const int index_x = my_rays[ray][0];
-      if (index_x >= proc2local_send[0][0] &&
-          index_x <= proc2local_send[0][0] + proc2local_send[0][1] - 1) {
-        number_of_rays_to_send++;
-      }
-    }
-    int ray_position = 0;
-    for (int ray = 0; ray < my_number_of_rays; ray++) {
-      const int index_x = my_rays[ray][0];
-      if (index_x >= proc2local_send[0][0] &&
-          index_x <= proc2local_send[0][0] + proc2local_send[0][1] - 1) {
-        memcpy(send_buffer + ray_position * proc2local_send[2][1],
-               grid + ray * npts_global[2] + proc2local_send[2][0],
-               proc2local_send[2][1] * sizeof(double complex));
-        ray_position++;
-      }
-    }
-    assert(ray_position == number_of_rays_to_send);
-
-    // Post send request
-    send_request = cp_mpi_isend_double_complex(
-        send_buffer, number_of_rays_to_send * proc2local_send[2][1],
-        send_process, 1, comm);
-
-    // Wait for the receive process and copy the data
-    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_recv");
-    const int handle2 = fft_start_timer(routine_name);
-    cp_mpi_wait(&recv_request);
-    fft_stop_timer(handle2);
-
-    ray_position = 0;
-    for (int ray = 0; ray < number_of_rays_recv; ray++) {
-      const int index_x = recv_rays[ray][0];
-      const int index_y = recv_rays[ray][1];
-      if (index_x >= my_bounds[0][0] &&
-          index_x <= my_bounds[0][0] + my_bounds[0][1] - 1) {
-        for (int index_z = 0; index_z < my_transposed_sizes[2]; index_z++) {
-          transposed[(index_z * my_transposed_sizes[0] +
-                      (index_x - my_bounds[0][0])) *
-                         my_transposed_sizes[1] +
-                     index_y] =
-              recv_buffer[ray_position * my_transposed_sizes[2] + index_z];
+  for (int xy_pair = 0; xy_pair < redistribution->my_size_x_gs*redistribution->npts_global_gspace[1]; xy_pair++) {
+    const int new_xy_index = redistribution->xy_to_proc_ray_y[xy_pair];
+        for (int index_z = 0; index_z < redistribution->my_size_z_rs; index_z++) {
+          transposed[index_z * redistribution->my_size_x_gs*redistribution->npts_global_gspace[1] +xy_pair] = recv_buffer[new_xy_index * redistribution->my_size_z_rs + index_z];
         }
-        ray_position++;
-      }
-    }
-    assert(ray_position == number_of_rays_to_recv);
-
-    // Wait for the send request
-    memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-    snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_xy_dist_z_r_wait_send");
-    const int handle3 = fft_start_timer(routine_name);
-    cp_mpi_wait(&send_request);
-    fft_stop_timer(handle3);
   }
 
-  free(recv_buffer);
-  free(send_buffer);
   fft_stop_timer(handle);
 }
 
