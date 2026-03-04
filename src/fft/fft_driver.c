@@ -1077,7 +1077,6 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                    const int *index_to_ray, const int (*proc2local_rs)[3][2],
                    const int (*proc2local_ms)[3][2],
                    const int (*proc2local_x_gs)[2], const int *rays_per_process,
-                   const int (*ray_to_xy)[2],
                    const fft_redistribution_t *redistribution,
                    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
@@ -1151,9 +1150,14 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
 
       // Perform second redistribution and transpose
       // (x_d,y,z_d) -> (z,xy_d)
-      collect_z_and_distribute_xy_ray_transpose(
-          grid_buffer_2, grid_buffer_1, npts_global, proc2local_ms,
-          rays_per_process, ray_to_xy, comm);
+
+    // but we need to redistribute to rays (x_d,y,z_d) -> (z,xy_d)
+    collect_z_and_distribute_xy_ray_pack_transposed(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_z_and_distribute_xy_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
     } else {
       if (is_complex) {
         memcpy(grid_buffer_2, grid_rs,
@@ -1269,7 +1273,7 @@ void fft_3d_fw_r2c_ray(
     const int npts_global[3], const int npts_global_gspace[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_x_gs)[2], const int *rays_per_process,
-    const int (*ray_to_xy)[2], const fft_redistribution_t *redistribution,
+    const fft_redistribution_t *redistribution,
     const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
@@ -1294,10 +1298,6 @@ void fft_3d_fw_r2c_ray(
                          proc2local_ms[my_process][1][1],
                          proc2local_ms[my_process][2][1]};
   int number_of_local_xy_rays = rays_per_process[my_process];
-  const int(*my_ray_to_xy)[2] = ray_to_xy;
-  for (int process = 0; process < my_process; process++) {
-    my_ray_to_xy += rays_per_process[process];
-  }
 
   int proc_grid[2];
   int periods[2];
@@ -1335,9 +1335,14 @@ void fft_3d_fw_r2c_ray(
 
       // Perform second redistribution and transpose
       // (x_d,y,z_d) -> (z,xy_d)
-      collect_z_and_distribute_xy_ray_transpose(
-          grid_buffer_2, grid_buffer_1, npts_global_gspace, proc2local_ms,
-          rays_per_process, ray_to_xy, comm);
+
+    // but we need to redistribute to rays (x_d,y,z_d) -> (z,xy_d)
+    collect_z_and_distribute_xy_ray_pack_transposed(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_z_and_distribute_xy_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
       // Perform the third FFT (z,xy_d) -> (xy_d,z)
       fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1503,7 +1508,6 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                    const int npts_global[3], const int (*proc2local_rs)[3][2],
                    const int (*proc2local_ms)[3][2],
                    const int (*proc2local_x_gs)[2], const int *rays_per_process,
-                   const int (*ray_to_xy)[2],
                    const fft_redistribution_t *redistribution,
                    const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
@@ -1556,9 +1560,12 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
 
       // Perform second redistribution and transpose
       // (z,xy_d) -> (x_d,y,z_d)
-      collect_xy_and_distribute_z_ray_transpose(
-          grid_buffer_2, grid_buffer_1, npts_global, proc2local_ms,
-          rays_per_process, ray_to_xy, comm);
+    collect_xy_and_distribute_z_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_xy_and_distribute_z_ray_unpack_transposed(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
       if (fft_sizes_rs[2] > 0) {
         // Perform the first two FFTs in x- and y-direction
@@ -1629,9 +1636,6 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
   } else if (proc_grid[0] > 1) {
     memset(grid_buffer_1, 0,
            number_of_local_xy_rays * npts_global[2] * sizeof(double complex));
-    const int(*my_ray_to_xy)[2] = ray_to_xy;
-    for (int process = 0; process < my_process; process++)
-      my_ray_to_xy += rays_per_process[process];
 #pragma omp parallel for default(none)                                         \
     shared(number_of_local_gpts, index_to_ray, grid_buffer_1, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
@@ -1667,9 +1671,6 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
   } else {
     // Ray distribution
     memset(grid_buffer_2, 0, product3(npts_global) * sizeof(double complex));
-    const int(*my_ray_to_xy)[2] = ray_to_xy;
-    for (int process = 0; process < my_process; process++)
-      my_ray_to_xy += rays_per_process[process];
 #pragma omp parallel for default(none)                                         \
     shared(number_of_local_gpts, index_to_ray, grid_buffer_2, grid_gs)
     for (int i = 0; i < number_of_local_gpts; i++) {
@@ -1703,7 +1704,7 @@ void fft_3d_bw_c2r_ray(
     const int npts_global[3], const int npts_global_gspace[3],
     const int (*proc2local_rs)[3][2], const int (*proc2local_ms)[3][2],
     const int (*proc2local_x_gs)[2], const int *rays_per_process,
-    const int (*ray_to_xy)[2], const fft_redistribution_t *redistribution,
+    const fft_redistribution_t *redistribution,
     const cp_mpi_comm_t comm, const cp_mpi_comm_t sub_comm[2]) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
@@ -1755,9 +1756,12 @@ void fft_3d_bw_c2r_ray(
 
       // Perform second redistribution and transpose
       // (z,xy_d) -> (x_d,y,z_d)
-      collect_xy_and_distribute_z_ray_transpose(
-          grid_buffer_2, grid_buffer_1, npts_global_gspace, proc2local_ms,
-          rays_per_process, ray_to_xy, comm);
+    collect_xy_and_distribute_z_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_xy_and_distribute_z_ray_unpack_transposed(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
       if (fft_sizes_rs[2] > 0) {
         // Perform the first two FFTs in x- and y-direction

@@ -144,6 +144,10 @@ void collect_z_and_distribute_xy_ray_pack(const double complex *restrict grid,
                                      double complex *restrict transposed,
     const fft_redistribution_t *redistribution);
 
+void collect_z_and_distribute_xy_ray_pack_transposed(const double complex *restrict grid,
+                                     double complex *restrict transposed,
+    const fft_redistribution_t *redistribution);
+
 void collect_z_and_distribute_xy_ray_comm(const double complex *restrict send_buffer,
                                      double complex *restrict recv_buffer,
     const fft_redistribution_t *redistribution,
@@ -166,17 +170,9 @@ void collect_xy_and_distribute_z_ray_unpack(const double complex *restrict recv_
                                      double complex *restrict transposed,
     const fft_redistribution_t *redistribution);
 
-void collect_z_and_distribute_xy_ray_transpose(
-    double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int (*proc2local)[3][2],
-    const int *number_of_rays, const int (*ray_to_xy)[2],
-    const cp_mpi_comm_t comm);
-
-void collect_xy_and_distribute_z_ray_transpose(
-    double complex *restrict grid, double complex *restrict transposed,
-    const int npts_global[3], const int (*proc2local_transposed)[3][2],
-    const int *number_of_rays, const int (*ray_to_xy)[2],
-    const cp_mpi_comm_t comm);
+void collect_xy_and_distribute_z_ray_unpack_transposed(const double complex *restrict recv_buffer,
+                                     double complex *restrict transposed,
+    const fft_redistribution_t *redistribution);
 
 #endif /* FFT_REORDER_H */
 
