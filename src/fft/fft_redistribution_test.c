@@ -637,10 +637,14 @@ int fft_test_transpose_ray(const int npts_global[3],
     }
   }
 
-  collect_z_and_distribute_xy_ray(
-      buffer_1, buffer_2, fft_grid_ray_layout->npts_global_gspace,
-      fft_grid_ray_layout->proc2local_ms, fft_grid_ray_layout->rays_per_process,
-      fft_grid_ray_layout->ray_to_xy, fft_grid_ray_layout->redistribution, fft_grid_ray_layout->comm);
+  collect_z_and_distribute_xy_ray_pack(
+      buffer_1, buffer_2, fft_grid_ray_layout->redistribution);
+
+  collect_z_and_distribute_xy_ray_comm(
+      buffer_2, buffer_1, fft_grid_ray_layout->redistribution, fft_grid_ray_layout->comm);
+
+  collect_z_and_distribute_xy_ray_unpack(
+      buffer_1, buffer_2, fft_grid_ray_layout->redistribution);
 
   max_error = 0.0;
   ray_index_offset = 0;

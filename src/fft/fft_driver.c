@@ -1183,9 +1183,12 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                       false, grid_buffer_1, grid_buffer_2);
 
       // Perform second redistribution (z_d,x_d,y) -> (z,xy_d)
-      collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1, npts_global,
-                                      proc2local_ms, rays_per_process,
-                                      ray_to_xy, redistribution, comm);
+      collect_z_and_distribute_xy_ray_pack(grid_buffer_2, grid_buffer_1,
+                                      redistribution);
+      collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
+                                      redistribution, comm);
+      collect_z_and_distribute_xy_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                      redistribution);
     }
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
@@ -1214,9 +1217,12 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
                     fft_sizes_ms[2], true, false, grid_buffer_1, grid_buffer_2);
 
     // Perform second transpose (z_d,x,y) -> (z,xy_d)
-    collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1, npts_global,
-                                    proc2local_ms, rays_per_process, ray_to_xy,
+    collect_z_and_distribute_xy_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
                                     redistribution, comm);
+    collect_z_and_distribute_xy_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1357,9 +1363,12 @@ void fft_3d_fw_r2c_ray(
                       false, grid_buffer_1, grid_buffer_2);
 
       // Perform second redistribution (z_d,x_d,y) -> (z,xy_d)
-      collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1,
-                                      npts_global_gspace, proc2local_ms,
-                                      rays_per_process, ray_to_xy, redistribution, comm);
+      collect_z_and_distribute_xy_ray_pack(grid_buffer_2, grid_buffer_1,
+                                      redistribution);
+      collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
+                                      redistribution, comm);
+      collect_z_and_distribute_xy_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                      redistribution);
 
       // Perform the third FFT (z,xy_d) -> (xy_d,z)
       fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,
@@ -1411,9 +1420,12 @@ void fft_3d_fw_r2c_ray(
     }
 
     // but we need to redistribute to rays (z_d,x,y) -> (z,xy_d)
-    collect_z_and_distribute_xy_ray(grid_buffer_2, grid_buffer_1,
-                                    npts_global_gspace, proc2local_ms,
-                                    rays_per_process, ray_to_xy, redistribution, comm);
+    collect_z_and_distribute_xy_ray_pack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
+    collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
+                                    redistribution, comm);
+    collect_z_and_distribute_xy_ray_unpack(grid_buffer_2, grid_buffer_1,
+                                    redistribution);
 
     // Perform the third FFT (z,xy_d) -> (xy_d,z)
     fft_1d_fw_local(npts_global[2], number_of_local_xy_rays, false, false,

@@ -143,7 +143,8 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
     redistribution->displacements_yz_ray_y = calloc(number_of_processes, sizeof(int));
     redistribution->displacements_yz_ray_z = calloc(number_of_processes, sizeof(int));
     redistribution->xy_to_proc_ray_y = calloc(my_bounds[0][1]*my_bounds[1][1], sizeof(int));
-    redistribution->xy_to_proc_ray_z = calloc(my_number_of_rays*cp_mpi_comm_size(sub_comm[0]), sizeof(int[3]));
+    redistribution->rays_z = my_number_of_rays*cp_mpi_comm_size(sub_comm[0]);
+    redistribution->xy_to_proc_ray_z = calloc(redistribution->rays_z, sizeof(int[3]));
     for (int process_shift = 0; process_shift < number_of_processes;
         process_shift++) {
       const int send_process =
@@ -204,8 +205,10 @@ void prepare_redistribution(fft_redistribution_t *redistribution,
         recv_ray++;
       }
     }
+  }
+  assert(ray_position == redistribution->rays_z);
 
-
+    for (int process = 0; process < number_of_processes; process++) {
       // Determine the number of rays to send to the given process
       const int number_of_rays_send = rays_per_process[process];
       const int(*send_rays)[2] = ray_to_xy;
@@ -526,50 +529,58 @@ void collect_y_and_distribute_z_blocked_unpack(
  * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
  * \author Frederick Stein
  ******************************************************************************/
-void collect_z_and_distribute_xy_ray(double complex *restrict grid,
-                                     double complex *restrict transposed,
-                                     const int npts_global[3],
-                                     const int (*proc2local)[3][2],
-                                     const int *number_of_rays,
-                                     const int (*ray_to_xy)[2],
+void collect_z_and_distribute_xy_ray_pack(const double complex *restrict grid,
+                                     double complex *restrict send_buffer,
+    const fft_redistribution_t *redistribution) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r_pack");
+  const int handle = fft_start_timer(routine_name);
+
+  for (int xy_pair = 0; xy_pair < redistribution->my_size_x_gs*redistribution->npts_global_gspace[1]; xy_pair++) {
+    const int new_xy_index = redistribution->xy_to_proc_ray_y[xy_pair];
+        for (int index_z = 0; index_z < redistribution->my_size_z_rs; index_z++) {
+          send_buffer[new_xy_index * redistribution->my_size_z_rs + index_z] =
+              grid[index_z * redistribution->my_size_x_gs*redistribution->npts_global_gspace[1] +xy_pair];
+        }
+  }
+
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_z_and_distribute_xy_ray_comm(const double complex *restrict send_buffer,
+                                     double complex *restrict recv_buffer,
     const fft_redistribution_t *redistribution,
                                      const cp_mpi_comm_t comm) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
-  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r");
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r_comm");
   const int handle = fft_start_timer(routine_name);
-  const int my_process = cp_mpi_comm_rank(comm);
-  int proc_grid[2], proc_coords[2], periodic[2];
-  cp_mpi_cart_get(comm, 2, proc_grid, periodic, proc_coords);
-
-  int my_ray_offset = 0;
-  for (int process = 0; process < my_process; process++)
-    my_ray_offset += number_of_rays[process];
-  const int my_number_of_rays = number_of_rays[my_process];
-  const int(*my_bounds)[2] = proc2local[my_process];
-  const int my_sizes[3] = {my_bounds[0][1], my_bounds[1][1], my_bounds[2][1]};
-  assert(my_sizes[1] == npts_global[1]);
-
-  const int(*my_rays)[2] = ray_to_xy;
-  for (int process = 0; process < my_process; process++)
-    my_rays += number_of_rays[process];
-
-  memset(transposed, 0, product3(my_sizes) * sizeof(double complex));
-
-  for (int xy_pair = 0; xy_pair < my_bounds[0][1]*my_bounds[1][1]; xy_pair++) {
-    const int new_xy_index = redistribution->xy_to_proc_ray_y[xy_pair];
-        for (int index_z = 0; index_z < my_sizes[2]; index_z++) {
-          transposed[new_xy_index * my_sizes[2] + index_z] =
-              grid[index_z * my_sizes[0] *
-                       my_sizes[1] +xy_pair];
-        }
-  }
     
-  cp_mpi_alltoallv_double_complex(transposed, redistribution->counts_yz_ray_y, redistribution->displacements_yz_ray_y, grid, redistribution->counts_yz_ray_z, redistribution->displacements_yz_ray_z, comm);
+  cp_mpi_alltoallv_double_complex(send_buffer, redistribution->counts_yz_ray_y, redistribution->displacements_yz_ray_y, recv_buffer, redistribution->counts_yz_ray_z, redistribution->displacements_yz_ray_z, comm);
 
-  for (int ray_position = 0; ray_position < my_number_of_rays*proc_grid[0]; ray_position++) {
+  fft_stop_timer(handle);
+}
+
+/*******************************************************************************
+ * \brief Performs a redistribution (z_D, x_D, y) -> (z, xy_D).
+ * \author Frederick Stein
+ ******************************************************************************/
+void collect_z_and_distribute_xy_ray_unpack(const double complex *restrict recv_buffer,
+                                     double complex *restrict transposed,
+    const fft_redistribution_t *redistribution) {
+  char routine_name[FFT_MAX_STRING_LENGTH + 1];
+  memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
+  snprintf(routine_name, FFT_MAX_STRING_LENGTH, "coll_z_dist_xy_r_unpack");
+  const int handle = fft_start_timer(routine_name);
+
+  for (int ray_position = 0; ray_position < redistribution->rays_z; ray_position++) {
         memcpy(transposed + redistribution->xy_to_proc_ray_z[ray_position][0],
-               grid + redistribution->xy_to_proc_ray_z[ray_position][1],
+               recv_buffer + redistribution->xy_to_proc_ray_z[ray_position][1],
                redistribution->xy_to_proc_ray_z[ray_position][2] * sizeof(double complex));
   }
 

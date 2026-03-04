@@ -36,6 +36,7 @@ typedef struct {
   int *xy_to_proc_ray_y;
   int *displacements_yz_ray_z;
   int *counts_yz_ray_z;
+  int rays_z;
   int (*xy_to_proc_ray_z)[3];
 } fft_redistribution_t;
 
@@ -139,14 +140,18 @@ void collect_y_and_distribute_z_blocked_unpack(
     const fft_redistribution_t *redistribution,
     const int (*proc2local_y_gs)[2]);
 
-void collect_z_and_distribute_xy_ray(double complex *restrict grid,
+void collect_z_and_distribute_xy_ray_pack(const double complex *restrict grid,
                                      double complex *restrict transposed,
-                                     const int npts_global[3],
-                                     const int (*proc2local)[3][2],
-                                     const int *number_of_rays,
-                                     const int (*ray_to_xy)[2],
+    const fft_redistribution_t *redistribution);
+
+void collect_z_and_distribute_xy_ray_comm(const double complex *restrict send_buffer,
+                                     double complex *restrict recv_buffer,
     const fft_redistribution_t *redistribution,
                                      const cp_mpi_comm_t comm);
+
+void collect_z_and_distribute_xy_ray_unpack(const double complex *restrict recv_buffer,
+                                     double complex *restrict transposed,
+    const fft_redistribution_t *redistribution);
 
 void collect_xy_and_distribute_z_ray(double complex *restrict grid,
                                      double complex *restrict transposed,
