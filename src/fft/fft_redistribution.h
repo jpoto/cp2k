@@ -36,7 +36,7 @@ typedef struct {
   int *xy_to_proc_ray_y;
   int *displacements_yz_ray_z;
   int *counts_yz_ray_z;
-  int *xy_to_proc_ray_z;
+  int (*xy_to_proc_ray_z)[3];
 } fft_redistribution_t;
 
 void prepare_redistribution(fft_redistribution_t *redistribution,
