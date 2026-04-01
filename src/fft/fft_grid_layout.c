@@ -502,7 +502,8 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                  const cp_mpi_comm_t comm,
                                  const int npts_global[3],
                                  const double dh_inv[3][3],
-                                 const bool use_halfspace) {
+                                 const bool use_halfspace,
+                                 const double cutoff) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_create_grid_layout");
@@ -552,6 +553,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
           dh_inv[dir][dir2] / ((double)npts_global[dir2]);
     }
   }
+  my_fft_grid->cutoff = cutoff;
 
   my_fft_grid->periodic[0] = 1;
   my_fft_grid->periodic[1] = 1;
@@ -764,7 +766,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
 }
 
 void grid_create_fft_grid_layout_from_reference(
-    fft_grid_layout **fft_grid, const int npts_global[3],
+    fft_grid_layout **fft_grid, const int npts_global[3], const double cutoff,
     const fft_grid_layout *fft_grid_ref) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
@@ -832,6 +834,7 @@ void grid_create_fft_grid_layout_from_reference(
           ((double)npts_global[dir2]);
     }
   }
+  my_fft_grid->cutoff = cutoff ? cutoff : fft_grid_ref->cutoff;
 
   my_fft_grid->periodic[0] = 1;
   my_fft_grid->periodic[1] = 1;

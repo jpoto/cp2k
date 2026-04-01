@@ -156,14 +156,14 @@ void fft_3d_bw_local_inplace_F(const int fft_size[3], double complex *grid) {
  ******************************************************************************/
 void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
                        const int npts_global[3], const double dh_inv[3][3],
-                       const bool use_halfspace) {
+                       const bool use_halfspace, const double cutoff) {
   grid_create_fft_grid_layout(
       fft_grid, cp_mpi_comm_f2c(comm_F),
       (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
       (const double[3][3]){{dh_inv[2][2], dh_inv[2][1], dh_inv[2][0]},
                            {dh_inv[1][2], dh_inv[1][1], dh_inv[1][0]},
                            {dh_inv[0][2], dh_inv[0][1], dh_inv[0][0]}},
-      use_halfspace);
+      cutoff, use_halfspace);
 }
 
 /*******************************************************************************
@@ -172,10 +172,10 @@ void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
  *grid_create_fft_grid_layout \author Frederick Stein
  ******************************************************************************/
 void fft_create_grid_from_reference_F(fft_grid_layout **fft_grid,
-                                      const int npts_global[3],
+                                      const int npts_global[3], const double cutoff,
                                       const fft_grid_layout *fft_grid_ref) {
   grid_create_fft_grid_layout_from_reference(
-      fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
+      fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, cutoff,
       fft_grid_ref);
 }
 

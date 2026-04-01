@@ -33,6 +33,7 @@ typedef struct {
   // If used, then complex-valued real-space grids are not possible anymore
   bool use_halfspace;
   int npts_global_gspace[3];
+  double cutoff;
   // Number of local points in g-space (relevant with ray-distribution)
   int npts_gs_local;
   bool ray_distribution;
@@ -80,7 +81,6 @@ typedef struct {
   fft_redistribution_t *redistribution;
   // Buffers for FFTs
   int buffer_size;
-  // buffers for different purposes
 } fft_grid_layout;
 
 /*******************************************************************************
@@ -98,7 +98,8 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                  const cp_mpi_comm_t comm,
                                  const int npts_global[3],
                                  const double dh_inv[3][3],
-                                 const bool use_halfspace);
+                                 const bool use_halfspace,
+                                 const double cutoff);
 
 /*******************************************************************************
  * \brief Print some information on a grid.
@@ -114,7 +115,7 @@ void grid_print_grid_layout_info(const fft_grid_layout *layout,
  ******************************************************************************/
 void grid_create_fft_grid_layout_from_reference(
     fft_grid_layout **fft_grid, const int npts_global[3],
-    const fft_grid_layout *fft_grid_ref);
+    const double cutoff, const fft_grid_layout *fft_grid_ref);
 
 /*******************************************************************************
  * \brief Retains a grid layout.

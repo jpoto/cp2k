@@ -33,7 +33,7 @@ int fft_test_transpose_blocked(const int npts_global[3],
 
   fft_grid_layout *fft_grid_layout = NULL;
   grid_create_fft_grid_layout(&fft_grid_layout, comm, npts_global, dh_inv,
-                              use_halfspace);
+                              use_halfspace, -1.0);
 
   const int(*my_bounds_rs)[2] = fft_grid_layout->proc2local_rs[my_process];
   int my_sizes_rs[3];
@@ -450,11 +450,11 @@ int fft_test_transpose_ray(const int npts_global[3],
   // Build the reference grid
   fft_grid_layout *ref_grid_layout = NULL;
   grid_create_fft_grid_layout(&ref_grid_layout, comm, npts_global_ref, dh_inv,
-                              use_halfspace);
+                              use_halfspace, -1.0);
 
   // Test ray transpositiond,
   fft_grid_layout *fft_grid_ray_layout = NULL;
-  grid_create_fft_grid_layout_from_reference(&fft_grid_ray_layout, npts_global,
+  grid_create_fft_grid_layout_from_reference(&fft_grid_ray_layout, npts_global, -1.0,
                                              ref_grid_layout);
 
   ensure_buffer_size(fft_grid_ray_layout->buffer_size);
