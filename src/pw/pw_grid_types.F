@@ -14,6 +14,7 @@ MODULE pw_grid_types
 
    USE kinds,                           ONLY: dp,&
                                               int_8
+   USE fft_api,                         ONLY: fft_grid_type
    USE message_passing,                 ONLY: mp_cart_type
 #include "../base/base_uses.f90"
 
@@ -51,6 +52,7 @@ MODULE pw_grid_types
 ! **************************************************************************************************
    TYPE pw_grid_type
       LOGICAL :: fftable_grid = .FALSE.
+      TYPE(fft_grid_type) :: fft_grid = fft_grid_type()
       INTEGER(int_8) :: ngpts = 0_int_8 ! # grid points
       INTEGER(int_8) :: ngpts_cut = 0_int_8 ! # grid points within cutoff
       INTEGER, DIMENSION(2, 3) :: bounds = 0 ! lower and upper bounds

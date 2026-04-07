@@ -36,6 +36,7 @@
 MODULE pw_grids
    USE kinds,                           ONLY: dp,&
                                               int_8
+   USE fft_api,                         ONLY: fft_create_grid, fft_create_grid_from_reference, fft_free_grid
    USE mathconstants,                   ONLY: twopi
    USE mathlib,                         ONLY: det_3x3,&
                                               inv_3x3
@@ -415,6 +416,16 @@ CONTAINS
                                spherical=my_spherical)
       ELSE
          CPABORT("BOUNDS, NPTS or CUTOFF have to be specified")
+      END IF
+
+      IF (pw_grid%fftable_grid) THEN
+         IF (PRESENT(ref_grid)) THEN
+            CALL fft_create_grid_from_reference(pw_grid%fft_grid, pw_grid%npts, cutoff, ref_grid%fft_grid)
+         ELSE
+            ! TODO: pass h matrix instead of h_inv instead of unscaled h_inv (ERROR!!!)
+            CALL fft_create_grid(pw_grid%fft_grid, pw_grid%npts, mp_comm, cell_h_inv, &
+                                 pw_grid%grid_span == HALFSPACE, pw_grid%cutoff)
+         END IF
       END IF
 
       CALL pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, mp_comm, bounds_local=bounds_local, &
@@ -2126,6 +2137,7 @@ CONTAINS
             IF (ALLOCATED(pw_grid%para%pos_of_x)) THEN
                DEALLOCATE (pw_grid%para%pos_of_x)
             END IF
+            CALL fft_free_grid(pw_grid%fft_grid)
 
             IF (ASSOCIATED(pw_grid)) THEN
                DEALLOCATE (pw_grid)

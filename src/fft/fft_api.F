@@ -28,7 +28,7 @@ MODULE fft_api
    PUBLIC :: fft_print_timing_report
    PUBLIC :: fft_backend_in_use, fft_use_mpi, fft_has_guru_interface
    PUBLIC :: fft_allocate, fft_free
-   PUBLIC :: fft_create_grid, fft_create_grid_from_reference, fft_free_grid
+   PUBLIC :: fft_grid_type, fft_create_grid, fft_create_grid_from_reference, fft_free_grid
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -802,7 +802,7 @@ CONTAINS
          SUBROUTINE fft_3d_fw_local_inplace_c(fft_size, grid) &
             BIND(C, name="fft_3d_fw_local_inplace_F")
             IMPORT :: C_INT, C_DOUBLE_COMPLEX
-            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            INTEGER(C_INT), DIMENSION(3), INTENT(IN) :: fft_size
             COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
          END SUBROUTINE fft_3d_fw_local_inplace_c
       END INTERFACE
@@ -825,7 +825,7 @@ CONTAINS
          SUBROUTINE fft_3d_bw_local_inplace_c(fft_size, grid) &
             BIND(C, name="fft_3d_bw_local_inplace_F")
             IMPORT :: C_INT, C_DOUBLE_COMPLEX
-            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            INTEGER(C_INT), DIMENSION(3), INTENT(IN) :: fft_size
             COMPLEX(C_DOUBLE_COMPLEX), DIMENSION(*), INTENT(INOUT) :: grid
          END SUBROUTINE fft_3d_bw_local_inplace_c
       END INTERFACE
@@ -835,7 +835,7 @@ CONTAINS
    END SUBROUTINE fft_3d_bw_local_inplace
 
 ! **************************************************************************************************
-!> \brief ...
+!> \brief Create a FFT grid layout anew
 !> \param fft_grid ...
 !> \param fft_size ...
 !> \param comm ...
@@ -856,11 +856,11 @@ CONTAINS
             BIND(C, name="fft_create_grid_F")
             IMPORT :: C_INT, C_DOUBLE, C_PTR, C_BOOL
             TYPE(C_PTR), INTENT(INOUT) :: layout
-            INTEGER(C_INT), INTENT(IN) :: comm
+            INTEGER(C_INT), VALUE :: comm
             INTEGER(C_INT), DIMENSION(3), INTENT(IN) :: fft_size
             REAL(C_DOUBLE), DIMENSION(3, 3), INTENT(IN) :: dh_inv
             LOGICAL(C_BOOL), VALUE :: use_halfspace
-            REAL(C_DOUBLE), INTENT(IN) :: cutoff
+            REAL(C_DOUBLE), VALUE :: cutoff
          END SUBROUTINE fft_create_grid_c
       END INTERFACE
 
@@ -876,7 +876,7 @@ CONTAINS
    END SUBROUTINE fft_create_grid
 
 ! **************************************************************************************************
-!> \brief ...
+!> \brief Create a FFT grid layout from a reference grid
 !> \param fft_grid ...
 !> \param fft_size ...
 !> \param fft_grid_ref ...
@@ -892,8 +892,8 @@ CONTAINS
             BIND(C, name="fft_create_grid_from_reference_F")
             IMPORT :: C_INT, C_PTR, C_DOUBLE
             TYPE(C_PTR), INTENT(INOUT) :: layout
-            INTEGER(C_INT), DIMENSION(3), INTENT(IN) :: fft_size
-            REAL(C_DOUBLE), INTENT(IN) :: cutoff
+            INTEGER(C_INT), DIMENSION(3) :: fft_size
+            REAL(C_DOUBLE), VALUE :: cutoff
             TYPE(C_PTR), VALUE :: layout_ref
          END SUBROUTINE fft_create_grid_from_reference_c
       END INTERFACE
@@ -911,7 +911,7 @@ CONTAINS
    END SUBROUTINE fft_create_grid_from_reference
 
 ! **************************************************************************************************
-!> \brief ...
+!> \brief Free a FFT grid layout
 !> \param fft_grid ...
 ! **************************************************************************************************
    SUBROUTINE fft_free_grid(fft_grid)
@@ -930,5 +930,28 @@ CONTAINS
       fft_grid%fft_grid = C_NULL_PTR
 
    END SUBROUTINE fft_free_grid
+
+   FUNCTION fft_grid_get_npts_global(fft_grid) RESULT(npts_global)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      INTEGER, DIMENSION(3) :: npts_global
+
+      INTEGER(C_INT), DIMENSION(3) :: npts_global_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_npts_global_c(layout, npts_global) &
+            BIND(C, name="fft_grid_get_npts_global_F")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE :: layout
+            INTEGER(C_INT), DIMENSION(*) :: npts_global
+         END SUBROUTINE fft_grid_get_npts_global_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      CALL fft_grid_get_npts_global_c(fft_grid%fft_grid, npts_global_c)
+
+      npts_global = INT(npts_global_c)
+
+   END FUNCTION fft_grid_get_npts_global
 
 END MODULE fft_api

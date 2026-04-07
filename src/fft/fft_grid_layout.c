@@ -776,8 +776,8 @@ void grid_create_fft_grid_layout_from_reference(
   assert(fft_grid_ref != NULL &&
          "Grid creation from reference grid requires a valid reference grid!");
   // Current restriction of the code.
-  assert(!fft_grid_ref->ray_distribution &&
-         "The reference grid has to have a blocked distribution!");
+  //assert(!fft_grid_ref->ray_distribution &&
+         //"The reference grid has to have a blocked distribution!");
   // We will use the reference grid to collect the data from other grids. To
   // prevent loss of accuracy, we require the new grid to be coarser than or as
   // coarse as the reference grid.

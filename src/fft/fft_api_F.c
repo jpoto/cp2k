@@ -10,6 +10,7 @@
 #include "fft_timer.h"
 
 #include <assert.h>
+#include <string.h>
 
 // Keep in accordance to fft_api.F
 const int FFT_LIBRARY_BACKEND_DEFAULT = 1;
@@ -174,6 +175,7 @@ void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
 void fft_create_grid_from_reference_F(fft_grid_layout **fft_grid,
                                       const int npts_global[3], const double cutoff,
                                       const fft_grid_layout *fft_grid_ref) {
+  assert(fft_grid_ref != NULL);
   grid_create_fft_grid_layout_from_reference(
       fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, cutoff,
       fft_grid_ref);
@@ -193,6 +195,15 @@ void fft_retain_grid_F(fft_grid_layout *fft_grid) {
  ******************************************************************************/
 void fft_free_grid_F(fft_grid_layout *fft_grid) {
   grid_free_fft_grid_layout(fft_grid);
+}
+
+/*******************************************************************************
+ * \brief Get the global number of points in each direction.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_npts_global_F(const fft_grid_layout *fft_grid, int *npts_global) {
+  assert(fft_grid != NULL);
+  memcpy(npts_global, fft_grid->npts_global, 3*sizeof(int));
 }
 
 // EOF
