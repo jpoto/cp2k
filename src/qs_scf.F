@@ -525,7 +525,9 @@ CONTAINS
 
             IF (dft_control%qs_control%xtb_control%do_tblite) THEN
                CPASSERT(scf_env%mixing_method > 0)
-               CALL tb_update_charges(qs_env, dft_control, qs_env%tb_tblite, .FALSE., .FALSE.)
+               !IF (iter_count > 1) THEN
+                 CALL tb_update_charges(qs_env, dft_control, qs_env%tb_tblite, .FALSE., .FALSE., -1)
+               !END IF
                CALL evaluate_core_matrix_traces(qs_env, rho_ao_ext=scf_env%p_mix_new)
                CALL tb_get_energy(qs_env, qs_env%tb_tblite, energy)
             END IF
