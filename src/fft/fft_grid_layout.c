@@ -525,28 +525,29 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->ref_counter = 1;
   my_fft_grid->ray_distribution = false;
 
-  int my_pgrid_guess[2] = {-1, -1};
-  if (pgrid_guess) memcpy(my_pgrid_guess, pgrid_guess, 2*sizeof(int));
-  if (my_pgrid_guess[0]) {
-    if (my_pgrid_guess[1]) {
-      if (my_pgrid_guess[0]*my_pgrid_guess[1] != number_of_processes) {
-        my_pgrid_guess[0] = -1;
-        my_pgrid_guess[1] = -1;
+  my_fft_grid->proc_grid[0] = -1;
+  my_fft_grid->proc_grid[1] = -1;
+  if (pgrid_guess) memcpy(my_fft_grid->proc_grid, pgrid_guess, 2*sizeof(int));
+  if (my_fft_grid->proc_grid[0]) {
+    if (my_fft_grid->proc_grid[1]) {
+      if (my_fft_grid->proc_grid[0]*my_fft_grid->proc_grid[1] != number_of_processes) {
+        my_fft_grid->proc_grid[0] = -1;
+        my_fft_grid->proc_grid[1] = -1;
       }
-    } else if (number_of_processes%my_pgrid_guess[0]==0) {
-      my_pgrid_guess[1] = number_of_processes/my_pgrid_guess[0];
+    } else if (number_of_processes%my_fft_grid->proc_grid[0]==0) {
+      my_fft_grid->proc_grid[1] = number_of_processes/my_fft_grid->proc_grid[0];
     } else {
-      my_pgrid_guess[0] = -1;
-      my_pgrid_guess[1] = -1;
+      my_fft_grid->proc_grid[0] = -1;
+      my_fft_grid->proc_grid[1] = -1;
     }
-  } else if (my_pgrid_guess[1]) {
-    if (number_of_processes%my_pgrid_guess[1]==0) {
-      my_pgrid_guess[0] = number_of_processes/my_pgrid_guess[1];
+  } else if (my_fft_grid->proc_grid[1]) {
+    if (number_of_processes%my_fft_grid->proc_grid[1]==0) {
+      my_fft_grid->proc_grid[0] = number_of_processes/my_fft_grid->proc_grid[1];
     } else {
-      my_pgrid_guess[1] = -1;
+      my_fft_grid->proc_grid[1] = -1;
     }
   }
-  if (my_pgrid_guess[0] <= 0 || my_pgrid_guess[1] <= 0) {
+  if (my_fft_grid->proc_grid[0] <= 0 || my_fft_grid->proc_grid[1] <= 0 || my_fft_grid->proc_grid[0]*my_fft_grid->proc_grid[1] != number_of_processes) {
     // Split the last dimension in real-space
     if (npts_global[2] < number_of_processes) {
       // We only distribute in two directions if necessary to reduce communication
@@ -565,6 +566,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
       my_fft_grid->proc_grid[1] = 1;
     }
   }
+  assert(my_fft_grid->proc_grid[0] && my_fft_grid->proc_grid[1] && my_fft_grid->proc_grid[0]*my_fft_grid->proc_grid[1] == number_of_processes);
 
   my_fft_grid->use_halfspace = use_halfspace;
   memcpy(my_fft_grid->npts_global, npts_global, 3 * sizeof(int));

@@ -36,7 +36,7 @@
 MODULE pw_grids
    USE kinds,                           ONLY: dp,&
                                               int_8
-   USE fft_api,                         ONLY: fft_create_grid, fft_create_grid_from_reference, fft_free_grid
+   USE fft_api,                         ONLY: fft_create_grid, fft_create_grid_from_reference, fft_free_grid, fft_grid_get_comm
    USE mathconstants,                   ONLY: twopi
    USE mathlib,                         ONLY: det_3x3,&
                                               inv_3x3
@@ -424,12 +424,12 @@ CONTAINS
          ELSE
             ! TODO: pass h matrix instead of h_inv instead of unscaled h_inv (ERROR!!!)
             CALL fft_create_grid(pw_grid%fft_grid, pw_grid%npts, mp_comm, cell_h_inv, &
-                                 pw_grid%grid_span == HALFSPACE, pw_grid%cutoff)
+                                 pw_grid%grid_span == HALFSPACE, pw_grid%cutoff, rs_dims)
          END IF
       END IF
 
       CALL pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, mp_comm, bounds_local=bounds_local, &
-                                  blocked=blocked, ref_grid=ref_grid, rs_dims=rs_dims, iounit=iounit)
+                                  blocked=blocked, ref_grid=ref_grid, iounit=iounit)
 
       CALL timestop(handle)
 
@@ -445,7 +445,6 @@ CONTAINS
 !> \param bounds_local ...
 !> \param blocked ...
 !> \param ref_grid ...
-!> \param rs_dims ...
 !> \param iounit ...
 !> \par History
 !>      JGH (20-Dec-2000) : Adapted for parallel use
@@ -462,7 +461,7 @@ CONTAINS
 !>      this is the function that should be used in the future
 ! **************************************************************************************************
    SUBROUTINE pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, mp_comm, bounds_local, &
-                                     blocked, ref_grid, rs_dims, iounit)
+                                     blocked, ref_grid, iounit)
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cell_hmat, cell_h_inv
       REAL(KIND=dp), INTENT(IN)                          :: cell_deth
       TYPE(pw_grid_type), INTENT(INOUT)                  :: pw_grid
@@ -471,7 +470,6 @@ CONTAINS
       INTEGER, DIMENSION(2, 3), INTENT(IN), OPTIONAL     :: bounds_local
       INTEGER, INTENT(in), OPTIONAL                      :: blocked
       TYPE(pw_grid_type), INTENT(in), OPTIONAL           :: ref_grid
-      INTEGER, DIMENSION(2), INTENT(in), OPTIONAL        :: rs_dims
       INTEGER, INTENT(in), OPTIONAL                      :: iounit
 
       CHARACTER(len=*), PARAMETER :: routineN = 'pw_grid_setup_internal'
@@ -514,8 +512,7 @@ CONTAINS
       END IF
 
       ! Distribute grid
-      CALL pw_grid_distribute(pw_grid, mp_comm, yz_mask, bounds_local=bounds_local, ref_grid=ref_grid, blocked=blocked, &
-                              rs_dims=rs_dims)
+      CALL pw_grid_distribute(pw_grid, mp_comm, yz_mask, bounds_local=bounds_local, ref_grid=ref_grid, blocked=blocked)
 
       ! Allocate the grid fields
       CALL pw_grid_allocate(pw_grid, pw_grid%ngpts_cut_local, &
@@ -709,14 +706,13 @@ CONTAINS
 !> \param bounds_local ...
 !> \param ref_grid ...
 !> \param blocked ...
-!> \param rs_dims ...
 !> \par History
 !>      JGH (01-Mar-2001) optional reference grid
 !>      JGH (22-May-2002) bug fix for pre_tag and HALFSPACE grids
 !>      JGH (09-Sep-2003) reduce scaling for distribution
 !> \author JGH (22-12-2000)
 ! **************************************************************************************************
-   SUBROUTINE pw_grid_distribute(pw_grid, mp_comm, yz_mask, bounds_local, ref_grid, blocked, rs_dims)
+   SUBROUTINE pw_grid_distribute(pw_grid, mp_comm, yz_mask, bounds_local, ref_grid, blocked)
 
       TYPE(pw_grid_type), INTENT(INOUT)                  :: pw_grid
 
@@ -725,7 +721,6 @@ CONTAINS
       INTEGER, DIMENSION(2, 3), INTENT(IN), OPTIONAL     :: bounds_local
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
       INTEGER, INTENT(IN), OPTIONAL                      :: blocked
-      INTEGER, DIMENSION(2), INTENT(in), OPTIONAL        :: rs_dims
 
       CHARACTER(len=*), PARAMETER :: routineN = 'pw_grid_distribute'
 
@@ -748,11 +743,6 @@ CONTAINS
       lbz = pw_grid%bounds(1, 3)
 
       pw_grid%ngpts = PRODUCT(INT(pw_grid%npts, KIND=int_8))
-
-      my_rs_dims = 0
-      IF (PRESENT(rs_dims)) THEN
-         my_rs_dims = rs_dims
-      END IF
 
       IF (PRESENT(blocked)) THEN
          blocked_local = blocked
@@ -798,44 +788,9 @@ CONTAINS
          ! if blocking is free:
          !                      1) blocked=.FALSE. for plane distributions
          !                      2) blocked=.TRUE.  for non-plane distributions
-         IF (ANY(my_rs_dims <= 0)) THEN
-            IF (ALL(my_rs_dims <= 0)) THEN
-               my_rs_dims = [0, 0]
-            ELSE
-               IF (my_rs_dims(1) > 0) THEN
-                  my_rs_dims(2) = np/my_rs_dims(1)
-               ELSE
-                  my_rs_dims(1) = np/my_rs_dims(2)
-               END IF
-            END IF
-         END IF
-         ! reset if the distribution can not be fulfilled
-         IF (PRODUCT(my_rs_dims) /= np) my_rs_dims = [0, 0]
-         ! reset if the distribution can not be dealt with [1,np]
-         IF (ALL(my_rs_dims == [1, np])) my_rs_dims = [0, 0]
 
-         ! if [0,0] now, we can optimize it ourselves
-         IF (ALL(my_rs_dims == [0, 0])) THEN
-            ! only small grids have a chance to be 2d distributed
-            IF (nx < np) THEN
-               ! gives the most square looking distribution
-               CALL mp_dims_create(np, my_rs_dims)
-               ! we tend to like the first index being smaller than the second
-               IF (my_rs_dims(1) > my_rs_dims(2)) THEN
-                  itmp = my_rs_dims(1)
-                  my_rs_dims(1) = my_rs_dims(2)
-                  my_rs_dims(2) = itmp
-               END IF
-               ! but should avoid having the first index 1 in all cases
-               IF (my_rs_dims(1) == 1) THEN
-                  itmp = my_rs_dims(1)
-                  my_rs_dims(1) = my_rs_dims(2)
-                  my_rs_dims(2) = itmp
-               END IF
-            ELSE
-               my_rs_dims = [np, 1]
-            END IF
-         END IF
+         !..fetch the communicator of the FFT grid
+         CALL fft_grid_get_comm(pw_grid%fft_grid, pw_grid%para%group)
 
          ! now fix the blocking if we have a choice
          SELECT CASE (blocked_local)
@@ -852,9 +807,6 @@ CONTAINS
          CASE DEFAULT
             CPABORT("")
          END SELECT
-
-         !..create group for real space distribution
-         CALL pw_grid%para%group%create(mp_comm, 2, my_rs_dims)
 
          IF (PRESENT(bounds_local)) THEN
             pw_grid%bounds_local = bounds_local

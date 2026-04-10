@@ -21,7 +21,12 @@
   do {                                                                         \
     const int error = (CMD);                                                   \
     if (MPI_SUCCESS != error) {                                                \
+      int error_class, error_len;                                              \
+      char error_string[MPI_MAX_ERROR_STRING];                                 \
+      MPI_Error_class(error, &error_class);                                    \
+      MPI_Error_string(error, error_string, &error_len);                       \
       fprintf(stderr, "MPI error #%i in %s:%i\n", error, __FILE__, __LINE__);  \
+      fprintf(stderr, "%s\n", error_string);                                   \
       MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);                                 \
     }                                                                          \
   } while (0)

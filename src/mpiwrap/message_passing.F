@@ -1631,6 +1631,8 @@ CONTAINS
          INTEGER :: ierr
 #endif
 
+         CALL mp_timeset(routineN, handle)
+
          free_comm = .TRUE.
          SELECT TYPE (comm)
          CLASS IS (mp_para_env_type)
@@ -1650,8 +1652,6 @@ CONTAINS
                free_comm = comm%owns_group
             END IF
          END SELECT
-
-         CALL mp_timeset(routineN, handle)
 
          IF (free_comm) THEN
 #if defined(__parallel)
