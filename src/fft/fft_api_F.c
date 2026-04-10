@@ -157,14 +157,14 @@ void fft_3d_bw_local_inplace_F(const int fft_size[3], double complex *grid) {
  ******************************************************************************/
 void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
                        const int npts_global[3], const double dh_inv[3][3],
-                       const bool use_halfspace, const double cutoff) {
+                       const bool use_halfspace, const double cutoff, const int *pgrid_guess) {
   grid_create_fft_grid_layout(
       fft_grid, cp_mpi_comm_f2c(comm_F),
       (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
       (const double[3][3]){{dh_inv[2][2], dh_inv[2][1], dh_inv[2][0]},
                            {dh_inv[1][2], dh_inv[1][1], dh_inv[1][0]},
                            {dh_inv[0][2], dh_inv[0][1], dh_inv[0][0]}},
-      cutoff, use_halfspace);
+      cutoff, use_halfspace, pgrid_guess);
 }
 
 /*******************************************************************************
@@ -204,6 +204,15 @@ void fft_free_grid_F(fft_grid_layout *fft_grid) {
 void fft_grid_get_npts_global_F(const fft_grid_layout *fft_grid, int *npts_global) {
   assert(fft_grid != NULL);
   memcpy(npts_global, fft_grid->npts_global, 3*sizeof(int));
+}
+
+/*******************************************************************************
+ * \brief Get the (2D)-cartesian communicator.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_comm_F(const fft_grid_layout *fft_grid, int *comm_handle) {
+  assert(fft_grid != NULL);
+  *comm_handle = cp_mpi_comm_c2f(fft_grid->comm);
 }
 
 // EOF

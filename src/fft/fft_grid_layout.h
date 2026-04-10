@@ -99,7 +99,8 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                  const int npts_global[3],
                                  const double dh_inv[3][3],
                                  const bool use_halfspace,
-                                 const double cutoff);
+                                 const double cutoff,
+                                 const int *pgrid_guess);
 
 /*******************************************************************************
  * \brief Print some information on a grid.

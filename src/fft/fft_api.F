@@ -29,6 +29,7 @@ MODULE fft_api
    PUBLIC :: fft_backend_in_use, fft_use_mpi, fft_has_guru_interface
    PUBLIC :: fft_allocate, fft_free
    PUBLIC :: fft_grid_type, fft_create_grid, fft_create_grid_from_reference, fft_free_grid
+   PUBLIC :: fft_grid_get_npts_global, fft_grid_get_comm
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -842,17 +843,20 @@ CONTAINS
 !> \param dh_inv ...
 !> \param use_halfspace ...
 ! **************************************************************************************************
-   SUBROUTINE fft_create_grid(fft_grid, fft_size, comm, dh_inv, use_halfspace, cutoff)
+   SUBROUTINE fft_create_grid(fft_grid, fft_size, comm, dh_inv, use_halfspace, cutoff, pgrid_guess)
       TYPE(fft_grid_type), INTENT(INOUT)                 :: fft_grid
       INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
-      REAL(KIND=dp), INTENT(IN)                           :: cutoff
+      REAL(KIND=dp), INTENT(IN)                          :: cutoff
+      INTEGER, INTENT(IN), DIMENSION(2), OPTIONAL        :: pgrid_guess
 
       CLASS(mp_comm_type), INTENT(IN) :: comm
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN) :: dh_inv
       LOGICAL, INTENT(IN) :: use_halfspace
+      INTEGER(C_INT), DIMENSION(2), TARGET :: pgrid_guess_c
+      TYPE(C_PTR) :: pgrid_guess_ptr
 
       INTERFACE
-         SUBROUTINE fft_create_grid_c(layout, comm, fft_size, dh_inv, use_halfspace, cutoff) &
+         SUBROUTINE fft_create_grid_c(layout, comm, fft_size, dh_inv, use_halfspace, cutoff, pgrid_guess) &
             BIND(C, name="fft_create_grid_F")
             IMPORT :: C_INT, C_DOUBLE, C_PTR, C_BOOL
             TYPE(C_PTR), INTENT(INOUT) :: layout
@@ -861,14 +865,22 @@ CONTAINS
             REAL(C_DOUBLE), DIMENSION(3, 3), INTENT(IN) :: dh_inv
             LOGICAL(C_BOOL), VALUE :: use_halfspace
             REAL(C_DOUBLE), VALUE :: cutoff
+            TYPE(C_PTR), VALUE :: pgrid_guess
          END SUBROUTINE fft_create_grid_c
       END INTERFACE
 
       IF (C_ASSOCIATED(fft_grid%fft_grid)) &
          CPABORT("The grid layout must be unassociated before creation")
 
+      pgrid_guess_ptr = C_NULL_PTR
+      IF (PRESENT(pgrid_guess)) THEN
+         pgrid_guess_c = INT(pgrid_guess, C_INT)
+         pgrid_guess_ptr = C_LOC(pgrid_guess_c)
+      END IF
+
       CALL fft_create_grid_c(fft_grid%fft_grid, INT(comm%get_handle(), C_INT), INT(fft_size, C_INT), &
-                             REAL(dh_inv, C_DOUBLE), LOGICAL(use_halfspace, C_BOOL), REAL(cutoff, C_DOUBLE))
+                           REAL(dh_inv, C_DOUBLE), LOGICAL(use_halfspace, C_BOOL), REAL(cutoff, C_DOUBLE), &
+                           pgrid_guess_ptr)
 
       IF (.NOT. C_ASSOCIATED(fft_grid%fft_grid)) &
          CPABORT("Grid creation failed")
@@ -953,5 +965,30 @@ CONTAINS
       npts_global = INT(npts_global_c)
 
    END FUNCTION fft_grid_get_npts_global
+
+   SUBROUTINE fft_grid_get_comm(fft_grid, comm)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      CLASS(mp_comm_type) :: comm
+
+      INTEGER(C_INT) :: comm_handle
+      TYPE(mp_comm_type) :: my_comm
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_comm_c(layout, comm) &
+            BIND(C, name="fft_grid_get_comm_F")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE :: layout
+            INTEGER(C_INT), INTENT(OUT) :: comm
+         END SUBROUTINE fft_grid_get_comm_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      CALL fft_grid_get_comm_c(fft_grid%fft_grid, comm_handle)
+
+      CALL my_comm%set_handle(INT(comm_handle), 2)
+      CALL comm%from_dup(my_comm)
+
+   END SUBROUTINE fft_grid_get_comm
 
 END MODULE fft_api

@@ -503,7 +503,8 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                  const int npts_global[3],
                                  const double dh_inv[3][3],
                                  const bool use_halfspace,
-                                 const double cutoff) {
+                                 const double cutoff,
+                                 const int *pgrid_guess) {
   char routine_name[FFT_MAX_STRING_LENGTH + 1];
   memset(routine_name, '\0', FFT_MAX_STRING_LENGTH + 1);
   snprintf(routine_name, FFT_MAX_STRING_LENGTH, "fft_create_grid_layout");
@@ -524,22 +525,45 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->ref_counter = 1;
   my_fft_grid->ray_distribution = false;
 
-  // Split the last dimension in real-space
-  if (npts_global[2] < number_of_processes) {
-    // We only distribute in two directions if necessary to reduce communication
-    cp_mpi_dims_create(number_of_processes, 2, my_fft_grid->proc_grid);
-    // Swap dimension if the large process dimension is not on the large global
-    // dimension
-    if ((npts_global[2] - npts_global[1]) *
-            (my_fft_grid->proc_grid[0] - my_fft_grid->proc_grid[1]) <
-        0) {
-      const int proc_grid_0 = my_fft_grid->proc_grid[0];
-      my_fft_grid->proc_grid[0] = my_fft_grid->proc_grid[1];
-      my_fft_grid->proc_grid[1] = proc_grid_0;
+  int my_pgrid_guess[2] = {-1, -1};
+  if (pgrid_guess) memcpy(my_pgrid_guess, pgrid_guess, 2*sizeof(int));
+  if (my_pgrid_guess[0]) {
+    if (my_pgrid_guess[1]) {
+      if (my_pgrid_guess[0]*my_pgrid_guess[1] != number_of_processes) {
+        my_pgrid_guess[0] = -1;
+        my_pgrid_guess[1] = -1;
+      }
+    } else if (number_of_processes%my_pgrid_guess[0]==0) {
+      my_pgrid_guess[1] = number_of_processes/my_pgrid_guess[0];
+    } else {
+      my_pgrid_guess[0] = -1;
+      my_pgrid_guess[1] = -1;
     }
-  } else {
-    my_fft_grid->proc_grid[0] = number_of_processes;
-    my_fft_grid->proc_grid[1] = 1;
+  } else if (my_pgrid_guess[1]) {
+    if (number_of_processes%my_pgrid_guess[1]==0) {
+      my_pgrid_guess[0] = number_of_processes/my_pgrid_guess[1];
+    } else {
+      my_pgrid_guess[1] = -1;
+    }
+  }
+  if (my_pgrid_guess[0] <= 0 || my_pgrid_guess[1] <= 0) {
+    // Split the last dimension in real-space
+    if (npts_global[2] < number_of_processes) {
+      // We only distribute in two directions if necessary to reduce communication
+      cp_mpi_dims_create(number_of_processes, 2, my_fft_grid->proc_grid);
+      // Swap dimension if the large process dimension is not on the large global
+      // dimension
+      if ((npts_global[2] - npts_global[1]) *
+              (my_fft_grid->proc_grid[0] - my_fft_grid->proc_grid[1]) <
+          0) {
+        const int proc_grid_0 = my_fft_grid->proc_grid[0];
+        my_fft_grid->proc_grid[0] = my_fft_grid->proc_grid[1];
+        my_fft_grid->proc_grid[1] = proc_grid_0;
+      }
+    } else {
+      my_fft_grid->proc_grid[0] = number_of_processes;
+      my_fft_grid->proc_grid[1] = 1;
+    }
   }
 
   my_fft_grid->use_halfspace = use_halfspace;
