@@ -358,6 +358,8 @@ CONTAINS
 
       IF (PRESENT(fft_compatible_grid)) THEN
          my_fft_compatible_grid = fft_compatible_grid
+         IF (my_fft_compatible_grid .AND. PRESENT(bounds_local)) &
+         CPABORT("FFT_compatible grids need to determine their bounds themselves!")
       ELSE
          my_fft_compatible_grid = .FALSE.
       END IF
@@ -873,6 +875,7 @@ CONTAINS
                pw_grid%para%bo(1:2, 3, ip, 3) = get_limit(nz, rsd(2), coor(2))
             END DO
          END IF
+         IF (pw_grid%para%group%mepos==0) WRITE(*,*) "local bounds", pw_grid%para%bo
          !..find the g space distribution
          pw_grid%ngpts_cut_local = 0
 
