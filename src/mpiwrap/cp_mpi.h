@@ -142,6 +142,12 @@ bool cp_mpi_comms_are_similar(const cp_mpi_comm_t comm1,
 void cp_mpi_max_int(int *values, const int count, const cp_mpi_comm_t comm);
 
 /*******************************************************************************
+ * \brief Wrapper around MPI_Allreduce for op MPI_MIN and datatype MPI_INT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_min_int(int *values, const int count, const cp_mpi_comm_t comm);
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Allreduce for op MPI_MAX and datatype MPI_UINT64_T.
  * \author Hans Pabst
  ******************************************************************************/

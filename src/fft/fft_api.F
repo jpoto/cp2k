@@ -843,20 +843,22 @@ CONTAINS
 !> \param dh_inv ...
 !> \param use_halfspace ...
 ! **************************************************************************************************
-   SUBROUTINE fft_create_grid(fft_grid, fft_size, comm, dh_inv, use_halfspace, cutoff, pgrid_guess)
+   SUBROUTINE fft_create_grid(fft_grid, fft_size, comm, dh_inv, use_halfspace, cutoff, pgrid_guess, external_local_bounds)
       TYPE(fft_grid_type), INTENT(INOUT)                 :: fft_grid
       INTEGER, DIMENSION(3), INTENT(IN)                  :: fft_size
       REAL(KIND=dp), INTENT(IN)                          :: cutoff
       INTEGER, INTENT(IN), DIMENSION(2), OPTIONAL        :: pgrid_guess
+      INTEGER, INTENT(IN), DIMENSION(2, 3), OPTIONAL     :: external_local_bounds
 
       CLASS(mp_comm_type), INTENT(IN) :: comm
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN) :: dh_inv
       LOGICAL, INTENT(IN) :: use_halfspace
       INTEGER(C_INT), DIMENSION(2), TARGET :: pgrid_guess_c
-      TYPE(C_PTR) :: pgrid_guess_ptr
+      INTEGER(C_INT), DIMENSION(2, 3), TARGET :: external_local_bounds_c
+      TYPE(C_PTR) :: pgrid_guess_ptr, external_local_bounds_ptr
 
       INTERFACE
-         SUBROUTINE fft_create_grid_c(layout, comm, fft_size, dh_inv, use_halfspace, cutoff, pgrid_guess) &
+         SUBROUTINE fft_create_grid_c(layout, comm, fft_size, dh_inv, use_halfspace, cutoff, pgrid_guess, external_local_bounds) &
             BIND(C, name="fft_create_grid_F")
             IMPORT :: C_INT, C_DOUBLE, C_PTR, C_BOOL
             TYPE(C_PTR), INTENT(INOUT) :: layout
@@ -866,6 +868,7 @@ CONTAINS
             LOGICAL(C_BOOL), VALUE :: use_halfspace
             REAL(C_DOUBLE), VALUE :: cutoff
             TYPE(C_PTR), VALUE :: pgrid_guess
+            TYPE(C_PTR), VALUE :: external_local_bounds
          END SUBROUTINE fft_create_grid_c
       END INTERFACE
 
@@ -878,9 +881,15 @@ CONTAINS
          pgrid_guess_ptr = C_LOC(pgrid_guess_c)
       END IF
 
+      external_local_bounds_ptr = C_NULL_PTR
+      IF (PRESENT(external_local_bounds)) THEN
+         external_local_bounds_c = INT(external_local_bounds, C_INT)
+         external_local_bounds_ptr = C_LOC(external_local_bounds_c)
+      END IF
+
       CALL fft_create_grid_c(fft_grid%fft_grid, INT(comm%get_handle(), C_INT), INT(fft_size, C_INT), &
                            REAL(dh_inv, C_DOUBLE), LOGICAL(use_halfspace, C_BOOL), REAL(cutoff, C_DOUBLE), &
-                           pgrid_guess_ptr)
+                           pgrid_guess_ptr, external_local_bounds_ptr)
 
       IF (.NOT. C_ASSOCIATED(fft_grid%fft_grid)) &
          CPABORT("Grid creation failed")
@@ -893,19 +902,24 @@ CONTAINS
 !> \param fft_size ...
 !> \param fft_grid_ref ...
 ! **************************************************************************************************
-   SUBROUTINE fft_create_grid_from_reference(fft_grid, fft_size, cutoff, fft_grid_ref)
+   SUBROUTINE fft_create_grid_from_reference(fft_grid, fft_size, cutoff, external_local_bounds, fft_grid_ref)
       TYPE(fft_grid_type), INTENT(INOUT) :: fft_grid
       INTEGER, INTENT(IN), DIMENSION(3) :: fft_size
       REAL(C_DOUBLE), INTENT(IN) :: cutoff
+      INTEGER, INTENT(IN), DIMENSION(2, 3), OPTIONAL     :: external_local_bounds
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid_ref
 
+      INTEGER(C_INT), DIMENSION(2, 3), TARGET :: external_local_bounds_c
+      TYPE(C_PTR) :: external_local_bounds_ptr
+
       INTERFACE
-         SUBROUTINE fft_create_grid_from_reference_c(layout, fft_size, cutoff, layout_ref) &
+         SUBROUTINE fft_create_grid_from_reference_c(layout, fft_size, cutoff, external_local_bounds, layout_ref) &
             BIND(C, name="fft_create_grid_from_reference_F")
             IMPORT :: C_INT, C_PTR, C_DOUBLE
             TYPE(C_PTR), INTENT(INOUT) :: layout
             INTEGER(C_INT), DIMENSION(3) :: fft_size
             REAL(C_DOUBLE), VALUE :: cutoff
+            TYPE(C_PTR), VALUE :: external_local_bounds
             TYPE(C_PTR), VALUE :: layout_ref
          END SUBROUTINE fft_create_grid_from_reference_c
       END INTERFACE
@@ -915,7 +929,14 @@ CONTAINS
       IF (.NOT. C_ASSOCIATED(fft_grid_ref%fft_grid)) &
          CPABORT("The reference grid must be associated")
 
-      CALL fft_create_grid_from_reference_c(fft_grid%fft_grid, INT(fft_size, C_INT), REAL(cutoff, C_DOUBLE), fft_grid_ref%fft_grid)
+      external_local_bounds_ptr = C_NULL_PTR
+      IF (PRESENT(external_local_bounds)) THEN
+         external_local_bounds_c = INT(external_local_bounds, C_INT)
+         external_local_bounds_ptr = C_LOC(external_local_bounds_c)
+      END IF
+
+      CALL fft_create_grid_from_reference_c(fft_grid%fft_grid, INT(fft_size, C_INT), REAL(cutoff, C_DOUBLE), &
+                                            external_local_bounds_ptr, fft_grid_ref%fft_grid)
 
       IF (.NOT. C_ASSOCIATED(fft_grid%fft_grid)) &
          CPABORT("The grid creation failed")

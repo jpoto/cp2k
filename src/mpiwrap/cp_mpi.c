@@ -324,6 +324,29 @@ void cp_mpi_max_int(int *values, const int count, const cp_mpi_comm_t comm) {
 }
 
 /*******************************************************************************
+ * \brief Wrapper around MPI_Allreduce for op MPI_MIN and datatype MPI_INT.
+ * \author Frederick Stein
+ ******************************************************************************/
+void cp_mpi_min_int(int *values, const int count, const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  if (MPI_COMM_NULL != comm) { // !MPI_Comm_compare
+    int value = 0;
+    void *recvbuf =
+        (1 < count ? cp_mpi_alloc_mem(count * sizeof(int)) : &value);
+    CHECK(MPI_Allreduce(values, recvbuf, count, MPI_INT, MPI_MIN, comm));
+    memcpy(values, recvbuf, count * sizeof(int));
+    if (1 < count) {
+      cp_mpi_free_mem(recvbuf);
+    }
+  }
+#else
+  (void)comm; // mark used
+  (void)values;
+  (void)count;
+#endif
+}
+
+/*******************************************************************************
  * \brief Wrapper around MPI_Allreduce for op MPI_MAX and datatype MPI_UINT64_T.
  * \author Ole Schuett
  ******************************************************************************/

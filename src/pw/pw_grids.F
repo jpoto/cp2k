@@ -422,11 +422,11 @@ CONTAINS
 
       IF (pw_grid%fftable_grid) THEN
          IF (PRESENT(ref_grid)) THEN
-            CALL fft_create_grid_from_reference(pw_grid%fft_grid, pw_grid%npts, cutoff, ref_grid%fft_grid)
+            CALL fft_create_grid_from_reference(pw_grid%fft_grid, pw_grid%npts, cutoff, bounds_local, ref_grid%fft_grid)
          ELSE
             ! TODO: pass h matrix instead of h_inv instead of unscaled h_inv (ERROR!!!)
             CALL fft_create_grid(pw_grid%fft_grid, pw_grid%npts, mp_comm, cell_h_inv, &
-                                 pw_grid%grid_span == HALFSPACE, pw_grid%cutoff, rs_dims)
+                                 pw_grid%grid_span == HALFSPACE, pw_grid%cutoff, rs_dims, bounds_local)
          END IF
       END IF
 

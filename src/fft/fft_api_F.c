@@ -157,14 +157,25 @@ void fft_3d_bw_local_inplace_F(const int fft_size[3], double complex *grid) {
  ******************************************************************************/
 void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
                        const int npts_global[3], const double dh_inv[3][3],
-                       const bool use_halfspace, const double cutoff, const int *pgrid_guess) {
+                       const bool use_halfspace, const double cutoff, const int *pgrid_guess, const int *external_local_bounds) {
+  int local_bounds[6];
+  int *local_bounds_ptr = NULL;
+  if (external_local_bounds) {
+    local_bounds_ptr = local_bounds;
+    local_bounds[0] = external_local_bounds[4];
+    local_bounds[1] = external_local_bounds[5];
+    local_bounds[2] = external_local_bounds[2];
+    local_bounds[3] = external_local_bounds[3];
+    local_bounds[4] = external_local_bounds[0];
+    local_bounds[5] = external_local_bounds[1];
+  }
   grid_create_fft_grid_layout(
       fft_grid, cp_mpi_comm_f2c(comm_F),
       (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
       (const double[3][3]){{dh_inv[2][2], dh_inv[2][1], dh_inv[2][0]},
                            {dh_inv[1][2], dh_inv[1][1], dh_inv[1][0]},
                            {dh_inv[0][2], dh_inv[0][1], dh_inv[0][0]}},
-      cutoff, use_halfspace, pgrid_guess);
+      cutoff, use_halfspace, pgrid_guess, local_bounds_ptr);
 }
 
 /*******************************************************************************
@@ -174,10 +185,22 @@ void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
  ******************************************************************************/
 void fft_create_grid_from_reference_F(fft_grid_layout **fft_grid,
                                       const int npts_global[3], const double cutoff,
+                                      const int *external_local_bounds, 
                                       const fft_grid_layout *fft_grid_ref) {
   assert(fft_grid_ref != NULL);
+  int local_bounds[6];
+  int *local_bounds_ptr = NULL;
+  if (external_local_bounds) {
+    local_bounds_ptr = local_bounds;
+    local_bounds[0] = external_local_bounds[4];
+    local_bounds[1] = external_local_bounds[5];
+    local_bounds[2] = external_local_bounds[2];
+    local_bounds[3] = external_local_bounds[3];
+    local_bounds[4] = external_local_bounds[0];
+    local_bounds[5] = external_local_bounds[1];
+  }
   grid_create_fft_grid_layout_from_reference(
-      fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, cutoff,
+      fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, cutoff, local_bounds_ptr,
       fft_grid_ref);
 }
 
@@ -213,7 +236,6 @@ void fft_grid_get_npts_global_F(const fft_grid_layout *fft_grid, int *npts_globa
 void fft_grid_get_comm_F(const fft_grid_layout *fft_grid, int *comm_handle) {
   assert(fft_grid != NULL);
   *comm_handle = cp_mpi_comm_c2f(fft_grid->comm);
-  printf("Pass communicator %i\n", *comm_handle);
 }
 
 // EOF

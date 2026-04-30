@@ -26,7 +26,7 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
 
   fft_grid_layout *grid_layout = NULL;
   grid_create_fft_grid_layout(&grid_layout, cp_mpi_get_comm_world(), fft_size,
-                              dh_inv, false, -1.0, NULL);
+                              dh_inv, false, -1.0, NULL, NULL);
 
   const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
@@ -100,7 +100,7 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
 
   fft_grid_layout *grid_layout = NULL;
   grid_create_fft_grid_layout(&grid_layout, cp_mpi_get_comm_world(), fft_size,
-                              dh_inv, use_halfspace, -1.0, NULL);
+                              dh_inv, use_halfspace, -1.0, NULL, NULL);
 
   const int(*my_bound_rs)[2] =
       grid_layout->proc2local_rs[cp_mpi_comm_rank(cp_mpi_get_comm_world())];
@@ -173,9 +173,9 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
 
   fft_grid_layout *grid_layout = NULL;
   grid_create_fft_grid_layout(&grid_layout, cp_mpi_get_comm_world(), fft_size,
-                              dh_inv, false, -1.0, NULL);
+                              dh_inv, false, -1.0, NULL, NULL);
   fft_grid_layout *grid_layout_ray = NULL;
-  grid_create_fft_grid_layout_from_reference(&grid_layout_ray, fft_size, -1.0,
+  grid_create_fft_grid_layout_from_reference(&grid_layout_ray, fft_size, -1.0, NULL,
                                              grid_layout);
 
   const int(*my_bound_rs)[2] =
@@ -249,9 +249,9 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
 
   fft_grid_layout *grid_layout = NULL;
   grid_create_fft_grid_layout(&grid_layout, cp_mpi_get_comm_world(), fft_size,
-                              dh_inv, use_halfspace, -1.0, NULL);
+                              dh_inv, use_halfspace, -1.0, NULL, NULL);
   fft_grid_layout *grid_layout_ray = NULL;
-  grid_create_fft_grid_layout_from_reference(&grid_layout_ray, fft_size, -1.0,
+  grid_create_fft_grid_layout_from_reference(&grid_layout_ray, fft_size, -1.0, NULL,
                                              grid_layout);
 
   const int(*my_bound_rs)[2] =
