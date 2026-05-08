@@ -52,7 +52,7 @@ bool debug_mode = false;
  ******************************************************************************/
 inline char *strdup(const char *src) {
   // Allocate memory for the length of the string +1 (for the Null character)
-  char *dst = malloc(strlen(src) + 1);
+  char *dst = malloc((strlen(src) + 1)*sizeof(char));
   // Copy the data
   strcpy(dst, src);
   return dst;
