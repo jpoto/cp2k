@@ -1428,8 +1428,6 @@ set(CP2K_FFT_SRCS_C
     fft/fft_grid_test.c
     fft/fft_lib.c
     fft/fft_lib_fftw.c
-    fft/fft_lib_ref.c
-    fft/fft_lib_ref_low.c
     fft/fft_lib_test.c
     fft/fft_redistribution.c
     fft/fft_redistribution_test.c

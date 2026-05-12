@@ -19,8 +19,6 @@ ALL_OBJECTS := ../offload/offload_buffer.o \
         fft_grid.o \
         fft_grid_layout.o \
         fft_lib.o \
-        fft_lib_ref.o \
-        fft_lib_ref_low.o \
         fft_lib_fftw.o \
         fft_lib_test.o \
         fft_timer.o \
