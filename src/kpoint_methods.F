@@ -26,13 +26,13 @@ MODULE kpoint_methods
                                               cp_cfm_type,&
                                               cp_fm_to_cfm
    USE cp_control_types,                ONLY: hairy_probes_type
-   USE cp_dbcsr_api,                    ONLY: &
-dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribute, &
+USE cp_dbcsr_api,                    ONLY: &
+         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribute, &
          dbcsr_distribution_get, dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_get_info, &
-         dbcsr_get_stored_coordinates, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
-         dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, &
-         dbcsr_replicate_all, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
-         dbcsr_type_no_symmetry, dbcsr_type_symmetric
+         dbcsr_get_matrix_type, dbcsr_get_stored_coordinates, dbcsr_iterator_blocks_left, &
+         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, &
+         dbcsr_iterator_type, dbcsr_p_type, dbcsr_replicate_all, dbcsr_set, dbcsr_type, &
+         dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
    USE cp_files,                        ONLY: close_file,&
@@ -44,9 +44,9 @@ dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribute, &
                                               fm_pool_give_back_fm
    USE cp_fm_struct,                    ONLY: cp_fm_struct_type
    USE cp_fm_types,                     ONLY: &
-        copy_info_type, cp_fm_cleanup_copy_general, cp_fm_create, cp_fm_finish_copy_general, &
-cp_fm_get_diag, cp_fm_get_info, cp_fm_get_submatrix, cp_fm_release, &
-         cp_fm_start_copy_general, cp_fm_to_fm, cp_fm_type
+         copy_info_type, cp_fm_cleanup_copy_general, cp_fm_create, cp_fm_finish_copy_general, &
+         cp_fm_get_diag, cp_fm_get_info, cp_fm_get_submatrix, cp_fm_release, &
+         cp_fm_start_copy_general, cp_fm_to_fm, cp_fm_type, cp_fm_write_formatted
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
    USE cryssym,                         ONLY: crys_sym_gen,&
                                               csym_type,&
@@ -62,7 +62,8 @@ USE input_constants,                 ONLY: smear_fermi_dirac,&
                                               smear_mv
     USE input_cp2k_kpoints,              ONLY: use_spglib_kpoint_backend,&
                                               use_spglib_kpoint_symmetry
-    USE kinds,                           ONLY: dp
+    USE kinds,                           ONLY: default_string_length,&
+                                              dp
    USE kpoint_types,                    ONLY: get_kpoint_info,&
                                               kind_rotmat_type,&
                                               kpoint_env_create,&

@@ -1493,7 +1493,7 @@ CONTAINS
       CALL kpoint_density_matrices(kpoints)
       CALL qs_rho_get(rho, rho_ao_kp=rho_ao_kp)
       CALL kpoint_density_transform(kpoints, rho_ao_kp, .FALSE., &
-                                    matrix_s_kp(1, 1)%matrix, sab_nl, scf_env%scf_work1)
+                                    matrix_s_kp(1, 1)%matrix, sab_nl, scf_env%scf_work1, qs_env)
       CALL qs_rho_update_rho(rho, qs_env=qs_env)
       CALL qs_ks_did_change(qs_env%ks_env, rho_changed=.TRUE.)
 
