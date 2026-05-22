@@ -1,0 +1,5 @@
+"C6H6_GAUXC_PBE.inp" = [{matcher="E_total", tol=1e-4, ref=-23.0}]
+"O2_GAUXC_PBE.inp"   = [{matcher="E_total", tol=1e-4, ref=-15.0}]
+"CO2_GAUXC_PBE.inp"  = [{matcher="E_total", tol=1e-4, ref=-37.73896595}]
+"NH3_GAUXC_PBE.inp"  = [{matcher="E_total", tol=1e-4, ref=-11.70596119}]
+"H2O_GAUXC_PBE.inp"  = [{matcher="E_total", tol=1e-4, ref=-17.19846179}]
