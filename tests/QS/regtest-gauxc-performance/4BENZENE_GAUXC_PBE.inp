@@ -1,0 +1,87 @@
+&GLOBAL
+  PRINT_LEVEL MEDIUM
+  PROJECT 4BENZENE_GAUXC_PBE
+  RUN_TYPE ENERGY
+&END GLOBAL
+
+&FORCE_EVAL
+  METHOD Quickstep
+  &DFT
+    BASIS_SET_FILE_NAME BASIS_MOLOPT
+    POTENTIAL_FILE_NAME GTH_POTENTIALS
+    SORT_BASIS EXP
+    &MGRID
+      CUTOFF 400
+      REL_CUTOFF 50
+    &END MGRID
+    &POISSON
+      PERIODIC NONE
+      POISSON_SOLVER ANALYTIC
+    &END POISSON
+    &QS
+      EPS_DEFAULT 1.0E-10
+      EPS_PGF_ORB 1.0E-20
+      METHOD GPW
+      EXTRAPOLATION USE_PREV_WF
+    &END QS
+    &SCF
+      EPS_SCF 1.0E-6
+      MAX_SCF 50
+      SCF_GUESS ATOMIC
+      &PRINT
+        &RESTART OFF
+        &END RESTART
+      &END PRINT
+    &END SCF
+    &XC
+      &XC_FUNCTIONAL
+        &GAUXC
+          FUNCTIONAL PBE
+          MODEL PBE
+        &END GAUXC
+      &END XC_FUNCTIONAL
+    &END XC
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC [angstrom] 12.000 35.000 5.000
+      PERIODIC NONE
+    &END CELL
+    &COORD
+       C         -1.13571        0.81699        0.00000
+       C          0.13967        1.39205        0.00000
+       C         -1.27538       -0.57507        0.00000
+       H         -2.01433        1.44903        0.00000
+       C          1.27538        0.57508        0.00000
+       H          0.24772        2.46898        0.00000
+       C         -0.13967       -1.39204        0.00000
+       C          1.13571       -0.81698        0.00000
+       H         -2.26205       -1.01996        0.00000
+       H          2.26205        1.01997        0.00000
+       H         -0.24772       -2.46897        0.00000
+       H          2.01433       -1.44902        0.00000
+       C          0.83817       -8.82899        0.00000
+       C         -0.15783       -6.61989        0.00000
+       C         -1.57293       -8.58709        0.00000
+       C          0.97787       -7.43689        0.00000
+       C         -0.43723       -9.40399        0.00000
+       C         -1.43323       -7.19499        0.00000
+       H         -2.55953       -9.03199        0.00000
+       H         -2.31183       -6.56299        0.00000
+       H         -0.04983       -5.54299        0.00000
+       H          1.96447       -6.99199        0.00000
+       H         -0.54523      -10.48099        0.00000
+       H         -2.31183       -9.40399        0.00000
+       H          0.96447       -10.48099        0.00000
+       H         -0.54523       -5.54299        0.00000
+    &END COORD
+    &KIND C
+      BASIS_SET DZVP-MOLOPT-GTH-q4
+      POTENTIAL GTH-PBE-q4
+    &END KIND
+    &KIND H
+      BASIS_SET DZVP-MOLOPT-GTH-q1
+      POTENTIAL GTH-PBE-q1
+    &END KIND
+  &END SUBSYS
+&END FORCE_EVAL
