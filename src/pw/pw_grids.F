@@ -36,7 +36,13 @@
 MODULE pw_grids
    USE kinds,                           ONLY: dp,&
                                               int_8
-   USE fft_api,                         ONLY: fft_create_grid, fft_create_grid_from_reference, fft_free_grid, fft_grid_get_comm
+   USE fft_api,                         ONLY: fft_create_grid, &
+                                              fft_create_grid_from_reference, &
+                                              fft_free_grid, &
+                                              fft_grid_get_comm, &
+                                              fft_grid_get_proc2local_rs, &
+                                              fft_grid_get_proc2local_ms, &
+                                              fft_grid_get_proc2local_gs
    USE mathconstants,                   ONLY: twopi
    USE mathlib,                         ONLY: det_3x3,&
                                               inv_3x3
@@ -428,9 +434,10 @@ CONTAINS
             CALL fft_create_grid(pw_grid%fft_grid, pw_grid%npts, mp_comm, cell_h_inv, &
                                  pw_grid%grid_span == HALFSPACE, pw_grid%cutoff, rs_dims, bounds_local)
          END IF
+         CALL fft_grid_get_comm(pw_grid%fft_grid, pw_grid%para%group)
       END IF
 
-      CALL pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, mp_comm, bounds_local=bounds_local, &
+      CALL pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, bounds_local=bounds_local, &
                                   blocked=blocked, ref_grid=ref_grid, iounit=iounit)
 
       CALL timestop(handle)
@@ -443,7 +450,6 @@ CONTAINS
 !> \param cell_h_inv ...
 !> \param cell_deth ...
 !> \param pw_grid ...
-!> \param mp_comm ...
 !> \param bounds_local ...
 !> \param blocked ...
 !> \param ref_grid ...
@@ -462,13 +468,12 @@ CONTAINS
 !> \note
 !>      this is the function that should be used in the future
 ! **************************************************************************************************
-   SUBROUTINE pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, mp_comm, bounds_local, &
+   SUBROUTINE pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, bounds_local, &
                                      blocked, ref_grid, iounit)
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cell_hmat, cell_h_inv
       REAL(KIND=dp), INTENT(IN)                          :: cell_deth
       TYPE(pw_grid_type), INTENT(INOUT)                  :: pw_grid
 
-      CLASS(mp_comm_type), INTENT(IN) :: mp_comm
       INTEGER, DIMENSION(2, 3), INTENT(IN), OPTIONAL     :: bounds_local
       INTEGER, INTENT(in), OPTIONAL                      :: blocked
       TYPE(pw_grid_type), INTENT(in), OPTIONAL           :: ref_grid
@@ -504,7 +509,7 @@ CONTAINS
       ! the indices in yz_mask are from -n/2 .. n/2 shifted by n/2 + 1
       ! these are not mapped indices !
       ALLOCATE (yz_mask(n(2), n(3)))
-      CALL pw_grid_count(cell_h_inv, pw_grid, mp_comm, ecut, yz_mask)
+      CALL pw_grid_count(cell_h_inv, pw_grid, pw_grid%para%group, ecut, yz_mask)
 
       ! Check if reference grid is compatible
       IF (PRESENT(ref_grid)) THEN
@@ -514,7 +519,7 @@ CONTAINS
       END IF
 
       ! Distribute grid
-      CALL pw_grid_distribute(pw_grid, mp_comm, yz_mask, bounds_local=bounds_local, ref_grid=ref_grid, blocked=blocked)
+      CALL pw_grid_distribute(pw_grid, yz_mask, bounds_local=bounds_local, ref_grid=ref_grid, blocked=blocked)
 
       ! Allocate the grid fields
       CALL pw_grid_allocate(pw_grid, pw_grid%ngpts_cut_local, &
@@ -703,7 +708,6 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Distribute grids in real and Fourier Space to the processors in group
 !> \param pw_grid ...
-!> \param mp_comm ...
 !> \param yz_mask ...
 !> \param bounds_local ...
 !> \param ref_grid ...
@@ -714,11 +718,10 @@ CONTAINS
 !>      JGH (09-Sep-2003) reduce scaling for distribution
 !> \author JGH (22-12-2000)
 ! **************************************************************************************************
-   SUBROUTINE pw_grid_distribute(pw_grid, mp_comm, yz_mask, bounds_local, ref_grid, blocked)
+   SUBROUTINE pw_grid_distribute(pw_grid, yz_mask, bounds_local, ref_grid, blocked)
 
       TYPE(pw_grid_type), INTENT(INOUT)                  :: pw_grid
 
-      CLASS(mp_comm_type), INTENT(IN) :: mp_comm
       INTEGER, DIMENSION(:, :), INTENT(INOUT)            :: yz_mask
       INTEGER, DIMENSION(2, 3), INTENT(IN), OPTIONAL     :: bounds_local
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
@@ -765,7 +768,6 @@ CONTAINS
          CPASSERT(pw_grid%ngpts < HUGE(pw_grid%ngpts_local))
          pw_grid%ngpts_local = INT(pw_grid%ngpts)
          my_rs_dims = 1
-         CALL pw_grid%para%group%create(mp_comm, 2, my_rs_dims)
 
          ALLOCATE (pw_grid%para%bo(2, 3, 0:0, 3))
          DO i = 1, 3
@@ -779,7 +781,7 @@ CONTAINS
          nx = pw_grid%npts(1)
          ny = pw_grid%npts(2)
          nz = pw_grid%npts(3)
-         np = mp_comm%num_pe
+         np = pw_grid%para%group%num_pe
 
          ! The user can specify 2 strictly positive indices => specific layout
          !                      1 strictly positive index   => the other is fixed by the number of CPUs
@@ -792,7 +794,6 @@ CONTAINS
          !                      2) blocked=.TRUE.  for non-plane distributions
 
          !..fetch the communicator of the FFT grid
-         CALL fft_grid_get_comm(pw_grid%fft_grid, pw_grid%para%group)
 
          ! now fix the blocking if we have a choice
          SELECT CASE (blocked_local)

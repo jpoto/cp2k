@@ -30,6 +30,7 @@ MODULE fft_api
    PUBLIC :: fft_allocate, fft_free
    PUBLIC :: fft_grid_type, fft_create_grid, fft_create_grid_from_reference, fft_free_grid
    PUBLIC :: fft_grid_get_npts_global, fft_grid_get_comm
+   PUBLIC :: fft_grid_get_proc2local_rs, fft_grid_get_proc2local_ms, fft_grid_get_proc2local_gs
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -964,6 +965,10 @@ CONTAINS
 
    END SUBROUTINE fft_free_grid
 
+! **************************************************************************************************
+!> \brief Get the number of global points of a grid type
+!> \param fft_grid ...
+! **************************************************************************************************
    FUNCTION fft_grid_get_npts_global(fft_grid) RESULT(npts_global)
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid
       INTEGER, DIMENSION(3) :: npts_global
@@ -987,6 +992,10 @@ CONTAINS
 
    END FUNCTION fft_grid_get_npts_global
 
+! **************************************************************************************************
+!> \brief Get the communicator of a grid type
+!> \param fft_grid ...
+! **************************************************************************************************
    SUBROUTINE fft_grid_get_comm(fft_grid, comm)
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid
       CLASS(mp_comm_type) :: comm
@@ -1011,5 +1020,155 @@ CONTAINS
       CALL comm%from_dup(my_comm)
 
    END SUBROUTINE fft_grid_get_comm
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in real space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_proc2local_rs(fft_grid, proc2local_rs, lower_bounds)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      INTEGER, DIMENSION(:, :, 0:), INTENT(INOUT) :: proc2local_rs
+      INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL :: lower_bounds
+
+      INTEGER :: proc, dir
+      TYPE(mp_comm_type) :: comm
+      INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: proc2local_rs_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_proc2local_rs_c(layout, proc2local_rs) &
+            BIND(C, name="fft_grid_get_proc2local_rs_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: proc2local_rs
+         END SUBROUTINE fft_grid_get_proc2local_rs_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      ALLOCATE(proc2local_rs_c(SIZE(proc2local_rs)))
+
+      CALL fft_grid_get_proc2local_rs_c(fft_grid%fft_grid, C_LOC(proc2local_rs_c))
+
+      CALL fft_grid_get_comm(fft_grid, comm)
+
+      IF (PRESENT(lower_bounds)) THEN
+         DO proc = 0, comm%num_pe-1
+            DO dir = 1, 3
+               proc2local_rs(1, dir, proc) = lower_bounds(dir)+INT(proc2local_rs_c(6*proc+2*dir))
+               proc2local_rs(2, dir, proc) = lower_bounds(dir)+INT(proc2local_rs_c(6*proc+2*dir)+proc2local_rs_c(6*proc+2*dir+1)-1)
+            END DO
+         END DO
+      ELSE
+         DO proc = 0, comm%num_pe-1
+            DO dir = 1, 3
+               proc2local_rs(1, dir, proc) = INT(proc2local_rs_c(6*proc+2*dir))
+               proc2local_rs(2, dir, proc) = INT(proc2local_rs_c(6*proc+2*dir)+proc2local_rs_c(6*proc+2*dir+1)-1)
+            END DO
+         END DO
+      END IF
+
+      CALL comm%free()
+
+   END SUBROUTINE fft_grid_get_proc2local_rs
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in mixed space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_proc2local_ms(fft_grid, proc2local_ms, lower_bounds)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      INTEGER, DIMENSION(:, :, 0:), INTENT(INOUT) :: proc2local_ms
+      INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL :: lower_bounds
+
+      INTEGER :: proc, dir
+      TYPE(mp_comm_type) :: comm
+      INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: proc2local_ms_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_proc2local_ms_c(layout, proc2local_ms) &
+            BIND(C, name="fft_grid_get_proc2local_ms_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: proc2local_ms
+         END SUBROUTINE fft_grid_get_proc2local_ms_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      ALLOCATE(proc2local_ms_c(SIZE(proc2local_ms)))
+
+      CALL fft_grid_get_proc2local_ms_c(fft_grid%fft_grid, C_LOC(proc2local_ms_c))
+
+      CALL fft_grid_get_comm(fft_grid, comm)
+
+      IF (PRESENT(lower_bounds)) THEN
+         DO proc = 0, comm%num_pe-1
+            DO dir = 1, 3
+               proc2local_ms(1, dir, proc) = lower_bounds(dir)+INT(proc2local_ms_c(6*proc+2*dir))
+               proc2local_ms(2, dir, proc) = lower_bounds(dir)+INT(proc2local_ms_c(6*proc+2*dir)+proc2local_ms_c(6*proc+2*dir+1)-1)
+            END DO
+         END DO
+      ELSE
+         DO proc = 0, comm%num_pe-1
+            DO dir = 1, 3
+               proc2local_ms(1, dir, proc) = INT(proc2local_ms_c(6*proc+2*dir))
+               proc2local_ms(2, dir, proc) = INT(proc2local_ms_c(6*proc+2*dir)+proc2local_ms_c(6*proc+2*dir+1)-1)
+            END DO
+         END DO
+      END IF
+
+      CALL comm%free()
+
+   END SUBROUTINE fft_grid_get_proc2local_ms
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_proc2local_gs(fft_grid, proc2local_gs, lower_bounds)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      INTEGER, DIMENSION(:, :, 0:), INTENT(INOUT) :: proc2local_gs
+      INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL :: lower_bounds
+
+      INTEGER :: proc, dir
+      TYPE(mp_comm_type) :: comm
+      INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: proc2local_gs_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_proc2local_gs_c(layout, proc2local_gs) &
+            BIND(C, name="fft_grid_get_proc2local_gs_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: proc2local_gs
+         END SUBROUTINE fft_grid_get_proc2local_gs_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      ALLOCATE(proc2local_gs_c(SIZE(proc2local_gs)))
+
+      CALL fft_grid_get_proc2local_gs_c(fft_grid%fft_grid, C_LOC(proc2local_gs_c))
+
+      CALL fft_grid_get_comm(fft_grid, comm)
+
+      IF (PRESENT(lower_bounds)) THEN
+         DO proc = 0, comm%num_pe-1
+            DO dir = 1, 3
+               proc2local_gs(1, dir, proc) = lower_bounds(dir)+INT(proc2local_gs_c(6*proc+2*dir))
+               proc2local_gs(2, dir, proc) = lower_bounds(dir)+INT(proc2local_gs_c(6*proc+2*dir)+proc2local_gs_c(6*proc+2*dir+1)-1)
+            END DO
+         END DO
+      ELSE
+         DO proc = 0, comm%num_pe-1
+            DO dir = 1, 3
+               proc2local_gs(1, dir, proc) = INT(proc2local_gs_c(6*proc+2*dir))
+               proc2local_gs(2, dir, proc) = INT(proc2local_gs_c(6*proc+2*dir)+proc2local_gs_c(6*proc+2*dir+1)-1)
+            END DO
+         END DO
+      END IF
+
+      CALL comm%free()
+
+   END SUBROUTINE fft_grid_get_proc2local_gs
 
 END MODULE fft_api
