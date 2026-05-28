@@ -11,6 +11,7 @@
 
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
 
 // Keep in accordance to fft_api.F
 const int FFT_LIBRARY_BACKEND_DEFAULT = 1;
@@ -169,6 +170,8 @@ void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
     local_bounds[4] = external_local_bounds[0];
     local_bounds[5] = external_local_bounds[1];
   }
+  fprintf(stderr, "Create grid with npts_global = %d %d %d\n", npts_global[0], npts_global[1], npts_global[2]);
+  fflush(stderr);
   grid_create_fft_grid_layout(
       fft_grid, cp_mpi_comm_f2c(comm_F),
       (const int[3]){npts_global[2], npts_global[1], npts_global[0]},
@@ -176,6 +179,8 @@ void fft_create_grid_F(fft_grid_layout **fft_grid, const int comm_F,
                            {dh_inv[1][2], dh_inv[1][1], dh_inv[1][0]},
                            {dh_inv[0][2], dh_inv[0][1], dh_inv[0][0]}},
       cutoff, use_halfspace, pgrid_guess, local_bounds_ptr);
+  fprintf(stderr, "Done creating grid\n");
+  fflush(stderr);
 }
 
 /*******************************************************************************
@@ -199,9 +204,13 @@ void fft_create_grid_from_reference_F(fft_grid_layout **fft_grid,
     local_bounds[4] = external_local_bounds[0];
     local_bounds[5] = external_local_bounds[1];
   }
+  fprintf(stderr, "Create grid with npts_global = %d %d %d\n", npts_global[0], npts_global[1], npts_global[2]);
+  fflush(stderr);
   grid_create_fft_grid_layout_from_reference(
       fft_grid, (const int[3]){npts_global[2], npts_global[1], npts_global[0]}, cutoff, local_bounds_ptr,
       fft_grid_ref);
+  fprintf(stderr, "Done creating grid\n");
+  fflush(stderr);
 }
 
 /*******************************************************************************
@@ -244,7 +253,17 @@ void fft_grid_get_comm_F(const fft_grid_layout *fft_grid, int *comm_handle) {
  ******************************************************************************/
 void fft_grid_get_proc2local_rs_F(const fft_grid_layout *fft_grid, int *proc2local_rs) {
   assert(fft_grid != NULL);
-  memcpy(proc2local_rs, fft_grid->proc2local_rs, 6*cp_mpi_comm_size(fft_grid->comm)*sizeof(int));
+  // Reverse the order of the indices
+  fprintf(stderr, "Copy RS\n");
+  fflush(stderr);
+  for (int process = 0; process < cp_mpi_comm_size(fft_grid->comm); process++) {
+    for (int dir = 0; dir < 3; dir++) {
+      proc2local_rs[6*process+2*dir] = 1+fft_grid->proc2local_rs[process][2-dir][0];
+      proc2local_rs[6*process+2*dir+1] = fft_grid->proc2local_rs[process][2-dir][1];
+    }
+  }
+  fprintf(stderr, "Done Copy RS\n");
+  fflush(stderr);
 }
 
 /*******************************************************************************
@@ -253,7 +272,17 @@ void fft_grid_get_proc2local_rs_F(const fft_grid_layout *fft_grid, int *proc2loc
  ******************************************************************************/
 void fft_grid_get_proc2local_ms_F(const fft_grid_layout *fft_grid, int *proc2local_ms) {
   assert(fft_grid != NULL);
-  memcpy(proc2local_ms, fft_grid->proc2local_ms, 6*cp_mpi_comm_size(fft_grid->comm)*sizeof(int));
+  // Reverse the order of the indices
+  fprintf(stderr, "Copy MS\n");
+  fflush(stderr);
+  for (int process = 0; process < cp_mpi_comm_size(fft_grid->comm); process++) {
+    for (int dir = 0; dir < 3; dir++) {
+      proc2local_ms[6*process+2*dir] = 1+fft_grid->proc2local_ms[process][2-dir][0];
+      proc2local_ms[6*process+2*dir+1] = fft_grid->proc2local_ms[process][2-dir][1];
+    }
+  }
+  fprintf(stderr, "Done Copy MS\n");
+  fflush(stderr);
 }
 
 /*******************************************************************************
@@ -262,7 +291,17 @@ void fft_grid_get_proc2local_ms_F(const fft_grid_layout *fft_grid, int *proc2loc
  ******************************************************************************/
 void fft_grid_get_proc2local_gs_F(const fft_grid_layout *fft_grid, int *proc2local_gs) {
   assert(fft_grid != NULL);
-  memcpy(proc2local_gs, fft_grid->proc2local_gs, 6*cp_mpi_comm_size(fft_grid->comm)*sizeof(int));
+  // Reverse the order of the indices
+  fprintf(stderr, "Copy GS\n");
+  fflush(stderr);
+  for (int process = 0; process < cp_mpi_comm_size(fft_grid->comm); process++) {
+    for (int dir = 0; dir < 3; dir++) {
+      proc2local_gs[6*process+2*dir] = 1+fft_grid->proc2local_gs[process][2-dir][0];
+      proc2local_gs[6*process+2*dir+1] = fft_grid->proc2local_gs[process][2-dir][1];
+    }
+  }
+  fprintf(stderr, "Done Copy GS\n");
+  fflush(stderr);
 }
 
 // EOF

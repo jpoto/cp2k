@@ -1027,10 +1027,11 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE fft_grid_get_proc2local_rs(fft_grid, proc2local_rs, lower_bounds)
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid
-      INTEGER, DIMENSION(:, :, 0:), INTENT(INOUT) :: proc2local_rs
-      INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL :: lower_bounds
+      INTEGER, DIMENSION(:, 0:, 0:), INTENT(INOUT) :: proc2local_rs
+      INTEGER, DIMENSION(0:2), INTENT(IN), OPTIONAL :: lower_bounds
 
-      INTEGER :: proc, dir
+      INTEGER :: proc, dir, comm_handle
+      INTEGER, DIMENSION(0:2) :: my_lower_bounds
       TYPE(mp_comm_type) :: comm
       INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: proc2local_rs_c
 
@@ -1041,33 +1042,37 @@ CONTAINS
             TYPE(C_PTR), VALUE :: layout
             TYPE(C_PTR), VALUE  :: proc2local_rs
          END SUBROUTINE fft_grid_get_proc2local_rs_c
+         
+         SUBROUTINE fft_grid_get_comm_c(layout, comm) &
+            BIND(C, name="fft_grid_get_comm_F")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE :: layout
+            INTEGER(C_INT), INTENT(OUT) :: comm
+         END SUBROUTINE fft_grid_get_comm_c
       END INTERFACE
 
       CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
 
-      ALLOCATE(proc2local_rs_c(SIZE(proc2local_rs)))
+      my_lower_bounds = 1
+      IF (PRESENT(lower_bounds)) my_lower_bounds = lower_bounds
+
+      ALLOCATE(proc2local_rs_c(0:SIZE(proc2local_rs)-1))
 
       CALL fft_grid_get_proc2local_rs_c(fft_grid%fft_grid, C_LOC(proc2local_rs_c))
 
-      CALL fft_grid_get_comm(fft_grid, comm)
+      CALL fft_grid_get_comm_c(fft_grid%fft_grid, comm_handle)
 
-      IF (PRESENT(lower_bounds)) THEN
-         DO proc = 0, comm%num_pe-1
-            DO dir = 1, 3
-               proc2local_rs(1, dir, proc) = lower_bounds(dir)+INT(proc2local_rs_c(6*proc+2*dir))
-               proc2local_rs(2, dir, proc) = lower_bounds(dir)+INT(proc2local_rs_c(6*proc+2*dir)+proc2local_rs_c(6*proc+2*dir+1)-1)
-            END DO
-         END DO
-      ELSE
-         DO proc = 0, comm%num_pe-1
-            DO dir = 1, 3
-               proc2local_rs(1, dir, proc) = INT(proc2local_rs_c(6*proc+2*dir))
-               proc2local_rs(2, dir, proc) = INT(proc2local_rs_c(6*proc+2*dir)+proc2local_rs_c(6*proc+2*dir+1)-1)
-            END DO
-         END DO
-      END IF
+      CALL comm%set_handle(INT(comm_handle), 2)
+      WRITE(*,*) "DEBUG obtained bounds RS: ", proc2local_rs_c
 
-      CALL comm%free()
+      DO proc = 0, comm%num_pe-1
+         DO dir = 0, 2
+            proc2local_rs(1, dir, proc) = &
+               my_lower_bounds(dir)-1+INT(proc2local_rs_c(6*proc+2*dir))
+            proc2local_rs(2, dir, proc) = &
+               my_lower_bounds(dir)-1+INT(proc2local_rs_c(6*proc+2*dir)+proc2local_rs_c(6*proc+2*dir+1)-1)
+         END DO
+      END DO
 
    END SUBROUTINE fft_grid_get_proc2local_rs
 
@@ -1077,10 +1082,11 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE fft_grid_get_proc2local_ms(fft_grid, proc2local_ms, lower_bounds)
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid
-      INTEGER, DIMENSION(:, :, 0:), INTENT(INOUT) :: proc2local_ms
-      INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL :: lower_bounds
+      INTEGER, DIMENSION(:, 0:, 0:), INTENT(INOUT) :: proc2local_ms
+      INTEGER, DIMENSION(0:2), INTENT(IN), OPTIONAL :: lower_bounds
 
-      INTEGER :: proc, dir
+      INTEGER :: proc, dir, comm_handle
+      INTEGER, DIMENSION(0:2) :: my_lower_bounds
       TYPE(mp_comm_type) :: comm
       INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: proc2local_ms_c
 
@@ -1091,33 +1097,35 @@ CONTAINS
             TYPE(C_PTR), VALUE :: layout
             TYPE(C_PTR), VALUE  :: proc2local_ms
          END SUBROUTINE fft_grid_get_proc2local_ms_c
+
+         SUBROUTINE fft_grid_get_comm_c(layout, comm) &
+            BIND(C, name="fft_grid_get_comm_F")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE :: layout
+            INTEGER(C_INT), INTENT(OUT) :: comm
+         END SUBROUTINE fft_grid_get_comm_c
       END INTERFACE
 
       CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
 
-      ALLOCATE(proc2local_ms_c(SIZE(proc2local_ms)))
+      my_lower_bounds = 1
+      IF (PRESENT(lower_bounds)) my_lower_bounds = lower_bounds
+
+      ALLOCATE(proc2local_ms_c(0:SIZE(proc2local_ms)-1))
 
       CALL fft_grid_get_proc2local_ms_c(fft_grid%fft_grid, C_LOC(proc2local_ms_c))
 
-      CALL fft_grid_get_comm(fft_grid, comm)
+      CALL fft_grid_get_comm_c(fft_grid%fft_grid, comm_handle)
+      WRITE(*,*) "DEBUG obtained bounds MS: ", proc2local_ms_c
 
-      IF (PRESENT(lower_bounds)) THEN
-         DO proc = 0, comm%num_pe-1
-            DO dir = 1, 3
-               proc2local_ms(1, dir, proc) = lower_bounds(dir)+INT(proc2local_ms_c(6*proc+2*dir))
-               proc2local_ms(2, dir, proc) = lower_bounds(dir)+INT(proc2local_ms_c(6*proc+2*dir)+proc2local_ms_c(6*proc+2*dir+1)-1)
-            END DO
+      DO proc = 0, comm%num_pe-1
+         DO dir = 0, 2
+            proc2local_ms(1, dir, proc) = &
+               my_lower_bounds(dir)-1+INT(proc2local_ms_c(6*proc+2*dir))
+            proc2local_ms(2, dir, proc) = &
+               my_lower_bounds(dir)-1+INT(proc2local_ms_c(6*proc+2*dir)+proc2local_ms_c(6*proc+2*dir+1)-1)
          END DO
-      ELSE
-         DO proc = 0, comm%num_pe-1
-            DO dir = 1, 3
-               proc2local_ms(1, dir, proc) = INT(proc2local_ms_c(6*proc+2*dir))
-               proc2local_ms(2, dir, proc) = INT(proc2local_ms_c(6*proc+2*dir)+proc2local_ms_c(6*proc+2*dir+1)-1)
-            END DO
-         END DO
-      END IF
-
-      CALL comm%free()
+      END DO
 
    END SUBROUTINE fft_grid_get_proc2local_ms
 
@@ -1127,10 +1135,11 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE fft_grid_get_proc2local_gs(fft_grid, proc2local_gs, lower_bounds)
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid
-      INTEGER, DIMENSION(:, :, 0:), INTENT(INOUT) :: proc2local_gs
-      INTEGER, DIMENSION(3), INTENT(IN), OPTIONAL :: lower_bounds
+      INTEGER, DIMENSION(:, 0:, 0:), INTENT(INOUT) :: proc2local_gs
+      INTEGER, DIMENSION(0:2), INTENT(IN), OPTIONAL :: lower_bounds
 
-      INTEGER :: proc, dir
+      INTEGER :: proc, dir, comm_handle
+      INTEGER, DIMENSION(0:2) :: my_lower_bounds
       TYPE(mp_comm_type) :: comm
       INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: proc2local_gs_c
 
@@ -1141,33 +1150,35 @@ CONTAINS
             TYPE(C_PTR), VALUE :: layout
             TYPE(C_PTR), VALUE  :: proc2local_gs
          END SUBROUTINE fft_grid_get_proc2local_gs_c
+
+         SUBROUTINE fft_grid_get_comm_c(layout, comm) &
+            BIND(C, name="fft_grid_get_comm_F")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE :: layout
+            INTEGER(C_INT), INTENT(OUT) :: comm
+         END SUBROUTINE fft_grid_get_comm_c
       END INTERFACE
 
       CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
 
-      ALLOCATE(proc2local_gs_c(SIZE(proc2local_gs)))
+      my_lower_bounds = 1
+      IF (PRESENT(lower_bounds)) my_lower_bounds = lower_bounds
+
+      ALLOCATE(proc2local_gs_c(0:SIZE(proc2local_gs)-1))
 
       CALL fft_grid_get_proc2local_gs_c(fft_grid%fft_grid, C_LOC(proc2local_gs_c))
 
-      CALL fft_grid_get_comm(fft_grid, comm)
+      CALL fft_grid_get_comm_c(fft_grid%fft_grid, comm_handle)
+      WRITE(*,*) "DEBUG obtained bounds GS: ", proc2local_gs_c
 
-      IF (PRESENT(lower_bounds)) THEN
-         DO proc = 0, comm%num_pe-1
-            DO dir = 1, 3
-               proc2local_gs(1, dir, proc) = lower_bounds(dir)+INT(proc2local_gs_c(6*proc+2*dir))
-               proc2local_gs(2, dir, proc) = lower_bounds(dir)+INT(proc2local_gs_c(6*proc+2*dir)+proc2local_gs_c(6*proc+2*dir+1)-1)
-            END DO
+      DO proc = 0, comm%num_pe-1
+         DO dir = 0, 2
+            proc2local_gs(1, dir, proc) = &
+               my_lower_bounds(dir)-1+INT(proc2local_gs_c(6*proc+2*dir))
+            proc2local_gs(2, dir, proc) = &
+               my_lower_bounds(dir)-1+INT(proc2local_gs_c(6*proc+2*dir)+proc2local_gs_c(6*proc+2*dir+1)-1)
          END DO
-      ELSE
-         DO proc = 0, comm%num_pe-1
-            DO dir = 1, 3
-               proc2local_gs(1, dir, proc) = INT(proc2local_gs_c(6*proc+2*dir))
-               proc2local_gs(2, dir, proc) = INT(proc2local_gs_c(6*proc+2*dir)+proc2local_gs_c(6*proc+2*dir+1)-1)
-            END DO
-         END DO
-      END IF
-
-      CALL comm%free()
+      END DO
 
    END SUBROUTINE fft_grid_get_proc2local_gs
 

@@ -549,13 +549,7 @@ CONTAINS
          n_tiles_tot = n_tiles_tot + ps_implicit_env%contacts(j)%dirichlet_bc%n_tiles
       END DO
 
-      IF (pw_grid%para%blocked) THEN
-         data_size = PRODUCT(npts_local)
-      ELSE IF (pw_grid%para%ray_distribution) THEN
          data_size = ngpts_local
-      ELSE ! parallel run with np = 1
-         data_size = PRODUCT(npts_local)
-      END IF
 
 ! check if this is the first scf iteration
       IF (times_called == 0) CALL ps_implicit_initial_guess_create(ps_implicit_env, pw_pool)
@@ -825,13 +819,7 @@ CONTAINS
          n_tiles_tot = n_tiles_tot + ps_implicit_env%contacts(j)%dirichlet_bc%n_tiles
       END DO
 
-      IF (dct_pw_grid%para%blocked) THEN
-         data_size = PRODUCT(npts_local)
-      ELSE IF (dct_pw_grid%para%ray_distribution) THEN
          data_size = ngpts_local
-      ELSE ! parallel run with np = 1
-         data_size = PRODUCT(npts_local)
-      END IF
 
       CALL pw_pool_create(pw_pool_xpndd, pw_grid=dct_pw_grid)
 
@@ -1145,13 +1133,7 @@ CONTAINS
          lb2 = bounds_local(1, 2); ub2 = bounds_local(2, 2)
          lb3 = bounds_local(1, 3); ub3 = bounds_local(2, 3)
 
-         IF (dct_pw_grid%para%blocked) THEN
-            data_size = PRODUCT(npts_local)
-         ELSE IF (dct_pw_grid%para%ray_distribution) THEN
             data_size = ngpts_local
-         ELSE ! parallel run with np = 1
-            data_size = PRODUCT(npts_local)
-         END IF
 
          ALLOCATE (ps_implicit_env%idx_1dto3d(data_size))
          l = 1
@@ -1281,13 +1263,7 @@ CONTAINS
          lb2 = bounds_local(1, 2); ub2 = bounds_local(2, 2)
          lb3 = bounds_local(1, 3); ub3 = bounds_local(2, 3)
 
-         IF (pw_grid_orig%para%blocked) THEN
-            data_size = PRODUCT(npts_local)
-         ELSE IF (pw_grid_orig%para%ray_distribution) THEN
             data_size = ngpts_local
-         ELSE ! parallel run with np = 1
-            data_size = PRODUCT(npts_local)
-         END IF
 
          ALLOCATE (ps_implicit_env%idx_1dto3d(data_size))
          l = 1
