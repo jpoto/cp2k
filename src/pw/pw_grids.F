@@ -113,7 +113,6 @@ CONTAINS
       pw_grid%para%mode = PW_MODE_LOCAL
       pw_grid%reference = 0
       pw_grid%ref_count = 1
-      pw_grid%fftable_grid = .FALSE.
       NULLIFY (pw_grid%g)
       NULLIFY (pw_grid%gsq)
       NULLIFY (pw_grid%g_hatmap)
@@ -278,14 +277,13 @@ CONTAINS
 !> \param ref_grid ...
 !> \param rs_dims ...
 !> \param iounit ...
-!> \param fftable_grid ...
 !> \author JGH (21-Dec-2007)
 !> \note
 !>      this is the function that should be used in the future
 ! **************************************************************************************************
    SUBROUTINE pw_grid_create_extended(pw_grid, mp_comm, cell_hmat, grid_span, cutoff, bounds, bounds_local, npts, &
                                       spherical, odd, fft_compatible_grid, ncommensurate, icommensurate, blocked, ref_grid, &
-                                      rs_dims, iounit, fftable_grid)
+                                      rs_dims, iounit)
 
       TYPE(pw_grid_type), POINTER                        :: pw_grid
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cell_hmat
@@ -300,7 +298,6 @@ CONTAINS
       TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
       INTEGER, DIMENSION(2), INTENT(in), OPTIONAL        :: rs_dims
       INTEGER, INTENT(in), OPTIONAL                      :: iounit
-      LOGICAL, INTENT(IN), OPTIONAL                      :: fftable_grid
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_grid_setup'
 
@@ -370,12 +367,6 @@ CONTAINS
          my_fft_compatible_grid = .FALSE.
       END IF
 
-      IF (PRESENT(fftable_grid)) THEN
-         pw_grid%fftable_grid = fftable_grid
-      ELSE
-         pw_grid%fftable_grid = .TRUE.
-      END IF
-
       IF (PRESENT(ncommensurate)) THEN
          my_ncommensurate = ncommensurate
          IF (PRESENT(icommensurate)) THEN
@@ -426,16 +417,14 @@ CONTAINS
          CPABORT("BOUNDS, NPTS or CUTOFF have to be specified")
       END IF
 
-      IF (pw_grid%fftable_grid) THEN
-         IF (PRESENT(ref_grid)) THEN
-            CALL fft_create_grid_from_reference(pw_grid%fft_grid, pw_grid%npts, cutoff, bounds_local, ref_grid%fft_grid)
-         ELSE
-            ! TODO: pass h matrix instead of h_inv instead of unscaled h_inv (ERROR!!!)
-            CALL fft_create_grid(pw_grid%fft_grid, pw_grid%npts, mp_comm, cell_h_inv, &
-                                 pw_grid%grid_span == HALFSPACE, pw_grid%cutoff, rs_dims, bounds_local)
-         END IF
-         CALL fft_grid_get_comm(pw_grid%fft_grid, pw_grid%para%group)
+      IF (PRESENT(ref_grid)) THEN
+         CALL fft_create_grid_from_reference(pw_grid%fft_grid, pw_grid%npts, cutoff, bounds_local, ref_grid%fft_grid)
+      ELSE
+         ! TODO: pass h matrix instead of h_inv instead of unscaled h_inv (ERROR!!!)
+         CALL fft_create_grid(pw_grid%fft_grid, pw_grid%npts, mp_comm, cell_h_inv, &
+                              pw_grid%grid_span == HALFSPACE, pw_grid%cutoff, rs_dims, bounds_local)
       END IF
+      CALL fft_grid_get_comm(pw_grid%fft_grid, pw_grid%para%group)
 
       CALL pw_grid_setup_internal(cell_hmat, cell_h_inv, cell_deth, pw_grid, bounds_local=bounds_local, &
                                   blocked=blocked, ref_grid=ref_grid, iounit=iounit)

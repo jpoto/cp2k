@@ -1161,9 +1161,6 @@ CONTAINS
                                     END IF
                                  END IF
 
-                                 IF (.NOT. pw1%pw_grid%fftable_grid) &
-                                    CPABORT("Grid was not set up for FFTs!")
-
                                  n => pw1%pw_grid%npts
 
                                  IF (pw1%pw_grid%para%mode == PW_MODE_LOCAL) THEN

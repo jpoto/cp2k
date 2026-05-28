@@ -51,7 +51,6 @@ MODULE pw_grid_types
    ! all you always wanted to know about grids, but were...
 ! **************************************************************************************************
    TYPE pw_grid_type
-      LOGICAL :: fftable_grid = .FALSE.
       TYPE(fft_grid_type) :: fft_grid = fft_grid_type()
       INTEGER(int_8) :: ngpts = 0_int_8 ! # grid points
       INTEGER(int_8) :: ngpts_cut = 0_int_8 ! # grid points within cutoff
