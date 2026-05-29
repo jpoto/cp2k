@@ -111,6 +111,7 @@ CONTAINS
                                                             vdw_type
       INTEGER, DIMENSION(:), POINTER                     :: exlist
       LOGICAL                                            :: at_end, explicit, found, is_available
+      CHARACTER(LEN=default_string_length)                :: error_msg
       REAL(KIND=dp)                                      :: dum
       TYPE(qs_atom_dispersion_type), POINTER             :: disp
       TYPE(section_vals_type), POINTER                   :: eeq_section
@@ -221,7 +222,11 @@ CONTAINS
                                              dispersion_env%pp_type, dispersion_env%ref_functional, &
                                              dispersion_env%s6, dispersion_env%s8, &
                                              dispersion_env%a1, dispersion_env%a2, &
-                                             dispersion_env%sr6, para_env)
+                                             dispersion_env%sr6, para_env, error=error_msg, &
+                                             calc_scaling=.NOT. dispersion_env%d3_scaling_explicit)
+               IF (error_msg /= "") THEN
+                  CALL cp_abort(__LOCATION__, error_msg)
+               END IF
             ELSE
                filename = dispersion_env%parameter_file_name
                CALL dftd3_c6_param(dispersion_env%c6ab, dispersion_env%maxci, filename, para_env)

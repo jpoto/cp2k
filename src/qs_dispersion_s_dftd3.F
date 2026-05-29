@@ -89,7 +89,7 @@ CONTAINS
    SUBROUTINE dftd3_param_from_library(c6ab, maxci, r0ab, rcov, r2r4, &
                                        pp_type, ref_functional, &
                                        s6, s8, a1, a2, sr6, &
-                                       para_env, error)
+                                       para_env, error, calc_scaling)
 
       REAL(KIND=dp), DIMENSION(:, :, :, :, :), &
          INTENT(INOUT)                                   :: c6ab
@@ -101,6 +101,7 @@ CONTAINS
       REAL(KIND=dp), INTENT(INOUT)                       :: s6, s8, a1, a2, sr6
       TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
       CHARACTER(LEN=*), INTENT(OUT), OPTIONAL            :: error
+      LOGICAL, INTENT(IN), OPTIONAL                      :: calc_scaling
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'dftd3_param_from_library'
 
@@ -108,6 +109,7 @@ CONTAINS
       INTEGER                                            :: handle, i, islice, iz, jref, jz, nelem, &
                                                             nref
       REAL(KIND=dp)                                      :: c6_val, r0_val, r4r2, rcov_val
+      LOGICAL                                            :: do_calc_scaling
       REAL(KIND=dp), DIMENSION(94)                       :: r0ab_tmp, r2r4_tmp, rcov_tmp
       TYPE(d3_param)                                     :: d3params
       TYPE(error_type), ALLOCATABLE                      :: lib_error
@@ -194,6 +196,12 @@ CONTAINS
          CASE DEFAULT
             d3params = d3_param()
          END SELECT
+         IF (ALLOCATED(lib_error)) THEN
+            IF (PRESENT(error)) THEN
+               error = "Functional '"//TRIM(ref_functional)//"' not found in s-dftd3 library"
+            END IF
+            RETURN
+         END IF
       END IF
 
       CALL para_env%bcast(func_name)
@@ -205,11 +213,16 @@ CONTAINS
 
       IF (PRESENT(error)) error = ""
 
-      s6 = d3params%s6
-      s8 = d3params%s8
-      a1 = d3params%a1
-      a2 = d3params%a2
-      sr6 = d3params%rs6
+      do_calc_scaling = .TRUE.
+      IF (PRESENT(calc_scaling)) do_calc_scaling = calc_scaling
+
+      IF (do_calc_scaling) THEN
+         s6 = d3params%s6
+         s8 = d3params%s8
+         a1 = d3params%a1
+         a2 = d3params%a2
+         sr6 = d3params%rs6
+      END IF
 
       CALL timestop(handle)
 
@@ -237,7 +250,7 @@ CONTAINS
    SUBROUTINE dftd3_param_from_library(c6ab, maxci, r0ab, rcov, r2r4, &
                                        pp_type, ref_functional, &
                                        s6, s8, a1, a2, sr6, &
-                                       para_env, error)
+                                       para_env, error, calc_scaling)
 
       REAL(KIND=dp), DIMENSION(:, :, :, :, :), &
          INTENT(INOUT)                                   :: c6ab
@@ -249,6 +262,7 @@ CONTAINS
       REAL(KIND=dp), INTENT(INOUT)                       :: s6, s8, a1, a2, sr6
       TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
       CHARACTER(LEN=*), INTENT(OUT), OPTIONAL            :: error
+      LOGICAL, INTENT(IN), OPTIONAL                      :: calc_scaling
 
       CPABORT("s-dftd3 library not compiled in")
 
