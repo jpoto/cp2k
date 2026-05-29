@@ -223,30 +223,9 @@ CONTAINS
                                              dispersion_env%a1, dispersion_env%a2, &
                                              dispersion_env%sr6, para_env)
             ELSE
-               CALL dftd3_c6_param(dispersion_env%c6ab, dispersion_env%maxci, &
-                                   dispersion_env%parameter_file_name, para_env)
+               filename = dispersion_env%parameter_file_name
+               CALL dftd3_c6_param(dispersion_env%c6ab, dispersion_env%maxci, filename, para_env)
                CALL setr0ab(dispersion_env%r0ab, dispersion_env%rcov, dispersion_env%r2r4)
-               IF (.NOT. dispersion_env%d3_scaling_explicit) THEN
-                  CALL qs_scaling_dftd3(dispersion_env%s6, dispersion_env%sr6, &
-                                        dispersion_env%s8, dispersion_env%ref_functional)
-                  IF (dispersion_env%pp_type == vdw_pairpot_dftd3bj) THEN
-                     BLOCK
-                        LOGICAL :: found
-                        CALL qs_scaling_dftd3bj(dispersion_env%s6, dispersion_env%a1, &
-                                                dispersion_env%s8, dispersion_env%a2, &
-                                                dispersion_env%ref_functional, found)
-                        IF (.NOT. found) THEN
-                           CALL dftd3_param_from_library(dispersion_env%c6ab, dispersion_env%maxci, &
-                                                         dispersion_env%r0ab, dispersion_env%rcov, &
-                                                         dispersion_env%r2r4, &
-                                                         dispersion_env%pp_type, dispersion_env%ref_functional, &
-                                                         dispersion_env%s6, dispersion_env%s8, &
-                                                         dispersion_env%a1, dispersion_env%a2, &
-                                                         dispersion_env%sr6, para_env)
-                        END IF
-                     END BLOCK
-                  END IF
-               END IF
             END IF
             ! Electronegativity
             CALL seten(dispersion_env%eneg)
