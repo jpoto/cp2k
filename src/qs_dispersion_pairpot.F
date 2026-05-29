@@ -56,7 +56,7 @@ MODULE qs_dispersion_pairpot
    USE qs_dispersion_d3,                ONLY: calculate_dispersion_d3_pairpot, &
                                              dftd3_c6_param
    USE qs_dispersion_d4,                ONLY: calculate_dispersion_d4_pairpot
-   USE qs_dispersion_s_dftd3,           ONLY: dftd3_param_from_library
+   USE qs_dispersion_s_dftd3,           ONLY: dftd3_functional_supported, dftd3_param_from_library
    USE qs_dispersion_utils,             ONLY: qs_scaling_dftd3, qs_scaling_dftd3bj
    USE qs_dispersion_types,             ONLY: dftd2_pp,&
                                               dftd3_pp,&
@@ -226,6 +226,15 @@ CONTAINS
                filename = dispersion_env%parameter_file_name
                CALL dftd3_c6_param(dispersion_env%c6ab, dispersion_env%maxci, filename, para_env)
                CALL setr0ab(dispersion_env%r0ab, dispersion_env%rcov, dispersion_env%r2r4)
+#if defined(__S_DFTD3)
+               CALL dftd3_functional_supported(dispersion_env%pp_type, dispersion_env%ref_functional, found)
+               IF (.NOT. found) THEN
+                  CALL cp_abort(__LOCATION__, &
+                                "Functional '"//TRIM(dispersion_env%ref_functional)// &
+                                "' not found. Please use a supported functional or enable "// &
+                                "d3_reference_code to use the s-dftd3 library.")
+               END IF
+#endif
             END IF
             ! Electronegativity
             CALL seten(dispersion_env%eneg)

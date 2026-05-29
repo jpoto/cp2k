@@ -31,11 +31,44 @@ MODULE qs_dispersion_s_dftd3
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'qs_dispersion_s_dftd3'
 
-   PUBLIC :: dftd3_param_from_library
+   PUBLIC :: dftd3_param_from_library, dftd3_functional_supported
 
 CONTAINS
 
 #if defined(__S_DFTD3)
+! **************************************************************************************************
+!> \brief Check if a functional is supported by the s-dftd3 library
+!> \param pp_type ...
+!> \param ref_functional ...
+!> \param found ...
+! **************************************************************************************************
+   SUBROUTINE dftd3_functional_supported(pp_type, ref_functional, found)
+      INTEGER, INTENT(IN)                                :: pp_type
+      CHARACTER(LEN=*), INTENT(IN)                       :: ref_functional
+      LOGICAL, INTENT(OUT)                               :: found
+
+      CHARACTER(LEN=default_string_length)               :: func_name
+      TYPE(d3_param)                                     :: d3params
+      TYPE(error_type)                                   :: lib_error
+
+      func_name = ref_functional
+      d3params = d3_param()
+      lib_error = error_type()
+      found = .TRUE.
+
+      SELECT CASE (pp_type)
+      CASE (2)
+         CALL get_zero_damping(d3params, func_name, lib_error)
+      CASE (3)
+         CALL get_rational_damping(d3params, func_name, lib_error)
+      CASE DEFAULT
+         d3params = d3_param()
+      END SELECT
+
+      IF (lib_error%has_failed()) found = .FALSE.
+
+   END SUBROUTINE dftd3_functional_supported
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param c6ab ...
