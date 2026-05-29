@@ -1,0 +1,14 @@
+# runs are executed in the same order as in this file
+# the second field tells which test should be run in order to compare with the last available output
+# e.g. 0 means do not compare anything, running is enough
+#      1 compares the last total energy in the file
+#      for details see cp2k/tools/do_regtest
+"b3lyp_d3bj_s.inp"                     = [{matcher="M033", tol=1.0E-14, ref=-0.00559494624729}]
+"r2scan_d3bj_s.inp"                    = [{matcher="M033", tol=1.0E-14, ref=-0.00206113298021}]
+"revtpss_d3bj_s.inp"                   = [{matcher="M033", tol=1.0E-14, ref=-0.00708528650222}]
+"dftd3bj_t1.inp"                       = [{matcher="M033", tol=1.0E-14, ref=-0.00355123783846}]
+"dftd3bj_skala.inp"                    = [{matcher="M033", tol=1.0E-14, ref=-0.00559494624729}]
+"dftd3bj_t2.inp"                       = [{matcher="M033", tol=1.0E-14, ref=-0.05897356220363}]
+"dftd3bj_t3.inp"                       = [{matcher="M033", tol=1.0E-14, ref=-0.00112424003807}]
+"dftd3bj_t4.inp"                       = [{matcher="M007", tol=2.0E-12, ref=-84.2983390350}]
+#EOF

@@ -1,0 +1,12 @@
+# runs are executed in the same order as in this file
+# the second field tells which test should be run in order to compare with the last available output
+# e.g. 0 means do not compare anything, running is enough
+#      1 compares the last total energy in the file
+#      for details see cp2k/tools/do_regtest
+"scan_d3_s.inp"                        = [{matcher="M033", tol=1.0E-14, ref=-0.00043770832074}]
+"dftd3src1.inp"                        = [{matcher="M033", tol=1.0E-14, ref=-0.02610167828267}]
+"dftd3src2.inp"                        = [{matcher="M033", tol=1.0E-12, ref=-0.01190472345638}]
+"dftd3_t1.inp"                         = [{matcher="M033", tol=1.0E-14, ref=-0.00147685198763}]
+"dftd3_t2.inp"                         = [{matcher="M033", tol=1.0E-14, ref=-0.00006284604445}]
+"dftd3_t3.inp"                         = [{matcher="M033", tol=1.0E-14, ref=-0.00021588485204}]
+#EOF
