@@ -49,11 +49,11 @@ CONTAINS
 
       CHARACTER(LEN=default_string_length)               :: func_name
       TYPE(d3_param)                                     :: d3params
-      TYPE(error_type)                                   :: lib_error
+      TYPE(error_type), ALLOCATABLE                      :: lib_error
 
+      ALLOCATE (lib_error)
       func_name = ref_functional
       d3params = d3_param()
-      lib_error = error_type()
       found = .TRUE.
 
       SELECT CASE (pp_type)
@@ -65,7 +65,7 @@ CONTAINS
          d3params = d3_param()
       END SELECT
 
-      IF (lib_error%has_failed()) found = .FALSE.
+      found = .NOT. ALLOCATED(lib_error)
 
    END SUBROUTINE dftd3_functional_supported
 
