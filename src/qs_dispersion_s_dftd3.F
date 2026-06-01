@@ -7,9 +7,10 @@
 
 MODULE qs_dispersion_s_dftd3
 
-   USE kinds, ONLY: default_string_length, &
-                    dp
+USE kinds, ONLY: default_string_length, &
+                     dp
    USE message_passing, ONLY: mp_para_env_type
+   USE qs_dispersion_cnum, ONLY: setr0ab
 
 #if defined(__S_DFTD3)
    USE dftd3_data_r4r2, ONLY: get_r4r2_val
@@ -19,7 +20,9 @@ MODULE qs_dispersion_s_dftd3
                           get_zero_damping, &
                           error_type
    USE dftd3_reference, ONLY: init_reference_c6, &
-                              get_c6
+                              get_c6, &
+                              reference_cn, &
+                              number_of_references
    USE mctc_data, ONLY: get_covalent_rad
 #endif
 
@@ -108,9 +111,9 @@ CONTAINS
       CHARACTER(LEN=default_string_length)               :: func_name
       INTEGER                                            :: handle, i, islice, iz, jref, jz, nelem, &
                                                             nref
-      REAL(KIND=dp)                                      :: c6_val, r0_val, r4r2, rcov_val
+      REAL(KIND=dp)                                      :: c6_val, r4r2, rcov_val, r0_pair
       LOGICAL                                            :: do_calc_scaling
-      REAL(KIND=dp), DIMENSION(94)                       :: r0ab_tmp, r2r4_tmp, rcov_tmp
+      REAL(KIND=dp), DIMENSION(94)                       :: r2r4_tmp, rcov_tmp
       TYPE(d3_param)                                     :: d3params
       TYPE(error_type), ALLOCATABLE                      :: lib_error
 
@@ -122,7 +125,9 @@ CONTAINS
       nelem = MIN(94, SIZE(maxci))
 
       maxci(:) = 0
-      maxci(:nelem) = nref
+      DO iz = 1, nelem
+         maxci(iz) = number_of_references(iz)
+      END DO
 
       IF (para_env%is_source()) THEN
          DO iz = 1, nelem
@@ -131,58 +136,54 @@ CONTAINS
 
             r4r2 = get_r4r2_val(iz)
             r2r4_tmp(iz) = r4r2
-
-            IF (r4r2 > 0.0_dp) THEN
-               r0_val = get_vdw_rad(iz)
-               r0ab_tmp(iz) = r0_val
-            ELSE
-               r0ab_tmp(iz) = 0.0_dp
-            END IF
          END DO
 
-         c6ab = 0.0_dp
-         DO jref = 1, nref
+         r0ab = 0.0_dp
+         DO iz = 1, nelem
             DO jz = 1, nelem
-               DO i = 1, nref
-                  DO iz = 1, nelem
-                     c6_val = get_c6(i, jref, iz, jz)
-                     DO islice = 1, SIZE(c6ab, 5)
-                        c6ab(iz, jz, i, jref, islice) = c6_val
-                     END DO
-                  END DO
-               END DO
+               IF (r2r4_tmp(iz) > 0.0_dp .AND. r2r4_tmp(jz) > 0.0_dp) THEN
+                  r0ab(iz, jz) = get_vdw_rad(iz, jz)
+               END IF
             END DO
          END DO
-      END IF
 
-      CALL para_env%bcast(r2r4_tmp)
-      CALL para_env%bcast(r0ab_tmp)
-      CALL para_env%bcast(rcov_tmp)
+c6ab = 0.0_dp
+          DO jref = 1, nref
+             DO jz = 1, nelem
+                DO i = 1, nref
+                   DO iz = 1, nelem
+                      c6_val = get_c6(i, jref, iz, jz)
+                      c6ab(iz, jz, i, jref, 1) = c6_val
+                      c6ab(iz, jz, i, jref, 2) = reference_cn(i, iz)
+                      c6ab(iz, jz, i, jref, 3) = reference_cn(jref, jz)
+                   END DO
+                END DO
+             END DO
+          END DO
+       END IF
 
-      IF (.NOT. para_env%is_source()) THEN
-         c6ab = 0.0_dp
-         DO jref = 1, nref
-            DO jz = 1, nelem
-               DO i = 1, nref
-                  DO iz = 1, nelem
-                     c6_val = get_c6(i, jref, iz, jz)
-                     DO islice = 1, SIZE(c6ab, 5)
-                        c6ab(iz, jz, i, jref, islice) = c6_val
-                     END DO
-                  END DO
-               END DO
-            END DO
-         END DO
-      END IF
+       CALL para_env%bcast(r2r4_tmp)
+       CALL para_env%bcast(r0ab)
+       CALL para_env%bcast(rcov_tmp)
+
+       IF (.NOT. para_env%is_source()) THEN
+          c6ab = 0.0_dp
+          DO jref = 1, nref
+             DO jz = 1, nelem
+                DO i = 1, nref
+                   DO iz = 1, nelem
+                      c6_val = get_c6(i, jref, iz, jz)
+                      c6ab(iz, jz, i, jref, 1) = c6_val
+                      c6ab(iz, jz, i, jref, 2) = reference_cn(i, iz)
+                      c6ab(iz, jz, i, jref, 3) = reference_cn(jref, jz)
+                   END DO
+                END DO
+             END DO
+          END DO
+       END IF
 
       r2r4(:nelem) = r2r4_tmp(:nelem)
       rcov(:nelem) = rcov_tmp(:nelem)
-      r0ab = 0.0_dp
-      DO iz = 1, nelem
-         DO jz = 1, nelem
-            r0ab(iz, jz) = r0ab_tmp(iz) + r0ab_tmp(jz)
-         END DO
-      END DO
 
       func_name = ref_functional
       d3params = d3_param()
@@ -224,7 +225,42 @@ CONTAINS
          sr6 = d3params%rs6
       END IF
 
-      CALL timestop(handle)
+IF (para_env%is_source()) THEN
+          WRITE (*, '(A,A)') "DEBUG LIB: C6 from s-dftd3 for ", TRIM(ref_functional)
+          WRITE (*, '(A,I4,A,I1,A,I1)') "DEBUG LIB: ref_stride=100 nref=", nref, " maxci(1)=", maxci(1), " maxci(6)=", maxci(6)
+          WRITE (*, *) "DEBUG LIB: C6 (slice 1)"
+          DO iz = 1, 6
+             DO jref = 1, MIN(maxci(iz), 7)
+                WRITE (*, '(A,I1,I1,A,E14.6)') "DLC6", iz, jref, "=", c6ab(iz, iz, jref, jref, 1)
+             END DO
+          END DO
+          WRITE (*, *) "DEBUG LIB: CN_ref_A (slice 2)"
+          DO iz = 1, 6
+             DO jref = 1, MIN(maxci(iz), 7)
+                WRITE (*, '(A,I1,I1,A,F12.6)') "DLCA", iz, jref, "=", c6ab(iz, iz, jref, jref, 2)
+             END DO
+          END DO
+          WRITE (*, *) "DEBUG LIB: CN_ref_B (slice 3)"
+          DO iz = 1, 6
+             DO jref = 1, MIN(maxci(iz), 7)
+                WRITE (*, '(A,I1,I1,A,F12.6)') "DLCB", iz, jref, "=", c6ab(iz, iz, jref, jref, 3)
+             END DO
+          END DO
+         WRITE (*, '(A,E14.6)') "DEBUG LIB: s6=", d3params%s6
+         WRITE (*, '(A,E14.6)') "DEBUG LIB: s8=", d3params%s8
+         WRITE (*, '(A,E14.6)') "DEBUG LIB: a1=", d3params%a1
+         WRITE (*, '(A,E14.6)') "DEBUG LIB: a2=", d3params%a2
+WRITE (*, '(A,E14.6)') "DEBUG LIB: rs6=", d3params%rs6
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: r2r4(1)=", r2r4_tmp(1)
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: r2r4(6)=", r2r4_tmp(6)
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: rcov(1)=", rcov_tmp(1)
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: rcov(6)=", rcov_tmp(6)
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: r0ab(1,1)=", r0ab(1,1)
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: r0ab(1,6)=", r0ab(1,6)
+          WRITE (*, '(A,F12.6)') "DEBUG LIB: r0ab(6,6)=", r0ab(6,6)
+       END IF
+
+       CALL timestop(handle)
 
    END SUBROUTINE dftd3_param_from_library
 
