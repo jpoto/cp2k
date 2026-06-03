@@ -166,21 +166,21 @@ c6ab = 0.0_dp
        CALL para_env%bcast(r0ab)
        CALL para_env%bcast(rcov_tmp)
 
-       IF (.NOT. para_env%is_source()) THEN
-          c6ab = 0.0_dp
-          DO jref = 1, nref
-             DO jz = 1, nelem
-                DO i = 1, nref
-                   DO iz = 1, nelem
-                      c6_val = get_c6(i, jref, iz, jz)
-                      c6ab(iz, jz, i, jref, 1) = c6_val
-                      c6ab(iz, jz, i, jref, 2) = reference_cn(i, iz)
-                      c6ab(iz, jz, i, jref, 3) = reference_cn(jref, jz)
-                   END DO
-                END DO
-             END DO
-          END DO
-       END IF
+IF (.NOT. para_env%is_source()) THEN
+            c6ab = 0.0_dp
+            DO jref = 1, nref
+               DO jz = 1, nelem
+                  DO i = 1, nref
+                     DO iz = 1, nelem
+                        c6_val = get_c6(i, jref, iz, jz)
+                        c6ab(iz, jz, i, jref, 1) = c6_val
+                        c6ab(iz, jz, i, jref, 2) = reference_cn(i, iz)
+                        c6ab(iz, jz, i, jref, 3) = reference_cn(jref, jz)
+                     END DO
+                  END DO
+               END DO
+            END DO
+         END IF
 
       r2r4(:nelem) = r2r4_tmp(:nelem)
       rcov(:nelem) = rcov_tmp(:nelem)
@@ -225,42 +225,7 @@ c6ab = 0.0_dp
          sr6 = d3params%rs6
       END IF
 
-IF (para_env%is_source()) THEN
-          WRITE (*, '(A,A)') "DEBUG LIB: C6 from s-dftd3 for ", TRIM(ref_functional)
-          WRITE (*, '(A,I4,A,I1,A,I1)') "DEBUG LIB: ref_stride=100 nref=", nref, " maxci(1)=", maxci(1), " maxci(6)=", maxci(6)
-          WRITE (*, *) "DEBUG LIB: C6 (slice 1)"
-          DO iz = 1, 6
-             DO jref = 1, MIN(maxci(iz), 7)
-                WRITE (*, '(A,I1,I1,A,E14.6)') "DLC6", iz, jref, "=", c6ab(iz, iz, jref, jref, 1)
-             END DO
-          END DO
-          WRITE (*, *) "DEBUG LIB: CN_ref_A (slice 2)"
-          DO iz = 1, 6
-             DO jref = 1, MIN(maxci(iz), 7)
-                WRITE (*, '(A,I1,I1,A,F12.6)') "DLCA", iz, jref, "=", c6ab(iz, iz, jref, jref, 2)
-             END DO
-          END DO
-          WRITE (*, *) "DEBUG LIB: CN_ref_B (slice 3)"
-          DO iz = 1, 6
-             DO jref = 1, MIN(maxci(iz), 7)
-                WRITE (*, '(A,I1,I1,A,F12.6)') "DLCB", iz, jref, "=", c6ab(iz, iz, jref, jref, 3)
-             END DO
-          END DO
-         WRITE (*, '(A,E14.6)') "DEBUG LIB: s6=", d3params%s6
-         WRITE (*, '(A,E14.6)') "DEBUG LIB: s8=", d3params%s8
-         WRITE (*, '(A,E14.6)') "DEBUG LIB: a1=", d3params%a1
-         WRITE (*, '(A,E14.6)') "DEBUG LIB: a2=", d3params%a2
-WRITE (*, '(A,E14.6)') "DEBUG LIB: rs6=", d3params%rs6
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: r2r4(1)=", r2r4_tmp(1)
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: r2r4(6)=", r2r4_tmp(6)
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: rcov(1)=", rcov_tmp(1)
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: rcov(6)=", rcov_tmp(6)
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: r0ab(1,1)=", r0ab(1,1)
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: r0ab(1,6)=", r0ab(1,6)
-          WRITE (*, '(A,F12.6)') "DEBUG LIB: r0ab(6,6)=", r0ab(6,6)
-       END IF
-
-       CALL timestop(handle)
+      CALL timestop(handle)
 
    END SUBROUTINE dftd3_param_from_library
 

@@ -230,6 +230,7 @@ CONTAINS
             ELSE
                filename = dispersion_env%parameter_file_name
                CALL dftd3_c6_param(dispersion_env%c6ab, dispersion_env%maxci, filename, para_env)
+               CALL setrcov(dispersion_env%rcov)
                CALL setr0ab(dispersion_env%r0ab, dispersion_env%rcov, dispersion_env%r2r4)
 #if defined(__S_DFTD3)
                CALL dftd3_functional_supported(dispersion_env%pp_type, dispersion_env%ref_functional, found)
@@ -251,11 +252,13 @@ CONTAINS
             ! c8 for he, ne and ar. for larger Z, C8 becomes too large
             ! which effectively mimics higher R^n terms neglected due
             ! to stability reasons
-            DO i = 1, max_elem
-               dum = 0.5_dp*dispersion_env%r2r4(i)*REAL(i, dp)**0.5_dp
-               ! store it as sqrt because the geom. av. is taken
-               dispersion_env%r2r4(i) = SQRT(dum)
-            END DO
+            IF (.NOT. dispersion_env%d3_reference_code) THEN
+               DO i = 1, max_elem
+                  dum = 0.5_dp*dispersion_env%r2r4(i)*REAL(i, dp)**0.5_dp
+                  ! store it as sqrt because the geom. av. is taken
+                  dispersion_env%r2r4(i) = SQRT(dum)
+               END DO
+            END IF
             ! parameters
             dispersion_env%k1 = 16.0_dp
             dispersion_env%k2 = 4._dp/3._dp
@@ -267,7 +270,9 @@ CONTAINS
             ! which is physically not right
             ! values >5 might lead to bumps in the potential
             dispersion_env%k3 = -4._dp
-            dispersion_env%rcov = dispersion_env%k2*dispersion_env%rcov*bohr
+            IF (.NOT. dispersion_env%d3_reference_code) THEN
+               dispersion_env%rcov = dispersion_env%k2*dispersion_env%rcov*bohr
+            END IF
             ! alpha default parameter
             dispersion_env%alp = 14._dp
             !
