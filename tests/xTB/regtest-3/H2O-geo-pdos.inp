@@ -15,11 +15,13 @@
   METHOD Quickstep
   &DFT
     &PRINT
-      &PDOS
+      &DOS
         &EACH
           GEO_OPT 2
         &END EACH
-      &END PDOS
+        &PDOS
+        &END PDOS
+      &END DOS
     &END PRINT
     &QS
       METHOD xTB

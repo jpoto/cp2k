@@ -28,7 +28,8 @@ MODULE input_cp2k_subsys
    USE cp_output_handling, ONLY: cp_print_key_section_create, debug_print_level, &
                                  high_print_level, medium_print_level
    USE cp_units, ONLY: cp_unit_to_cp2k
-   USE input_constants, ONLY: do_add, do_bondparm_covalent, do_bondparm_vdw, &
+   USE input_constants, ONLY: canonicalize_cell_auto, canonicalize_cell_false, &
+                              canonicalize_cell_true, do_add, do_bondparm_covalent, do_bondparm_vdw, &
                               do_cell_cif, do_cell_cp2k, do_cell_xsc, &
                               do_cell_extxyz, do_cell_pdb, &
                               do_conn_amb7, do_conn_g87, do_conn_g96, &
@@ -202,12 +203,25 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="CANONICALIZE", &
-                          description="Transform a general input cell to CP2K's internal convention "// &
-                          "that A lies along the X-axis and B is in the XY plane. Cell-dependent "// &
-                          "Cartesian input such as coordinates, restarts, velocities, k-points, band "// &
-                          "paths, electric-field directions, and fixed spatial points is transformed "// &
-                          "consistently. The stress tensor follows the canonical internal cell.", &
-                          usage="CANONICALIZE T", default_l_val=.TRUE., lone_keyword_l_val=.TRUE.)
+                          description="Policy for transforming a general input cell to CP2K's internal "// &
+                          "convention that A lies along the X-axis and B is in the XY plane. AUTO is "// &
+                          "conservative and keeps the input orientation when a silent transformation "// &
+                          "could affect Cartesian or direction-dependent input. TRUE explicitly requests "// &
+                          "canonicalization and transforms supported cell-dependent input. FALSE always "// &
+                          "keeps the input orientation.", &
+                          usage="CANONICALIZE AUTO", &
+                          enum_c_vals=s2a("AUTO", "TRUE", "FALSE", "T", "F", ".TRUE.", ".FALSE."), &
+                          enum_i_vals=[canonicalize_cell_auto, canonicalize_cell_true, &
+                                       canonicalize_cell_false, canonicalize_cell_true, canonicalize_cell_false, &
+                                       canonicalize_cell_true, canonicalize_cell_false], &
+                          enum_desc=s2a("Keep the input orientation unless canonicalization is unambiguously safe", &
+                                        "Explicitly canonicalize the input cell", &
+                                        "Keep the input cell orientation", &
+                                        "Alias for TRUE", &
+                                        "Alias for FALSE", &
+                                        "Alias for TRUE", &
+                                        "Alias for FALSE"), &
+                          default_i_val=canonicalize_cell_auto, lone_keyword_i_val=canonicalize_cell_true)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
@@ -1861,6 +1875,10 @@ CONTAINS
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
+      CALL create_fragments_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
    END SUBROUTINE create_topology_section
 
 ! **************************************************************************************************
@@ -1925,6 +1943,42 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
    END SUBROUTINE create_center_section
+
+! **************************************************************************************************
+!> \brief Specify keywords used to setup several fragments
+!> \param section the section to create
+! **************************************************************************************************
+   SUBROUTINE create_fragments_section(section)
+      TYPE(section_type), POINTER                        :: section
+
+      TYPE(keyword_type), POINTER                        :: keyword
+      TYPE(section_type), POINTER                        :: subsection, subsubsection
+
+      CPASSERT(.NOT. ASSOCIATED(section))
+      NULLIFY (keyword, subsection, subsubsection)
+      CALL section_create(section, __LOCATION__, name="FRAGMENTS", &
+                          description="Specify the fragments of a full system.", &
+                          n_keywords=1, n_subsections=0, repeats=.FALSE.)
+
+      CALL section_create(subsection, __LOCATION__, name="FRAGMENT", &
+                          description="Specify information about the fragments.", &
+                          n_keywords=1, n_subsections=0, repeats=.TRUE.)
+
+      CALL keyword_create(keyword, __LOCATION__, &
+                          name="FRAG_RANGE", &
+                          variants=s2a("RANGE"), &
+                          description="Defines fragments. This keyword can be repeated.", &
+                          repeats=.FALSE., &
+                          n_var=-1, &
+                          type_of_var=integer_t, &
+                          usage="FRAG_RANGE 1 5")
+      CALL section_add_keyword(subsection, keyword)
+      CALL keyword_release(keyword)
+
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
+   END SUBROUTINE create_fragments_section
 
 ! **************************************************************************************************
 !> \brief Specify keywords used to setup several molecules with few connectivity files

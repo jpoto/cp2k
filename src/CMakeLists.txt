@@ -808,6 +808,9 @@ list(
   semi_empirical_utils.F
   simpar_types.F
   sirius_interface.F
+  skala_gpw_functional.F
+  skala_gpw_features.F
+  skala_torch_api.F
   smeagol_control_types.F
   smeagol_emtoptions.F
   smeagol_interface.F
@@ -1518,6 +1521,7 @@ set(CP2K_PROGS_C
     grid/grid_miniapp.c;grid/grid_unittest.c;dbm/dbm_miniapp.c;start/libcp2k_unittest.c
 )
 set(CP2K_PROGS_F
+    aobasis/orbital_transformation_matrices_unittest.F
     dbt/dbt_unittest.F
     dbt/tas/dbt_tas_unittest.F
     start/cp2k.F
@@ -1747,7 +1751,7 @@ target_link_libraries(
     $<$<BOOL:${CP2K_USE_DEEPMD}>:DeePMD::deepmd
     DeePMD::deepmd_c>
     $<$<BOOL:${CP2K_USE_PEXSI}>:PEXSI::PEXSI>
-    $<$<BOOL:${CP2K_USE_ACE}>:cp2k::ACE>
+    $<$<BOOL:${CP2K_USE_ACE}>:pace::pace>
     $<$<BOOL:${CP2K_USE_TBLITE}>:cp2k::tblite>
     $<$<BOOL:${CP2K_USE_TBLITE}>:s-dftd3::s-dftd3>
     $<$<BOOL:${CP2K_USE_SIRIUS}>:sirius::sirius>
@@ -1871,6 +1875,7 @@ add_library(cp2k::cp2k ALIAS cp2k)
 list(
   APPEND
   __CP2K_APPS
+  "orbital_transformation_matrices_unittest"
   "gemm_square_unittest"
   "memory_utilities_unittest"
   "parallel_rng_types_unittest"
@@ -1887,6 +1892,8 @@ list(
 add_executable(cp2k-bin start/cp2k.F)
 # for linking
 
+add_executable(orbital_transformation_matrices_unittest
+               aobasis/orbital_transformation_matrices_unittest.F)
 add_executable(gemm_square_unittest common/gemm_square_unittest.F)
 add_executable(memory_utilities_unittest common/memory_utilities_unittest.F)
 add_executable(parallel_rng_types_unittest common/parallel_rng_types_unittest.F)

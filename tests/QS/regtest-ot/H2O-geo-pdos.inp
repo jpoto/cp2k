@@ -20,11 +20,13 @@
       CUTOFF 200
     &END MGRID
     &PRINT
-      &PDOS
+      &DOS
         &EACH
           GEO_OPT 2
         &END EACH
-      &END PDOS
+        &PDOS
+        &END PDOS
+      &END DOS
     &END PRINT
     &QS
       EPS_DEFAULT 1.0E-12
