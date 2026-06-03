@@ -1,0 +1,8 @@
+# Library-based tests (s-dftd3) for comparison with file-based
+# tol=0 means we just run without comparing
+"pbe_dftd3bj_lib.inp"                 = [{matcher="M011", tol=0, ref=0.0}]
+"blyp_dftd3bj_lib.inp"                = [{matcher="M011", tol=0, ref=0.0}]
+"bp86_dftd3bj_lib.inp"                = [{matcher="M011", tol=0, ref=0.0}]
+"b3lyp_dftd3bj_lib.inp"               = [{matcher="M011", tol=0, ref=0.0}]
+"pbe0_dftd3bj_lib.inp"                = [{matcher="M011", tol=0, ref=0.0}]
+"tpss_dftd3bj_lib.inp"                = [{matcher="M011", tol=0, ref=0.0}]

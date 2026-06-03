@@ -1,6 +1,6 @@
 &GLOBAL
   PRINT_LEVEL MEDIUM
-  PROJECT dftd3_blyp_auto
+  PROJECT dftd3_blyp_lib
   RUN_TYPE ENERGY
 &END GLOBAL
 
@@ -39,6 +39,7 @@
         &PAIR_POTENTIAL
           PARAMETER_FILE_NAME dftd3.dat
           TYPE DFTD3
+          D3_REFERENCE_CODE
           &PRINT_DFTD
           &END PRINT_DFTD
         &END PAIR_POTENTIAL
