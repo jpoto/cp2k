@@ -46,6 +46,7 @@ typedef struct {
   int my_number_of_rays;
   // maps of index in g-space to g-space vectors
   int (*index_to_g)[3];
+  double *index_to_gsquared;
   // maps of index in sorted layout to cartesian or ray-layout (C2C-FFT)
   int *index_to_cart;
   int *index_to_ray;
@@ -219,6 +220,12 @@ void fft_3d_bw_with_layout_from_cart(const double complex *restrict grid_gs,
 void fft_3d_bw_c2r_with_layout_from_cart(const double complex *restrict grid_gs,
                                          double *restrict grid_rs,
                                          const fft_grid_layout *fft_grid);
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_set_hmat(fft_grid_layout *fft_grid, const double hmat[3][3]);
 
 #endif
 

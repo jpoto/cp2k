@@ -42,7 +42,11 @@ MODULE pw_grids
                                               fft_grid_get_comm, &
                                               fft_grid_get_proc2local_rs, &
                                               fft_grid_get_proc2local_ms, &
-                                              fft_grid_get_proc2local_gs
+                                              fft_grid_get_proc2local_gs, &
+                                              fft_grid_get_number_of_gs_points, &
+                                              fft_grid_get_gs_index_to_vector, &
+                                              fft_grid_get_gs_index_to_gsquared, &
+                                              fft_grid_set_hmat
    USE mathconstants,                   ONLY: twopi
    USE mathlib,                         ONLY: det_3x3,&
                                               inv_3x3
@@ -567,6 +571,8 @@ CONTAINS
       pw_grid%dh_inv(2, :) = cell_h_inv(2, :)*REAL(pw_grid%npts(2), KIND=dp)
       pw_grid%dh_inv(3, :) = cell_h_inv(3, :)*REAL(pw_grid%npts(3), KIND=dp)
 
+      CALL fft_grid_set_hmat(pw_grid%fft_grid, cell_hmat)
+
       IF ((cell_hmat(1, 2) == 0.0_dp) .AND. (cell_hmat(1, 3) == 0.0_dp) .AND. &
           (cell_hmat(2, 1) == 0.0_dp) .AND. (cell_hmat(2, 3) == 0.0_dp) .AND. &
           (cell_hmat(3, 1) == 0.0_dp) .AND. (cell_hmat(3, 2) == 0.0_dp)) THEN
@@ -760,6 +766,14 @@ CONTAINS
       CALL fft_grid_get_proc2local_gs(pw_grid%fft_grid, pw_grid%para%bo(:, :, :, 3))
       pw_grid%bounds_local(:, :) = pw_grid%para%bo(:, :, pw_grid%para%group%mepos, 1)
       IF (pw_grid%para%group%mepos==0) WRITE(*,*) "local bounds", pw_grid%para%bo
+
+      pw_grid%ngpts_cut_local = fft_grid_get_number_of_gs_points(pw_grid%fft_grid)
+
+      ALLOCATE(pw_grid%g_hat(3, pw_grid%ngpts_cut_local))
+      ALLOCATE(pw_grid%gsq(pw_grid%ngpts_cut_local))
+
+      CALL fft_grid_get_gs_index_to_vector(pw_grid%fft_grid, pw_grid%g_hat)
+      CALL fft_grid_get_gs_index_to_gsquared(pw_grid%fft_grid, pw_grid%gsq)
 
       IF (pw_grid%para%mode == PW_MODE_LOCAL) THEN
 
@@ -1313,10 +1327,6 @@ CONTAINS
                      pw_grid%g(1, gpt) = length_x
                      pw_grid%g(2, gpt) = length_y
                      pw_grid%g(3, gpt) = length_z
-                     pw_grid%gsq(gpt) = length
-                     pw_grid%g_hat(1, gpt) = l
-                     pw_grid%g_hat(2, gpt) = m
-                     pw_grid%g_hat(3, gpt) = n
                   END IF
 
                END DO
@@ -1345,10 +1355,6 @@ CONTAINS
                      pw_grid%g(1, gpt) = length_x
                      pw_grid%g(2, gpt) = length_y
                      pw_grid%g(3, gpt) = length_z
-                     pw_grid%gsq(gpt) = length
-                     pw_grid%g_hat(1, gpt) = l
-                     pw_grid%g_hat(2, gpt) = m
-                     pw_grid%g_hat(3, gpt) = n
                   END IF
 
                END DO
@@ -1386,10 +1392,6 @@ CONTAINS
                      pw_grid%g(1, gpt) = length_x
                      pw_grid%g(2, gpt) = length_y
                      pw_grid%g(3, gpt) = length_z
-                     pw_grid%gsq(gpt) = length
-                     pw_grid%g_hat(1, gpt) = l
-                     pw_grid%g_hat(2, gpt) = m
-                     pw_grid%g_hat(3, gpt) = n
 
                   END DO
                END DO
@@ -1522,8 +1524,6 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       ALLOCATE (pw_grid%g(3, ng))
-      ALLOCATE (pw_grid%gsq(ng))
-      ALLOCATE (pw_grid%g_hat(3, ng))
 
       nmaps = 1
       IF (pw_grid%grid_span == HALFSPACE) nmaps = 2
@@ -1544,349 +1544,6 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE pw_grid_allocate
-
-! **************************************************************************************************
-!> \brief Sort g-vectors according to length
-!> \param pw_grid ...
-!> \param ref_grid ...
-!> \par History
-!>      JGH (20-12-2000) : allocate idx, ng = SIZE ( pw_grid % gsq ) the
-!>                         sorting is local and independent from parallelisation
-!>                         WARNING: Global ordering depends now on the number
-!>                                  of cpus.
-!>      JGH (28-02-2001) : check for ordering against reference grid
-!>      JGH (01-05-2001) : sort spherical cutoff grids also within shells
-!>                         reference grids for non-spherical cutoffs
-!>      JGH (20-06-2001) : do not sort non-spherical grids
-!>      JGH (19-02-2003) : Order all grids, this makes subgrids also for
-!>                         non-spherical cutoffs possible
-!>      JGH (21-02-2003) : Introduce gather array for general reference grids
-!> \author apsi
-!>      Christopher Mundy
-! **************************************************************************************************
-   SUBROUTINE pw_grid_sort(pw_grid, ref_grid)
-
-      ! Argument
-      TYPE(pw_grid_type), INTENT(INOUT)                  :: pw_grid
-      TYPE(pw_grid_type), INTENT(IN), OPTIONAL           :: ref_grid
-
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_grid_sort'
-
-      INTEGER                                            :: handle, i, ig, ih, ip, is, it, ng, ngr
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: idx
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: int_tmp
-      LOGICAL                                            :: g_found
-      REAL(KIND=dp)                                      :: gig, gigr
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: real_tmp
-
-      CALL timeset(routineN, handle)
-
-      ng = SIZE(pw_grid%gsq)
-      ALLOCATE (idx(ng))
-
-      ! grids are (locally) ordered by length of G-vectors
-      CALL sort(pw_grid%gsq, ng, idx)
-      ! within shells order wrt x,y,z
-      CALL sort_shells(pw_grid%gsq, pw_grid%g_hat, idx)
-
-      ALLOCATE (real_tmp(3, ng))
-      DO i = 1, ng
-         real_tmp(1, i) = pw_grid%g(1, idx(i))
-         real_tmp(2, i) = pw_grid%g(2, idx(i))
-         real_tmp(3, i) = pw_grid%g(3, idx(i))
-      END DO
-      DO i = 1, ng
-         pw_grid%g(1, i) = real_tmp(1, i)
-         pw_grid%g(2, i) = real_tmp(2, i)
-         pw_grid%g(3, i) = real_tmp(3, i)
-      END DO
-      DEALLOCATE (real_tmp)
-
-      ALLOCATE (int_tmp(3, ng))
-      DO i = 1, ng
-         int_tmp(1, i) = pw_grid%g_hat(1, idx(i))
-         int_tmp(2, i) = pw_grid%g_hat(2, idx(i))
-         int_tmp(3, i) = pw_grid%g_hat(3, idx(i))
-      END DO
-      DO i = 1, ng
-         pw_grid%g_hat(1, i) = int_tmp(1, i)
-         pw_grid%g_hat(2, i) = int_tmp(2, i)
-         pw_grid%g_hat(3, i) = int_tmp(3, i)
-      END DO
-      DEALLOCATE (int_tmp)
-
-      DEALLOCATE (idx)
-
-      ! check if ordering is compatible to reference grid
-      IF (PRESENT(ref_grid)) THEN
-         ngr = SIZE(ref_grid%gsq)
-         ngr = MIN(ng, ngr)
-         IF (pw_grid%spherical) THEN
-            IF (.NOT. ALL(pw_grid%g_hat(1:3, 1:ngr) &
-                          == ref_grid%g_hat(1:3, 1:ngr))) THEN
-               CPABORT("G space sorting not compatible")
-            END IF
-         ELSE
-            ALLOCATE (pw_grid%gidx(1:ngr))
-            pw_grid%gidx = 0
-            ! first try as many trivial associations as possible
-            it = 0
-            DO ig = 1, ngr
-               IF (.NOT. ALL(pw_grid%g_hat(1:3, ig) &
-                             == ref_grid%g_hat(1:3, ig))) EXIT
-               pw_grid%gidx(ig) = ig
-               it = ig
-            END DO
-            ! now for the ones that could not be done
-            IF (ng == ngr) THEN
-               ! for the case pw_grid <= ref_grid
-               is = it
-               DO ig = it + 1, ngr
-                  gig = pw_grid%gsq(ig)
-                  gigr = MAX(1._dp, gig)
-                  g_found = .FALSE.
-                  DO ih = is + 1, SIZE(ref_grid%gsq)
-                     IF (ABS(gig - ref_grid%gsq(ih))/gigr > 1.e-12_dp) CYCLE
-                     g_found = .TRUE.
-                     EXIT
-                  END DO
-                  IF (.NOT. g_found) THEN
-                     WRITE (*, "(A,I10,F20.10)") "G-vector", ig, pw_grid%gsq(ig)
-                     CPABORT("G vector not found")
-                  END IF
-                  ip = ih - 1
-                  DO ih = ip + 1, SIZE(ref_grid%gsq)
-                     IF (ABS(gig - ref_grid%gsq(ih))/gigr > 1.e-12_dp) CYCLE
-                     IF (pw_grid%g_hat(1, ig) /= ref_grid%g_hat(1, ih)) CYCLE
-                     IF (pw_grid%g_hat(2, ig) /= ref_grid%g_hat(2, ih)) CYCLE
-                     IF (pw_grid%g_hat(3, ig) /= ref_grid%g_hat(3, ih)) CYCLE
-                     pw_grid%gidx(ig) = ih
-                     EXIT
-                  END DO
-                  IF (pw_grid%gidx(ig) == 0) THEN
-                     WRITE (*, "(A,2I10)") " G-Shell ", is + 1, ip + 1
-                     WRITE (*, "(A,I10,3I6,F20.10)") &
-                        " G-vector", ig, pw_grid%g_hat(1:3, ig), pw_grid%gsq(ig)
-                     DO ih = 1, SIZE(ref_grid%gsq)
-                        IF (pw_grid%g_hat(1, ig) /= ref_grid%g_hat(1, ih)) CYCLE
-                        IF (pw_grid%g_hat(2, ig) /= ref_grid%g_hat(2, ih)) CYCLE
-                        IF (pw_grid%g_hat(3, ig) /= ref_grid%g_hat(3, ih)) CYCLE
-                        WRITE (*, "(A,I10,3I6,F20.10)") &
-                           " G-vector", ih, ref_grid%g_hat(1:3, ih), ref_grid%gsq(ih)
-                     END DO
-                     CPABORT("G vector not found")
-                  END IF
-                  is = ip
-               END DO
-            ELSE
-               ! for the case pw_grid > ref_grid
-               is = it
-               DO ig = it + 1, ngr
-                  gig = ref_grid%gsq(ig)
-                  gigr = MAX(1._dp, gig)
-                  g_found = .FALSE.
-                  DO ih = is + 1, ng
-                     IF (ABS(pw_grid%gsq(ih) - gig)/gigr > 1.e-12_dp) CYCLE
-                     g_found = .TRUE.
-                     EXIT
-                  END DO
-                  IF (.NOT. g_found) THEN
-                     WRITE (*, "(A,I10,F20.10)") "G-vector", ig, ref_grid%gsq(ig)
-                     CPABORT("G vector not found")
-                  END IF
-                  ip = ih - 1
-                  DO ih = ip + 1, ng
-                     IF (ABS(pw_grid%gsq(ih) - gig)/gigr > 1.e-12_dp) CYCLE
-                     IF (pw_grid%g_hat(1, ih) /= ref_grid%g_hat(1, ig)) CYCLE
-                     IF (pw_grid%g_hat(2, ih) /= ref_grid%g_hat(2, ig)) CYCLE
-                     IF (pw_grid%g_hat(3, ih) /= ref_grid%g_hat(3, ig)) CYCLE
-                     pw_grid%gidx(ig) = ih
-                     EXIT
-                  END DO
-                  IF (pw_grid%gidx(ig) == 0) THEN
-                     WRITE (*, "(A,2I10)") " G-Shell ", is + 1, ip + 1
-                     WRITE (*, "(A,I10,3I6,F20.10)") &
-                        " G-vector", ig, ref_grid%g_hat(1:3, ig), ref_grid%gsq(ig)
-                     DO ih = 1, ng
-                        IF (pw_grid%g_hat(1, ih) /= ref_grid%g_hat(1, ig)) CYCLE
-                        IF (pw_grid%g_hat(2, ih) /= ref_grid%g_hat(2, ig)) CYCLE
-                        IF (pw_grid%g_hat(3, ih) /= ref_grid%g_hat(3, ig)) CYCLE
-                        WRITE (*, "(A,I10,3I6,F20.10)") &
-                           " G-vector", ih, pw_grid%g_hat(1:3, ih), pw_grid%gsq(ih)
-                     END DO
-                     CPABORT("G vector not found")
-                  END IF
-                  is = ip
-               END DO
-            END IF
-            ! test if all g-vectors are associated
-            IF (ANY(pw_grid%gidx == 0)) THEN
-               CPABORT("G space sorting not compatible")
-            END IF
-         END IF
-      END IF
-
-      !check if G=0 is at first position
-      IF (pw_grid%have_g0) THEN
-         IF (pw_grid%gsq(1) /= 0.0_dp) THEN
-            CPABORT("G = 0 not in first position")
-         END IF
-      END IF
-
-      CALL timestop(handle)
-
-   END SUBROUTINE pw_grid_sort
-
-! **************************************************************************************************
-!> \brief ...
-!> \param gsq ...
-!> \param g_hat ...
-!> \param idx ...
-! **************************************************************************************************
-   SUBROUTINE sort_shells(gsq, g_hat, idx)
-
-      ! Argument
-      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: gsq
-      INTEGER, DIMENSION(:, :), INTENT(IN)               :: g_hat
-      INTEGER, DIMENSION(:), INTENT(INOUT)               :: idx
-
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'sort_shells'
-      REAL(KIND=dp), PARAMETER                           :: small = 5.e-16_dp
-
-      INTEGER                                            :: handle, ig, ng, s1, s2
-      REAL(KIND=dp)                                      :: s_begin
-
-      CALL timeset(routineN, handle)
-
-! Juergs temporary hack to get the grids sorted for large (4000Ry) cutoffs.
-! might need to call lapack for machine precision.
-
-      ng = SIZE(gsq)
-      s_begin = -1.0_dp
-      s1 = 0
-      s2 = 0
-      ig = 1
-      DO ig = 1, ng
-         IF (ABS(gsq(ig) - s_begin) < small) THEN
-            s2 = ig
-         ELSE
-            CALL redist(g_hat, idx, s1, s2)
-            s_begin = gsq(ig)
-            s1 = ig
-            s2 = ig
-         END IF
-      END DO
-      CALL redist(g_hat, idx, s1, s2)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE sort_shells
-
-! **************************************************************************************************
-!> \brief ...
-!> \param g_hat ...
-!> \param idx ...
-!> \param s1 ...
-!> \param s2 ...
-! **************************************************************************************************
-   SUBROUTINE redist(g_hat, idx, s1, s2)
-
-      ! Argument
-      INTEGER, DIMENSION(:, :), INTENT(IN)               :: g_hat
-      INTEGER, DIMENSION(:), INTENT(INOUT)               :: idx
-      INTEGER, INTENT(IN)                                :: s1, s2
-
-      INTEGER                                            :: i, ii, n1, n2, n3, ns
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: indl
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: slen
-
-      IF (s2 <= s1) RETURN
-      ns = s2 - s1 + 1
-      ALLOCATE (indl(ns))
-      ALLOCATE (slen(ns))
-
-      DO i = s1, s2
-         ii = idx(i)
-         n1 = g_hat(1, ii)
-         n2 = g_hat(2, ii)
-         n3 = g_hat(3, ii)
-         slen(i - s1 + 1) = 1000.0_dp*REAL(n1, dp) + &
-                            REAL(n2, dp) + 0.001_dp*REAL(n3, dp)
-      END DO
-      CALL sort(slen, ns, indl)
-      DO i = 1, ns
-         ii = indl(i) + s1 - 1
-         indl(i) = idx(ii)
-      END DO
-      idx(s1:s2) = indl(1:ns)
-
-      DEALLOCATE (indl)
-      DEALLOCATE (slen)
-
-   END SUBROUTINE redist
-
-! **************************************************************************************************
-!> \brief Reorder yzq and yzp arrays for parallel FFT according to FFT mapping
-!> \param pw_grid ...
-!> \param yz ...
-!> \par History
-!>      none
-!> \author JGH (17-Jan-2001)
-! **************************************************************************************************
-   SUBROUTINE pw_grid_remap(pw_grid, yz)
-
-      ! Argument
-      TYPE(pw_grid_type), INTENT(INOUT)                  :: pw_grid
-      INTEGER, DIMENSION(:, :), INTENT(OUT)              :: yz
-
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_grid_remap'
-
-      INTEGER                                            :: gpt, handle, i, ip, is, j, m, n
-
-      IF (pw_grid%para%mode == PW_MODE_LOCAL) RETURN
-
-      CALL timeset(routineN, handle)
-
-      ASSOCIATE (ny => pw_grid%npts(2), nz => pw_grid%npts(3), posm => pw_grid%mapm%pos, posn => pw_grid%mapn%pos, &
-                 negm => pw_grid%mapm%neg, negn => pw_grid%mapn%neg)
-
-         yz = 0
-         pw_grid%para%yzp = 0
-         pw_grid%para%yzq = 0
-
-         DO gpt = 1, SIZE(pw_grid%gsq)
-            m = posm(pw_grid%g_hat(2, gpt)) + 1
-            n = posn(pw_grid%g_hat(3, gpt)) + 1
-            yz(m, n) = yz(m, n) + 1
-         END DO
-         IF (pw_grid%grid_span == HALFSPACE) THEN
-            DO gpt = 1, SIZE(pw_grid%gsq)
-               m = negm(pw_grid%g_hat(2, gpt)) + 1
-               n = negn(pw_grid%g_hat(3, gpt)) + 1
-               yz(m, n) = yz(m, n) + 1
-            END DO
-         END IF
-
-         ip = pw_grid%para%group%mepos
-         is = 0
-         DO i = 1, nz
-            DO j = 1, ny
-               IF (yz(j, i) > 0) THEN
-                  is = is + 1
-                  pw_grid%para%yzp(1, is, ip) = j
-                  pw_grid%para%yzp(2, is, ip) = i
-                  pw_grid%para%yzq(j, i) = is
-               END IF
-            END DO
-         END DO
-      END ASSOCIATE
-
-      CPASSERT(is == pw_grid%para%nyzray(ip))
-      CALL pw_grid%para%group%sum(pw_grid%para%yzp)
-
-      CALL timestop(handle)
-
-   END SUBROUTINE pw_grid_remap
 
 ! **************************************************************************************************
 !> \brief Recalculate the g-vectors after a change of the box

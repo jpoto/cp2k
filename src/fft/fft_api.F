@@ -31,6 +31,8 @@ MODULE fft_api
    PUBLIC :: fft_grid_type, fft_create_grid, fft_create_grid_from_reference, fft_free_grid
    PUBLIC :: fft_grid_get_npts_global, fft_grid_get_comm
    PUBLIC :: fft_grid_get_proc2local_rs, fft_grid_get_proc2local_ms, fft_grid_get_proc2local_gs
+   PUBLIC :: fft_grid_get_number_of_gs_points, fft_grid_get_gs_index_to_vector
+   PUBLIC :: fft_grid_get_gs_index_to_gsquared, fft_grid_set_hmat
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -1181,5 +1183,116 @@ CONTAINS
       END DO
 
    END SUBROUTINE fft_grid_get_proc2local_gs
+
+! **************************************************************************************************
+!> \brief Get the number of local GS points
+!> \param fft_grid ...
+! **************************************************************************************************
+   FUNCTION fft_grid_get_number_of_gs_points(fft_grid) RESULT(npts_gs_local)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      INTEGER :: npts_gs_local
+
+      INTERFACE
+         INTEGER(C_INT) FUNCTION fft_grid_get_number_of_gs_points_c(layout) &
+            BIND(C, name="fft_grid_get_number_of_gs_points_F")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE :: layout
+         END FUNCTION fft_grid_get_number_of_gs_points_c
+      END INTERFACE
+
+      npts_gs_local = INT(fft_grid_get_number_of_gs_points_c(fft_grid%fft_grid))
+
+   END FUNCTION fft_grid_get_number_of_gs_points
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_gs_index_to_vector(fft_grid, gs_index_to_vector)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      INTEGER, DIMENSION(0:, 0:), INTENT(INOUT) :: gs_index_to_vector
+
+      INTEGER :: index, dir, tmp
+      INTEGER, DIMENSION(0:2) :: npts_global
+      INTEGER(C_INT), DIMENSION(:), TARGET, ALLOCATABLE :: gs_index_to_vector_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_gs_index_to_vector_c(layout, gs_index_to_vector) &
+            BIND(C, name="fft_grid_get_gs_index_to_vector_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: gs_index_to_vector
+         END SUBROUTINE fft_grid_get_gs_index_to_vector_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      ALLOCATE(gs_index_to_vector_c(0:SIZE(gs_index_to_vector)-1))
+
+      CALL fft_grid_get_gs_index_to_vector_c(fft_grid%fft_grid, C_LOC(gs_index_to_vector_c))
+
+      npts_global = fft_grid_get_npts_global(fft_grid)
+
+      DO index = 0, SIZE(gs_index_to_vector, 2)-1
+         DO dir = 0, 2
+            tmp = INT(gs_index_to_vector_c(3*index+dir))
+            IF (tmp > npts_global(dir)/2) tmp = tmp - npts_global(dir)
+            gs_index_to_vector(dir, index) = tmp
+         END DO
+      END DO
+
+   END SUBROUTINE fft_grid_get_gs_index_to_vector
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_gs_index_to_gsquared(fft_grid, gs_index_to_gsquared)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT) :: gs_index_to_gsquared
+
+      REAL(C_DOUBLE), DIMENSION(:), TARGET, ALLOCATABLE :: gs_index_to_gsquared_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_gs_index_to_gsquared_c(layout, gs_index_to_gsquared) &
+            BIND(C, name="fft_grid_get_gs_index_to_gsquared_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: gs_index_to_gsquared
+         END SUBROUTINE fft_grid_get_gs_index_to_gsquared_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      ALLOCATE(gs_index_to_gsquared_c(SIZE(gs_index_to_gsquared)))
+
+      CALL fft_grid_get_gs_index_to_gsquared_c(fft_grid%fft_grid, C_LOC(gs_index_to_gsquared_c))
+
+      gs_index_to_gsquared(:) = REAL(gs_index_to_gsquared_c, KIND=dp)
+
+   END SUBROUTINE fft_grid_get_gs_index_to_gsquared
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_set_hmat(fft_grid, hmat)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN) :: hmat
+
+      INTERFACE
+         SUBROUTINE fft_grid_set_hmat_c(layout, hmat) &
+            BIND(C, name="fft_grid_set_hmat_F")
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), VALUE :: layout
+            REAL(C_DOUBLE), DIMENSION(3, 3), INTENT(IN)  :: hmat
+         END SUBROUTINE fft_grid_set_hmat_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      CALL fft_grid_set_hmat_c(fft_grid%fft_grid, REAL(hmat, C_DOUBLE))
+
+   END SUBROUTINE fft_grid_set_hmat
 
 END MODULE fft_api

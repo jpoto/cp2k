@@ -242,9 +242,9 @@ void fft_grid_get_npts_global_F(const fft_grid_layout *fft_grid, int *npts_globa
  * \brief Get the (2D)-cartesian communicator.
  * \author Frederick Stein
  ******************************************************************************/
-void fft_grid_get_comm_F(const fft_grid_layout *fft_grid, int *comm_handle) {
+int fft_grid_get_comm_F(const fft_grid_layout *fft_grid) {
   assert(fft_grid != NULL);
-  *comm_handle = cp_mpi_comm_c2f(fft_grid->comm);
+  return cp_mpi_comm_c2f(fft_grid->comm);
 }
 
 /*******************************************************************************
@@ -301,6 +301,63 @@ void fft_grid_get_proc2local_gs_F(const fft_grid_layout *fft_grid, int *proc2loc
     }
   }
   fprintf(stderr, "Done Copy GS\n");
+  fflush(stderr);
+}
+
+/*******************************************************************************
+ * \brief Get the number of local points in g-space.
+ * \author Frederick Stein
+ ******************************************************************************/
+int fft_grid_get_number_of_gs_points_F(const fft_grid_layout *fft_grid) {
+  assert(fft_grid != NULL);
+  return fft_grid->npts_gs_local;
+}
+
+/*******************************************************************************
+ * \brief Get the mapping of the local index in g-space to the symmetrized g-space vector.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_gs_index_to_vector_F(const fft_grid_layout *fft_grid, int *gs_index_to_vector) {
+  assert(fft_grid != NULL);
+  // Reverse the order of the indices
+  fprintf(stderr, "Copy GS Index to Vector\n");
+  fflush(stderr);
+  for (int index = 0; index < fft_grid->npts_gs_local; index++) {
+    for (int dir = 0; dir < 3; dir++) {
+      gs_index_to_vector[3*index+2-dir] = fft_grid->index_to_g[index][2-dir];
+    }
+  }
+  fprintf(stderr, "Done Copy GS Index to Vector\n");
+  fflush(stderr);
+}
+
+/*******************************************************************************
+ * \brief Get the mapping of the local index in g-space to the symmetrized g-space vector.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_gs_index_to_gsquared_F(const fft_grid_layout *fft_grid, double *gs_index_to_gsquared) {
+  assert(fft_grid != NULL);
+  // Reverse the order of the indices
+  fprintf(stderr, "Copy GS Index to G-squared\n");
+  fflush(stderr);
+  memcpy(gs_index_to_gsquared, fft_grid->index_to_gsquared, fft_grid->npts_gs_local*sizeof(double));
+  fprintf(stderr, "Done Copy GS Index to G-squared\n");
+  fflush(stderr);
+}
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_set_hmat_F(fft_grid_layout *fft_grid, const double hmat[3][3]) {
+  assert(fft_grid != NULL);
+  // Reverse the order of the indices
+  fprintf(stderr, "Set hmat\n");
+  fflush(stderr);
+  fft_grid_set_hmat(fft_grid, (const double[3][3]){{hmat[2][2], hmat[2][1], hmat[2][0]},
+                                              {hmat[1][2], hmat[1][1], hmat[1][0]},
+                                              {hmat[0][2], hmat[0][1], hmat[0][0]}});
+  fprintf(stderr, "Done Done hmat\n");
   fflush(stderr);
 }
 

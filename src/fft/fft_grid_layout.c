@@ -974,6 +974,21 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
     }
   }
 
+  my_fft_grid->index_to_gsquared =
+      calloc(my_fft_grid->npts_gs_local, sizeof(double));
+#pragma omp parallel for default(none) shared(my_fft_grid)
+  for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+    my_fft_grid->index_to_gsquared[index] = squared_length_of_g_vector(
+        (const int[3]){
+            convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][0],
+                                             my_fft_grid->npts_global[0]),
+            convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][1],
+                                             my_fft_grid->npts_global[1]),
+            convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][2],
+                                             my_fft_grid->npts_global[2])},
+        my_fft_grid->h_inv);
+  }
+
   my_fft_grid->redistribution = calloc(1, sizeof(fft_redistribution_t));
   prepare_redistribution(
       my_fft_grid->redistribution, my_fft_grid->npts_global_gspace,
@@ -1313,6 +1328,21 @@ void grid_create_fft_grid_layout_from_reference(
     }
   }
 
+  my_fft_grid->index_to_gsquared =
+      calloc(my_fft_grid->npts_gs_local, sizeof(double));
+#pragma omp parallel for default(none) shared(my_fft_grid)
+  for (int index = 0; index < my_fft_grid->npts_gs_local; index++) {
+    my_fft_grid->index_to_gsquared[index] = squared_length_of_g_vector(
+        (const int[3]){
+            convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][0],
+                                             my_fft_grid->npts_global[0]),
+            convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][1],
+                                             my_fft_grid->npts_global[1]),
+            convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][2],
+                                             my_fft_grid->npts_global[2])},
+        my_fft_grid->h_inv);
+  }
+
   my_fft_grid->redistribution = calloc(1, sizeof(fft_redistribution_t));
   prepare_redistribution(
       my_fft_grid->redistribution, my_fft_grid->npts_global_gspace,
@@ -1334,6 +1364,19 @@ void grid_retain_fft_grid_layout(fft_grid_layout *fft_grid) {
   assert(fft_grid != NULL);
   assert(fft_grid->ref_counter > 0);
   fft_grid->ref_counter++;
+}
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_set_hmat(fft_grid_layout *fft_grid, const double hmat[3][3]) {
+  assert(fft_grid != NULL);
+  for (int dir = 0; dir < 3; dir++) {
+    for (int dir2 = 0; dir2 < 3; dir2++) {
+      fft_grid->h_inv[dir][dir2] = hmat[dir][dir2] * fft_grid->npts_global[dir2];
+    }
+  }
 }
 
 /*******************************************************************************
