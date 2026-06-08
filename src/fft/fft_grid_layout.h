@@ -15,6 +15,18 @@
 #include <stdbool.h>
 
 /*******************************************************************************
+ * \brief Container to store infos on the cell.
+ * \author Frederick Stein
+ ******************************************************************************/
+typedef struct {
+  double dhmat[3][3];
+  double dhmat_inv[3][3];
+  double volume;
+  double dvolume;
+  double dr[3];
+} fft_cell_info;
+
+/*******************************************************************************
  * \brief Container to represent fft grids.
  * \author Frederick Stein
  ******************************************************************************/
@@ -27,8 +39,8 @@ typedef struct {
   int ref_counter;
   // Global number of points
   int npts_global[3];
-  // Grid spacing in reciprocal space
-  double h_inv[3][3];
+  // Info on the cell
+  fft_cell_info cell_info;
   // Whether to use the MPI-backend
   bool use_mpi_backend;
   // Whether to use only one half of g-space

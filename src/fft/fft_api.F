@@ -33,6 +33,8 @@ MODULE fft_api
    PUBLIC :: fft_grid_get_proc2local_rs, fft_grid_get_proc2local_ms, fft_grid_get_proc2local_gs
    PUBLIC :: fft_grid_get_number_of_gs_points, fft_grid_get_gs_index_to_vector
    PUBLIC :: fft_grid_get_gs_index_to_gsquared, fft_grid_set_hmat
+   PUBLIC :: fft_grid_get_volume, fft_grid_get_dvolume
+   PUBLIC :: fft_grid_get_dh, fft_grid_get_dh_inv, fft_grid_get_dr
    PUBLIC :: fft_1d_fw_local, fft_1d_bw_local
    PUBLIC :: fft_2d_fw_local, fft_2d_bw_local
    PUBLIC :: fft_3d_fw_local, fft_3d_bw_local
@@ -1294,5 +1296,120 @@ CONTAINS
       CALL fft_grid_set_hmat_c(fft_grid%fft_grid, REAL(hmat, C_DOUBLE))
 
    END SUBROUTINE fft_grid_set_hmat
+
+! **************************************************************************************************
+!> \brief Get the cell volume
+!> \param fft_grid ...
+! **************************************************************************************************
+   FUNCTION fft_grid_get_volume(fft_grid) RESULT(volume)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp) :: volume
+
+      INTERFACE
+         REAL(C_DOUBLE) FUNCTION fft_grid_get_volume_c(layout) &
+            BIND(C, name="fft_grid_get_volume_F")
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), VALUE :: layout
+         END FUNCTION fft_grid_get_volume_c
+      END INTERFACE
+
+      volume = INT(fft_grid_get_volume_c(fft_grid%fft_grid))
+
+   END FUNCTION fft_grid_get_volume
+
+! **************************************************************************************************
+!> \brief Get the cell volume per grid point
+!> \param fft_grid ...
+! **************************************************************************************************
+   FUNCTION fft_grid_get_dvolume(fft_grid) RESULT(dvolume)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp) :: dvolume
+
+      INTERFACE
+         REAL(C_DOUBLE) FUNCTION fft_grid_get_dvolume_c(layout) &
+            BIND(C, name="fft_grid_get_dvolume_F")
+            IMPORT :: C_PTR, C_DOUBLE
+            TYPE(C_PTR), VALUE :: layout
+         END FUNCTION fft_grid_get_dvolume_c
+      END INTERFACE
+
+      dvolume = INT(fft_grid_get_dvolume_c(fft_grid%fft_grid))
+
+   END FUNCTION fft_grid_get_dvolume
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_dr(fft_grid, dh)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp), DIMENSION(3), INTENT(OUT) :: dr
+
+      REAL(KIND=C_DOUBLE), DIMENSION(3), TARGET :: dr_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_dr_c(layout, dr) &
+            BIND(C, name="fft_grid_get_dr_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: dr
+         END SUBROUTINE fft_grid_get_dr_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      CALL fft_grid_get_dr_c(fft_grid%fft_grid, C_LOC(dr_c))
+
+   END SUBROUTINE fft_grid_get_dr
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_dh(fft_grid, dh)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(OUT) :: dh
+
+      REAL(KIND=C_DOUBLE), DIMENSION(3, 3), TARGET :: dh_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_dh_c(layout, dh) &
+            BIND(C, name="fft_grid_get_dh_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: dh
+         END SUBROUTINE fft_grid_get_dh_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      CALL fft_grid_get_dh_c(fft_grid%fft_grid, C_LOC(dh_c))
+
+   END SUBROUTINE fft_grid_get_dh
+
+! **************************************************************************************************
+!> \brief Get the mapping of the process ID to the local bounds in reciprocal space
+!> \param fft_grid ...
+! **************************************************************************************************
+   SUBROUTINE fft_grid_get_dh_inv(fft_grid, dh_inv)
+      TYPE(fft_grid_type), INTENT(IN) :: fft_grid
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(OUT) :: dh_inv
+
+      REAL(KIND=C_DOUBLE), DIMENSION(3, 3), TARGET :: dh_inv_c
+
+      INTERFACE
+         SUBROUTINE fft_grid_get_dh_inv_c(layout, dh_inv) &
+            BIND(C, name="fft_grid_get_dh_inv_F")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE :: layout
+            TYPE(C_PTR), VALUE  :: dh_inv
+         END SUBROUTINE fft_grid_get_dh_inv_c
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
+
+      CALL fft_grid_get_dh_inv_c(fft_grid%fft_grid, C_LOC(dh_inv_c))
+
+   END SUBROUTINE fft_grid_get_dh_inv
 
 END MODULE fft_api

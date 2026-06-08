@@ -88,7 +88,7 @@ void sort_g_vectors(fft_grid_layout *my_fft_grid) {
                                              my_fft_grid->npts_global[1]),
             convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][2],
                                              my_fft_grid->npts_global[2])},
-        my_fft_grid->h_inv);
+        my_fft_grid->cell_info.dhmat);
   }
 
   // Sort the indices according to the length of the vectors
@@ -575,7 +575,7 @@ void setup_proc2local(fft_grid_layout *my_fft_grid, const int *external_local_bo
 void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                  const cp_mpi_comm_t comm,
                                  const int npts_global[3],
-                                 const double dh_inv[3][3],
+                                 const double hmat[3][3],
                                  const bool use_halfspace,
                                  const double cutoff,
                                  const int *pgrid_guess,
@@ -605,12 +605,21 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   memcpy(my_fft_grid->npts_global_gspace, npts_global, 3 * sizeof(int));
   if (my_fft_grid->use_halfspace)
     my_fft_grid->npts_global_gspace[0] = npts_global[0] / 2 + 1;
+  my_fft_grid->cell_info.volume = hmat[0][0] * hmat[1][1] * hmat[2][2]+hmat[0][1] * hmat[1][2] * hmat[2][0]+hmat[0][2] * hmat[1][0] * hmat[2][1]-hmat[0][2] * hmat[1][1] * hmat[2][0]-hmat[0][1] * hmat[1][0] * hmat[2][2]-hmat[0][0] * hmat[1][2] * hmat[2][1];
   for (int dir = 0; dir < 3; dir++) {
     for (int dir2 = 0; dir2 < 3; dir2++) {
-      my_fft_grid->h_inv[dir][dir2] =
-          dh_inv[dir][dir2] / ((double)npts_global[dir2]);
+      my_fft_grid->cell_info.dhmat[dir][dir2] =
+          hmat[dir][dir2] / ((double)npts_global[dir]);
+      my_fft_grid->cell_info.dhmat[dir][dir2] = (hmat[(dir+1)%3][(dir2+2)%3] * hmat[(dir+2)%3][(dir2+1)%3] - hmat[(dir+1)%3][(dir2+1)%3] * hmat[(dir+2)%3][(dir2+2)%3]) / my_fft_grid->cell_info.volume/ ((double)npts_global[dir2]);
     }
   }
+  for (int dir = 0; dir < 3; dir++) {
+    my_fft_grid->cell_info.dr[dir] = fsqrt(my_fft_grid->cell_info.dhmat[dir][0] * my_fft_grid->cell_info.dhmat[dir][0] +
+                                  my_fft_grid->cell_info.dhmat[dir][1] * my_fft_grid->cell_info.dhmat[dir][1] +
+                                  my_fft_grid->cell_info.dhmat[dir][2] * my_fft_grid->cell_info.dhmat[dir][2]);
+  }
+  my_fft_grid->cell_info.volume = fabs(my_fft_grid->cell_info.volume);
+  my_fft_grid->cell_info.dvolume = my_fft_grid->cell_info.volume / ((double)npts_global[0] * (double)npts_global[1] * (double)npts_global[2]);
   my_fft_grid->cutoff = cutoff;
 
   if (external_local_bounds != NULL) {
@@ -986,7 +995,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
                                              my_fft_grid->npts_global[1]),
             convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][2],
                                              my_fft_grid->npts_global[2])},
-        my_fft_grid->h_inv);
+        my_fft_grid->cell_info.dhmat);
   }
 
   my_fft_grid->redistribution = calloc(1, sizeof(fft_redistribution_t));
@@ -1069,8 +1078,8 @@ void grid_create_fft_grid_layout_from_reference(
     my_fft_grid->npts_global_gspace[0] = npts_global[0] / 2 + 1;
   for (int dir = 0; dir < 3; dir++) {
     for (int dir2 = 0; dir2 < 3; dir2++) {
-      my_fft_grid->h_inv[dir][dir2] =
-          fft_grid_ref->h_inv[dir][dir2] *
+      my_fft_grid->cell_info.dhmat[dir][dir2] =
+          fft_grid_ref->cell_info.dhmat[dir][dir2] *
           ((double)fft_grid_ref->npts_global[dir2]) /
           ((double)npts_global[dir2]);
     }
@@ -1340,7 +1349,7 @@ void grid_create_fft_grid_layout_from_reference(
                                              my_fft_grid->npts_global[1]),
             convert_c_index_to_shifted_index(my_fft_grid->index_to_g[index][2],
                                              my_fft_grid->npts_global[2])},
-        my_fft_grid->h_inv);
+        my_fft_grid->cell_info.dhmat);
   }
 
   my_fft_grid->redistribution = calloc(1, sizeof(fft_redistribution_t));
@@ -1374,7 +1383,7 @@ void fft_grid_set_hmat(fft_grid_layout *fft_grid, const double hmat[3][3]) {
   assert(fft_grid != NULL);
   for (int dir = 0; dir < 3; dir++) {
     for (int dir2 = 0; dir2 < 3; dir2++) {
-      fft_grid->h_inv[dir][dir2] = hmat[dir][dir2] * fft_grid->npts_global[dir2];
+      fft_grid->cell_info.dhmat[dir][dir2] = hmat[dir][dir2] * fft_grid->npts_global[dir2];
     }
   }
 }
@@ -1391,8 +1400,8 @@ void grid_print_grid_layout_info(const fft_grid_layout *layout,
     fprintf(stdout, "Global sizes: %i %i %i\n", layout->npts_global[0],
             layout->npts_global[1], layout->npts_global[2]);
     for (int dir = 0; dir < 3; dir++)
-      fprintf(stdout, "Grid spacing %i: %f %f %f\n", dir, layout->h_inv[dir][0],
-              layout->h_inv[dir][1], layout->h_inv[dir][2]);
+      fprintf(stdout, "Grid spacing %i: %f %f %f\n", dir, layout->cell_info.dhmat[dir][0],
+              layout->cell_info.dhmat[dir][1], layout->cell_info.dhmat[dir][2]);
     fprintf(stdout, "Use half space: %i\n", layout->use_halfspace);
     fprintf(stdout, "Use ray distribution: %i\n", layout->ray_distribution);
     fprintf(stdout, "Process grid: %i %i\n", layout->proc_grid[0],

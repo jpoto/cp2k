@@ -46,7 +46,12 @@ MODULE pw_grids
                                               fft_grid_get_number_of_gs_points, &
                                               fft_grid_get_gs_index_to_vector, &
                                               fft_grid_get_gs_index_to_gsquared, &
-                                              fft_grid_set_hmat
+                                              fft_grid_set_hmat, &
+                                              fft_grid_get_volume, &
+                                              fft_grid_get_dvolume, &
+                                              fft_grid_get_dh, &
+                                              fft_grid_get_dh_inv, &
+                                              fft_grid_get_dr
    USE mathconstants,                   ONLY: twopi
    USE mathlib,                         ONLY: det_3x3,&
                                               inv_3x3
@@ -562,6 +567,11 @@ CONTAINS
       pw_grid%dh_inv(3, :) = cell_h_inv(3, :)*REAL(pw_grid%npts(3), KIND=dp)
 
       CALL fft_grid_set_hmat(pw_grid%fft_grid, cell_hmat)
+      pw_grid%vol = fft_grid_get_volume(pw_grid%fft_grid)
+      pw_grid%dvol = fft_grid_get_dvolume(pw_grid%fft_grid)
+      CALL fft_grid_get_dh(pw_grid%fft_grid, pw_grid%dh)
+      CALL fft_grid_get_dh_inv(pw_grid%fft_grid, pw_grid%dh_inv)
+      CALL fft_grid_get_dr(pw_grid%fft_grid, pw_grid%dr)
 
       IF ((cell_hmat(1, 2) == 0.0_dp) .AND. (cell_hmat(1, 3) == 0.0_dp) .AND. &
           (cell_hmat(2, 1) == 0.0_dp) .AND. (cell_hmat(2, 3) == 0.0_dp) .AND. &

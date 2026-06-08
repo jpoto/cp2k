@@ -361,4 +361,59 @@ void fft_grid_set_hmat_F(fft_grid_layout *fft_grid, const double hmat[3][3]) {
   fflush(stderr);
 }
 
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+double fft_grid_get_volume_F(const fft_grid_layout *fft_grid) {
+  assert(fft_grid != NULL);
+  return fft_grid->cell_info.volume;
+}
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+double fft_grid_get_dvolume_F(const fft_grid_layout *fft_grid) {
+  assert(fft_grid != NULL);
+  return fft_grid->cell_info.dvolume;
+}
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_dr_F(const fft_grid_layout *fft_grid, double *dr) {
+  assert(fft_grid != NULL);
+  for (int dir = 0; dir < 3; dir++) {
+    dr[dir] = fft_grid->cell_info.dr[dir];
+  }
+}
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_dh_F(const fft_grid_layout *fft_grid, double *dhmat) {
+  assert(fft_grid != NULL);
+  for (int dir = 0; dir < 3; dir++) {
+    for (int dir2 = 0; dir2 < 3; dir2++) {
+      dhmat[dir * 3 + dir2] = fft_grid->cell_info.dhmat[dir][dir2];
+    }
+  }
+}
+
+/*******************************************************************************
+ * \brief Set the h-matrix of a grid layout.
+ * \author Frederick Stein
+ ******************************************************************************/
+void fft_grid_get_dh_inv_F(const fft_grid_layout *fft_grid, double *dhmat_inv) {
+  assert(fft_grid != NULL);
+  for (int dir = 0; dir < 3; dir++) {
+    for (int dir2 = 0; dir2 < 3; dir2++) {
+      dhmat_inv[dir * 3 + dir2] = fft_grid->cell_info.dhmat_inv[dir][dir2];
+    }
+  }
+}
+
 // EOF
