@@ -49,8 +49,10 @@ MODULE f77_interface
    USE dbm_api,                         ONLY: dbm_library_finalize,&
                                               dbm_library_init
    USE eip_environment,                 ONLY: eip_init
-   USE eip_environment_types,           ONLY: eip_env_create,&
-                                              eip_environment_type
+    USE eip_environment_types,           ONLY: eip_env_create,&
+                                               eip_environment_type
+    USE mp2_types,                       ONLY: mp2_type,&
+                                               mp2_env_create
    USE embed_main,                      ONLY: embed_create_force_env
    USE embed_types,                     ONLY: embed_env_type
    USE environment,                     ONLY: cp2k_finalize,&
@@ -73,8 +75,8 @@ MODULE f77_interface
                                               globenv_release
    USE grid_api,                        ONLY: grid_library_finalize,&
                                               grid_library_init
-   USE input_constants,                 ONLY: &
-        do_eip, do_embed, do_fist, do_ipi, do_mixed, do_nnp, do_qmmm, do_qmmmx, do_qs, do_sirius
+    USE input_constants,                 ONLY: &
+         do_eip, do_embed, do_fist, do_ipi, do_mixed, do_mp2, do_nnp, do_qmmm, do_qmmmx, do_qs, do_rpa, do_sirius
    USE input_cp2k_check,                ONLY: check_cp2k_input
    USE input_cp2k_force_eval,           ONLY: create_force_eval_section
    USE input_cp2k_read,                 ONLY: empty_initial_variables,&
@@ -629,8 +631,9 @@ CONTAINS
       TYPE(nnp_type), POINTER                            :: nnp_env
       TYPE(pwdft_environment_type), POINTER              :: pwdft_env
       TYPE(qmmm_env_type), POINTER                       :: qmmm_env
-      TYPE(qmmmx_env_type), POINTER                      :: qmmmx_env
-      TYPE(qs_environment_type), POINTER                 :: qs_env
+       TYPE(qmmmx_env_type), POINTER                      :: qmmmx_env
+       TYPE(mp2_type), POINTER                       :: mp2_env
+       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(section_type), POINTER                        :: section
       TYPE(section_vals_type), POINTER :: fe_section, force_env_section, force_env_sections, &
                                           fp_section, input_file, qmmm_section, qmmmx_section, root_section, subsys_section, &
@@ -891,21 +894,32 @@ CONTAINS
             CALL force_env_create(my_force_env, root_section, nnp_env=nnp_env, para_env=my_para_env, &
                                   globenv=globenv, force_env_section=force_env_section)
 
-         CASE (do_ipi)
-            ALLOCATE (ipi_env)
-            CALL ipi_init(ipi_env, root_section, my_para_env, force_env_section=force_env_section, &
-                          subsys_section=subsys_section)
-            CALL force_env_create(my_force_env, root_section, ipi_env=ipi_env, para_env=my_para_env, &
-                                  globenv=globenv, force_env_section=force_env_section)
+          CASE (do_ipi)
+             ALLOCATE (ipi_env)
+             CALL ipi_init(ipi_env, root_section, my_para_env, force_env_section=force_env_section, &
+                           subsys_section=subsys_section)
+             CALL force_env_create(my_force_env, root_section, ipi_env=ipi_env, para_env=my_para_env, &
+                                   globenv=globenv, force_env_section=force_env_section)
 
-         CASE DEFAULT
-            CALL create_force_eval_section(section)
-            keyword => section_get_keyword(section, "METHOD")
-            CALL keyword_get(keyword, enum=enum)
-            CALL cp_abort(__LOCATION__, &
-                          "Invalid METHOD <"//TRIM(enum_i2c(enum, method_name_id))// &
-                          "> was specified, ")
-            CALL section_release(section)
+          CASE (do_mp2, do_rpa)
+             ALLOCATE (qs_env)
+             CALL qs_env_create(qs_env, globenv)
+             
+             ALLOCATE (mp2_env)
+             CALL mp2_env_create(mp2_env)
+             qs_env%mp2_env => mp2_env
+             
+             CALL force_env_create(my_force_env, root_section, qs_env=qs_env, para_env=my_para_env, &
+                                   globenv=globenv, force_env_section=force_env_section)
+
+          CASE DEFAULT
+             CALL create_force_eval_section(section)
+             keyword => section_get_keyword(section, "METHOD")
+             CALL keyword_get(keyword, enum=enum)
+             CALL cp_abort(__LOCATION__, &
+                           "Invalid METHOD <"//TRIM(enum_i2c(enum, method_name_id))// &
+                           "> was specified, ")
+             CALL section_release(section)
          END SELECT
 
          NULLIFY (meta_env, fp_env)

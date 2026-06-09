@@ -45,16 +45,18 @@ MODULE input_constants
    INTEGER, PARAMETER, PUBLIC               :: do_no_et = 0, &
                                                do_et_ddapc = 1
    ! Method Names
-   INTEGER, PARAMETER, PUBLIC               :: do_qs = 1, &
-                                               do_fist = 2, &
-                                               do_qmmm = 3, &
-                                               do_qmmmx = 4, &
-                                               do_eip = 5, &
-                                               do_mixed = 6, &
-                                               do_embed = 7, &
-                                               do_sirius = 8, &
-                                               do_nnp = 9, &
-                                               do_ipi = 10
+    INTEGER, PARAMETER, PUBLIC               :: do_qs = 1, &
+                                                do_fist = 2, &
+                                                do_qmmm = 3, &
+                                                do_qmmmx = 4, &
+                                                do_eip = 5, &
+                                                do_mixed = 6, &
+                                                do_embed = 7, &
+                                                do_sirius = 8, &
+                                                do_nnp = 9, &
+                                                do_ipi = 10, &
+                                                do_mp2 = 11, &
+                                                do_rpa = 12
 
    ! QMMM
    REAL(KIND=dp), PARAMETER, PUBLIC         :: RADIUS_QMMM_DEFAULT = 0.80_dp, & ! Angstrom
