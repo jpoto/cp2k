@@ -1,0 +1,67 @@
+&GLOBAL
+  PROJECT h2o_mp2
+  RUN_TYPE ENERGY_FORCE
+  PRINT_LEVEL MEDIUM
+&
+
+&FORCE_EVAL
+  METHOD Quickstep
+  &DFT
+    BASIS_SET_FILE_NAME BASIS_MOLOPT
+    POTENTIAL_FILE_NAME GTH_POTENTIALS
+    
+    &QS
+      METHOD GPW
+      EPS_DEFAULT 1.0E-12
+    &
+    
+    &SCF
+      MAX_SCF 50
+      EPS_SCF 1.0E-6
+      SCF_GUESS ATOMIC
+      &OT
+        MINIMIZER DIIS
+        PRECONDITIONER FULL_SINGLE_INVERSE
+      &
+      &OUTER_SCF
+        MAX_SCF 10
+        EPS_SCF 1.0E-6
+      &
+    &
+    
+    &XC
+      &XC_FUNCTIONAL PBE
+      &
+    &
+    
+    &MP2
+      METHOD GPW
+      RI_MP2 TRUE
+      MEMORY
+        EPS_STORAGE_SCALING 0.1
+      &
+    &
+  &
+  
+  &SUBSYS
+    &CELL
+      ABC 10.0 10.0 10.0
+      PERIODIC NONE
+    &
+    &COORD
+      O    0.00000000    0.00000000    0.00000000
+      H    0.95800000    0.00000000    0.00000000
+      H    0.00000000    0.95800000    0.00000000
+    &
+    &KIND O
+      ELEMENT O
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-PBE
+    &
+    &KIND H
+      ELEMENT H
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-PBE
+    &
+  &
+&
