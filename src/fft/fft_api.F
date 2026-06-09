@@ -1341,7 +1341,7 @@ CONTAINS
 !> \brief Get the mapping of the process ID to the local bounds in reciprocal space
 !> \param fft_grid ...
 ! **************************************************************************************************
-   SUBROUTINE fft_grid_get_dr(fft_grid, dh)
+   SUBROUTINE fft_grid_get_dr(fft_grid, dr)
       TYPE(fft_grid_type), INTENT(IN) :: fft_grid
       REAL(KIND=dp), DIMENSION(3), INTENT(OUT) :: dr
 
@@ -1359,6 +1359,8 @@ CONTAINS
       CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
 
       CALL fft_grid_get_dr_c(fft_grid%fft_grid, C_LOC(dr_c))
+
+      dr = REAL(dr_c, KIND=dp)
 
    END SUBROUTINE fft_grid_get_dr
 
@@ -1385,6 +1387,8 @@ CONTAINS
 
       CALL fft_grid_get_dh_c(fft_grid%fft_grid, C_LOC(dh_c))
 
+      dh = REAL(dh_c, KIND=dp)
+
    END SUBROUTINE fft_grid_get_dh
 
 ! **************************************************************************************************
@@ -1409,6 +1413,8 @@ CONTAINS
       CPASSERT(C_ASSOCIATED(fft_grid%fft_grid))
 
       CALL fft_grid_get_dh_inv_c(fft_grid%fft_grid, C_LOC(dh_inv_c))
+
+      dh_inv = REAL(dh_inv_c, KIND=dp)
 
    END SUBROUTINE fft_grid_get_dh_inv
 
