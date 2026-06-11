@@ -1,0 +1,7 @@
+# Shell mode regression tests
+"shell_dft.inp"                                = [{matcher="E_total", tol=1.0E-10, ref=-17.20455006654803}]
+"shell_dftb.inp"                               = [{matcher="E_total", tol=1.0E-10, ref=-4.09819803923235}]
+"shell_mp2_direct.inp"                         = [{matcher="E_total", tol=1.0E-8, ref=-27.91070347912895}]
+"shell_mp2_ri.inp"                             = [{matcher="E_total", tol=1.0E-8, ref=-28.14594509228936}]
+"shell_rpa_ri.inp"                             = [{matcher="E_total", tol=1.0E-8, ref=-28.14594509228936}]
+#EOF
