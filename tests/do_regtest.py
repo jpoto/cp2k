@@ -542,8 +542,58 @@ async def run_batch(batch: Batch, cfg: Config) -> BatchResult:
         if not cfg.skip_unittests:
             results += await run_unittests(batch, cfg)
         if not cfg.skip_regtests:
-            results += await run_regtests(batch, cfg)
+            if batch.name == "QS/regtest_shell":
+                results += await run_shell_tests(batch, cfg)
+            else:
+                results += await run_regtests(batch, cfg)
         return BatchResult(batch, results)
+
+
+# ======================================================================================
+async def run_shell_tests(batch: Batch, cfg: Config) -> List[TestResult]:
+    results: List[TestResult] = []
+    shell_test_script = batch.src_dir / "run_shell_tests.py"
+    if not shell_test_script.exists():
+        return results
+
+    mpiranks = max(cfg.mpiranks, 2)
+    shell_binary = "cp2k.psmp"
+    start_time = time.perf_counter()
+    cmd = [
+        "python3",
+        str(shell_test_script),
+        "--mpiranks", str(mpiranks),
+        "--ompthreads", str(cfg.ompthreads),
+        "--timeout", str(cfg.timeout),
+        "--binary", shell_binary,
+    ]
+    if cfg.debug:
+        print(f"Creating subprocess: {cmd}")
+
+    child = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=batch.workdir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    output, _ = await asyncio.wait_for(child.communicate(), timeout=cfg.timeout + 60)
+    duration = time.perf_counter() - start_time
+
+    output_text = output.decode("utf8", errors="replace")
+    out_path = batch.workdir / "shell_tests.out"
+    out_path.write_text(output_text)
+
+    lines = output_text.split("\n")
+    for line in lines:
+        line = line.strip()
+        if line.startswith("Testing "):
+            test_name = line.split("Testing ")[1].split("...")[0].strip()
+            status = "OK" if "OK (" in line else "RUNTIME FAIL"
+            test = Regtest(test_name, [], batch.workdir)
+            test.out_path = out_path
+            results.append(TestResult(batch, test, None, duration, status))
+
+    return results
 
 
 # ======================================================================================
