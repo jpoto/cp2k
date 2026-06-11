@@ -58,6 +58,18 @@ MODULE input_constants
                                                 do_mp2 = 11, &
                                                 do_rpa = 12
 
+   ! MP2/RPA method types for shell mode
+   INTEGER, PARAMETER, PUBLIC               :: &
+      shell_mp2_gpw = 1, &
+      shell_mp2_ri = 2, &
+      shell_mp2_ri_laplace = 3, &
+      shell_mp2_ri_admm = 4, &
+      shell_mp2_direct = 5, &
+      shell_rpa_ri = 1, &
+      shell_rpa_cubic = 2, &
+      shell_rpa_lr = 3, &
+      shell_rpa_ri_admm = 4
+
    ! QMMM
    REAL(KIND=dp), PARAMETER, PUBLIC         :: RADIUS_QMMM_DEFAULT = 0.80_dp, & ! Angstrom
                                                ALPHA_IMOMM_DEFAULT = 1.38_dp, &

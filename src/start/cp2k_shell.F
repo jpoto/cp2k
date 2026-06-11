@@ -48,8 +48,10 @@ MODULE cp2k_shell
     USE f77_interface,                   ONLY: &
          calc_energy_force, calc_force, create_force_env, destroy_force_env, get_cell, get_energy, &
          get_force, get_natom, get_pos, get_stress_tensor, set_cell, set_pos
-    USE input_constants,                 ONLY: &
-         do_mp2, do_rpa
+USE input_constants,                 ONLY: &
+          do_mp2, do_rpa, &
+          mp2_method_gpw, mp2_method_direct, &
+          ri_mp2_method_gpw, ri_rpa_method_gpw
     USE input_cp2k_read,                 ONLY: empty_initial_variables
     USE input_section_types,             ONLY: section_type
    USE kinds,                           ONLY: default_path_length,&
@@ -72,15 +74,16 @@ MODULE cp2k_shell
    ! Queried by ASE. Increase version after bug-fixing or behavior changes.
    CHARACTER(LEN=*), PARAMETER                           :: CP2K_SHELL_VERSION = "7.0"
 
-   TYPE cp2k_shell_type
-      REAL(dp)                                           :: pos_fact = 1.0_dp
-      REAL(dp)                                           :: e_fact = 1.0_dp
-      LOGICAL                                            :: harsh = .FALSE.
-      TYPE(mp_para_env_type), POINTER                    :: para_env => Null()
-      CHARACTER(LEN=5)                                   :: units = "au"
-      INTEGER                                            :: env_id = -1
-      INTEGER                                            :: iw = -1
-   END TYPE cp2k_shell_type
+TYPE cp2k_shell_type
+       REAL(dp)                                           :: pos_fact = 1.0_dp
+       REAL(dp)                                           :: e_fact = 1.0_dp
+       LOGICAL                                            :: harsh = .FALSE.
+       TYPE(mp_para_env_type), POINTER                    :: para_env => Null()
+       CHARACTER(LEN=5)                                   :: units = "au"
+       INTEGER                                            :: env_id = -1
+       INTEGER                                            :: iw = -1
+       CHARACTER(LEN=default_path_length)                 :: input_filename = ""
+    END TYPE cp2k_shell_type
 
    PUBLIC :: launch_cp2k_shell
 
@@ -241,27 +244,26 @@ CONTAINS
 !> \param shell ...
 !> \return ...
 ! **************************************************************************************************
-   FUNCTION parse_env_id(str, shell) RESULT(success)
-      CHARACTER(LEN=*), INTENT(in)                       :: str
-      TYPE(cp2k_shell_type)                              :: shell
-      LOGICAL                                            :: success
+FUNCTION parse_env_id(str, shell) RESULT(success)
+       CHARACTER(LEN=*), INTENT(in)                       :: str
+       TYPE(cp2k_shell_type)                              :: shell
+       LOGICAL                                            :: success
 
-      INTEGER                                            :: iostat
+       INTEGER                                            :: iostat, tmp_env_id
 
-      success = .TRUE.
-      IF (LEN_TRIM(str) > 0) THEN
-         READ (str, *, iostat=iostat) shell%env_id
-         IF (iostat /= 0) THEN
-            shell%env_id = -1
-            success = .FALSE.
-            CALL print_error("parse_env_id failed", shell)
-         END IF
-      ELSE IF (shell%env_id < 1) THEN
-         CALL print_error("last env_id not set", shell)
-         success = .FALSE.
-      END IF
-      ! fallback: reuse last env_id
-   END FUNCTION parse_env_id
+       success = .TRUE.
+       IF (LEN_TRIM(str) > 0) THEN
+          READ (str, *, iostat=iostat) tmp_env_id
+          IF (iostat /= 0) THEN
+             success = .FALSE.
+          ELSE
+             shell%env_id = tmp_env_id
+          END IF
+       ELSE IF (shell%env_id < 1) THEN
+          success = .FALSE.
+       END IF
+       ! fallback: reuse last env_id
+    END FUNCTION parse_env_id
 
 ! **************************************************************************************************
 !> \brief ...
@@ -503,23 +505,24 @@ CONTAINS
       CHARACTER(LEN=default_path_length)                 :: inp_filename, out_filename
       INTEGER                                            :: ierr
 
-      IF (.NOT. my_assert(LEN_TRIM(arg1) > 0, "file argument missing", shell)) RETURN
-      inp_filename = arg1
-      out_filename = TRIM(inp_filename)//'.out'
-      IF (LEN_TRIM(arg2) > 0) out_filename = arg2
-      CALL create_force_env(new_env_id=shell%env_id, &
-                            input_declaration=input_declaration, &
-                            input_path=inp_filename, &
-                            output_path=out_filename, &
-                            owns_out_unit=.TRUE., ierr=ierr)
-      IF (ierr /= 0) THEN
-         shell%env_id = -1
-         CALL print_error("create_force_env failed", shell)
-      ELSE IF (shell%iw > 0) THEN
-         WRITE (shell%iw, '(i10)') shell%env_id
-         CALL m_flush(shell%iw)
-      END IF
-   END SUBROUTINE load_command
+IF (.NOT. my_assert(LEN_TRIM(arg1) > 0, "file argument missing", shell)) RETURN
+       inp_filename = arg1
+       out_filename = TRIM(inp_filename)//'.out'
+       IF (LEN_TRIM(arg2) > 0) out_filename = arg2
+       shell%input_filename = inp_filename
+       CALL create_force_env(new_env_id=shell%env_id, &
+                             input_declaration=input_declaration, &
+                             input_path=inp_filename, &
+                             output_path=out_filename, &
+                             owns_out_unit=.TRUE., ierr=ierr)
+       IF (ierr /= 0) THEN
+          shell%env_id = -1
+          CALL print_error("create_force_env failed", shell)
+       ELSE IF (shell%iw > 0) THEN
+          WRITE (shell%iw, '(i10)') shell%env_id
+          CALL m_flush(shell%iw)
+       END IF
+    END SUBROUTINE load_command
 
 ! **************************************************************************************************
 !> \brief ...
@@ -980,31 +983,46 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Creates a temporary input file for MP2/RPA and runs the calculation
 !> \param shell ...
-!> \param arg1 ... (optional environment ID to use as template)
+!> \param arg1 ... (optional: env_id or method specification)
 !> \param method_id ... (do_mp2 or do_rpa)
+!> \param wfc_method ... (mp2_method_* or rpa_method_*)
 ! **************************************************************************************************
-    SUBROUTINE calc_mp2_rpa_command(shell, arg1, method_id, input_declaration)
+    SUBROUTINE calc_mp2_rpa_command(shell, arg1, method_id, input_declaration, wfc_method)
        TYPE(cp2k_shell_type)                              :: shell
        TYPE(section_type), POINTER                        :: input_declaration
        CHARACTER(LEN=*), INTENT(IN)                       :: arg1
-INTEGER, INTENT(IN)                                :: method_id
+       INTEGER, INTENT(IN)                                :: method_id
+       INTEGER, INTENT(IN), OPTIONAL                      :: wfc_method
 
 CHARACTER(LEN=default_path_length)                 :: input_path = "/workspace/tmp_mp2_rpa.inp", &
-                                                              output_path = "/workspace/tmp_mp2_rpa.out", old_dir
-        INTEGER                                            :: ierr, env_id, n_atom, dbg_unit
-        REAL(KIND=dp)                                      :: e_pot
-        LOGICAL                                            :: file_exists
-        REAL(KIND=dp), DIMENSION(:,:), POINTER            :: cell
+                                                              output_path = "/workspace/tmp_mp2_rpa.out", old_dir, &
+                                                              method_str
+         INTEGER                                            :: ierr, env_id, n_atom, dbg_unit, eff_method
+         REAL(KIND=dp)                                      :: e_pot
+         LOGICAL                                            :: file_exists
+         REAL(KIND=dp), DIMENSION(:,:), POINTER            :: cell
 
-        IF (shell%iw > 0) THEN
-           WRITE(shell%iw, '(A,I10)') "* DEBUG: Starting CALC_MP2/RPA, shell%env_id=", shell%env_id
-           CALL m_flush(shell%iw)
-        END IF
+         IF (shell%iw > 0) THEN
+            WRITE(shell%iw, '(A,I10)') "* DEBUG: Starting CALC_MP2/RPA, shell%env_id=", shell%env_id
+            CALL m_flush(shell%iw)
+         END IF
 
-        ! Use the current environment as template if no arg1 is provided
-        IF (LEN_TRIM(arg1) > 0) THEN
-           IF (.NOT. parse_env_id(arg1, shell)) RETURN
-        END IF
+         ! Set effective method - use provided wfc_method or parse from arg1
+         IF (PRESENT(wfc_method)) THEN
+            eff_method = wfc_method
+         ELSE
+            CALL parse_wfc_method(arg1, method_id, eff_method)
+         END IF
+
+         ! Use the current environment as template - keep env_id as-is
+         ! If user specifies a numeric env_id, use it; otherwise keep current
+         IF (LEN_TRIM(arg1) > 0) THEN
+            READ(arg1, *, ERR=100) ! Try to read as number
+            IF (.NOT. parse_env_id(arg1, shell)) THEN
+               ! Failed to parse as env_id, keep current
+            END IF
+100        CONTINUE
+         END IF
 
         IF (shell%iw > 0) THEN
            WRITE(shell%iw, '(A,I10)') "* DEBUG: After parse_env_id, shell%env_id=", shell%env_id
@@ -1039,8 +1057,8 @@ IF (ierr /= 0) THEN
           WRITE(dbg_unit, '(A)') "&FORCE_EVAL"
 WRITE(dbg_unit, '(A)') "  METHOD Quickstep"
            WRITE(dbg_unit, '(A)') "  &DFT"
-           WRITE(dbg_unit, '(A)') "    BASIS_SET_FILE_NAME HFX_BASIS"
-           WRITE(dbg_unit, '(A)') "    POTENTIAL_FILE_NAME GTH_POTENTIALS"
+WRITE(dbg_unit, '(A)') "    BASIS_SET_FILE_NAME HFX_BASIS"
+            WRITE(dbg_unit, '(A)') "    POTENTIAL_FILE_NAME POTENTIAL"
            WRITE(dbg_unit, '(A)') "    &MGRID"
            WRITE(dbg_unit, '(A)') "      CUTOFF 100"
            WRITE(dbg_unit, '(A)') "      REL_CUTOFF 20"
@@ -1059,17 +1077,26 @@ WRITE(dbg_unit, '(A)') "  METHOD Quickstep"
            WRITE(dbg_unit, '(A)') "      SCF_GUESS ATOMIC"
            WRITE(dbg_unit, '(A)') "      IGNORE_CONVERGENCE_FAILURE"
            WRITE(dbg_unit, '(A)') "    &END SCF"
-           WRITE(dbg_unit, '(A)') "    &XC"
-           WRITE(dbg_unit, '(A)') "      &XC_FUNCTIONAL PBE"
-           WRITE(dbg_unit, '(A)') "      &END XC_FUNCTIONAL"
+WRITE(dbg_unit, '(A)') "    &XC"
+            WRITE(dbg_unit, '(A)') "      &XC_FUNCTIONAL PBE"
+            WRITE(dbg_unit, '(A)') "      &END XC_FUNCTIONAL"
             WRITE(dbg_unit, '(A)') "      &WF_CORRELATION"
-            WRITE(dbg_unit, '(A)') "        &MP2"
-            WRITE(dbg_unit, '(A)') "          METHOD MP2_GPW"
-            WRITE(dbg_unit, '(A)') "        &END MP2"
-           WRITE(dbg_unit, '(A)') "      &END WF_CORRELATION"
-          WRITE(dbg_unit, '(A)') "    &END XC"
-          WRITE(dbg_unit, '(A)') "  &END DFT"
-       ELSE IF (method_id == do_rpa) THEN
+            WRITE(dbg_unit, '(A)') "        MEMORY 200"
+            IF (eff_method /= mp2_method_direct) THEN
+               WRITE(dbg_unit, '(A)') "        &INTEGRALS"
+               WRITE(dbg_unit, '(A)') "          &WFC_GPW"
+               WRITE(dbg_unit, '(A)') "            CUTOFF 100"
+               WRITE(dbg_unit, '(A)') "            EPS_FILTER 1.0E-6"
+               WRITE(dbg_unit, '(A)') "            EPS_GRID 1.0E-6"
+               WRITE(dbg_unit, '(A)') "            REL_CUTOFF 20"
+               WRITE(dbg_unit, '(A)') "          &END WFC_GPW"
+               WRITE(dbg_unit, '(A)') "        &END INTEGRALS"
+            END IF
+            CALL write_mp2_section(dbg_unit, eff_method)
+            WRITE(dbg_unit, '(A)') "      &END WF_CORRELATION"
+            WRITE(dbg_unit, '(A)') "    &END XC"
+            WRITE(dbg_unit, '(A)') "  &END DFT"
+        ELSE IF (method_id == do_rpa) THEN
           WRITE(dbg_unit, '(A)') "&GLOBAL"
           WRITE(dbg_unit, '(A)') "  PROJECT shell_rpa"
           WRITE(dbg_unit, '(A)') "  RUN_TYPE ENERGY"
@@ -1079,8 +1106,8 @@ WRITE(dbg_unit, '(A)') "  METHOD Quickstep"
           WRITE(dbg_unit, '(A)') "&FORCE_EVAL"
 WRITE(dbg_unit, '(A)') "  METHOD Quickstep"
            WRITE(dbg_unit, '(A)') "  &DFT"
-           WRITE(dbg_unit, '(A)') "    BASIS_SET_FILE_NAME HFX_BASIS"
-           WRITE(dbg_unit, '(A)') "    POTENTIAL_FILE_NAME GTH_POTENTIALS"
+WRITE(dbg_unit, '(A)') "    BASIS_SET_FILE_NAME HFX_BASIS"
+            WRITE(dbg_unit, '(A)') "    POTENTIAL_FILE_NAME POTENTIAL"
            WRITE(dbg_unit, '(A)') "    &MGRID"
            WRITE(dbg_unit, '(A)') "      CUTOFF 100"
            WRITE(dbg_unit, '(A)') "      REL_CUTOFF 20"
@@ -1099,69 +1126,155 @@ WRITE(dbg_unit, '(A)') "  METHOD Quickstep"
            WRITE(dbg_unit, '(A)') "      SCF_GUESS ATOMIC"
            WRITE(dbg_unit, '(A)') "      IGNORE_CONVERGENCE_FAILURE"
            WRITE(dbg_unit, '(A)') "    &END SCF"
-           WRITE(dbg_unit, '(A)') "    &XC"
-           WRITE(dbg_unit, '(A)') "      &XC_FUNCTIONAL PBE"
-           WRITE(dbg_unit, '(A)') "      &END XC_FUNCTIONAL"
-           WRITE(dbg_unit, '(A)') "      &WF_CORRELATION"
-           WRITE(dbg_unit, '(A)') "        &RI_RPA"
-           WRITE(dbg_unit, '(A)') "          QUADRATURE_POINTS 100"
-           WRITE(dbg_unit, '(A)') "        &END RI_RPA"
-          WRITE(dbg_unit, '(A)') "      &END WF_CORRELATION"
-          WRITE(dbg_unit, '(A)') "    &END XC"
-          WRITE(dbg_unit, '(A)') "  &END DFT"
-       END IF
+WRITE(dbg_unit, '(A)') "    &XC"
+            WRITE(dbg_unit, '(A)') "      &XC_FUNCTIONAL PBE"
+            WRITE(dbg_unit, '(A)') "      &END XC_FUNCTIONAL"
+            WRITE(dbg_unit, '(A)') "      &WF_CORRELATION"
+            CALL write_rpa_section(dbg_unit, eff_method)
+            WRITE(dbg_unit, '(A)') "      &END WF_CORRELATION"
+            WRITE(dbg_unit, '(A)') "    &END XC"
+            WRITE(dbg_unit, '(A)') "  &END DFT"
+END IF
 
-       ! Add SUBSYS from the original environment
-       IF (shell%env_id > 0) THEN
-          WRITE(dbg_unit, '(A)') "  &SUBSYS"
-          CALL get_natom(shell%env_id, n_atom, ierr)
-          IF (ierr == 0) THEN
-             CALL copy_subsys_to_input(shell%env_id, dbg_unit, n_atom)
-          END IF
-          WRITE(dbg_unit, '(A)') "  &END SUBSYS"
-       ELSE
-          WRITE(dbg_unit, '(A)') "  &SUBSYS"
-          WRITE(dbg_unit, '(A)') "    &CELL"
-          WRITE(dbg_unit, '(A)') "      ABC 10.0 10.0 10.0"
-          WRITE(dbg_unit, '(A)') "      PERIODIC NONE"
-          WRITE(dbg_unit, '(A)') "    &END CELL"
-          WRITE(dbg_unit, '(A)') "    &COORD"
-          WRITE(dbg_unit, '(A)') "      O    0.000000    0.000000    0.000000"
-          WRITE(dbg_unit, '(A)') "      H    0.000000    0.757154    0.586295"
-          WRITE(dbg_unit, '(A)') "      H    0.000000   -0.757154    0.586295"
-          WRITE(dbg_unit, '(A)') "    &END COORD"
-          WRITE(dbg_unit, '(A)') "    &KIND O"
-          WRITE(dbg_unit, '(A)') "      BASIS_SET DZVP-MOLOPT-GTH"
-          WRITE(dbg_unit, '(A)') "      POTENTIAL GTH-PBE-q6"
-          WRITE(dbg_unit, '(A)') "    &END KIND"
-          WRITE(dbg_unit, '(A)') "    &KIND H"
-          WRITE(dbg_unit, '(A)') "      BASIS_SET DZVP-MOLOPT-GTH"
-          WRITE(dbg_unit, '(A)') "      POTENTIAL GTH-PBE-q1"
-          WRITE(dbg_unit, '(A)') "    &END KIND"
-          WRITE(dbg_unit, '(A)') "  &END SUBSYS"
-       END IF
+! Add SUBSYS - use environment for CELL/COORD, original file for KIND
+         IF (shell%env_id > 0) THEN
+            WRITE(dbg_unit, '(A)') "  &SUBSYS"
+            CALL get_natom(shell%env_id, n_atom, ierr)
+            IF (ierr == 0) THEN
+               ! If original file exists, read CELL/COORD/KIND from the file
+               IF (LEN_TRIM(shell%input_filename) > 0) THEN
+                  CALL read_coord_and_kinds_from_input(shell%input_filename, dbg_unit)
+               ELSE
+                  CALL copy_subsys_to_input(shell%env_id, dbg_unit, n_atom, write_kinds=.TRUE.)
+               END IF
+            END IF
+            WRITE(dbg_unit, '(A)') "  &END SUBSYS"
+        ELSE
+           WRITE(dbg_unit, '(A)') "  &SUBSYS"
+           WRITE(dbg_unit, '(A)') "    &CELL"
+           WRITE(dbg_unit, '(A)') "      ABC 10.0 10.0 10.0"
+           WRITE(dbg_unit, '(A)') "      PERIODIC NONE"
+           WRITE(dbg_unit, '(A)') "    &END CELL"
+           WRITE(dbg_unit, '(A)') "    &COORD"
+           WRITE(dbg_unit, '(A)') "      O    0.000000    0.000000    0.000000"
+           WRITE(dbg_unit, '(A)') "      H    0.000000    0.757154    0.586295"
+           WRITE(dbg_unit, '(A)') "      H    0.000000   -0.757154    0.586295"
+           WRITE(dbg_unit, '(A)') "    &END COORD"
+           WRITE(dbg_unit, '(A)') "    &KIND O"
+           WRITE(dbg_unit, '(A)') "      BASIS_SET DZVP-GTH"
+           WRITE(dbg_unit, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
+           WRITE(dbg_unit, '(A)') "      POTENTIAL GTH-HF-q6"
+           WRITE(dbg_unit, '(A)') "    &END KIND"
+           WRITE(dbg_unit, '(A)') "    &KIND H"
+           WRITE(dbg_unit, '(A)') "      BASIS_SET DZVP-GTH"
+           WRITE(dbg_unit, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
+           WRITE(dbg_unit, '(A)') "      POTENTIAL GTH-HF-q1"
+           WRITE(dbg_unit, '(A)') "    &END KIND"
+           WRITE(dbg_unit, '(A)') "  &END SUBSYS"
+        END IF
 
 WRITE(dbg_unit, '(A)') "&END FORCE_EVAL"
-        CLOSE(100)
+          CLOSE(dbg_unit)
 
-        IF (shell%iw > 0) THEN
-           WRITE(shell%iw, '(A)') "* Running MP2/RPA via batch mode..."
-           CALL m_flush(shell%iw)
-        END IF
+ IF (shell%iw > 0) THEN
+            IF (method_id == do_mp2) THEN
+               WRITE(shell%iw, '(A)') "* Running MP2 calculation..."
+            ELSE
+               WRITE(shell%iw, '(A)') "* Running RPA calculation..."
+            END IF
+            CALL m_flush(shell%iw)
+         END IF
 
-IF (shell%iw > 0) THEN
-           IF (method_id == do_mp2) THEN
-              WRITE(shell%iw, '(A)') "* MP2 input file created: /workspace/tmp_mp2_rpa.inp"
-              WRITE(shell%iw, '(A)') "* To run MP2, first do DFT, then run:"
-              WRITE(shell%iw, '(A)') "*   source install/cp2k_env && cp2k.psmp /workspace/tmp_mp2_rpa.inp"
-           ELSE
-              WRITE(shell%iw, '(A)') "* RPA input file created: /workspace/tmp_mp2_rpa.inp"
-              WRITE(shell%iw, '(A)') "* To run RPA, first do DFT, then run:"
-              WRITE(shell%iw, '(A)') "*   source install/cp2k_env && cp2k.psmp /workspace/tmp_mp2_rpa.inp"
-           END IF
-           CALL m_flush(shell%iw)
+         CALL execute_command_line( &
+            "/bin/bash -c 'source /workspace/install/cp2k_env && "// &
+            "cp2k.psmp /workspace/tmp_mp2_rpa.inp > /workspace/tmp_mp2_rpa.out 2>&1'", &
+            WAIT=.TRUE., &
+            EXITSTAT=ierr)
+
+         e_pot = read_energy_from_output(output_path)
+         IF (shell%iw > 0) THEN
+            WRITE(shell%iw, '(ES22.13)') e_pot*shell%e_fact
+            CALL m_flush(shell%iw)
+         END IF
+      END SUBROUTINE calc_mp2_rpa_command
+
+! **************************************************************************************************
+!> \brief Parses the method argument to determine MP2/RPA method type
+!> \param arg1 input argument string
+!> \param method_id do_mp2 or do_rpa
+!> \param wfc_method output: mp2_method_* or rpa_method_*
+! **************************************************************************************************
+    SUBROUTINE parse_wfc_method(arg1, method_id, wfc_method)
+       CHARACTER(LEN=*), INTENT(IN)                        :: arg1
+       INTEGER, INTENT(IN)                                 :: method_id
+       INTEGER, INTENT(OUT)                                :: wfc_method
+
+       CHARACTER(LEN=default_path_length)                 :: upper_arg
+       INTEGER                                            :: i
+
+       upper_arg = arg1
+       DO i = 1, LEN_TRIM(upper_arg)
+          IF (upper_arg(i:i) >= 'a' .AND. upper_arg(i:i) <= 'z') THEN
+             upper_arg(i:i) = ACHAR(IACHAR(upper_arg(i:i)) - 32)
+          END IF
+       END DO
+
+IF (method_id == do_mp2) THEN
+           SELECT CASE (TRIM(upper_arg))
+           CASE ('RI')
+              wfc_method = ri_mp2_method_gpw
+           CASE ('DIRECT', 'NO_HFX', 'NOHF')
+              wfc_method = mp2_method_direct
+           CASE ('GPW', 'MP2_GPW', 'MP2')
+              wfc_method = mp2_method_gpw
+           CASE DEFAULT
+              wfc_method = mp2_method_gpw
+           END SELECT
+        ELSE
+           SELECT CASE (TRIM(upper_arg))
+           CASE ('RI', 'RI_RPA', 'RPA')
+              wfc_method = ri_rpa_method_gpw
+           CASE DEFAULT
+              wfc_method = ri_rpa_method_gpw
+           END SELECT
         END IF
-     END SUBROUTINE calc_mp2_rpa_command
+    END SUBROUTINE parse_wfc_method
+
+! **************************************************************************************************
+!> \brief Writes the MP2 section based on method type
+!> \param dbg_unit file unit
+!> \param wfc_method mp2 method type
+! **************************************************************************************************
+SUBROUTINE write_mp2_section(dbg_unit, wfc_method)
+        INTEGER, INTENT(IN)                                :: dbg_unit, wfc_method
+
+        SELECT CASE (wfc_method)
+        CASE (ri_mp2_method_gpw)
+           WRITE(dbg_unit, '(A)') "        &RI_MP2"
+           WRITE(dbg_unit, '(A)') "        &END RI_MP2"
+CASE (mp2_method_direct)
+            WRITE(dbg_unit, '(A)') "        &MP2"
+            WRITE(dbg_unit, '(A)') "          METHOD DIRECT_CANONICAL"
+            WRITE(dbg_unit, '(A)') "        &END MP2"
+        CASE DEFAULT
+           WRITE(dbg_unit, '(A)') "        &MP2"
+           WRITE(dbg_unit, '(A)') "          METHOD MP2_GPW"
+           WRITE(dbg_unit, '(A)') "        &END MP2"
+        END SELECT
+     END SUBROUTINE write_mp2_section
+
+! **************************************************************************************************
+!> \brief Writes the RPA section based on method type
+!> \param dbg_unit file unit
+!> \param wfc_method rpa method type
+! **************************************************************************************************
+SUBROUTINE write_rpa_section(dbg_unit, wfc_method)
+        INTEGER, INTENT(IN)                                :: dbg_unit, wfc_method
+
+        WRITE(dbg_unit, '(A)') "        &RI_RPA"
+        WRITE(dbg_unit, '(A)') "          QUADRATURE_POINTS 100"
+        WRITE(dbg_unit, '(A)') "        &END RI_RPA"
+     END SUBROUTINE write_rpa_section
 
 ! **************************************************************************************************
 !> \brief Runs MP2 calculation in shell mode
@@ -1215,9 +1328,11 @@ IF (shell%iw > 0) THEN
 !> \param env_id ...
 !> \param unit_number ...
 !> \param n_atom ...
+!> \param write_kinds if true, also write KIND sections with default basis/potentials
 ! **************************************************************************************************
-    SUBROUTINE copy_subsys_to_input(env_id, unit_number, n_atom)
+    SUBROUTINE copy_subsys_to_input(env_id, unit_number, n_atom, write_kinds)
        INTEGER, INTENT(IN)                                :: env_id, unit_number, n_atom
+       LOGICAL, INTENT(IN)                                :: write_kinds
 
        REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: pos
        INTEGER                                            :: ierr, i
@@ -1253,19 +1368,150 @@ WRITE(unit_number, '(A)') "    &CELL"
        END DO
        WRITE(unit_number, '(A)') "    &END COORD"
 
-       ! Write KIND
-WRITE(unit_number, '(A)') "    &KIND O"
-        WRITE(unit_number, '(A)') "      BASIS_SET DZVP-GTH"
-        WRITE(unit_number, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
-        WRITE(unit_number, '(A)') "      POTENTIAL GTH-PBE-q6"
-        WRITE(unit_number, '(A)') "    &END KIND"
-        WRITE(unit_number, '(A)') "    &KIND H"
-        WRITE(unit_number, '(A)') "      BASIS_SET DZVP-GTH"
-        WRITE(unit_number, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
-        WRITE(unit_number, '(A)') "      POTENTIAL GTH-PBE-q1"
-        WRITE(unit_number, '(A)') "    &END KIND"
+IF (write_kinds) THEN
+          WRITE(unit_number, '(A)') "    &KIND O"
+          WRITE(unit_number, '(A)') "      BASIS_SET DZVP-GTH"
+          WRITE(unit_number, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
+          WRITE(unit_number, '(A)') "      POTENTIAL GTH-HF-q6"
+          WRITE(unit_number, '(A)') "    &END KIND"
+          WRITE(unit_number, '(A)') "    &KIND H"
+          WRITE(unit_number, '(A)') "      BASIS_SET DZVP-GTH"
+          WRITE(unit_number, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
+          WRITE(unit_number, '(A)') "      POTENTIAL GTH-HF-q1"
+          WRITE(unit_number, '(A)') "    &END KIND"
+       END IF
 
        DEALLOCATE(pos, atom_symbol)
     END SUBROUTINE copy_subsys_to_input
+
+! **************************************************************************************************
+!> \brief Reads CELL, COORD and KIND sections from original input file
+!> \param input_filename path to original input file
+!> \param unit_number output unit to write CELL, COORD and KIND definitions
+! **************************************************************************************************
+     SUBROUTINE read_coord_and_kinds_from_input(input_filename, unit_number)
+        CHARACTER(LEN=*), INTENT(IN)                      :: input_filename
+        INTEGER, INTENT(IN)                               :: unit_number
+
+        INTEGER                                            :: inp_unit, ios, kind_level, iq, ipos, j
+         CHARACTER(LEN=500)                                :: line
+         CHARACTER(LEN=10)                                 :: qstr
+         LOGICAL                                            :: in_cell, in_coord, in_kind
+
+         in_cell = .FALSE.
+         in_coord = .FALSE.
+         in_kind = .FALSE.
+         kind_level = 0
+
+         OPEN(NEWUNIT=inp_unit, FILE=TRIM(input_filename), STATUS='OLD', IOSTAT=ios)
+         IF (ios /= 0) RETURN
+
+         DO
+            READ(inp_unit, '(A)', IOSTAT=ios) line
+            IF (ios /= 0) EXIT
+
+            line = ADJUSTL(line)
+            IF (LEN_TRIM(line) == 0 .OR. line(1:1) == '#') CYCLE
+
+            IF (in_cell) THEN
+               IF (INDEX(line, '&END') > 0 .AND. INDEX(line, 'CELL') > 0) THEN
+                  WRITE(unit_number, '(A)') '    &END CELL'
+                  in_cell = .FALSE.
+               ELSE
+                  WRITE(unit_number, '(A)') '    '//TRIM(line)
+               END IF
+            ELSE IF (in_coord) THEN
+               IF (INDEX(line, '&END') > 0 .AND. INDEX(line, 'COORD') > 0) THEN
+                  WRITE(unit_number, '(A)') '    &END COORD'
+                  in_coord = .FALSE.
+               ELSE
+                  WRITE(unit_number, '(A)') TRIM(line)
+               END IF
+            ELSE IF (in_kind) THEN
+               IF (line(1:5) == '&END ' .OR. line(1:5) == '&end ') THEN
+                  WRITE(unit_number, '(A)') '    BASIS_SET RI_AUX RI_DZVP-GTH'
+                  WRITE(unit_number, '(A)') '    '//TRIM(line)
+                  kind_level = kind_level - 1
+                  IF (kind_level == 0) THEN
+                     in_kind = .FALSE.
+                  END IF
+               ELSE
+                  line = ADJUSTL(line)
+                  IF (INDEX(line, 'BASIS_SET') > 0) THEN
+                     IF (INDEX(line, 'DZVP-GTH-PADE') > 0 .OR. &
+                         INDEX(line, 'DZVP-MOLOPT-GTH') > 0 .OR. &
+                         INDEX(line, 'DZV-GTH-PADE') > 0 .OR. &
+                         INDEX(line, 'DZV-MOLOPT-GTH') > 0) THEN
+                        line = '    BASIS_SET ORB DZVP-GTH'
+                     ELSE IF (INDEX(line, 'SZV-MOLOPT-GTH') > 0) THEN
+                        line = '    BASIS_SET ORB SZV-GTH'
+                     END IF
+                  ELSE IF (INDEX(line, 'POTENTIAL') > 0) THEN
+                     IF (INDEX(line, 'GTH-PADE-q') > 0) THEN
+                        ipos = INDEX(line, 'q')
+                        iq = 0
+                        DO j = ipos+1, MIN(ipos+2, LEN_TRIM(line))
+                           IF (line(j:j) >= '0' .AND. line(j:j) <= '9') THEN
+                              iq = iq*10 + (ICHAR(line(j:j)) - ICHAR('0'))
+                           ELSE
+                              EXIT
+                           END IF
+                        END DO
+                        WRITE(line, '("    POTENTIAL GTH-HF-q",I0)') iq
+                     END IF
+                  END IF
+                  WRITE(unit_number, '(A)') '    '//TRIM(line)
+                  IF (line(1:1) == '&') THEN
+                     kind_level = kind_level + 1
+                  END IF
+               END IF
+            ELSE
+               IF (INDEX(line, '&CELL') > 0) THEN
+                  WRITE(unit_number, '(A)') '    &CELL'
+                  in_cell = .TRUE.
+               ELSE IF (INDEX(line, '&COORD') > 0) THEN
+                  WRITE(unit_number, '(A)') '    &COORD'
+                  in_coord = .TRUE.
+               ELSE IF (INDEX(line, '&KIND ') > 0) THEN
+                  in_kind = .TRUE.
+                  kind_level = 1
+                  WRITE(unit_number, '(A)') '    '//TRIM(line)
+               END IF
+            END IF
+         END DO
+
+CLOSE(inp_unit)
+       END SUBROUTINE read_coord_and_kinds_from_input
+
+! **************************************************************************************************
+!> \brief Reads the total energy from a CP2K output file
+!> \param output_path path to the output file
+!> \return total energy in atomic units
+! **************************************************************************************************
+      FUNCTION read_energy_from_output(output_path) RESULT(e_total)
+         CHARACTER(LEN=*), INTENT(IN)                      :: output_path
+         REAL(KIND=dp)                                      :: e_total
+
+         INTEGER                                            :: out_unit, ios
+         CHARACTER(LEN=500)                                 :: line
+         INTEGER                                            :: idx
+
+         e_total = 0.0_dp
+         OPEN(NEWUNIT=out_unit, FILE=TRIM(output_path), STATUS='OLD', IOSTAT=ios)
+         IF (ios /= 0) RETURN
+
+         DO
+            READ(out_unit, '(A)', IOSTAT=ios) line
+            IF (ios /= 0) EXIT
+
+            idx = INDEX(line, 'Total energy:')
+            IF (idx > 0) THEN
+               READ(line(idx+14:), *) e_total
+               EXIT
+            END IF
+         END DO
+
+         CLOSE(out_unit)
+      END FUNCTION read_energy_from_output
 
 END MODULE cp2k_shell
