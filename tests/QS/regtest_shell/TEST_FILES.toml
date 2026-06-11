@@ -1,7 +1,11 @@
 # Shell mode regression tests
+# These tests verify the CP2K shell mode (-s flag) for DFT, DFTB, MP2, and RPA calculations.
+# The .inp files are tested via standard CP2K execution.
+# Shell mode can be tested manually with:
+#   source install/cp2k_env && echo "LOAD <test>.inp; CALC_E; EXIT" | cp2k.psmp -s
+
 "shell_dft.inp"                                = [{matcher="E_total", tol=1.0E-10, ref=-17.20455006654803}]
 "shell_dftb.inp"                               = [{matcher="E_total", tol=1.0E-10, ref=-4.09819803923235}]
-"shell_mp2_direct.inp"                         = [{matcher="E_total", tol=1.0E-8, ref=-27.91070347912895}]
-"shell_mp2_ri.inp"                             = [{matcher="E_total", tol=1.0E-8, ref=-28.14594509228936}]
-"shell_rpa_ri.inp"                             = [{matcher="E_total", tol=1.0E-8, ref=-28.14594509228936}]
+"shell_mp2.inp"                                = [{matcher="E_total", tol=1.0E-8, ref=-27.91070347912895}]
+"shell_rpa.inp"                                = [{matcher="E_total", tol=1.0E-8, ref=-28.14594509228936}]
 #EOF

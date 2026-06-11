@@ -1,6 +1,6 @@
 &GLOBAL
   PRINT_LEVEL LOW
-  PROJECT shell_mp2_direct
+  PROJECT shell_mp2
   RUN_TYPE ENERGY
 &END GLOBAL
 

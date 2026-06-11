@@ -1,6 +1,6 @@
 &GLOBAL
   PRINT_LEVEL LOW
-  PROJECT shell_rpa_ri
+  PROJECT shell_rpa
   RUN_TYPE ENERGY
 &END GLOBAL
 
