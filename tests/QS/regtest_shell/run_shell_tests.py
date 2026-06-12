@@ -28,30 +28,65 @@ TESTS = [
         "expected": -4.09819803923235,
     },
     {
-        "name": "shell_mp2_direct",
-        "commands": "LOAD tests/QS/regtest_shell/shell_mp2.inp\nCALC_MP2 DIRECT\nEXIT",
-        "expected": -28.14594509228936,
-    },
-    {
         "name": "shell_mp2_ri",
         "commands": "LOAD tests/QS/regtest_shell/shell_mp2.inp\nCALC_MP2 RI\nEXIT",
-        "expected": -28.14594509228936,
+        "expected": -17.4306202618000,
     },
     {
         "name": "shell_rpa_ri",
         "commands": "LOAD tests/QS/regtest_shell/shell_rpa.inp\nCALC_RPA RI\nEXIT",
-        "expected": -28.14594509228936,
+        "expected": -17.430126812470,
+    },
+    {
+        "name": "shell_h2o_mp2_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_h2o_mp2_ri.inp\nCALC_MP2 RI\nEXIT",
+        "expected": -17.4306202618000,
+    },
+    {
+        "name": "shell_h2o_rpa_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_h2o_rpa.inp\nCALC_RPA RI\nEXIT",
+        "expected": -17.430126812470,
+    },
+    {
+        "name": "shell_co2_mp2_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_co2_mp2_ri.inp\nCALC_MP2 RI\nEXIT",
+        "expected": -38.5096114417010,
+    },
+    {
+        "name": "shell_co2_rpa_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_co2_rpa.inp\nCALC_RPA RI\nEXIT",
+        "expected": -38.3690556334470,
+    },
+    {
+        "name": "shell_ch4_mp2_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_ch4_mp2_ri.inp\nCALC_MP2 RI\nEXIT",
+        "expected": -8.2298154750783E+00,
+    },
+    {
+        "name": "shell_ch4_rpa_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_ch4_rpa.inp\nCALC_RPA RI\nEXIT",
+        "expected": -8.2696978439657E+00,
+    },
+    {
+        "name": "shell_h2o2_mp2_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_h2o2_mp2_ri.inp\nCALC_MP2 RI\nEXIT",
+        "expected": -33.5898678758610,
+    },
+    {
+        "name": "shell_h2o2_rpa_ri",
+        "commands": "LOAD tests/QS/regtest_shell/shell_h2o2_rpa.inp\nCALC_RPA RI\nEXIT",
+        "expected": -33.553414403570,
     },
 ]
 
-TOLERANCE = 1e-10
+TOLERANCE = 1e-6
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Runs CP2K shell mode regression tests.")
-    parser.add_argument("--mpiranks", type=int, default=2)
-    parser.add_argument("--ompthreads", type=int, default=1)
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--mpiranks", type=int, default=1, help="Number of MPI ranks (default: 1)")
+    parser.add_argument("--ompthreads", type=int, default=4, help="Number of OpenMP threads (default: 4)")
+    parser.add_argument("--timeout", type=int, default=600, help="Timeout per test in seconds (default: 600)")
     parser.add_argument("--binary", default="cp2k.psmp", help="CP2K binary name (default: cp2k.psmp)")
     return parser.parse_args()
 

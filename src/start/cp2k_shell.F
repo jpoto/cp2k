@@ -198,6 +198,7 @@ CONTAINS
       INTEGER                                            :: i, iostat
 
       success = .TRUE.
+      CALL shell%para_env%sync()
       IF (shell%iw > 0) THEN
          WRITE (shell%iw, '("* READY")')
          CALL m_flush(shell%iw)
@@ -209,6 +210,7 @@ CONTAINS
             success = .FALSE. ! EOF
          END IF
       END IF
+      CALL shell%para_env%sync()
       CALL shell%para_env%bcast(success)
       IF (.NOT. success) RETURN
       CALL shell%para_env%bcast(line)
@@ -1065,7 +1067,7 @@ WRITE(dbg_unit, '(A)') "    BASIS_SET_FILE_NAME HFX_BASIS"
            WRITE(dbg_unit, '(A)') "    &END MGRID"
            WRITE(dbg_unit, '(A)') "    &POISSON"
            WRITE(dbg_unit, '(A)') "      PERIODIC NONE"
-           WRITE(dbg_unit, '(A)') "      POISSON_SOLVER WAVELET"
+           WRITE(dbg_unit, '(A)') "      POISSON_SOLVER MT"
            WRITE(dbg_unit, '(A)') "    &END POISSON"
            WRITE(dbg_unit, '(A)') "    &QS"
            WRITE(dbg_unit, '(A)') "      METHOD GPW"
@@ -1114,7 +1116,7 @@ WRITE(dbg_unit, '(A)') "    BASIS_SET_FILE_NAME HFX_BASIS"
            WRITE(dbg_unit, '(A)') "    &END MGRID"
            WRITE(dbg_unit, '(A)') "    &POISSON"
            WRITE(dbg_unit, '(A)') "      PERIODIC NONE"
-           WRITE(dbg_unit, '(A)') "      POISSON_SOLVER WAVELET"
+           WRITE(dbg_unit, '(A)') "      POISSON_SOLVER MT"
            WRITE(dbg_unit, '(A)') "    &END POISSON"
            WRITE(dbg_unit, '(A)') "    &QS"
            WRITE(dbg_unit, '(A)') "      METHOD GPW"
@@ -1136,42 +1138,18 @@ WRITE(dbg_unit, '(A)') "    &XC"
             WRITE(dbg_unit, '(A)') "  &END DFT"
 END IF
 
-! Add SUBSYS - use environment for CELL/COORD, original file for KIND
-         IF (shell%env_id > 0) THEN
-            WRITE(dbg_unit, '(A)') "  &SUBSYS"
-            CALL get_natom(shell%env_id, n_atom, ierr)
-            IF (ierr == 0) THEN
-               ! If original file exists, read CELL/COORD/KIND from the file
-               IF (LEN_TRIM(shell%input_filename) > 0) THEN
-                  CALL read_coord_and_kinds_from_input(shell%input_filename, dbg_unit)
-               ELSE
-                  CALL copy_subsys_to_input(shell%env_id, dbg_unit, n_atom, write_kinds=.TRUE.)
-               END IF
+! Add SUBSYS - read CELL/COORD/KIND from input file
+         WRITE(dbg_unit, '(A)') "  &SUBSYS"
+         IF (LEN_TRIM(shell%input_filename) > 0) THEN
+            CALL read_coord_and_kinds_from_input(shell%input_filename, dbg_unit)
+         ELSE
+            IF (shell%iw > 0) THEN
+               WRITE(shell%iw, '(A)') "*** ERROR: Input file required for MP2/RPA calculation"
             END IF
-            WRITE(dbg_unit, '(A)') "  &END SUBSYS"
-        ELSE
-           WRITE(dbg_unit, '(A)') "  &SUBSYS"
-           WRITE(dbg_unit, '(A)') "    &CELL"
-           WRITE(dbg_unit, '(A)') "      ABC 10.0 10.0 10.0"
-           WRITE(dbg_unit, '(A)') "      PERIODIC NONE"
-           WRITE(dbg_unit, '(A)') "    &END CELL"
-           WRITE(dbg_unit, '(A)') "    &COORD"
-           WRITE(dbg_unit, '(A)') "      O    0.000000    0.000000    0.000000"
-           WRITE(dbg_unit, '(A)') "      H    0.000000    0.757154    0.586295"
-           WRITE(dbg_unit, '(A)') "      H    0.000000   -0.757154    0.586295"
-           WRITE(dbg_unit, '(A)') "    &END COORD"
-           WRITE(dbg_unit, '(A)') "    &KIND O"
-           WRITE(dbg_unit, '(A)') "      BASIS_SET DZVP-GTH"
-           WRITE(dbg_unit, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
-           WRITE(dbg_unit, '(A)') "      POTENTIAL GTH-HF-q6"
-           WRITE(dbg_unit, '(A)') "    &END KIND"
-           WRITE(dbg_unit, '(A)') "    &KIND H"
-           WRITE(dbg_unit, '(A)') "      BASIS_SET DZVP-GTH"
-           WRITE(dbg_unit, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
-           WRITE(dbg_unit, '(A)') "      POTENTIAL GTH-HF-q1"
-           WRITE(dbg_unit, '(A)') "    &END KIND"
-           WRITE(dbg_unit, '(A)') "  &END SUBSYS"
-        END IF
+            CLOSE(dbg_unit)
+            RETURN
+         END IF
+         WRITE(dbg_unit, '(A)') "  &END SUBSYS"
 
 WRITE(dbg_unit, '(A)') "&END FORCE_EVAL"
           CLOSE(dbg_unit)
@@ -1196,6 +1174,7 @@ WRITE(dbg_unit, '(A)') "&END FORCE_EVAL"
             WRITE(shell%iw, '(ES22.13)') e_pot*shell%e_fact
             CALL m_flush(shell%iw)
          END IF
+         CALL shell%para_env%sync()
       END SUBROUTINE calc_mp2_rpa_command
 
 ! **************************************************************************************************
@@ -1301,88 +1280,7 @@ SUBROUTINE write_rpa_section(dbg_unit, wfc_method)
        CHARACTER(LEN=*), INTENT(IN)                       :: arg1
 
        CALL calc_mp2_rpa_command(shell, arg1, do_rpa, input_declaration)
-    END SUBROUTINE calc_rpa_command
-
-! **************************************************************************************************
-!> \brief Copies positions from one environment to another
-!> \param from_env_id ...
-!> \param to_env_id ...
-!> \param n_atom ...
-!> \param ierr ...
-! **************************************************************************************************
-    SUBROUTINE copy_positions(from_env_id, to_env_id, n_atom, ierr)
-       INTEGER, INTENT(IN)                                :: from_env_id, to_env_id, n_atom
-       INTEGER, INTENT(OUT)                               :: ierr
-
-       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: pos
-       INTEGER                                            :: i
-
-       ALLOCATE (pos(3*n_atom))
-       CALL get_pos(from_env_id, pos, 3*n_atom, ierr)
-       IF (ierr == 0) CALL set_pos(to_env_id, pos, 3*n_atom, ierr)
-       DEALLOCATE (pos)
-    END SUBROUTINE copy_positions
-
-! **************************************************************************************************
-!> \brief Copies the SUBSYS section from an environment to an input file
-!> \param env_id ...
-!> \param unit_number ...
-!> \param n_atom ...
-!> \param write_kinds if true, also write KIND sections with default basis/potentials
-! **************************************************************************************************
-    SUBROUTINE copy_subsys_to_input(env_id, unit_number, n_atom, write_kinds)
-       INTEGER, INTENT(IN)                                :: env_id, unit_number, n_atom
-       LOGICAL, INTENT(IN)                                :: write_kinds
-
-       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: pos
-       INTEGER                                            :: ierr, i
-       CHARACTER(LEN=2), ALLOCATABLE, DIMENSION(:)        :: atom_symbol
-
-! Get positions
-        ALLOCATE (pos(3*n_atom), atom_symbol(n_atom))
-        CALL get_pos(env_id, pos, 3*n_atom, ierr)
-        IF (ierr /= 0) THEN
-           IF (env_id > 0) THEN
-              WRITE(unit_number, '(A,I10)') "    ! get_pos failed with ierr=", ierr
-           END IF
-           DEALLOCATE(pos, atom_symbol)
-           RETURN
-        END IF
-
-       ! Set default atom symbols (simplified: O and H for water)
-       atom_symbol(1) = "O"
-       DO i = 2, n_atom
-          atom_symbol(i) = "H"
-       END DO
-
-       ! Write CELL with default ABC
-WRITE(unit_number, '(A)') "    &CELL"
-        WRITE(unit_number, '(A,3F12.6)') "      ABC [angstrom] 6.0 6.0 6.0"
-        WRITE(unit_number, '(A)') "      PERIODIC NONE"
-        WRITE(unit_number, '(A)') "    &END CELL"
-
-       ! Write COORD
-       WRITE(unit_number, '(A)') "    &COORD"
-       DO i = 1, n_atom
-          WRITE(unit_number, '(A2,3F20.10)') atom_symbol(i), pos(3*i-2), pos(3*i-1), pos(3*i)
-       END DO
-       WRITE(unit_number, '(A)') "    &END COORD"
-
-IF (write_kinds) THEN
-          WRITE(unit_number, '(A)') "    &KIND O"
-          WRITE(unit_number, '(A)') "      BASIS_SET DZVP-GTH"
-          WRITE(unit_number, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
-          WRITE(unit_number, '(A)') "      POTENTIAL GTH-HF-q6"
-          WRITE(unit_number, '(A)') "    &END KIND"
-          WRITE(unit_number, '(A)') "    &KIND H"
-          WRITE(unit_number, '(A)') "      BASIS_SET DZVP-GTH"
-          WRITE(unit_number, '(A)') "      BASIS_SET RI_AUX RI_DZVP-GTH"
-          WRITE(unit_number, '(A)') "      POTENTIAL GTH-HF-q1"
-          WRITE(unit_number, '(A)') "    &END KIND"
-       END IF
-
-       DEALLOCATE(pos, atom_symbol)
-    END SUBROUTINE copy_subsys_to_input
+END SUBROUTINE calc_rpa_command
 
 ! **************************************************************************************************
 !> \brief Reads CELL, COORD and KIND sections from original input file
@@ -1393,9 +1291,8 @@ IF (write_kinds) THEN
         CHARACTER(LEN=*), INTENT(IN)                      :: input_filename
         INTEGER, INTENT(IN)                               :: unit_number
 
-        INTEGER                                            :: inp_unit, ios, kind_level, iq, ipos, j
+        INTEGER                                            :: inp_unit, ios, kind_level
          CHARACTER(LEN=500)                                :: line
-         CHARACTER(LEN=10)                                 :: qstr
          LOGICAL                                            :: in_cell, in_coord, in_kind
 
          in_cell = .FALSE.
@@ -1429,7 +1326,6 @@ IF (write_kinds) THEN
                END IF
             ELSE IF (in_kind) THEN
                IF (line(1:5) == '&END ' .OR. line(1:5) == '&end ') THEN
-                  WRITE(unit_number, '(A)') '    BASIS_SET RI_AUX RI_DZVP-GTH'
                   WRITE(unit_number, '(A)') '    '//TRIM(line)
                   kind_level = kind_level - 1
                   IF (kind_level == 0) THEN
@@ -1437,29 +1333,6 @@ IF (write_kinds) THEN
                   END IF
                ELSE
                   line = ADJUSTL(line)
-                  IF (INDEX(line, 'BASIS_SET') > 0) THEN
-                     IF (INDEX(line, 'DZVP-GTH-PADE') > 0 .OR. &
-                         INDEX(line, 'DZVP-MOLOPT-GTH') > 0 .OR. &
-                         INDEX(line, 'DZV-GTH-PADE') > 0 .OR. &
-                         INDEX(line, 'DZV-MOLOPT-GTH') > 0) THEN
-                        line = '    BASIS_SET ORB DZVP-GTH'
-                     ELSE IF (INDEX(line, 'SZV-MOLOPT-GTH') > 0) THEN
-                        line = '    BASIS_SET ORB SZV-GTH'
-                     END IF
-                  ELSE IF (INDEX(line, 'POTENTIAL') > 0) THEN
-                     IF (INDEX(line, 'GTH-PADE-q') > 0) THEN
-                        ipos = INDEX(line, 'q')
-                        iq = 0
-                        DO j = ipos+1, MIN(ipos+2, LEN_TRIM(line))
-                           IF (line(j:j) >= '0' .AND. line(j:j) <= '9') THEN
-                              iq = iq*10 + (ICHAR(line(j:j)) - ICHAR('0'))
-                           ELSE
-                              EXIT
-                           END IF
-                        END DO
-                        WRITE(line, '("    POTENTIAL GTH-HF-q",I0)') iq
-                     END IF
-                  END IF
                   WRITE(unit_number, '(A)') '    '//TRIM(line)
                   IF (line(1:1) == '&') THEN
                      kind_level = kind_level + 1
@@ -1504,10 +1377,13 @@ CLOSE(inp_unit)
             READ(out_unit, '(A)', IOSTAT=ios) line
             IF (ios /= 0) EXIT
 
-            idx = INDEX(line, 'Total energy:')
+            idx = INDEX(line, 'ENERGY| Total FORCE_EVAL ( QS ) energy')
             IF (idx > 0) THEN
-               READ(line(idx+14:), *) e_total
-               EXIT
+               idx = INDEX(line, ']') + 1
+               DO WHILE (line(idx:idx) == ' ')
+                  idx = idx + 1
+               END DO
+               READ(line(idx:), *) e_total
             END IF
          END DO
 
