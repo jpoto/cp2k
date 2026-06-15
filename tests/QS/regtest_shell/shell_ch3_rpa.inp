@@ -1,0 +1,70 @@
+&GLOBAL
+  PRINT_LEVEL LOW
+  PROJECT shell_ch3_rpa
+  RUN_TYPE ENERGY
+&END GLOBAL
+
+&FORCE_EVAL
+  METHOD Quickstep
+  &DFT
+    BASIS_SET_FILE_NAME HFX_BASIS
+    MULTIPLICITY 2
+    POTENTIAL_FILE_NAME GTH_POTENTIALS
+    UKS
+    &MGRID
+      CUTOFF 100
+      REL_CUTOFF 20
+    &END MGRID
+    &POISSON
+      PERIODIC NONE
+      POISSON_SOLVER WAVELET
+    &END POISSON
+    &QS
+      EPS_DEFAULT 1.0E-12
+      METHOD GPW
+    &END QS
+    &SCF
+      MAX_SCF 50
+      EPS_SCF 1.0E-5
+      SCF_GUESS ATOMIC
+    &END SCF
+    &XC
+      &HF
+        FRACTION 1.0
+        &SCREENING
+          EPS_SCHWARZ 1.0E-6
+        &END SCREENING
+      &END HF
+      &WF_CORRELATION
+        MEMORY 50
+        &RI_RPA
+          RPA_NUM_QUAD_POINTS 4
+        &END RI_RPA
+      &END WF_CORRELATION
+      &XC_FUNCTIONAL NONE
+      &END XC_FUNCTIONAL
+    &END XC
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC 10.0 10.0 10.0
+      PERIODIC NONE
+    &END CELL
+    &COORD
+      C     0.000     0.000     0.300
+      H     0.000     1.173     0.000
+      H     0.929    -0.536     0.000
+      H    -0.929    -0.536     0.000
+    &END COORD
+    &KIND C
+      BASIS_SET DZVP-GTH
+      BASIS_SET RI_AUX RI_DZVP-GTH
+      POTENTIAL GTH-PBE-q4
+    &END KIND
+    &KIND H
+      BASIS_SET DZVP-GTH
+      BASIS_SET RI_AUX RI_DZVP-GTH
+      POTENTIAL GTH-PBE-q1
+    &END KIND
+  &END SUBSYS
+&END FORCE_EVAL

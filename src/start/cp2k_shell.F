@@ -997,9 +997,9 @@ IF (.NOT. my_assert(LEN_TRIM(arg1) > 0, "file argument missing", shell)) RETURN
        INTEGER, INTENT(IN), OPTIONAL                      :: wfc_method
 
 CHARACTER(LEN=default_path_length)                 :: input_path = "/workspace/tmp_mp2_rpa.inp", &
-                                                              output_path = "/workspace/tmp_mp2_rpa.out", old_dir, &
-                                                              method_str
-         INTEGER                                            :: ierr, env_id, n_atom, dbg_unit, eff_method
+                                                               output_path = "/workspace/tmp_mp2_rpa.out", &
+                                                               method_str, mpi_cmd
+          INTEGER                                            :: ierr, env_id, n_atom, dbg_unit, eff_method
          REAL(KIND=dp)                                      :: e_pot
          LOGICAL                                            :: file_exists
          REAL(KIND=dp), DIMENSION(:,:), POINTER            :: cell
@@ -1031,24 +1031,19 @@ CHARACTER(LEN=default_path_length)                 :: input_path = "/workspace/t
            CALL m_flush(shell%iw)
         END IF
 
-        ! Create a temporary input file for MP2/RPA
-        INQUIRE(FILE=input_path, EXIST=file_exists)
-        IF (shell%iw > 0) THEN
-           WRITE(shell%iw, '(A,L)') "* DEBUG: file_exists=", file_exists
-           CALL m_flush(shell%iw)
-        END IF
-        OPEN(NEWUNIT=dbg_unit, FILE=input_path, STATUS="REPLACE", ACTION="WRITE", IOSTAT=ierr)
-IF (ierr /= 0) THEN
-           CALL print_error('Failed to create temporary input file for MP2/RPA', shell)
-           RETURN
-        END IF
+! Create a temporary input file for MP2/RPA - only on rank 0
+         IF (shell%para_env%mepos == 0) THEN
+            INQUIRE(FILE=input_path, EXIST=file_exists)
+            OPEN(NEWUNIT=dbg_unit, FILE=input_path, STATUS="REPLACE", ACTION="WRITE", IOSTAT=ierr)
+            IF (ierr /= 0) THEN
+               IF (shell%iw > 0) THEN
+                  WRITE(shell%iw, '(A)') "*** ERROR: Failed to create temporary input file"
+               END IF
+               CLOSE(dbg_unit, IOSTAT=ierr)
+               RETURN
+            END IF
 
-        IF (shell%iw > 0) THEN
-           WRITE(shell%iw, '(A,I10)') "* DEBUG: Opened file on unit=", dbg_unit
-           CALL m_flush(shell%iw)
-        END IF
-
-       ! Write MP2/RPA input template
+            ! Write MP2/RPA input template
        IF (method_id == do_mp2) THEN
           WRITE(dbg_unit, '(A)') "&GLOBAL"
           WRITE(dbg_unit, '(A)') "  PROJECT shell_mp2"
@@ -1152,28 +1147,36 @@ END IF
          WRITE(dbg_unit, '(A)') "  &END SUBSYS"
 
 WRITE(dbg_unit, '(A)') "&END FORCE_EVAL"
-          CLOSE(dbg_unit)
+           CLOSE(dbg_unit)
 
- IF (shell%iw > 0) THEN
-            IF (method_id == do_mp2) THEN
-               WRITE(shell%iw, '(A)') "* Running MP2 calculation..."
-            ELSE
-               WRITE(shell%iw, '(A)') "* Running RPA calculation..."
+         END IF
+
+         CALL shell%para_env%sync()
+
+         IF (shell%para_env%mepos == 0) THEN
+            IF (shell%iw > 0) THEN
+               IF (method_id == do_mp2) THEN
+                  WRITE(shell%iw, '(A)') "* Running MP2 calculation..."
+               ELSE
+                  WRITE(shell%iw, '(A)') "* Running RPA calculation..."
+               END IF
+               CALL m_flush(shell%iw)
             END IF
-            CALL m_flush(shell%iw)
+
+            WRITE(mpi_cmd, '(I0)') shell%para_env%num_pe
+            CALL execute_command_line("/bin/bash -c 'source /workspace/install/cp2k_env && "// &
+               "/workspace/install/bin/cp2k.psmp /workspace/tmp_mp2_rpa.inp > /workspace/tmp_mp2_rpa.out 2>&1'", &
+               WAIT=.TRUE., &
+               EXITSTAT=ierr)
+
+            e_pot = read_energy_from_output(output_path)
+            IF (shell%iw > 0) THEN
+               WRITE(shell%iw, '(ES22.13)') e_pot*shell%e_fact
+               CALL m_flush(shell%iw)
+            END IF
          END IF
 
-         CALL execute_command_line( &
-            "/bin/bash -c 'source /workspace/install/cp2k_env && "// &
-            "cp2k.psmp /workspace/tmp_mp2_rpa.inp > /workspace/tmp_mp2_rpa.out 2>&1'", &
-            WAIT=.TRUE., &
-            EXITSTAT=ierr)
-
-         e_pot = read_energy_from_output(output_path)
-         IF (shell%iw > 0) THEN
-            WRITE(shell%iw, '(ES22.13)') e_pot*shell%e_fact
-            CALL m_flush(shell%iw)
-         END IF
+         CALL shell%para_env%bcast(e_pot)
          CALL shell%para_env%sync()
       END SUBROUTINE calc_mp2_rpa_command
 
@@ -1369,23 +1372,23 @@ CLOSE(inp_unit)
          CHARACTER(LEN=500)                                 :: line
          INTEGER                                            :: idx
 
-         e_total = 0.0_dp
-         OPEN(NEWUNIT=out_unit, FILE=TRIM(output_path), STATUS='OLD', IOSTAT=ios)
-         IF (ios /= 0) RETURN
+e_total = 0.0_dp
+          OPEN(NEWUNIT=out_unit, FILE=TRIM(output_path), STATUS='OLD', IOSTAT=ios)
+          IF (ios /= 0) RETURN
 
-         DO
-            READ(out_unit, '(A)', IOSTAT=ios) line
-            IF (ios /= 0) EXIT
+          DO
+             READ(out_unit, '(A)', IOSTAT=ios) line
+             IF (ios /= 0) EXIT
 
-            idx = INDEX(line, 'ENERGY| Total FORCE_EVAL ( QS ) energy')
-            IF (idx > 0) THEN
-               idx = INDEX(line, ']') + 1
-               DO WHILE (line(idx:idx) == ' ')
-                  idx = idx + 1
-               END DO
-               READ(line(idx:), *) e_total
-            END IF
-         END DO
+             idx = INDEX(line, 'ENERGY| Total FORCE_EVAL ( QS ) energy')
+             IF (idx > 0) THEN
+                idx = INDEX(line, ']') + 1
+                DO WHILE (line(idx:idx) == ' ')
+                   idx = idx + 1
+                END DO
+                READ(line(idx:), *) e_total
+             END IF
+          END DO
 
          CLOSE(out_unit)
       END FUNCTION read_energy_from_output
