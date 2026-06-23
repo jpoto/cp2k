@@ -114,7 +114,8 @@ MODULE mp2_types
    TYPE ri_mp2_type
       INTEGER                                            :: block_size = 0, &
                                                             number_integration_groups = 0
-      LOGICAL                                            :: print_dgemm_info = .FALSE.
+      LOGICAL                                            :: print_dgemm_info = .FALSE., &
+                                                            use_c_backend = .FALSE.
    END TYPE ri_mp2_type
 
    TYPE ri_rpa_type
