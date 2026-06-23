@@ -305,6 +305,15 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create( &
+         keyword, __LOCATION__, &
+         name="USE_C_BACKEND", &
+         description="Uses the new C-Backend for better GPU performance (currently not implemented yet).", &
+         lone_keyword_l_val=.TRUE., &
+         default_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
    END SUBROUTINE create_ri_mp2
 
 ! **************************************************************************************************

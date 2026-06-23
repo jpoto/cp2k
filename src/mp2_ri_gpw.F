@@ -22,6 +22,8 @@ MODULE mp2_ri_gpw
                                               group_dist_d1_type,&
                                               maxsize,&
                                               release_group_dist
+   USE ISO_C_BINDING,                   ONLY: C_DOUBLE, &
+                                              C_INT
    USE kinds,                           ONLY: dp,&
                                               int_8
    USE libint_2c_3c,                    ONLY: compare_potential_types
@@ -31,6 +33,7 @@ MODULE mp2_ri_gpw
                                               m_walltime
    USE message_passing,                 ONLY: mp_comm_type,&
                                               mp_para_env_type
+   USE mp2_gpu_api,                     ONLY: calc_ri_mp2_energy
    USE mp2_ri_grad_util,                ONLY: complete_gamma
    USE mp2_types,                       ONLY: mp2_type,&
                                               three_dim_real_array
@@ -119,6 +122,17 @@ CONTAINS
          DIMENSION(:)                                    :: B_ia_Q
 
       CALL timeset(routineN, handle)
+
+      IF (mp2_env%ri_mp2%use_c_backend) THEN
+         CPASSERT(SIZE(BIb_C)==1)
+         CALL get_group_dist(gd_B_virtual(ispin), para_env_sub%mepos, &
+                             my_B_virtual_start(ispin), my_B_virtual_end(ispin), my_B_size(ispin))
+         CALL get_group_dist(gd_array, color_sub, my_group_L_start, my_group_L_end, my_group_L_size)
+         CALL calc_ri_mp2_energy(Emp2_cou, Emp2_EX, Emp2_S, Emp2_T, BIb_C(1)%array, para_env, para_env_sub, Eigenval(:, 1), &
+                                 homo(1), my_B_virtual_start(1)-1, my_B_size(1), my_group_L_start-1, my_group_L_size, dimen_RI)
+         CALL timestop(handle)
+         RETURN
+      END IF
 
       nspins = SIZE(homo)
 
