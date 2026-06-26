@@ -614,7 +614,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
     }
   }
   for (int dir = 0; dir < 3; dir++) {
-    my_fft_grid->cell_info.dr[dir] = fsqrt(my_fft_grid->cell_info.dhmat[dir][0] * my_fft_grid->cell_info.dhmat[dir][0] +
+    my_fft_grid->cell_info.dr[dir] = sqrt(my_fft_grid->cell_info.dhmat[dir][0] * my_fft_grid->cell_info.dhmat[dir][0] +
                                   my_fft_grid->cell_info.dhmat[dir][1] * my_fft_grid->cell_info.dhmat[dir][1] +
                                   my_fft_grid->cell_info.dhmat[dir][2] * my_fft_grid->cell_info.dhmat[dir][2]);
   }
