@@ -150,6 +150,7 @@ QS/regtest-gauxc-gapw-gth                                   gauxc
 QS/regtest-gauxc-gapw-gth-kp                                gauxc
 QS/regtest-gauxc-gapw-ecp                                   gauxc
 QS/regtest-gauxc-cuda                                       gauxc_cuda
+QS/regtest-gauxc-performance                                gauxc
 SE/regtest-3-2
 QS/regtest-almo-2
 QS/regtest-dft-vdw-corr-3                                   libxc

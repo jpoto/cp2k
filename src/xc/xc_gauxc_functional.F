@@ -33,8 +33,10 @@ MODULE xc_gauxc_functional
    USE kinds,                           ONLY: default_path_length,&
                                               default_string_length,&
                                               dp
-   USE message_passing,                 ONLY: mp_comm_self,&
-                                              mp_para_env_type
+USE message_passing,                 ONLY: mp_comm_self,&
+                                               mp_para_env_type
+   USE omp_lib,                        ONLY: omp_get_max_threads,&
+                                              omp_get_thread_num
    USE particle_types,                  ONLY: particle_type
    USE qs_energy_types,                 ONLY: qs_energy_type
    USE qs_environment_types,            ONLY: get_qs_env,&
@@ -65,6 +67,22 @@ MODULE xc_gauxc_functional
 
    LOGICAL, PARAMETER :: debug_this_module = .TRUE.
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'xc_gauxc_functional'
+
+   TYPE gauxc_cache_type
+      PRIVATE
+      TYPE(cp_gauxc_molecule_type)            :: molecule
+      TYPE(cp_gauxc_basisset_type)            :: basisset
+      TYPE(cp_gauxc_grid_type)                :: grid
+      TYPE(cp_gauxc_grid_type)                :: gradient_grid
+      TYPE(cp_gauxc_integrator_type)          :: integrator
+      TYPE(cp_gauxc_integrator_type)          :: gradient_integrator
+      LOGICAL                                 :: initialized = .FALSE.
+      INTEGER                                 :: natom = -1
+      INTEGER                                 :: nkind = -1
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:) :: cached_r
+   END TYPE gauxc_cache_type
+
+   TYPE(gauxc_cache_type), SAVE, TARGET      :: gauxc_cache
 
    PUBLIC :: apply_gauxc, gauxc_gapw_has_paw_pseudopotentials, skala_info, &
              xc_section_uses_gauxc
@@ -114,36 +132,39 @@ CONTAINS
    END SUBROUTINE set_gauxc_onedft_atom_chunk_env
 
 ! **************************************************************************************************
-!> \brief ...
+!> \brief Convert DBCSR matrix to dense, iterating only over stored blocks.
+!>        Two-phase approach: collect blocks and their data serially, copy to dense in parallel with OpenMP.
+!>        Uses single-pass iteration to avoid double-scanning blocks.
 !> \param dbcsr_mat ...
 !> \param dense_mat ...
 ! **************************************************************************************************
    SUBROUTINE dbcsr_to_dense(dbcsr_mat, dense_mat)
-      USE cp_dbcsr_api, ONLY: dbcsr_get_info, dbcsr_get_matrix_type, dbcsr_iterator_type, &
+      USE cp_dbcsr_api, ONLY: dbcsr_get_info, dbcsr_iterator_type, &
                               dbcsr_iterator_start, dbcsr_iterator_next_block, dbcsr_iterator_blocks_left, &
-                              dbcsr_iterator_stop, dbcsr_type_antisymmetric, dbcsr_type_symmetric
+                              dbcsr_iterator_stop
       TYPE(dbcsr_p_type), INTENT(IN)                     :: dbcsr_mat
       REAL(c_double), ALLOCATABLE, DIMENSION(:, :), &
          INTENT(INOUT)                                   :: dense_mat
 
-      CHARACTER                                          :: matrix_type
-      INTEGER                                            :: col, col_end, col_start, icol, irow, &
-                                                            nblkcols_total, nblkrows_total, ncols, &
-                                                            nrows, row, row_end, row_start
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, r_offset
+      INTEGER                                            :: col_end, col_start, icol, ii, irow, &
+                                                            nblkrows, nblkcols, ncols, nrows, &
+                                                            nr, nc, row_end, row_start, nblocks, &
+                                                            max_nrows, max_ncols
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, r_offset, &
+                                                            row_blk_size_cache, col_blk_size_cache, &
+                                                            blk_row_start, blk_col_start, blk_nr, blk_nc
       INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, row_blk_size
-      LOGICAL                                            :: transposed
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :, :)    :: blk_data
       REAL(c_double), POINTER                            :: block(:, :)
       TYPE(dbcsr_iterator_type)                          :: iter
 
       CALL dbcsr_get_info(dbcsr_mat%matrix, &
                           row_blk_size=row_blk_size, &
                           col_blk_size=col_blk_size, &
-                          nblkrows_total=nblkrows_total, &
-                          nblkcols_total=nblkcols_total, &
+                          nblkrows_total=nblkrows, &
+                          nblkcols_total=nblkcols, &
                           nfullrows_total=nrows, &
                           nfullcols_total=ncols)
-      matrix_type = dbcsr_get_matrix_type(dbcsr_mat%matrix)
 
       IF (.NOT. ALLOCATED(dense_mat)) THEN
          ALLOCATE (dense_mat(nrows, ncols))
@@ -155,81 +176,112 @@ CONTAINS
       END IF
       dense_mat = 0._dp
 
-      ALLOCATE (r_offset(nblkrows_total), c_offset(nblkcols_total))
+      ALLOCATE ( &
+         r_offset(nblkrows), &
+         c_offset(nblkcols), &
+         row_blk_size_cache(nblkrows), &
+         col_blk_size_cache(nblkcols))
+
+      row_blk_size_cache = row_blk_size(1:nblkrows)
+      col_blk_size_cache = col_blk_size(1:nblkcols)
 
       r_offset(1) = 1
-      DO row = 2, nblkrows_total
-         r_offset(row) = r_offset(row - 1) + row_blk_size(row - 1)
+      DO irow = 2, nblkrows
+         r_offset(irow) = r_offset(irow - 1) + row_blk_size_cache(irow - 1)
       END DO
       c_offset(1) = 1
-      DO col = 2, nblkcols_total
-         c_offset(col) = c_offset(col - 1) + col_blk_size(col - 1)
+      DO icol = 2, nblkcols
+         c_offset(icol) = c_offset(icol - 1) + col_blk_size_cache(icol - 1)
       END DO
 
+      max_nrows = MAXVAL(row_blk_size_cache)
+      max_ncols = MAXVAL(col_blk_size_cache)
+
+      ALLOCATE ( &
+         blk_row_start(nblkrows*nblkcols), &
+         blk_col_start(nblkrows*nblkcols), &
+         blk_nr(nblkrows*nblkcols), &
+         blk_nc(nblkrows*nblkcols))
+      ALLOCATE (blk_data(max_nrows, max_ncols, nblkrows*nblkcols))
+
+      nblocks = 0
       CALL dbcsr_iterator_start(iter, dbcsr_mat%matrix)
       DO WHILE (dbcsr_iterator_blocks_left(iter))
-         CALL dbcsr_iterator_next_block(iter, irow, icol, block, transposed=transposed)
-         row_start = r_offset(irow)
-         row_end = row_start + row_blk_size(irow) - 1
-         col_start = c_offset(icol)
-         col_end = col_start + col_blk_size(icol) - 1
-         IF (transposed) THEN
-            dense_mat(row_start:row_end, col_start:col_end) = TRANSPOSE(block)
-            IF (irow /= icol) THEN
-               IF (matrix_type == dbcsr_type_symmetric) THEN
-                  dense_mat(col_start:col_end, row_start:row_end) = block
-               ELSE IF (matrix_type == dbcsr_type_antisymmetric) THEN
-                  dense_mat(col_start:col_end, row_start:row_end) = -block
-               END IF
-            END IF
-         ELSE
-            dense_mat(row_start:row_end, col_start:col_end) = block
-            IF (irow /= icol) THEN
-               IF (matrix_type == dbcsr_type_symmetric) THEN
-                  dense_mat(col_start:col_end, row_start:row_end) = TRANSPOSE(block)
-               ELSE IF (matrix_type == dbcsr_type_antisymmetric) THEN
-                  dense_mat(col_start:col_end, row_start:row_end) = -TRANSPOSE(block)
-               END IF
-            END IF
-         END IF
+         CALL dbcsr_iterator_next_block(iter, irow, icol, block)
+         nblocks = nblocks + 1
+         blk_row_start(nblocks) = r_offset(irow)
+         blk_col_start(nblocks) = c_offset(icol)
+         blk_nr(nblocks) = row_blk_size_cache(irow)
+         blk_nc(nblocks) = col_blk_size_cache(icol)
+         blk_data(1:blk_nr(nblocks), 1:blk_nc(nblocks), nblocks) = block(:, :)
       END DO
       CALL dbcsr_iterator_stop(iter)
 
-      DEALLOCATE (r_offset, c_offset)
+      IF (nblocks == 0) THEN
+         DEALLOCATE (r_offset, c_offset, row_blk_size_cache, col_blk_size_cache, &
+                     blk_row_start, blk_col_start, blk_nr, blk_nc, blk_data)
+         RETURN
+      END IF
+
+!$OMP PARALLEL DO PRIVATE(ii, row_start, row_end, col_start, col_end, nr, nc)
+      DO ii = 1, nblocks
+         row_start = blk_row_start(ii)
+         row_end = row_start + blk_nr(ii) - 1
+         col_start = blk_col_start(ii)
+         col_end = col_start + blk_nc(ii) - 1
+         nr = blk_nr(ii)
+         nc = blk_nc(ii)
+
+         dense_mat(row_start:row_end, col_start:col_end) = blk_data(1:nr, 1:nc, ii)
+         IF (row_start /= col_start) THEN
+            dense_mat(col_start:col_end, row_start:row_end) = TRANSPOSE(blk_data(1:nr, 1:nc, ii))
+         END IF
+      END DO
+!$OMP END PARALLEL DO
+
+      DEALLOCATE (r_offset, c_offset, row_blk_size_cache, col_blk_size_cache, &
+                  blk_row_start, blk_col_start, blk_nr, blk_nc, blk_data)
 
    END SUBROUTINE dbcsr_to_dense
 
-! ******, ***********************************************************************************
-!> \brief Convert a dense symmetric matrix to a DBCSR matrix with full upper block structure.
-!>        This creates all upper-triangular blocks, not just those present in a template.
-!>        This is needed because GauXC computes VXC for the full dense density matrix.
+! **************************************************************************************************
+!> \brief Convert a dense symmetric matrix to DBCSR by iterating only over stored blocks.
+!>        Two-phase approach: collect block info serially, copy data in parallel with OpenMP.
 !> \param dense_mat Input dense matrix
 !> \param template_dbcsr Template DBCSR matrix for distribution and block sizes
-!> \return dbcsr_mat Output DBCSR matrix with full upper block structure
+!> \return dbcsr_mat Output DBCSR matrix with symmetric upper block structure
 ! **************************************************************************************************
    FUNCTION dense_to_dbcsr(dense_mat, template_dbcsr) RESULT(dbcsr_mat)
       USE cp_dbcsr_api, ONLY: &
-         dbcsr_create, &
-         dbcsr_distribution_get, &
-         dbcsr_distribution_type, &
-         dbcsr_finalize, &
-         dbcsr_get_info, &
-         dbcsr_get_stored_coordinates, &
-         dbcsr_init_p, &
-         dbcsr_put_block, &
-         dbcsr_release, &
-         dbcsr_type_symmetric, &
-         dbcsr_work_create
+          dbcsr_create, &
+          dbcsr_finalize, &
+          dbcsr_get_info, &
+          dbcsr_init_p, &
+          dbcsr_iterator_blocks_left, &
+          dbcsr_iterator_next_block, &
+          dbcsr_iterator_start, &
+          dbcsr_iterator_stop, &
+          dbcsr_iterator_type, &
+          dbcsr_put_block, &
+          dbcsr_release, &
+          dbcsr_type_symmetric, &
+          dbcsr_work_create
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: dense_mat
       TYPE(dbcsr_p_type), INTENT(IN)                     :: template_dbcsr
       TYPE(dbcsr_p_type)                                 :: dbcsr_mat
 
-      INTEGER                                            :: col, icol, irow, mynode, nblkcols_total, &
-                                                            nblkrows_total, ncols, nrows, owner, &
-                                                            row
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, r_offset
+      INTEGER                                            :: col_end, col_start, icol, ii, irow, &
+                                                            nblkcols_total, nblkrows_total, &
+ncols, nc, nr, nrows, nblocks, &
+                                                          row_end, row_start, max_nrows, max_ncols
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, r_offset, &
+                                                          row_blk_size_cache, col_blk_size_cache, &
+                                                          blk_row_start, blk_col_start, blk_nr, blk_nc, &
+                                                          blk_dbcsr_irow, blk_dbcsr_icol
       INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, row_blk_size
-      TYPE(dbcsr_distribution_type)                      :: dist
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :, :)    :: blk_data
+      REAL(c_double), POINTER                            :: block(:, :)
+      TYPE(dbcsr_iterator_type)                          :: iter
 
       CALL dbcsr_get_info(template_dbcsr%matrix, &
                           row_blk_size=row_blk_size, &
@@ -237,9 +289,7 @@ CONTAINS
                           nblkrows_total=nblkrows_total, &
                           nblkcols_total=nblkcols_total, &
                           nfullrows_total=nrows, &
-                          nfullcols_total=ncols, &
-                          distribution=dist)
-      CALL dbcsr_distribution_get(dist, mynode=mynode)
+                          nfullcols_total=ncols)
 
       CPASSERT(nrows == SIZE(dense_mat, 1))
       CPASSERT(ncols == SIZE(dense_mat, 2))
@@ -251,34 +301,73 @@ CONTAINS
                         matrix_type=dbcsr_type_symmetric)
       CALL dbcsr_work_create(dbcsr_mat%matrix, work_mutable=.TRUE.)
 
-      ALLOCATE (r_offset(nblkrows_total), c_offset(nblkcols_total))
+      ALLOCATE ( &
+         r_offset(nblkrows_total), &
+         c_offset(nblkcols_total), &
+         row_blk_size_cache(nblkrows_total), &
+         col_blk_size_cache(nblkcols_total))
+
+      row_blk_size_cache = row_blk_size(1:nblkrows_total)
+      col_blk_size_cache = col_blk_size(1:nblkcols_total)
 
       r_offset(1) = 1
-      DO row = 2, nblkrows_total
-         r_offset(row) = r_offset(row - 1) + row_blk_size(row - 1)
+      DO irow = 2, nblkrows_total
+         r_offset(irow) = r_offset(irow - 1) + row_blk_size_cache(irow - 1)
       END DO
       c_offset(1) = 1
-      DO col = 2, nblkcols_total
-         c_offset(col) = c_offset(col - 1) + col_blk_size(col - 1)
+      DO icol = 2, nblkcols_total
+         c_offset(icol) = c_offset(icol - 1) + col_blk_size_cache(icol - 1)
       END DO
 
-      DO irow = 1, nblkrows_total
-         DO icol = 1, nblkcols_total
-            IF (irow > icol) CYCLE
-            CALL dbcsr_get_stored_coordinates(dbcsr_mat%matrix, irow, icol, owner)
-            IF (owner /= mynode) CYCLE
-            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, &
-                                 0.5_dp*( &
-                                 dense_mat(r_offset(irow):r_offset(irow) + row_blk_size(irow) - 1, &
-                                           c_offset(icol):c_offset(icol) + col_blk_size(icol) - 1) + &
-                                 TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
-                                                     c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1))))
-         END DO
+      max_nrows = MAXVAL(row_blk_size_cache)
+      max_ncols = MAXVAL(col_blk_size_cache)
+
+      ALLOCATE ( &
+         blk_row_start(nblkrows_total*nblkcols_total), &
+         blk_col_start(nblkrows_total*nblkcols_total), &
+         blk_nr(nblkrows_total*nblkcols_total), &
+         blk_nc(nblkrows_total*nblkcols_total), &
+         blk_dbcsr_irow(nblkrows_total*nblkcols_total), &
+         blk_dbcsr_icol(nblkrows_total*nblkcols_total))
+      ALLOCATE (blk_data(max_nrows, max_ncols, nblkrows_total*nblkcols_total))
+
+      nblocks = 0
+      CALL dbcsr_iterator_start(iter, dbcsr_mat%matrix)
+      DO WHILE (dbcsr_iterator_blocks_left(iter))
+         CALL dbcsr_iterator_next_block(iter, irow, icol, block)
+         nblocks = nblocks + 1
+         blk_dbcsr_irow(nblocks) = irow
+         blk_dbcsr_icol(nblocks) = icol
+         blk_row_start(nblocks) = r_offset(irow)
+         blk_col_start(nblocks) = c_offset(icol)
+         blk_nr(nblocks) = row_blk_size_cache(irow)
+         blk_nc(nblocks) = col_blk_size_cache(icol)
+         row_start = blk_row_start(nblocks)
+         row_end = row_start + blk_nr(nblocks) - 1
+         col_start = blk_col_start(nblocks)
+         col_end = col_start + blk_nc(nblocks) - 1
+         blk_data(1:blk_nr(nblocks), 1:blk_nc(nblocks), nblocks) = dense_mat(row_start:row_end, col_start:col_end)
       END DO
+      CALL dbcsr_iterator_stop(iter)
+
+      IF (nblocks > 0) THEN
+!$OMP PARALLEL DO PRIVATE(ii, nr, nc)
+         DO ii = 1, nblocks
+            nr = blk_nr(ii)
+            nc = blk_nc(ii)
+
+            CALL dbcsr_put_block(dbcsr_mat%matrix, &
+                                 blk_dbcsr_irow(ii), &
+                                 blk_dbcsr_icol(ii), &
+                                 blk_data(1:nr, 1:nc, ii))
+         END DO
+!$OMP END PARALLEL DO
+      END IF
 
       CALL dbcsr_finalize(dbcsr_mat%matrix)
 
-      DEALLOCATE (r_offset, c_offset)
+      DEALLOCATE (r_offset, c_offset, row_blk_size_cache, col_blk_size_cache, &
+                  blk_row_start, blk_col_start, blk_nr, blk_nc, blk_data, blk_dbcsr_irow, blk_dbcsr_icol)
 
    END FUNCTION dense_to_dbcsr
 
@@ -945,6 +1034,251 @@ CONTAINS
 ! passing it to GauXC.
 
 ! **************************************************************************************************
+!> \brief Check if particle positions have changed since last call
+!> \param particle_set Current particle positions
+!> \return geometry_changed True if positions differ from cached
+! **************************************************************************************************
+   FUNCTION geometry_changed(particle_set) RESULT(changed)
+      TYPE(particle_type), DIMENSION(:), INTENT(IN)    :: particle_set
+      LOGICAL                                          :: changed
+
+      INTEGER                                          :: iatom, natom
+
+      natom = SIZE(particle_set)
+      changed = .TRUE.
+
+      IF (.NOT. gauxc_cache%initialized) RETURN
+
+      IF (gauxc_cache%natom /= natom) RETURN
+
+      IF (.NOT. ALLOCATED(gauxc_cache%cached_r)) RETURN
+
+      DO iatom = 1, natom
+         IF (ANY(ABS(particle_set(iatom)%r - gauxc_cache%cached_r(3*(iatom-1)+1:3*iatom)) > 1.0E-10_dp)) THEN
+            RETURN
+         END IF
+      END DO
+
+      changed = .FALSE.
+   END FUNCTION geometry_changed
+
+! **************************************************************************************************
+!> \brief Update the cached particle positions
+!> \param particle_set Current particle positions
+! **************************************************************************************************
+   SUBROUTINE update_cached_positions(particle_set)
+      TYPE(particle_type), DIMENSION(:), INTENT(IN)    :: particle_set
+
+      INTEGER                                          :: iatom, natom
+
+      natom = SIZE(particle_set)
+      gauxc_cache%natom = natom
+
+      IF (.NOT. ALLOCATED(gauxc_cache%cached_r)) THEN
+         ALLOCATE (gauxc_cache%cached_r(3*natom))
+      ELSE IF (SIZE(gauxc_cache%cached_r) /= 3*natom) THEN
+         DEALLOCATE (gauxc_cache%cached_r)
+         ALLOCATE (gauxc_cache%cached_r(3*natom))
+      END IF
+
+      DO iatom = 1, natom
+         gauxc_cache%cached_r(3*(iatom-1)+1:3*iatom) = particle_set(iatom)%r
+      END DO
+   END SUBROUTINE update_cached_positions
+
+! **************************************************************************************************
+!> \brief Check if basis set has changed
+!> \param qs_kind_set Current kind set
+!> \return changed True if basis differs from cached
+! **************************************************************************************************
+   FUNCTION basis_changed(qs_kind_set) RESULT(changed)
+      TYPE(qs_kind_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: qs_kind_set
+      LOGICAL                                          :: changed
+
+      INTEGER                                          :: nkind
+
+      nkind = SIZE(qs_kind_set)
+      changed = .TRUE.
+
+      IF (.NOT. gauxc_cache%initialized) RETURN
+
+      IF (gauxc_cache%nkind /= nkind) RETURN
+
+      changed = .FALSE.
+   END FUNCTION basis_changed
+
+! **************************************************************************************************
+!> \brief Initialize the cache for a new system
+! **************************************************************************************************
+   SUBROUTINE init_gauxc_cache()
+      gauxc_cache%initialized = .TRUE.
+      gauxc_cache%natom = -1
+      gauxc_cache%nkind = -1
+   END SUBROUTINE init_gauxc_cache
+
+! **************************************************************************************************
+!> \brief Get cached GauXC objects or create new ones if cache is invalid
+!> \param particle_set Particle positions
+!> \param qs_kind_set Kind set
+!> \param grid_type Grid type string
+!> \param radial_quadrature Radial quadrature string
+!> \param pruning_scheme Pruning scheme string
+!> \param lb_exec_space Load balancer execution space
+!> \param batch_size Batch size
+!> \param device_runtime_fill_fraction Device runtime fill fraction
+!> \param use_gradient_self_runtime Use self runtime for gradients
+!> \param use_self_runtime Use self runtime
+!> \param para_env Parallel environment
+!> \param need_xc_gradient Whether gradients are needed
+!> \param xc_fun_name XC functional name
+!> \param int_exec_space Integrator execution space
+!> \param lwd_kernel LWD kernel path
+!> \param nspins Number of spins
+!> \param gauxc_status Status object
+!> \param gauxc_mol Output molecule object
+!> \param gauxc_basis Output basisset object
+!> \param gauxc_grid_result Output grid object
+!> \param gauxc_integrator_result Output integrator object
+!> \param gauxc_gradient_grid_result Output gradient grid object (optional)
+!> \param gauxc_gradient_integrator_result Output gradient integrator object (optional)
+! **************************************************************************************************
+   SUBROUTINE get_or_create_gauxc_objects( &
+      particle_set, qs_kind_set, &
+      grid_type, radial_quadrature, pruning_scheme, &
+      lb_exec_space, batch_size, device_runtime_fill_fraction, &
+      use_gradient_self_runtime, use_self_runtime, para_env, &
+      need_xc_gradient, xc_fun_name, int_exec_space, lwd_kernel, nspins, &
+      gauxc_status, &
+      gauxc_mol, gauxc_basis, gauxc_grid_result, gauxc_integrator_result, &
+      gauxc_gradient_grid_result, gauxc_gradient_integrator_result)
+
+      TYPE(particle_type), DIMENSION(:), INTENT(IN)      :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: qs_kind_set
+      CHARACTER(len=*), INTENT(IN)                       :: grid_type, radial_quadrature, &
+                                                            pruning_scheme, lb_exec_space, &
+                                                            xc_fun_name, int_exec_space, lwd_kernel
+      INTEGER, INTENT(IN)                                :: batch_size, nspins
+      REAL(c_double), INTENT(IN)                         :: device_runtime_fill_fraction
+      LOGICAL, INTENT(IN)                                :: use_gradient_self_runtime, use_self_runtime, &
+                                                            need_xc_gradient
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(cp_gauxc_status_type), INTENT(OUT)            :: gauxc_status
+      TYPE(cp_gauxc_molecule_type), INTENT(OUT)          :: gauxc_mol
+      TYPE(cp_gauxc_basisset_type), INTENT(OUT)          :: gauxc_basis
+      TYPE(cp_gauxc_grid_type), INTENT(OUT)              :: gauxc_grid_result
+      TYPE(cp_gauxc_integrator_type), INTENT(OUT)        :: gauxc_integrator_result
+      TYPE(cp_gauxc_grid_type), INTENT(OUT), OPTIONAL    :: gauxc_gradient_grid_result
+      TYPE(cp_gauxc_integrator_type), INTENT(OUT), &
+         OPTIONAL                                        :: gauxc_gradient_integrator_result
+
+      IF (.NOT. gauxc_cache%initialized) THEN
+         CALL init_gauxc_cache()
+      END IF
+
+      IF (geometry_changed(particle_set) .OR. basis_changed(qs_kind_set)) THEN
+         gauxc_mol = gauxc_create_molecule(particle_set, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+         gauxc_basis = gauxc_create_basisset(qs_kind_set, particle_set, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+
+         IF (use_self_runtime) THEN
+            gauxc_grid_result = gauxc_create_grid( &
+                               gauxc_mol, &
+                               gauxc_basis, &
+                               grid_type, &
+                               radial_quadrature, &
+                               pruning_scheme, &
+                               lb_exec_space, &
+                               batch_size, &
+                               device_runtime_fill_fraction, &
+                               gauxc_status, &
+                               mpi_comm=mp_comm_self%get_handle())
+         ELSE
+            gauxc_grid_result = gauxc_create_grid( &
+                               gauxc_mol, &
+                               gauxc_basis, &
+                               grid_type, &
+                               radial_quadrature, &
+                               pruning_scheme, &
+                               lb_exec_space, &
+                               batch_size, &
+                               device_runtime_fill_fraction, &
+                               gauxc_status, &
+                               mpi_comm=para_env%get_handle())
+         END IF
+         CALL gauxc_check_status(gauxc_status)
+
+         gauxc_integrator_result = gauxc_create_integrator( &
+                                    TRIM(xc_fun_name), &
+                                    gauxc_grid_result, &
+                                    int_exec_space, &
+                                    lwd_kernel, &
+                                    nspins, &
+                                    gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+
+         IF (need_xc_gradient) THEN
+            IF (use_gradient_self_runtime) THEN
+               gauxc_gradient_grid_result = gauxc_create_grid( &
+                                       gauxc_mol, &
+                                       gauxc_basis, &
+                                       grid_type, &
+                                       radial_quadrature, &
+                                       pruning_scheme, &
+                                       lb_exec_space, &
+                                       batch_size, &
+                                       device_runtime_fill_fraction, &
+                                       gauxc_status, &
+                                       mpi_comm=mp_comm_self%get_handle())
+            ELSE
+               gauxc_gradient_grid_result = gauxc_create_grid( &
+                                       gauxc_mol, &
+                                       gauxc_basis, &
+                                       grid_type, &
+                                       radial_quadrature, &
+                                       pruning_scheme, &
+                                       lb_exec_space, &
+                                       batch_size, &
+                                       device_runtime_fill_fraction, &
+                                       gauxc_status, &
+                                       mpi_comm=para_env%get_handle())
+            END IF
+            CALL gauxc_check_status(gauxc_status)
+
+            gauxc_gradient_integrator_result = gauxc_create_integrator( &
+                                       TRIM(xc_fun_name), &
+                                       gauxc_gradient_grid_result, &
+                                       int_exec_space, &
+                                       lwd_kernel, &
+                                       nspins, &
+                                       gauxc_status)
+            CALL gauxc_check_status(gauxc_status)
+
+            gauxc_cache%gradient_grid = gauxc_gradient_grid_result
+            gauxc_cache%gradient_integrator = gauxc_gradient_integrator_result
+         END IF
+
+         gauxc_cache%molecule = gauxc_mol
+         gauxc_cache%basisset = gauxc_basis
+         gauxc_cache%grid = gauxc_grid_result
+         gauxc_cache%integrator = gauxc_integrator_result
+         CALL update_cached_positions(particle_set)
+         gauxc_cache%nkind = SIZE(qs_kind_set)
+      ELSE
+         gauxc_mol = gauxc_cache%molecule
+         gauxc_basis = gauxc_cache%basisset
+         gauxc_grid_result = gauxc_cache%grid
+         gauxc_integrator_result = gauxc_cache%integrator
+         IF (need_xc_gradient) THEN
+            gauxc_gradient_grid_result = gauxc_cache%gradient_grid
+            gauxc_gradient_integrator_result = gauxc_cache%gradient_integrator
+         END IF
+      END IF
+   END SUBROUTINE get_or_create_gauxc_objects
+
+! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
 !> \param xc_section ...
@@ -1260,20 +1594,132 @@ CONTAINS
          END IF
       END IF
 
-      gauxc_mol = gauxc_create_molecule( &
-                  particle_set, &
-                  gauxc_status)
-      CALL gauxc_check_status(gauxc_status)
-      gauxc_basis = gauxc_create_basisset( &
-                    qs_kind_set, &
-                    particle_set, &
-                    gauxc_status)
-      CALL gauxc_check_status(gauxc_status)
-      hdf5_output = (TRIM(output_path) /= "")
-      write_hdf5_output = hdf5_output .AND. para_env%mepos == 0
-      IF (write_hdf5_output .AND. ASSOCIATED(scf_env)) THEN
-         write_hdf5_output = scf_env%iter_count == 1
+      IF (geometry_changed(particle_set) .OR. basis_changed(qs_kind_set)) THEN
+         IF (para_env%mepos == 0 .AND. ASSOCIATED(scf_env) .AND. &
+             scf_env%iter_count == 1 .AND. TRIM(output_path) /= "") THEN
+            hdf5_output = .TRUE.
+         ELSE
+            hdf5_output = .FALSE.
+         END IF
+      ELSE
+         hdf5_output = .FALSE.
       END IF
+      write_hdf5_output = hdf5_output
+
+      IF (geometry_changed(particle_set) .OR. basis_changed(qs_kind_set)) THEN
+         gauxc_mol = gauxc_create_molecule(particle_set, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+         gauxc_basis = gauxc_create_basisset(qs_kind_set, particle_set, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+         CALL update_cached_positions(particle_set)
+         gauxc_cache%nkind = SIZE(qs_kind_set)
+         gauxc_cache%initialized = .TRUE.
+      ELSE
+         gauxc_mol = gauxc_cache%molecule
+         gauxc_basis = gauxc_cache%basisset
+      END IF
+
+      use_fd_gradient = gapw_method .AND. need_xc_gradient .AND. (gauxc_basis%max_l > 3)
+      IF (use_fd_gradient) use_gradient_mpi_runtime = .FALSE.
+      IF (use_gradient_mpi_runtime) THEN
+         use_gradient_self_runtime = .FALSE.
+      END IF
+      IF (use_fd_gradient .AND. para_env%mepos == 0) THEN
+         CALL cp_warn( &
+            __LOCATION__, &
+            "Using finite-difference GauXC XC gradients for METHOD GAPW/GAPW_XC with "// &
+            "basis functions beyond f shells. The upstream analytical GauXC gradient path is "// &
+            "not yet reliable for this case.")
+      END IF
+
+      IF (geometry_changed(particle_set) .OR. basis_changed(qs_kind_set)) THEN
+         IF (use_self_runtime) THEN
+            gauxc_grid_result = gauxc_create_grid( &
+                                gauxc_mol, &
+                                gauxc_basis, &
+                                grid_type, &
+                                radial_quadrature, &
+                                pruning_scheme, &
+                                lb_exec_space, &
+                                batch_size, &
+                                device_runtime_fill_fraction, &
+                                gauxc_status, &
+                                mpi_comm=mp_comm_self%get_handle())
+         ELSE
+            gauxc_grid_result = gauxc_create_grid( &
+                                gauxc_mol, &
+                                gauxc_basis, &
+                                grid_type, &
+                                radial_quadrature, &
+                                pruning_scheme, &
+                                lb_exec_space, &
+                                batch_size, &
+                                device_runtime_fill_fraction, &
+                                gauxc_status, &
+                                mpi_comm=para_env%get_handle())
+         END IF
+         CALL gauxc_check_status(gauxc_status)
+         gauxc_integrator_result = gauxc_create_integrator( &
+                                   TRIM(xc_fun_name), &
+                                   gauxc_grid_result, &
+                                   int_exec_space, &
+                                   lwd_kernel, &
+                                   nspins, &
+                                   gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+         gauxc_cache%grid = gauxc_grid_result
+         gauxc_cache%integrator = gauxc_integrator_result
+
+         IF (need_xc_gradient) THEN
+            IF (use_gradient_self_runtime) THEN
+               gauxc_gradient_grid_result = gauxc_create_grid( &
+                                       gauxc_mol, &
+                                       gauxc_basis, &
+                                       grid_type, &
+                                       radial_quadrature, &
+                                       pruning_scheme, &
+                                       lb_exec_space, &
+                                       batch_size, &
+                                       device_runtime_fill_fraction, &
+                                       gauxc_status, &
+                                       mpi_comm=mp_comm_self%get_handle())
+            ELSE
+               gauxc_gradient_grid_result = gauxc_create_grid( &
+                                       gauxc_mol, &
+                                       gauxc_basis, &
+                                       grid_type, &
+                                       radial_quadrature, &
+                                       pruning_scheme, &
+                                       lb_exec_space, &
+                                       batch_size, &
+                                       device_runtime_fill_fraction, &
+                                       gauxc_status, &
+                                       mpi_comm=para_env%get_handle())
+            END IF
+            CALL gauxc_check_status(gauxc_status)
+            gauxc_gradient_integrator_result = gauxc_create_integrator( &
+                                       TRIM(xc_fun_name), &
+                                       gauxc_gradient_grid_result, &
+                                       int_exec_space, &
+                                       lwd_kernel, &
+                                       nspins, &
+                                       gauxc_status)
+            CALL gauxc_check_status(gauxc_status)
+            gauxc_cache%gradient_grid = gauxc_gradient_grid_result
+            gauxc_cache%gradient_integrator = gauxc_gradient_integrator_result
+         END IF
+
+         gauxc_cache%molecule = gauxc_mol
+         gauxc_cache%basisset = gauxc_basis
+      ELSE
+         gauxc_grid_result = gauxc_cache%grid
+         gauxc_integrator_result = gauxc_cache%integrator
+         IF (need_xc_gradient) THEN
+            gauxc_gradient_grid_result = gauxc_cache%gradient_grid
+            gauxc_gradient_integrator_result = gauxc_cache%gradient_integrator
+         END IF
+      END IF
+
       IF (write_hdf5_output) THEN
          CALL gauxc_write_molecule_hdf5( &
             gauxc_mol, &
@@ -1288,84 +1734,6 @@ CONTAINS
             "basisset.h5", &
             "basisset", &
             gauxc_status)
-         CALL gauxc_check_status(gauxc_status)
-      END IF
-      use_fd_gradient = gapw_method .AND. need_xc_gradient .AND. (gauxc_basis%max_l > 3)
-      IF (use_fd_gradient) use_gradient_mpi_runtime = .FALSE.
-      IF (use_gradient_mpi_runtime) THEN
-         use_gradient_self_runtime = .FALSE.
-      END IF
-      IF (use_fd_gradient .AND. para_env%mepos == 0) THEN
-         CALL cp_warn( &
-            __LOCATION__, &
-            "Using finite-difference GauXC XC gradients for METHOD GAPW/GAPW_XC with "// &
-            "basis functions beyond f shells. The upstream analytical GauXC gradient path is "// &
-            "not yet reliable for this case.")
-      END IF
-      IF (use_self_runtime) THEN
-         ! SKALA currently needs a replicated molecular runtime for reproducible
-         ! open-shell densities across CP2K MPI ranks.
-         gauxc_grid_result = gauxc_create_grid( &
-                             gauxc_mol, &
-                             gauxc_basis, &
-                             grid_type, &
-                             radial_quadrature, &
-                             pruning_scheme, &
-                             lb_exec_space, &
-                             batch_size, &
-                             device_runtime_fill_fraction, &
-                             gauxc_status, &
-                             mpi_comm=mp_comm_self%get_handle())
-      ELSE
-         ! Use the QS force-evaluation communicator rather than GauXC's global
-         ! runtime.  In mixed CDFT the diabatic states can be built on disjoint
-         ! MPI subgroups; using the global communicator would make GauXC wait
-         ! for ranks that are working on another state.
-         gauxc_grid_result = gauxc_create_grid( &
-                             gauxc_mol, &
-                             gauxc_basis, &
-                             grid_type, &
-                             radial_quadrature, &
-                             pruning_scheme, &
-                             lb_exec_space, &
-                             batch_size, &
-                             device_runtime_fill_fraction, &
-                             gauxc_status, &
-                             mpi_comm=para_env%get_handle())
-      END IF
-      CALL gauxc_check_status(gauxc_status)
-      gauxc_integrator_result = gauxc_create_integrator( &
-                                TRIM(xc_fun_name), &
-                                gauxc_grid_result, &
-                                int_exec_space, &
-                                lwd_kernel, &
-                                nspins, &
-                                gauxc_status)
-      CALL gauxc_check_status(gauxc_status)
-
-      IF (use_gradient_self_runtime) THEN
-         ! Upstream GauXC does not yet support OneDFT/SKALA nuclear gradients
-         ! on an MPI runtime.  Keep the energy/VXC path on the normal MPI
-         ! runtime and use an isolated runtime only for the replicated gradient.
-         gauxc_gradient_grid_result = gauxc_create_grid( &
-                                      gauxc_mol, &
-                                      gauxc_basis, &
-                                      grid_type, &
-                                      radial_quadrature, &
-                                      pruning_scheme, &
-                                      lb_exec_space, &
-                                      batch_size, &
-                                      device_runtime_fill_fraction, &
-                                      gauxc_status, &
-                                      mpi_comm=mp_comm_self%get_handle())
-         CALL gauxc_check_status(gauxc_status)
-         gauxc_gradient_integrator_result = gauxc_create_integrator( &
-                                            TRIM(xc_fun_name), &
-                                            gauxc_gradient_grid_result, &
-                                            int_exec_space, &
-                                            lwd_kernel, &
-                                            nspins, &
-                                            gauxc_status)
          CALL gauxc_check_status(gauxc_status)
       END IF
 
