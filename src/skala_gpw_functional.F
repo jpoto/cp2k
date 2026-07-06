@@ -1491,9 +1491,10 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
          INTENT(OUT)                                     :: grad_grad
 
-      INTEGER                                            :: base, feature_pos, i, j, k, local_row, &
-                                                            nflat_local, nroute_grad_per_point, &
-                                                            nroute_points, phase_handle, point_pos, row
+      INTEGER                                            :: base, chunk_row, feature_pos, i, j, k, &
+                                                            local_row, nflat_local, &
+                                                            nroute_grad_per_point, nroute_points, &
+                                                            phase_handle, point_pos, row
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: route_grad_return_recv_counts, &
                                                             route_grad_return_recv_displs, &
                                                             route_grad_return_send_counts, &
@@ -1513,7 +1514,7 @@ CONTAINS
          IF (features%uses_collapsed_rks_dynamic) &
             nroute_grad_per_point = ncollapsed_grad_per_point
          ALLOCATE (send_grad_buffer(MAX(1, nroute_grad_per_point*features%chunk_feature_count)), &
-                   recv_grad_buffer(MAX(1, nroute_grad_per_point*nroute_points)), &
+                   recv_grad_buffer(MAX(1, nroute_grad_per_point*features%chunk_feature_count)), &
                    route_grad_return_send_counts(SIZE(features%route_point_recv_counts)), &
                    route_grad_return_send_displs(SIZE(features%route_point_recv_displs)), &
                    route_grad_return_recv_counts(SIZE(features%route_point_send_counts)), &
@@ -1546,10 +1547,10 @@ CONTAINS
          density_grad = 0.0_dp
          grad_grad = 0.0_dp
          kin_grad = 0.0_dp
-         DO point_pos = 1, nroute_points
-            local_row = features%route_send_local_rows(point_pos)
+         DO chunk_row = 1, features%chunk_feature_count
+            local_row = features%route_send_local_rows(chunk_row)
             CPASSERT(local_row >= 1 .AND. local_row <= nflat_local)
-            base = nroute_grad_per_point*(point_pos - 1)
+            base = nroute_grad_per_point*(features%route_recv_point_for_chunk(chunk_row) - 1)
             IF (features%uses_collapsed_rks_dynamic) THEN
                density_grad(local_row, :) = density_grad(local_row, :) + &
                                             recv_grad_buffer(base + 1)

@@ -64,6 +64,7 @@ MODULE skala_gpw_features
                                                             route_grad_return_send_counts, &
                                                             route_grad_return_send_displs, &
                                                             route_local_dest, chunk_return_positions, &
+                                                            route_recv_point_for_chunk, &
                                                             route_point_recv_counts, &
                                                             route_point_recv_displs, &
                                                             route_point_send_counts, &
@@ -143,6 +144,7 @@ MODULE skala_gpw_features
                                                            local_feature_counts, local_feature_offsets, &
                                                            local_feature_rows, &
                                                            chunk_return_positions, &
+                                                           route_recv_point_for_chunk, &
                                                            route_grad_return_recv_counts, &
                                                            route_grad_return_recv_displs, &
                                                            route_grad_return_send_counts, &
@@ -1156,13 +1158,15 @@ CONTAINS
       INTEGER                                            :: chunk_row, dest, local_feature, point_pos, row
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: cursor, recv_meta, send_meta
 
-      ALLOCATE (cache%route_local_dest(SIZE(local_to_global)), &
-                cache%route_send_local_rows(SIZE(local_to_global)), &
-                cache%chunk_return_positions(cache%chunk_feature_count), &
-                cursor(SIZE(cache%route_point_send_counts)))
+ALLOCATE (cache%route_local_dest(SIZE(local_to_global)), &
+                 cache%route_send_local_rows(SIZE(local_to_global)), &
+                 cache%chunk_return_positions(cache%chunk_feature_count), &
+                 cache%route_recv_point_for_chunk(cache%chunk_feature_count), &
+                 cursor(SIZE(cache%route_point_send_counts)))
       cache%route_point_send_counts = 0
       cache%route_send_local_rows = 0
       cache%chunk_return_positions = 0
+      cache%route_recv_point_for_chunk = 0
       DO local_feature = 1, SIZE(local_to_global)
          dest = feature_row_chunk_owner(local_to_global(local_feature), &
                                         cache%chunk_feature_counts, &
@@ -1194,14 +1198,15 @@ CONTAINS
                           cache%route_point_send_displs, recv_meta, &
                           cache%route_point_recv_counts, &
                           cache%route_point_recv_displs)
-      DO point_pos = 1, cache%chunk_feature_count
-         row = recv_meta(point_pos)
-         chunk_row = row - cache%chunk_feature_begin + 1
-         CPASSERT(chunk_row >= 1 .AND. chunk_row <= cache%chunk_feature_count)
-         cache%chunk_return_positions(chunk_row) = point_pos
-      END DO
+DO point_pos = 1, cache%chunk_feature_count
+          row = recv_meta(point_pos)
+          chunk_row = row - cache%chunk_feature_begin + 1
+          CPASSERT(chunk_row >= 1 .AND. chunk_row <= cache%chunk_feature_count)
+          cache%chunk_return_positions(chunk_row) = point_pos
+          cache%route_recv_point_for_chunk(point_pos) = chunk_row
+       END DO
 
-      cache%route_grad_return_send_counts(:) = ngrad_per_point*cache%route_point_recv_counts
+       cache%route_grad_return_send_counts(:) = ngrad_per_point*cache%route_point_recv_counts
       cache%route_grad_return_send_displs(:) = ngrad_per_point*cache%route_point_recv_displs
       cache%route_grad_return_recv_counts(:) = ngrad_per_point*cache%route_point_send_counts
       cache%route_grad_return_recv_displs(:) = ngrad_per_point*cache%route_point_send_displs
@@ -1309,14 +1314,17 @@ CONTAINS
             ALLOCATE (features%chunk_density(cached_layout%chunk_feature_count, 1), &
                       features%chunk_grad(cached_layout%chunk_feature_count, 3, 1), &
                       features%chunk_kin(cached_layout%chunk_feature_count, 1), &
-                      features%chunk_return_positions(cached_layout%chunk_feature_count))
+                      features%chunk_return_positions(cached_layout%chunk_feature_count), &
+                      features%route_recv_point_for_chunk(cached_layout%chunk_feature_count))
          ELSE
             ALLOCATE (features%chunk_density(cached_layout%chunk_feature_count, 2), &
                       features%chunk_grad(cached_layout%chunk_feature_count, 3, 2), &
                       features%chunk_kin(cached_layout%chunk_feature_count, 2), &
-                      features%chunk_return_positions(cached_layout%chunk_feature_count))
+                      features%chunk_return_positions(cached_layout%chunk_feature_count), &
+                      features%route_recv_point_for_chunk(cached_layout%chunk_feature_count))
          END IF
          features%chunk_return_positions(:) = cached_layout%chunk_return_positions
+         features%route_recv_point_for_chunk(:) = cached_layout%route_recv_point_for_chunk
 
          DO chunk_row = 1, cached_layout%chunk_feature_count
             point_pos = cached_layout%chunk_return_positions(chunk_row)
@@ -1468,6 +1476,7 @@ CONTAINS
          DEALLOCATE (cache%route_grad_return_send_displs)
       IF (ALLOCATED(cache%route_local_dest)) DEALLOCATE (cache%route_local_dest)
       IF (ALLOCATED(cache%chunk_return_positions)) DEALLOCATE (cache%chunk_return_positions)
+      IF (ALLOCATED(cache%route_recv_point_for_chunk)) DEALLOCATE (cache%route_recv_point_for_chunk)
       IF (ALLOCATED(cache%route_point_recv_counts)) DEALLOCATE (cache%route_point_recv_counts)
       IF (ALLOCATED(cache%route_point_recv_displs)) DEALLOCATE (cache%route_point_recv_displs)
       IF (ALLOCATED(cache%route_point_send_counts)) DEALLOCATE (cache%route_point_send_counts)
@@ -1592,6 +1601,7 @@ CONTAINS
       IF (ALLOCATED(features%chunk_grad_counts)) DEALLOCATE (features%chunk_grad_counts)
       IF (ALLOCATED(features%chunk_grad_displs)) DEALLOCATE (features%chunk_grad_displs)
       IF (ALLOCATED(features%chunk_return_positions)) DEALLOCATE (features%chunk_return_positions)
+      IF (ALLOCATED(features%route_recv_point_for_chunk)) DEALLOCATE (features%route_recv_point_for_chunk)
       IF (ALLOCATED(features%route_grad_return_recv_counts)) &
          DEALLOCATE (features%route_grad_return_recv_counts)
       IF (ALLOCATED(features%route_grad_return_recv_displs)) &
