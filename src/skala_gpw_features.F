@@ -1158,11 +1158,11 @@ CONTAINS
       INTEGER                                            :: chunk_row, dest, local_feature, point_pos, row
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: cursor, recv_meta, send_meta
 
-ALLOCATE (cache%route_local_dest(SIZE(local_to_global)), &
-                 cache%route_send_local_rows(SIZE(local_to_global)), &
-                 cache%chunk_return_positions(cache%chunk_feature_count), &
-                 cache%route_recv_point_for_chunk(cache%chunk_feature_count), &
-                 cursor(SIZE(cache%route_point_send_counts)))
+      ALLOCATE (cache%route_local_dest(SIZE(local_to_global)), &
+                cache%route_send_local_rows(SIZE(local_to_global)), &
+                cache%chunk_return_positions(cache%chunk_feature_count), &
+                cache%route_recv_point_for_chunk(cache%chunk_feature_count), &
+                cursor(SIZE(cache%route_point_send_counts)))
       cache%route_point_send_counts = 0
       cache%route_send_local_rows = 0
       cache%chunk_return_positions = 0
@@ -1198,15 +1198,15 @@ ALLOCATE (cache%route_local_dest(SIZE(local_to_global)), &
                           cache%route_point_send_displs, recv_meta, &
                           cache%route_point_recv_counts, &
                           cache%route_point_recv_displs)
-DO point_pos = 1, cache%chunk_feature_count
-          row = recv_meta(point_pos)
-          chunk_row = row - cache%chunk_feature_begin + 1
-          CPASSERT(chunk_row >= 1 .AND. chunk_row <= cache%chunk_feature_count)
-          cache%chunk_return_positions(chunk_row) = point_pos
-          cache%route_recv_point_for_chunk(point_pos) = chunk_row
-       END DO
+      DO point_pos = 1, cache%chunk_feature_count
+         row = recv_meta(point_pos)
+         chunk_row = row - cache%chunk_feature_begin + 1
+         CPASSERT(chunk_row >= 1 .AND. chunk_row <= cache%chunk_feature_count)
+         cache%chunk_return_positions(chunk_row) = point_pos
+         cache%route_recv_point_for_chunk(point_pos) = chunk_row
+      END DO
 
-       cache%route_grad_return_send_counts(:) = ngrad_per_point*cache%route_point_recv_counts
+      cache%route_grad_return_send_counts(:) = ngrad_per_point*cache%route_point_recv_counts
       cache%route_grad_return_send_displs(:) = ngrad_per_point*cache%route_point_recv_displs
       cache%route_grad_return_recv_counts(:) = ngrad_per_point*cache%route_point_send_counts
       cache%route_grad_return_recv_displs(:) = ngrad_per_point*cache%route_point_send_displs
