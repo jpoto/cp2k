@@ -142,6 +142,7 @@ QS/regtest-gauxc-api                                        gauxc
 QS/regtest-gauxc-api-debug                                  gauxc
 QS/regtest-gauxc-cdft                                       gauxc
 QS/regtest-gauxc-skala                                      gauxc
+QS/regtest-skala-native                                     gauxc
 QS/regtest-gauxc-gpw-mol                                    gauxc
 QS/regtest-gauxc-gpw-nlcc                                   gauxc
 QS/regtest-gauxc-gpw-coords                                 gauxc

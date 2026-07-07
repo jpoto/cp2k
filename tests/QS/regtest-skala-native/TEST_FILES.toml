@@ -1,0 +1,11 @@
+# Periodic tests using SKALA neural network functional
+#
+# Tests compare NATIVE_GRID (CP2K native grid) vs GAUXC_GRID (external GauXC grid)
+# for periodic systems with SKALA neural network functional
+#
+# All tests use PERIODIC_REFERENCE T for GauXC to ensure proper periodic handling.
+#
+"H2_PERIODIC_NATIVE_SKALA.inp"      = [{matcher="E_total", tol=1e-8,  ref=-1.170490688064866}]
+"H2_PERIODIC_GAUXC_SKALA.inp"       = [{matcher="E_total", tol=1e-8,  ref=-1.17073289822638}]
+"H2O_PERIODIC_NATIVE_SKALA.inp"     = [{matcher="E_total", tol=1e-8,  ref=-17.216280821881227}]
+"H2O_PERIODIC_GAUXC_SKALA.inp"      = [{matcher="E_total", tol=1e-8,  ref=-17.216204890974254}]
