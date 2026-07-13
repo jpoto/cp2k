@@ -82,6 +82,8 @@ MODULE tblite_interface
    USE cp_fm_types, ONLY: copy_info_type, cp_fm_cleanup_copy_general, &
                           cp_fm_create, cp_fm_finish_copy_general, cp_fm_get_info, &
                           cp_fm_release, cp_fm_start_copy_general, cp_fm_type
+   USE cp_fm_pool_types, ONLY: cp_fm_pool_p_type, &
+                               fm_pool_create_fm, fm_pool_give_back_fm
    USE cp_log_handling, ONLY: cp_get_default_logger, &
                               cp_logger_type, cp_logger_get_default_io_unit
    USE cp_output_handling, ONLY: cp_print_key_should_output, &
@@ -121,6 +123,7 @@ MODULE tblite_interface
    USE qs_integral_utils, ONLY: basis_set_list_setup, get_memory_usage
    USE qs_kind_types, ONLY: get_qs_kind, qs_kind_type, get_qs_kind_set
    USE qs_ks_types, ONLY: get_ks_env, qs_ks_env_type, set_ks_env
+   USE qs_matrix_pools, ONLY: mpools_get
    USE qs_neighbor_list_types, ONLY: neighbor_list_iterator_create, neighbor_list_iterate, &
                                      get_iterator_info, neighbor_list_set_p_type, &
                                      neighbor_list_iterator_p_type, neighbor_list_iterator_release
@@ -1250,23 +1253,27 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_part
       TYPE(copy_info_type), ALLOCATABLE, &
          DIMENSION(:, :, :)                              :: info
+      TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_ao_fm_pools
       TYPE(cp_fm_type)                                   :: fmdummy
-      TYPE(cp_fm_type), DIMENSION(:), POINTER            :: fmwork
+      TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:)        :: fmwork
       TYPE(kpoint_env_type), POINTER                     :: kp
       TYPE(mp_para_env_type), POINTER                    :: para_env
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
 
-      NULLIFY (fmwork, kp, para_env, scf_env)
-      CALL get_qs_env(qs_env, scf_env=scf_env)
-      CPASSERT(ASSOCIATED(scf_env))
-      fmwork => scf_env%scf_work1
+      NULLIFY (ao_ao_fm_pools, kp, para_env)
+      CALL mpools_get(qs_env%mpools, ao_ao_fm_pools=ao_ao_fm_pools)
+      CPASSERT(ASSOCIATED(ao_ao_fm_pools))
+      CPASSERT(SIZE(ao_ao_fm_pools) >= 1)
+      CPASSERT(ASSOCIATED(ao_ao_fm_pools(1)%pool))
       para_env => kpoints%blacs_env_all%para_env
       CALL get_kpoint_info(kpoints, nkp=nkp, kp_range=kp_range, use_real_wfn=use_real_wfn)
       nspin = tb%wfn%nspin
       nc = 1
       IF (.NOT. use_real_wfn) nc = 2
-      CPASSERT(SIZE(fmwork) >= nc)
       CPASSERT(SIZE(density, 3) == nspin .AND. SIZE(density, 4) == nkp)
+      ALLOCATE (fmwork(nc))
+      DO ic = 1, nc
+         CALL fm_pool_create_fm(ao_ao_fm_pools(1)%pool, fmwork(ic))
+      END DO
       ALLOCATE (dense_part(SIZE(density, 1), SIZE(density, 2)))
       ALLOCATE (info(nc, nkp, nspin))
 
@@ -1314,6 +1321,10 @@ CONTAINS
             END DO
          END DO
       END DO
+      DO ic = 1, nc
+         CALL fm_pool_give_back_fm(ao_ao_fm_pools(1)%pool, fmwork(ic))
+      END DO
+      DEALLOCATE (fmwork)
       DEALLOCATE (dense_part, info)
 
    END SUBROUTINE tb_collect_kpoint_density
