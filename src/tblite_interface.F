@@ -30,6 +30,7 @@ MODULE tblite_interface
                                  acp_image_type, hamiltonian_image_type, &
                                  cp2k_build_gamma_h0, cp2k_build_image_acp, &
                                  cp2k_build_image_h0, cp2k_exchange_kpoint, &
+                                 cp2k_exchange_kpoint_gradient, &
                                  cp2k_gamma_gradient, cp2k_prepare_exchange, &
                                  cp2k_get_cgto, cp2k_multipole_cgto, &
                                  cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
@@ -77,9 +78,10 @@ MODULE tblite_interface
    USE cp_dbcsr_contrib, ONLY: dbcsr_dot, dbcsr_print
    USE cp_dbcsr_cp2k_link, ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations, ONLY: dbcsr_allocate_matrix_set, dbcsr_deallocate_matrix_set
+   USE cp_fm_struct, ONLY: cp_fm_struct_type
    USE cp_fm_types, ONLY: copy_info_type, cp_fm_cleanup_copy_general, &
-                          cp_fm_finish_copy_general, cp_fm_get_info, &
-                          cp_fm_start_copy_general, cp_fm_type
+                          cp_fm_create, cp_fm_finish_copy_general, cp_fm_get_info, &
+                          cp_fm_release, cp_fm_start_copy_general, cp_fm_type
    USE cp_log_handling, ONLY: cp_get_default_logger, &
                               cp_logger_type, cp_logger_get_default_io_unit
    USE cp_output_handling, ONLY: cp_print_key_should_output, &
@@ -103,7 +105,7 @@ MODULE tblite_interface
                               tblite_solver_gvd, tblite_solver_gvr
    USE input_section_types, ONLY: section_vals_val_get
    USE kinds, ONLY: default_path_length, default_string_length, dp, int_8
-   USE kpoint_methods, ONLY: rskp_transform
+   USE kpoint_methods, ONLY: kpoint_density_transform, rskp_transform
    USE kpoint_types, ONLY: get_kpoint_info, kpoint_env_type, kpoint_sym_type, kpoint_type
    USE memory_utilities, ONLY: reallocate
    USE message_passing, ONLY: mp_para_env_type
@@ -161,7 +163,7 @@ MODULE tblite_interface
    PUBLIC :: tb_gxtb_gamma_gradient
 #if defined(__TBLITE_GXTB)
    PUBLIC :: tb_apply_gxtb_kpoint_fm, tb_mix_gxtb_gamma_fm, tb_prepare_gxtb_kpoint_mixer, &
-             tb_sync_gxtb_kpoint_density
+             tb_sync_gxtb_kpoint_density, tb_gxtb_kpoint_exchange_gradient
 #endif
    PUBLIC :: tb_reference_cli_compare
 
@@ -1039,7 +1041,8 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: dense
       TYPE(dbcsr_type), POINTER                          :: matrix
 
-      INTEGER                                            :: col, col_first, col_nao, row, row_first, row_nao
+      INTEGER                                            :: col, col_first, col_nao, row, row_first, &
+                                                            row_nao
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
       TYPE(dbcsr_iterator_type)                          :: iter
 
@@ -1068,7 +1071,8 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: dense
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
-      INTEGER                                            :: col, col_first, col_nao, row, row_first, row_nao
+      INTEGER                                            :: col, col_first, col_nao, row, row_first, &
+                                                            row_nao
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
       TYPE(dbcsr_iterator_type)                          :: iter
 
@@ -1098,9 +1102,9 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE tb_fm_to_dense(matrix, dense, para_env)
 
-      TYPE(cp_fm_type), INTENT(IN)                      :: matrix
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)       :: dense
-      TYPE(mp_para_env_type), POINTER                   :: para_env
+      TYPE(cp_fm_type), INTENT(IN)                       :: matrix
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: dense
+      TYPE(mp_para_env_type), POINTER                    :: para_env
 
       INTEGER                                            :: iloc, jloc, ncol_local, nrow_local
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
@@ -1197,7 +1201,8 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
       LOGICAL, INTENT(IN)                                :: antisymmetric
 
-      INTEGER                                            :: col, col_first, col_nao, row, row_first, row_nao
+      INTEGER                                            :: col, col_first, col_nao, row, row_first, &
+                                                            row_nao
       REAL(KIND=dp)                                      :: transpose_sign
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
       TYPE(dbcsr_iterator_type)                          :: iter
@@ -1243,7 +1248,8 @@ CONTAINS
       INTEGER, DIMENSION(2)                              :: kp_range
       LOGICAL                                            :: my_kpgrp, use_real_wfn
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_part
-      TYPE(copy_info_type), ALLOCATABLE, DIMENSION(:, :, :) :: info
+      TYPE(copy_info_type), ALLOCATABLE, &
+         DIMENSION(:, :, :)                              :: info
       TYPE(cp_fm_type)                                   :: fmdummy
       TYPE(cp_fm_type), DIMENSION(:), POINTER            :: fmwork
       TYPE(kpoint_env_type), POINTER                     :: kp
@@ -1293,7 +1299,7 @@ CONTAINS
                   density(:, :, ispin, ik) = CMPLX(dense_part, 0.0_dp, KIND=dp)
                ELSE
                   density(:, :, ispin, ik) = density(:, :, ispin, ik) + &
-                                              CMPLX(0.0_dp, dense_part, KIND=dp)
+                                             CMPLX(0.0_dp, dense_part, KIND=dp)
                END IF
             END DO
          END DO
@@ -1349,7 +1355,7 @@ CONTAINS
       DO ispin = 1, nspin
          CALL tb_dbcsr_to_dense(tb, matrix_ks(ispin)%matrix, raw_fock(:, :, ispin), para_env)
          hermitian_error = MAXVAL(ABS(raw_fock(:, :, ispin) - &
-                                       TRANSPOSE(raw_fock(:, :, ispin))))
+                                      TRANSPOSE(raw_fock(:, :, ispin))))
          IF (hermitian_error > 1.0E-10_dp) &
             CPABORT("CP2K supplied a non-symmetric Gamma Fock matrix to the g-xTB mixer")
       END DO
@@ -1359,7 +1365,7 @@ CONTAINS
       mixed_fock = RESHAPE(mixed_vector, SHAPE(mixed_fock))
       DO ispin = 1, nspin
          hermitian_error = MAXVAL(ABS(mixed_fock(:, :, ispin) - &
-                                       TRANSPOSE(mixed_fock(:, :, ispin))))
+                                      TRANSPOSE(mixed_fock(:, :, ispin))))
          IF (hermitian_error > 1.0E-10_dp) &
             CPABORT("save_tblite returned a non-symmetric mixed Gamma Fock matrix")
          CALL tb_dense_to_fm(mixed_fock(:, :, ispin), fmwork(ispin))
@@ -1378,14 +1384,15 @@ CONTAINS
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
 
-      INTEGER                                            :: block_size, ik, ispin, nao, nc, ndim, nkp, &
-                                                            nspin, offset
+      COMPLEX(KIND=dp), ALLOCATABLE, &
+         DIMENSION(:, :, :, :)                           :: raw_fock
+      INTEGER                                            :: block_size, ik, ispin, nao, nc, ndim, &
+                                                            nkp, nspin, offset
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error, scale
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: mixed_vector, raw_vector
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: fock_imag, fock_real
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :) :: raw_fock
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mp_para_env_type), POINTER                    :: para_env
@@ -1456,9 +1463,9 @@ CONTAINS
             raw_fock(:, :, ispin, ik) = CMPLX(fock_real, fock_imag, KIND=dp)
             IF (tb%exchange_fock_kp_valid) &
                raw_fock(:, :, ispin, ik) = raw_fock(:, :, ispin, ik) + &
-                                             tb%exchange_fock_kp(:, :, ispin, ik)
+                                           tb%exchange_fock_kp(:, :, ispin, ik)
             hermitian_error = MAXVAL(ABS(raw_fock(:, :, ispin, ik) - &
-                                          CONJG(TRANSPOSE(raw_fock(:, :, ispin, ik)))))
+                                         CONJG(TRANSPOSE(raw_fock(:, :, ispin, ik)))))
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("CP2K supplied a non-Hermitian k-point Fock matrix to the g-xTB mixer")
          END DO
@@ -1502,7 +1509,7 @@ CONTAINS
             END IF
             tb%mixed_fock_kp(:, :, ispin, ik) = CMPLX(fock_real, fock_imag, KIND=dp)
             hermitian_error = MAXVAL(ABS(tb%mixed_fock_kp(:, :, ispin, ik) - &
-                                          CONJG(TRANSPOSE(tb%mixed_fock_kp(:, :, ispin, ik)))))
+                                         CONJG(TRANSPOSE(tb%mixed_fock_kp(:, :, ispin, ik)))))
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("save_tblite returned a non-Hermitian mixed k-point Fock matrix")
          END DO
@@ -1525,11 +1532,12 @@ CONTAINS
       TYPE(qs_environment_type), POINTER                 :: qs_env
       LOGICAL, INTENT(IN)                                :: diis_step
 
+      COMPLEX(KIND=dp), ALLOCATABLE, &
+         DIMENSION(:, :, :, :)                           :: current_density, mixed_density
       INTEGER                                            :: ik, ikk, ispin, nao, nkp, nspin
       INTEGER, DIMENSION(2)                              :: kp_range
       LOGICAL                                            :: use_real_wfn
       REAL(KIND=dp)                                      :: alpha, hermitian_error
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :) :: current_density, mixed_density
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(kpoint_env_type), POINTER                     :: kp
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -1572,7 +1580,7 @@ CONTAINS
          CPASSERT(ASSOCIATED(kp))
          DO ispin = 1, nspin
             hermitian_error = MAXVAL(ABS(mixed_density(:, :, ispin, ik) - &
-                                          CONJG(TRANSPOSE(mixed_density(:, :, ispin, ik)))))
+                                         CONJG(TRANSPOSE(mixed_density(:, :, ispin, ik)))))
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("CP2K g-xTB density mixing produced a non-Hermitian P(k)")
             CALL tb_dense_to_fm(REAL(mixed_density(:, :, ispin, ik), KIND=dp), &
@@ -1602,21 +1610,23 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
-      INTEGER                                            :: ik, ishell, ispin, isym, nao, nkp, nspin, &
-                                                            source_atom, source_shell, target_atom, &
-                                                            target_shell
-      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: full_grid, use_real_wfn
-      REAL(KIND=dp)                                      :: exchange_energy, hermitian_error, star_weight
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_imag, overlap_real
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: fock
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :) :: density
+      COMPLEX(KIND=dp), ALLOCATABLE, &
+         DIMENSION(:, :, :, :)                           :: density
+      INTEGER                                            :: ik, ishell, ispin, isym, nao, nkp, &
+                                                            nspin, source_atom, source_shell, &
+                                                            target_atom, target_shell
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      LOGICAL                                            :: full_grid, use_real_wfn
+      REAL(KIND=dp)                                      :: exchange_energy, hermitian_error, &
+                                                            star_weight
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_imag, overlap_real
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(error_type), ALLOCATABLE                      :: error
-      TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
+      TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
 
@@ -1678,7 +1688,7 @@ CONTAINS
             CPABORT("CP2K supplied a non-Hermitian k-point overlap matrix to save_tblite")
          DO ispin = 1, nspin
             hermitian_error = MAXVAL(ABS(density(:, :, ispin, ik) - &
-                                          CONJG(TRANSPOSE(density(:, :, ispin, ik)))))
+                                         CONJG(TRANSPOSE(density(:, :, ispin, ik)))))
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("CP2K supplied a non-Hermitian k-point density matrix to save_tblite")
          END DO
@@ -1694,7 +1704,7 @@ CONTAINS
             CPABORT("save_tblite returned a non-finite k-point exchange response")
          DO ispin = 1, nspin
             hermitian_error = MAXVAL(ABS(fock(:, :, ispin) - &
-                                          CONJG(TRANSPOSE(fock(:, :, ispin)))))
+                                         CONJG(TRANSPOSE(fock(:, :, ispin)))))
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("save_tblite returned a non-Hermitian k-point exchange matrix")
          END DO
@@ -1731,7 +1741,7 @@ CONTAINS
                         source_shell = tb%calc%bas%ish_at(source_atom) + ishell
                         target_shell = tb%calc%bas%ish_at(target_atom) + ishell
                         tb%pot%vsh(target_shell, 1) = tb%pot%vsh(target_shell, 1) + &
-                                                       star_weight*exchange_vsh(source_shell)
+                                                      star_weight*exchange_vsh(source_shell)
                      END DO
                   END DO
                END DO
@@ -1747,6 +1757,247 @@ CONTAINS
       tb%exchange_fock_kp_valid = .TRUE.
 
    END SUBROUTINE tb_build_gxtb_kpoint_exchange
+
+! **************************************************************************************************
+!> Differentiate the explicit g-xTB exchange contribution on a CP2K k-point mesh.
+!>
+!> The save_tblite kernel returns the response of one irreducible k-point without its mesh weight.
+!> Atomic gradients and stress are expanded over the complete k star here.  Its overlap response
+!> transforms like a density matrix and is folded back to CP2K's real-space image convention by
+!> kpoint_density_transform, including weights, symmetry, Bloch phases, and image orientation.
+!>
+!> This isolated bridge puts the spin-summed exchange overlap response into matrix_w(1,:).  The
+!> ordinary alpha/beta channels must still be separate at entry; a later up/down-to-charge/magnet
+!> conversion adds matrix_w(2,:) to channel one.  H0/ACP response and final force/virial dispatch
+!> deliberately remain outside.
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_kpoint_exchange_gradient(qs_env, tb, gradient, sigma)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(tblite_type), POINTER                         :: tb
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: gradient, sigma
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap, overlap_grad
+      COMPLEX(KIND=dp), ALLOCATABLE, &
+         DIMENSION(:, :, :, :)                           :: density
+      INTEGER                                            :: ic, ik, ikk, img, ispin, isym, kplocal, &
+                                                            nao, nat, nc, nimg, nkp, nspin, &
+                                                            source_atom, target_atom
+      INTEGER, DIMENSION(2)                              :: kp_range
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      LOGICAL                                            :: full_grid, use_real_wfn
+      REAL(KIND=dp)                                      :: hermitian_error, star_weight
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: k_gradient, k_sigma, overlap_imag, &
+                                                            overlap_real
+      REAL(KIND=dp), DIMENSION(3, 3)                     :: rotated_sigma
+      TYPE(cp_fm_struct_type), POINTER                   :: matrix_struct
+      TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :, :)  :: pmat_ext
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: exchange_w_rs, matrix_s, matrix_w
+      TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
+      TYPE(error_type), ALLOCATABLE                      :: error
+      TYPE(kpoint_env_type), POINTER                     :: kp
+      TYPE(kpoint_sym_type), POINTER                     :: kpsym
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_nl
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
+
+      NULLIFY (cell_to_index, cmatrix, exchange_w_rs, kp, kpoints, kpsym, matrix_s, &
+               matrix_struct, matrix_w, para_env, rmatrix, sab_nl, scf_env)
+      gradient = 0.0_dp
+      sigma = 0.0_dp
+
+      CALL get_qs_env(qs_env, kpoints=kpoints, matrix_s_kp=matrix_s, matrix_w_kp=matrix_w, &
+                      para_env=para_env, scf_env=scf_env)
+      IF (.NOT. ASSOCIATED(kpoints)) CPABORT("Missing k-point environment for g-xTB exchange gradient")
+      IF (.NOT. ASSOCIATED(matrix_s)) CPABORT("Missing overlap images for g-xTB exchange gradient")
+      IF (.NOT. ASSOCIATED(matrix_w)) &
+         CPABORT("Missing energy-weighted density images for g-xTB exchange gradient")
+      IF (.NOT. ASSOCIATED(para_env)) &
+         CPABORT("Missing parallel environment for g-xTB exchange gradient")
+      IF (.NOT. ASSOCIATED(scf_env)) CPABORT("Missing SCF environment for g-xTB exchange gradient")
+      IF (.NOT. ASSOCIATED(scf_env%scf_work1)) &
+         CPABORT("Missing full-matrix work space for g-xTB exchange gradient")
+
+      CALL get_kpoint_info(kpoints, nkp=nkp, kp_range=kp_range, full_grid=full_grid, &
+                           use_real_wfn=use_real_wfn, cell_to_index=cell_to_index, sab_nl=sab_nl)
+      IF (.NOT. ASSOCIATED(cell_to_index) .OR. .NOT. ASSOCIATED(sab_nl)) &
+         CPABORT("Incomplete k-point image map for g-xTB exchange gradient")
+      IF (ABS(SUM(kpoints%wkp(1:nkp)) - 1.0_dp) > 1.0E-10_dp) &
+         CPABORT("g-xTB k-point weights do not sum to one")
+
+      nao = tb%calc%bas%nao
+      nat = tb%mol%nat
+      nspin = tb%wfn%nspin
+      nimg = SIZE(matrix_s, 2)
+      nc = MERGE(1, 2, use_real_wfn)
+      kplocal = kp_range(2) - kp_range(1) + 1
+      CPASSERT(SIZE(gradient, 1) == 3 .AND. SIZE(gradient, 2) == nat)
+      CPASSERT(SIZE(sigma, 1) == 3 .AND. SIZE(sigma, 2) == 3)
+      CPASSERT(SIZE(matrix_s, 1) >= 1)
+      CPASSERT(SIZE(matrix_w, 1) >= nspin .AND. SIZE(matrix_w, 2) == nimg)
+      CPASSERT(SIZE(scf_env%scf_work1) >= nc)
+      CPASSERT(kplocal > 0)
+
+      ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao), &
+                overlap_grad(nao, nao), overlap_real(nao, nao), overlap_imag(nao, nao), &
+                k_gradient(3, nat), k_sigma(3, 3))
+      CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+      IF (.NOT. ALL(ieee_is_finite(REAL(density, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(density)))) &
+         CPABORT("CP2K supplied a non-finite k-point density to the exchange gradient")
+
+      ! pmat_ext is local to each k-point group, just like kp%pmat.  The exchange overlap
+      ! derivative is already spin-summed by save_tblite, so only channel one is populated.  A
+      ! subsequent up/down-to-charge/magnet conversion will add the untouched beta W to this.
+      ALLOCATE (pmat_ext(kplocal, nc, nspin))
+      DO ikk = 1, kplocal
+         kp => kpoints%kp_env(ikk)%kpoint_env
+         CPASSERT(ASSOCIATED(kp))
+         CPASSERT(SIZE(kp%pmat, 1) >= nc .AND. SIZE(kp%pmat, 2) >= nspin)
+         DO ispin = 1, nspin
+            DO ic = 1, nc
+               CALL cp_fm_get_info(kp%pmat(ic, ispin), matrix_struct=matrix_struct)
+               CPASSERT(ASSOCIATED(matrix_struct))
+               CALL cp_fm_create(pmat_ext(ikk, ic, ispin), matrix_struct, set_zero=.TRUE.)
+            END DO
+         END DO
+      END DO
+
+      ALLOCATE (rmatrix, cmatrix)
+      CALL dbcsr_create(rmatrix, template=matrix_s(1, 1)%matrix, &
+                        matrix_type=dbcsr_type_symmetric)
+      CALL dbcsr_create(cmatrix, template=matrix_s(1, 1)%matrix, &
+                        matrix_type=dbcsr_type_antisymmetric)
+      CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
+      CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
+
+      DO ik = 1, nkp
+         CALL dbcsr_set(rmatrix, 0.0_dp)
+         CALL dbcsr_set(cmatrix, 0.0_dp)
+         CALL rskp_transform(rmatrix, cmatrix, matrix_s, 1, kpoints%xkp(1:3, ik), &
+                             cell_to_index, sab_nl)
+         CALL tb_dbcsr_component_to_dense(tb, rmatrix, overlap_real, para_env, .FALSE.)
+         CALL tb_dbcsr_component_to_dense(tb, cmatrix, overlap_imag, para_env, .TRUE.)
+         overlap = CMPLX(overlap_real, overlap_imag, KIND=dp)
+         IF (.NOT. ALL(ieee_is_finite(overlap_real)) .OR. &
+             .NOT. ALL(ieee_is_finite(overlap_imag))) &
+            CPABORT("CP2K supplied a non-finite overlap to the exchange gradient")
+         hermitian_error = MAXVAL(ABS(overlap - CONJG(TRANSPOSE(overlap))))
+         IF (hermitian_error > 1.0E-10_dp) &
+            CPABORT("CP2K supplied a non-Hermitian overlap to the exchange gradient")
+         DO ispin = 1, nspin
+            hermitian_error = MAXVAL(ABS(density(:, :, ispin, ik) - &
+                                         CONJG(TRANSPOSE(density(:, :, ispin, ik)))))
+            IF (hermitian_error > 1.0E-10_dp) &
+               CPABORT("CP2K supplied a non-Hermitian density to the exchange gradient")
+         END DO
+
+         ! save_tblite owns the conversion of its internal kernel adjoints to CP2K's explicit
+         ! nuclear-gradient/stress convention; this bridge only applies mesh weights and symmetry.
+         CALL cp2k_exchange_kpoint_gradient(tb%calc, tb%mol, tb%ecache, &
+                                            density(:, :, :, ik), overlap, overlap_grad, &
+                                            k_gradient, k_sigma, error)
+         IF (ALLOCATED(error)) CPABORT("save_tblite k-point exchange gradient failed")
+         IF (.NOT. ALL(ieee_is_finite(REAL(overlap_grad, KIND=dp))) .OR. &
+             .NOT. ALL(ieee_is_finite(AIMAG(overlap_grad))) .OR. &
+             .NOT. ALL(ieee_is_finite(k_gradient)) .OR. &
+             .NOT. ALL(ieee_is_finite(k_sigma))) &
+            CPABORT("save_tblite returned a non-finite k-point exchange gradient")
+         hermitian_error = MAXVAL(ABS(overlap_grad - CONJG(TRANSPOSE(overlap_grad))))
+         IF (hermitian_error > 1.0E-10_dp) &
+            CPABORT("save_tblite returned a non-Hermitian overlap gradient")
+         IF (use_real_wfn .AND. MAXVAL(ABS(AIMAG(overlap_grad))) > 1.0E-10_dp) &
+            CPABORT("Complex exchange overlap gradient cannot use real k-point wavefunctions")
+
+         IF (ik >= kp_range(1) .AND. ik <= kp_range(2)) THEN
+            ikk = ik - kp_range(1) + 1
+            CALL tb_dense_to_fm(REAL(overlap_grad, KIND=dp), pmat_ext(ikk, 1, 1))
+            IF (.NOT. use_real_wfn) &
+               CALL tb_dense_to_fm(AIMAG(overlap_grad), pmat_ext(ikk, 2, 1))
+         END IF
+
+         IF (full_grid) THEN
+            gradient = gradient + kpoints%wkp(ik)*k_gradient
+            sigma = sigma + kpoints%wkp(ik)*k_sigma
+         ELSE
+            kpsym => kpoints%kp_sym(ik)%kpoint_sym
+            CPASSERT(ASSOCIATED(kpsym))
+            IF (kpsym%apply_symmetry) THEN
+               CPASSERT(kpsym%nwght > 0)
+               CPASSERT(ASSOCIATED(kpsym%f0))
+               CPASSERT(ASSOCIATED(kpsym%rot))
+               CPASSERT(ASSOCIATED(kpsym%rotp))
+               CPASSERT(SIZE(kpsym%f0, 1) == nat)
+               CPASSERT(SIZE(kpsym%f0, 2) >= kpsym%nwght)
+               CPASSERT(SIZE(kpsym%rot, 3) >= kpsym%nwght)
+               CPASSERT(SIZE(kpsym%rotp) >= kpsym%nwght)
+               star_weight = kpoints%wkp(ik)/REAL(kpsym%nwght, KIND=dp)
+               DO isym = 1, kpsym%nwght
+                  ! A negative rotp marks time reversal.  These real nuclear and strain
+                  ! derivatives transform with the spatial rotation only: there is no extra sign.
+                  DO source_atom = 1, nat
+                     target_atom = kpsym%f0(source_atom, isym)
+                     CPASSERT(target_atom >= 1 .AND. target_atom <= nat)
+                     gradient(:, target_atom) = gradient(:, target_atom) + star_weight* &
+                                                MATMUL(kpsym%rot(1:3, 1:3, isym), &
+                                                       k_gradient(:, source_atom))
+                  END DO
+                  rotated_sigma = MATMUL(kpsym%rot(1:3, 1:3, isym), &
+                                         MATMUL(k_sigma, &
+                                                TRANSPOSE(kpsym%rot(1:3, 1:3, isym))))
+                  sigma = sigma + star_weight*rotated_sigma
+               END DO
+            ELSE
+               ! Inversion/time-reversal-only reduction has equal real derivatives at k and -k;
+               ! its representative already carries the combined CP2K mesh weight.
+               gradient = gradient + kpoints%wkp(ik)*k_gradient
+               sigma = sigma + kpoints%wkp(ik)*k_sigma
+            END IF
+         END IF
+      END DO
+
+      CALL dbcsr_deallocate_matrix(rmatrix)
+      CALL dbcsr_deallocate_matrix(cmatrix)
+
+      CALL dbcsr_allocate_matrix_set(exchange_w_rs, nspin, nimg)
+      DO ispin = 1, nspin
+         DO img = 1, nimg
+            ALLOCATE (exchange_w_rs(ispin, img)%matrix)
+            CALL dbcsr_create(exchange_w_rs(ispin, img)%matrix, &
+                              template=matrix_s(1, 1)%matrix, &
+                              name="g-XTB EXCHANGE OVERLAP RESPONSE", &
+                              matrix_type=dbcsr_type_symmetric)
+            CALL cp_dbcsr_alloc_block_from_nbl(exchange_w_rs(ispin, img)%matrix, sab_nl)
+            CALL dbcsr_set(exchange_w_rs(ispin, img)%matrix, 0.0_dp)
+         END DO
+      END DO
+
+      CALL kpoint_density_transform(kpoints, exchange_w_rs, .TRUE., &
+                                    matrix_s(1, 1)%matrix, sab_nl, scf_env%scf_work1, &
+                                    pmat_ext=pmat_ext, overlap_rs=matrix_s)
+      DO img = 1, nimg
+         ! At Gamma save_tblite gives G_k=dE_exchange/dS=-ao_grad_gamma, while the established
+         ! Gamma path adds ao_grad_gamma to W.  Hence the image convention is W_exchange=-G_k,
+         ! with no additional factor 1/2 (the independent-pair overlap kernel already accounts for
+         ! its factor two).  Avoiding a dense round trip preserves image-block orientation exactly.
+         CALL dbcsr_add(matrix_w(1, img)%matrix, exchange_w_rs(1, img)%matrix, &
+                        alpha_scalar=1.0_dp, beta_scalar=-1.0_dp)
+      END DO
+
+      CALL dbcsr_deallocate_matrix_set(exchange_w_rs)
+      DO ispin = 1, nspin
+         DO ic = 1, nc
+            DO ikk = 1, kplocal
+               CALL cp_fm_release(pmat_ext(ikk, ic, ispin))
+            END DO
+         END DO
+      END DO
+      DEALLOCATE (pmat_ext, density, overlap, overlap_grad, overlap_real, overlap_imag, &
+                  k_gradient, k_sigma)
+
+   END SUBROUTINE tb_gxtb_kpoint_exchange_gradient
 
 ! **************************************************************************************************
 !> Apply the complete mixed g-xTB F(k), or add explicit exchange for a non-native backend.
@@ -1765,10 +2016,10 @@ CONTAINS
       INTEGER                                            :: iloc, jloc, ncol_global, ncol_local, &
                                                             nrow_global, nrow_local
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
+      LOGICAL                                            :: use_mixed
       REAL(KIND=dp), CONTIGUOUS, DIMENSION(:, :), &
          POINTER                                         :: local_data
       TYPE(tblite_type), POINTER                         :: tb
-      LOGICAL                                            :: use_mixed
 
       NULLIFY (tb)
       IF (.NOT. ASSOCIATED(qs_env)) RETURN
@@ -1812,7 +2063,7 @@ CONTAINS
                   REAL(tb%mixed_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
             ELSE
                local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                  REAL(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
+                                        REAL(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
             END IF
          END DO
       END DO
@@ -1835,7 +2086,7 @@ CONTAINS
                      AIMAG(tb%mixed_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
                ELSE
                   local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                     AIMAG(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
+                                           AIMAG(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
                END IF
             END DO
          END DO
@@ -1922,8 +2173,8 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: nimg
 
       INTEGER                                            :: acp_img, i, i_first, i_nao, iatom, ic, &
-                                                            id, img, iq, j, j_first, j_nao, jatom, &
-                                                            icol, irow
+                                                            icol, id, img, iq, irow, j_first, &
+                                                            j_nao, jatom
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: acp_map
       INTEGER, DIMENSION(3)                              :: cell
       LOGICAL                                            :: found, matched
@@ -1986,8 +2237,8 @@ CONTAINS
             hblock = TRANSPOSE(images%hamiltonian(j_first:j_first + j_nao - 1, &
                                                   i_first:i_first + i_nao - 1, ic))
             IF (acp_map(ic) > 0) hblock = hblock + &
-               TRANSPOSE(acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
-                                                i_first:i_first + i_nao - 1, acp_map(ic)))
+                                          TRANSPOSE(acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
+                                                                           i_first:i_first + i_nao - 1, acp_map(ic)))
 
             DO i = 1, dip_n
                id = i + dip_n*(ic - 1)
@@ -2018,8 +2269,8 @@ CONTAINS
             hblock = images%hamiltonian(j_first:j_first + j_nao - 1, &
                                         i_first:i_first + i_nao - 1, ic)
             IF (acp_map(ic) > 0) hblock = hblock + &
-               acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
-                                      i_first:i_first + i_nao - 1, acp_map(ic))
+                                          acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
+                                                                 i_first:i_first + i_nao - 1, acp_map(ic))
 
             DO i = 1, dip_n
                id = i + dip_n*(ic - 1)
@@ -5208,8 +5459,9 @@ CONTAINS
       CHARACTER(LEN=16)                                  :: solvation_model_name
       CHARACTER(LEN=32) :: acc_str, charge_str, efield_x_str, efield_y_str, efield_z_str, &
          etemp_guess_val_str, etemp_str, iter_str, spin_str, spinpol_str
-      CHARACTER(LEN=4*default_path_length+16) :: efield_str, etemp_guess_str, guess_str, param_str, &
-         post_processing_output_str, post_processing_str, restart_str, solvation_str, verbosity_str
+      CHARACTER(LEN=4*default_path_length+16) :: efield_str, etemp_guess_str, guess_str, &
+         param_str, post_processing_output_str, post_processing_str, restart_str, solvation_str, &
+         verbosity_str
       CHARACTER(LEN=8)                                   :: guess, method, solver
       CHARACTER(LEN=8*default_path_length)               :: command
       CHARACTER(LEN=default_path_length)                 :: file_base, gen_file, grad_file, &
