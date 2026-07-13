@@ -10,7 +10,7 @@ tblite_ver="0.6.0"
 tblite_sha256="372281aedb89234168d00eb691addb303197a9462a9c55d145c835f2cf5e8b42"
 tblite_sdftd3_ver="1.4.0"
 tblite_dftd4_ver="4.2.0"
-save_tblite_rev="85cc01e0de19c7386eef6ea927429dd6aa67b11a"
+save_tblite_rev="841ba6706144275698c923a80d4d223e160d4399"
 save_tblite_repo="${SAVE_TBLITE_REPOSITORY:-https://github.com/DCM-Uni-Paderborn/save_tblite.git}"
 save_tblite_src_dir="save_tblite-${save_tblite_rev}"
 
