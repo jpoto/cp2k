@@ -1,2 +1,6 @@
-"H2O_gxtb_pbc.inp" = [{matcher="E_total", tol=1.0E-8, ref=-4.065297749760279}]
+"H2O_gxtb_pbc.inp"           = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346}]
+"H2O_gxtb_force.inp"         = [{matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_stress.inp"        = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346}]
+"O2_gxtb_uks_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-150.34083895130186}]
 #EOF
