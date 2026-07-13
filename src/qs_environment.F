@@ -1698,6 +1698,8 @@ CONTAINS
             scf_control%smear%method = smear_fermi_dirac
             scf_control%smear%electronic_temperature = 300._dp/kelvin
             scf_control%smear%eps_fermi_dirac = 1.E-6_dp
+            ! Preserve the requested alpha/beta electron counts as native tblite does.
+            scf_control%smear%fixed_mag_mom = -1.0_dp
          END IF
       END IF
       dft_control%smear = scf_control%smear%do_smear
@@ -2180,7 +2182,9 @@ CONTAINS
 
       IF (dft_control%nspins == 2) THEN
          ! Check and set number of added (unoccupied) orbitals for beta spin
-         IF (scf_control%added_mos(2) < 0) THEN
+         IF (dft_control%qs_control%xtb_control%do_tblite .AND. .NOT. scf_control%use_ot) THEN
+            n_mo_add = n_ao - n_mo(2)  ! tblite needs all beta MOs as well
+         ELSE IF (scf_control%added_mos(2) < 0) THEN
             n_mo_add = n_ao - n_mo(2)  ! use all available MOs
          ELSE IF (scf_control%added_mos(2) > 0) THEN
             n_mo_add = scf_control%added_mos(2)

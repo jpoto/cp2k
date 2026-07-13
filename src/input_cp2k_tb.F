@@ -28,7 +28,8 @@ MODULE input_cp2k_tb
         tblite_cli_solution_state_bar1mol, tblite_cli_solution_state_gsolv, &
         tblite_cli_solution_state_reference, tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
         tblite_cli_solvation_gb, tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, &
-        tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, tblite_mixer_damping_default, &
+        tblite_guess_auto, tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
+        tblite_mixer_damping_default, &
         tblite_mixer_iterations_default, tblite_mixer_max_weight_default, &
         tblite_mixer_memory_inherit, tblite_mixer_min_weight_default, tblite_mixer_omega0_default, &
         tblite_mixer_weight_factor_default, tblite_scc_mixer_auto, tblite_scc_mixer_cp2k, &
@@ -918,17 +919,19 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="GUESS", &
                           description="Initial population guess used only for the native tblite reference command. "// &
-                          "SAD uses the superposition of atomic densities, matching the default of tblite run. EEQ "// &
+                          "AUTO leaves the choice to the selected tblite method; this preserves g-xTB's EEQBC "// &
+                          "default. SAD uses the superposition of atomic densities. EEQ "// &
                           "uses electronegativity equilibration charges, while CEH uses the charge-equilibration "// &
                           "Hamiltonian guess. This keyword does not affect the production CP2K/tblite calculation; "// &
                           "there, initial densities and restarts remain controlled by CP2K's SCF machinery.", &
-                          usage="GUESS (SAD|EEQ|CEH)", &
-                          enum_c_vals=s2a("SAD", "EEQ", "CEH"), &
-                          enum_i_vals=[tblite_guess_sad, tblite_guess_eeq, tblite_guess_ceh], &
-                          enum_desc=s2a("Use the superposition of atomic densities guess.", &
+                          usage="GUESS (AUTO|SAD|EEQ|CEH)", &
+                          enum_c_vals=s2a("AUTO", "SAD", "EEQ", "CEH"), &
+                          enum_i_vals=[tblite_guess_auto, tblite_guess_sad, tblite_guess_eeq, tblite_guess_ceh], &
+                          enum_desc=s2a("Use the method-specific native tblite default guess.", &
+                                        "Use the superposition of atomic densities guess.", &
                                         "Use the electronegativity equilibration guess.", &
                                         "Use the charge-equilibration Hamiltonian guess."), &
-                          default_i_val=tblite_guess_sad)
+                          default_i_val=tblite_guess_auto)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

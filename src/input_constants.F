@@ -1398,7 +1398,8 @@ MODULE input_constants
                                                tblite_mixer_weight_factor_default = 0.01_dp
 
    ! tblite reference CLI initial guess selection
-   INTEGER, PARAMETER, PUBLIC               :: tblite_guess_sad = 0, &
+   INTEGER, PARAMETER, PUBLIC               :: tblite_guess_auto = -1, &
+                                               tblite_guess_sad = 0, &
                                                tblite_guess_eeq = 1, &
                                                tblite_guess_ceh = 2
 

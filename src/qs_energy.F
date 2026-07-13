@@ -39,6 +39,7 @@ MODULE qs_energy
    USE qs_scf,                          ONLY: scf
    USE qs_tddfpt2_smearing_methods,     ONLY: deallocate_fermi_params
    USE scf_control_types,               ONLY: scf_control_type
+   USE tblite_interface,                ONLY: tb_reference_cli_compare
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -175,6 +176,14 @@ CONTAINS
             CALL lri_print_stat(qs_env)
          END IF
 
+      END IF
+
+      ! The force driver performs the reference comparison after forces and
+      ! virial have been assembled.  Pure ENERGY runs have no force-driver
+      ! pass, so compare the independently converged energy here.
+      IF (.NOT. run_rtp .AND. .NOT. my_calc_forces) THEN
+         IF (dft_control%qs_control%xtb .AND. dft_control%qs_control%xtb_control%do_tblite) &
+            CALL tb_reference_cli_compare(qs_env)
       END IF
 
       CALL timestop(handle)

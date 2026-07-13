@@ -15,8 +15,8 @@ MODULE cp_control_types
    USE eeq_input,                       ONLY: eeq_solver_type
    USE input_constants,                 ONLY: &
         do_full_density, rtp_bse_ham_G0W0, rtp_method_tddft, tblite_cli_born_kernel_auto, &
-        tblite_cli_solution_state_gsolv, tblite_cli_solvation_none, tblite_guess_ceh, &
-        tblite_guess_sad, tblite_mixer_damping_default, tblite_mixer_iterations_default, &
+        tblite_cli_solution_state_gsolv, tblite_cli_solvation_none, tblite_guess_auto, &
+        tblite_guess_ceh, tblite_mixer_damping_default, tblite_mixer_iterations_default, &
         tblite_mixer_max_weight_default, tblite_mixer_min_weight_default, &
         tblite_mixer_omega0_default, tblite_mixer_weight_factor_default, tblite_scc_mixer_auto, &
         tblite_solver_gvd, use_mom_ref_coac
@@ -229,7 +229,7 @@ MODULE cp_control_types
       LOGICAL                              :: stop_on_error = .FALSE.
       LOGICAL                              :: efield_active = .FALSE.
       LOGICAL                              :: solvation_active = .FALSE.
-      INTEGER                              :: guess = tblite_guess_sad
+      INTEGER                              :: guess = tblite_guess_auto
       INTEGER                              :: solvation_born_kernel = tblite_cli_born_kernel_auto
       INTEGER                              :: solvation_model = tblite_cli_solvation_none
       INTEGER                              :: solvation_state = tblite_cli_solution_state_gsolv

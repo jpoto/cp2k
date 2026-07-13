@@ -25,6 +25,7 @@ MODULE tblite_interface
    USE tblite_data_spin, ONLY: get_spin_constant
 #if defined(__TBLITE_GXTB)
    USE tblite_cp2k_compat, ONLY: get_mixer_dimension => cp2k_get_mixer_dimension, &
+                                 cp2k_build_gamma_h0, cp2k_gamma_gradient, &
                                  cp2k_get_cgto, cp2k_multipole_cgto, &
                                  cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
                                  cp2k_update_basis
@@ -84,7 +85,7 @@ MODULE tblite_interface
                               tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
                               tblite_cli_solvation_gb, tblite_cli_solvation_gbe, &
                               tblite_cli_solvation_gbsa, &
-                              tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
+                              tblite_guess_auto, tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
                               tblite_mixer_damping_default, &
                               tblite_mixer_max_weight_default, tblite_mixer_min_weight_default, &
                               tblite_mixer_omega0_default, tblite_mixer_weight_factor_default, &
@@ -139,10 +140,6 @@ MODULE tblite_interface
    INTEGER, PARAMETER                                 :: quad_n = 6
    REAL(KIND=dp), PARAMETER                           :: same_atom = 0.00001_dp
    REAL(KIND=dp), PARAMETER                           :: tblite_scc_pconv = 2.0E-5_dp
-   CHARACTER(len=*), PARAMETER                        :: gxtb_force_error = &
-                                                        "CP2K/save_tblite g-xTB currently supports single-point energies only; "// &
-                                                      "the charge-dependent q-vSZP basis response is not yet implemented for forces"
-
    PUBLIC :: tb_set_calculator, tb_init_geometry, tb_init_wf
    PUBLIC :: tb_get_basis, build_tblite_matrices
    PUBLIC :: tb_get_energy, tb_update_charges, tb_ham_add_coulomb
@@ -150,6 +147,7 @@ MODULE tblite_interface
    PUBLIC :: tb_scf_mixer_error
    PUBLIC :: tb_get_multipole
    PUBLIC :: tb_derive_dH_off
+   PUBLIC :: tb_gxtb_gamma_gradient
    PUBLIC :: tb_reference_cli_compare
 
 CONTAINS
@@ -348,7 +346,15 @@ CONTAINS
 
       tb%mol%charge = dft_control%charge
       tb%mol%uhf = MAX(0, dft_control%multiplicity - 1)
-      IF (nSpin == 2) CALL tb_add_spin_polarization(tb)
+      IF (nSpin == 2) THEN
+#if defined(__TBLITE_GXTB)
+         ! g-xTB carries its fitted spin-polarization container directly on
+         ! the calculator. Other methods still use CP2K's legacy wrapper.
+         IF (.NOT. ALLOCATED(tb%calc%spin_polarization)) CALL tb_add_spin_polarization(tb)
+#else
+         CALL tb_add_spin_polarization(tb)
+#endif
+      END IF
 
       info = tb%calc%variable_info()
       IF (info%charge > shell_resolved) CPABORT("tblite: no support for orbital resolved charge")
@@ -365,6 +371,7 @@ CONTAINS
       !allocate quantities later required
       ALLOCATE (tb%e_hal(tb%mol%nat), tb%e_rep(tb%mol%nat), tb%e_disp(tb%mol%nat))
       ALLOCATE (tb%e_scd(tb%mol%nat), tb%e_es(tb%mol%nat), tb%e_int(tb%mol%nat))
+      ALLOCATE (tb%e_inc(tb%mol%nat), tb%e_exchange(tb%mol%nat), tb%e_spin(tb%mol%nat))
       ALLOCATE (tb%selfenergy(tb%calc%bas%nsh))
       IF (ALLOCATED(tb%calc%ncoord)) ALLOCATE (tb%cn(tb%mol%nat))
 
@@ -630,8 +637,7 @@ CONTAINS
 #if defined(__TBLITE_GXTB)
             CALL new_gxtb_calculator(tb%calc, tb%mol, error)
 #else
-            CPABORT("METHOD GXTB requires a tblite provider with g-xTB support; rebuild with "// &
-                    "CP2K_TBLITE_PROVIDER=SAVE")
+            CPABORT("METHOD GXTB requires CP2K_TBLITE_PROVIDER=SAVE")
 #endif
          END SELECT
       END IF
@@ -667,17 +673,26 @@ CONTAINS
 
 #if defined(__TBLITE)
 
-      TYPE(container_cache)                              :: hcache, rcache
+      TYPE(container_cache)                              :: hcache, incache, rcache
 
       tb%e_hal = 0.0_dp
       tb%e_rep = 0.0_dp
       tb%e_disp = 0.0_dp
       tb%e_int = 0.0_dp
+      tb%e_inc = 0.0_dp
+      tb%e_exchange = 0.0_dp
+      tb%e_spin = 0.0_dp
       IF (ALLOCATED(tb%grad)) THEN
          tb%grad = 0.0_dp
          CALL tb_zero_force(qs_env)
       END IF
       tb%sigma = 0.0_dp
+
+#if defined(__TBLITE_GXTB)
+      IF (ALLOCATED(tb%calc%increment)) THEN
+         CALL tb%calc%increment%get_engrad(tb%mol, incache, tb%e_inc)
+      END IF
+#endif
 
       IF (ALLOCATED(tb%calc%halogen)) THEN
          CALL tb%calc%halogen%update(tb%mol, hcache)
@@ -779,7 +794,7 @@ CONTAINS
       energy%dispersion = SUM(tb%e_disp)
       energy%dispersion_sc = SUM(tb%e_scd)
       energy%xtb_xb_inter = SUM(tb%e_hal)
-      xtb_inter = SUM(tb%e_int)
+      xtb_inter = SUM(tb%e_int) + SUM(tb%e_inc) + SUM(tb%e_exchange) + SUM(tb%e_spin)
 
       energy%total = energy%core + energy%repulsive + energy%el_stat + energy%dispersion &
                      + energy%dispersion_sc + energy%xtb_xb_inter + xtb_inter &
@@ -963,6 +978,89 @@ CONTAINS
 
    END SUBROUTINE tb_get_basis
 
+#if defined(__TBLITE_GXTB)
+! **************************************************************************************************
+!> Return the dense tblite AO range belonging to one CP2K atom block.
+! **************************************************************************************************
+   SUBROUTINE tb_atom_ao_range(tb, iatom, first_ao, nao)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      INTEGER, INTENT(IN)                                :: iatom
+      INTEGER, INTENT(OUT)                               :: first_ao, nao
+
+      INTEGER                                            :: first_shell, last_shell
+
+      first_shell = tb%calc%bas%ish_at(iatom) + 1
+      last_shell = first_shell + tb%calc%bas%nsh_at(iatom) - 1
+      first_ao = tb%calc%bas%iao_sh(first_shell) + 1
+      nao = SUM(tb%calc%bas%nao_sh(first_shell:last_shell))
+
+   END SUBROUTINE tb_atom_ao_range
+
+! **************************************************************************************************
+!> Scatter a dense tblite Gamma matrix into locally owned CP2K atom blocks.
+! **************************************************************************************************
+   SUBROUTINE tb_dense_to_dbcsr(tb, dense, matrix)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: dense
+      TYPE(dbcsr_type), POINTER                          :: matrix
+
+      INTEGER                                            :: col, col_first, col_nao, row, row_first, row_nao
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
+      TYPE(dbcsr_iterator_type)                          :: iter
+
+      CALL dbcsr_iterator_start(iter, matrix)
+      DO WHILE (dbcsr_iterator_blocks_left(iter))
+         NULLIFY (block)
+         CALL dbcsr_iterator_next_block(iter, row, col, block)
+         CALL tb_atom_ao_range(tb, row, row_first, row_nao)
+         CALL tb_atom_ao_range(tb, col, col_first, col_nao)
+         CPASSERT(SIZE(block, 1) == row_nao)
+         CPASSERT(SIZE(block, 2) == col_nao)
+         block(:, :) = dense(row_first:row_first + row_nao - 1, &
+                             col_first:col_first + col_nao - 1)
+      END DO
+      CALL dbcsr_iterator_stop(iter)
+
+   END SUBROUTINE tb_dense_to_dbcsr
+
+! **************************************************************************************************
+!> Gather a symmetric CP2K Gamma matrix into tblite atom/AO ordering.
+! **************************************************************************************************
+   SUBROUTINE tb_dbcsr_to_dense(tb, matrix, dense, para_env)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      TYPE(dbcsr_type), POINTER                          :: matrix
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: dense
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      INTEGER                                            :: col, col_first, col_nao, row, row_first, row_nao
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
+      TYPE(dbcsr_iterator_type)                          :: iter
+
+      dense = 0.0_dp
+      CALL dbcsr_iterator_start(iter, matrix)
+      DO WHILE (dbcsr_iterator_blocks_left(iter))
+         NULLIFY (block)
+         CALL dbcsr_iterator_next_block(iter, row, col, block)
+         CALL tb_atom_ao_range(tb, row, row_first, row_nao)
+         CALL tb_atom_ao_range(tb, col, col_first, col_nao)
+         CPASSERT(SIZE(block, 1) == row_nao)
+         CPASSERT(SIZE(block, 2) == col_nao)
+         dense(row_first:row_first + row_nao - 1, &
+               col_first:col_first + col_nao - 1) = block
+         IF (row /= col) THEN
+            dense(col_first:col_first + col_nao - 1, &
+                  row_first:row_first + row_nao - 1) = TRANSPOSE(block)
+         END IF
+      END DO
+      CALL dbcsr_iterator_stop(iter)
+      CALL para_env%sum(dense)
+
+   END SUBROUTINE tb_dbcsr_to_dense
+#endif
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
@@ -982,7 +1080,7 @@ CONTAINS
                                                             irow, ia, ib, sgfa, sgfb, ldsab, nseta, nsetb, &
                                                             natorb_a, natorb_b, raw_iatom, raw_jatom, &
                                                             slot, idim, jdim
-      LOGICAL                                            :: found, norml1, norml2, use_arnoldi
+      LOGICAL                                            :: found, norml1, norml2, use_arnoldi, use_gxtb_gamma
       REAL(KIND=dp)                                      :: dr, dshpoly, ff, hij_base, r2, rr
       REAL(KIND=dp)                                      :: native_dot_tmp, native_cn_icol, native_cn_irow, &
                                                             native_dot_weight
@@ -994,6 +1092,11 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: atom_of_kind, kind_of
       INTEGER, DIMENSION(:, :, :), POINTER                :: cell_to_index
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: owork
+#if defined(__TBLITE_GXTB)
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_h
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dense_dipole, dense_quadrupole
+      TYPE(error_type), ALLOCATABLE                      :: error
+#endif
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: native_cn_deriv_thread
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: native_radial_force_thread
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: oint, sint, hint
@@ -1054,13 +1157,6 @@ CONTAINS
 
       !update geometry (required for debug / geometry optimization)
       CALL tb_update_geometry(qs_env, tb)
-#if defined(__TBLITE_GXTB)
-      IF (calculate_forces .AND. ALLOCATED(tb%calc%method)) THEN
-         IF (tb%calc%method == "gxtb") &
-            CPABORT(gxtb_force_error)
-      END IF
-#endif
-
       nkind = SIZE(atomic_kind_set)
       nderivatives = 0
       IF (calculate_forces) THEN
@@ -1082,6 +1178,15 @@ CONTAINS
       END IF
       maxder = ncoset(nderivatives)
       nimg = dft_control%nimages
+      use_gxtb_gamma = .FALSE.
+#if defined(__TBLITE_GXTB)
+      use_gxtb_gamma = dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. nimg == 1
+      IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+         IF (nimg > 1) CPABORT("g-xTB k-point matrices are not yet implemented; use Gamma only")
+         CALL cp2k_update_basis(tb%calc, tb%mol, tb%bcache, error, calculate_forces, tb%wfn_aux)
+         IF (ALLOCATED(error)) CPABORT("save_tblite q-vSZP basis update failed")
+      END IF
+#endif
       IF (nimg > 1) THEN
          IF (.NOT. ASSOCIATED(sab_kp)) CPABORT("Missing k-point neighbor list for tblite")
          sab_orb => sab_kp
@@ -1102,7 +1207,7 @@ CONTAINS
                          matrix_w_kp=matrix_w, &
                          virial=virial, force=force)
 
-         IF (SIZE(matrix_p, 1) == 2) THEN
+         IF (SIZE(matrix_p, 1) == 2 .AND. .NOT. use_gxtb_gamma) THEN
             DO img = 1, nimg
                CALL dbcsr_add(matrix_p(1, img)%matrix, matrix_p(2, img)%matrix, &
                               alpha_scalar=1.0_dp, beta_scalar=1.0_dp)
@@ -1113,7 +1218,7 @@ CONTAINS
          tb%use_virial = virial%pv_availability .AND. (.NOT. virial%pv_numer)
       END IF
 
-      IF (calculate_forces) THEN
+      IF (calculate_forces .AND. .NOT. use_gxtb_gamma) THEN
          CALL dbcsr_allocate_matrix_set(matrix_q_native, 1, nimg)
          DO img = 1, nimg
             ALLOCATE (matrix_q_native(1, img)%matrix)
@@ -1123,7 +1228,7 @@ CONTAINS
       END IF
 
       CALL get_atomic_kind_set(atomic_kind_set=atomic_kind_set, atom_of_kind=atom_of_kind, kind_of=kind_of)
-      IF (calculate_forces) THEN
+      IF (calculate_forces .AND. .NOT. use_gxtb_gamma) THEN
          ALLOCATE (native_radial_force_thread(3, SIZE(atom_of_kind)))
          ALLOCATE (native_cn_deriv_thread(SIZE(atom_of_kind)))
          native_cn_deriv_thread = 0.0_dp
@@ -1149,6 +1254,21 @@ CONTAINS
          CALL cp_dbcsr_alloc_block_from_nbl(matrix_h(1, img)%matrix, sab_orb)
       END DO
       CALL set_ks_env(ks_env, matrix_h_kp=matrix_h)
+#if defined(__TBLITE_GXTB)
+      IF (use_gxtb_gamma) THEN
+         n1 = tb%calc%bas%nao
+         IF (ALLOCATED(tb%overlap_dense)) DEALLOCATE (tb%overlap_dense)
+         ALLOCATE (tb%overlap_dense(n1, n1), dense_h(n1, n1), &
+                   dense_dipole(3, n1, n1), dense_quadrupole(6, n1, n1))
+         CALL cp2k_build_gamma_h0(tb%calc, tb%mol, tb%bcache, tb%acache, tb%accuracy, &
+                                  tb%selfenergy, tb%overlap_dense, dense_dipole, &
+                                  dense_quadrupole, dense_h)
+         CALL tb_dense_to_dbcsr(tb, tb%overlap_dense, matrix_s(1, 1)%matrix)
+         CALL tb_dense_to_dbcsr(tb, dense_h, matrix_h(1, 1)%matrix)
+         DEALLOCATE (dense_h, dense_dipole, dense_quadrupole)
+         GOTO 900
+      END IF
+#endif
       IF (calculate_forces .AND. nimg > 1) THEN
          CALL dbcsr_allocate_matrix_set(matrix_dh_native, 9, nimg)
          DO img = 1, nimg
@@ -1518,6 +1638,7 @@ CONTAINS
          END IF
       END IF
 
+900   CONTINUE
       DO img = 1, nimg
          DO i = 1, SIZE(matrix_s, 1)
             CALL dbcsr_finalize(matrix_s(i, img)%matrix)
@@ -1527,7 +1648,7 @@ CONTAINS
          END DO
       END DO
 
-      IF (calculate_forces) THEN
+      IF (calculate_forces .AND. .NOT. use_gxtb_gamma) THEN
          CALL build_overlap_matrix(ks_env, matrixkp_s=matrix_s_native, &
                                    matrix_name="OVERLAP MATRIX", nderivative=nderivatives, &
                                    basis_type_a="ORB", basis_type_b="ORB", sab_nl=sab_orb, &
@@ -1704,6 +1825,16 @@ CONTAINS
       ELSE
          matrix_p => scf_env%p_mix_new
       END IF
+      nimg = dft_control%nimages
+#if defined(__TBLITE_GXTB)
+      IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+         IF (nimg /= 1) CPABORT("g-xTB density conversion currently requires Gamma-only matrices")
+         DO ispin = 1, nspin
+            CALL tb_dbcsr_to_dense(tb, matrix_p(ispin, 1)%matrix, &
+                                   tb%wfn%density(:, :, ispin), para_env)
+         END DO
+      END IF
+#endif
       IF (nspin > 1 .AND. (.NOT. calculate_forces)) CALL tb_store_density_ref(tb, matrix_p)
       IF (ASSOCIATED(tb%dipbra)) do_dipole = .TRUE.
       IF (ASSOCIATED(tb%quadbra)) do_quadrupole = .TRUE.
@@ -1719,7 +1850,6 @@ CONTAINS
       END IF
       n_atom = SIZE(particle_set)
       nkind = SIZE(atomic_kind_set)
-      nimg = dft_control%nimages
       CALL get_qs_kind_set(qs_kind_set, maxsgf=nsgf)
       ALLOCATE (aocg(nsgf, n_atom))
       ALLOCATE (aocg_spin(nsgf, n_atom, nspin))
@@ -2195,6 +2325,33 @@ CONTAINS
          CALL tb%calc%interactions%get_energy(tb%mol, tb%icache, tb%wfn, tb%e_int)
       END IF
 
+#if defined(__TBLITE_GXTB)
+      IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+         tb%e_exchange = 0.0_dp
+         tb%e_spin = 0.0_dp
+
+         IF (ALLOCATED(tb%calc%exchange)) THEN
+            CALL tb%calc%exchange%update(tb%mol, tb%ecache)
+            CALL tb%calc%exchange%get_potential_w_overlap(tb%mol, tb%ecache, tb%wfn, &
+                                                          tb%overlap_dense, tb%pot)
+            CALL tb%calc%exchange%get_energy_w_overlap(tb%mol, tb%ecache, tb%wfn, &
+                                                       tb%overlap_dense, tb%e_exchange)
+         END IF
+
+         IF (ALLOCATED(tb%calc%repulsion)) THEN
+            tb%e_rep = 0.0_dp
+            CALL tb%calc%repulsion%update(tb%mol, tb%rcache)
+            CALL tb%calc%repulsion%get_potential(tb%mol, tb%rcache, tb%wfn, tb%pot)
+            CALL tb%calc%repulsion%get_energy(tb%mol, tb%rcache, tb%wfn, tb%e_rep)
+         END IF
+
+         IF (ALLOCATED(tb%calc%spin_polarization)) THEN
+            CALL tb%calc%spin_polarization%get_potential(tb%mol, tb%scache, tb%wfn, tb%pot)
+            CALL tb%calc%spin_polarization%get_energy(tb%mol, tb%scache, tb%wfn, tb%e_spin)
+         END IF
+      END IF
+#endif
+
       IF (calculate_forces) THEN
          IF (ALLOCATED(tb%calc%coulomb)) THEN
             tb%grad = 0.0_dp
@@ -2216,6 +2373,15 @@ CONTAINS
             CALL tb_dump_sigma_component("after_interactions_scf", tb%sigma, para_env)
             CALL tb_grad2force(qs_env, tb, para_env, 3)
          END IF
+#if defined(__TBLITE_GXTB)
+         IF (dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. &
+             ALLOCATED(tb%calc%repulsion)) THEN
+            tb%grad = 0.0_dp
+            CALL tb%calc%repulsion%get_gradient(tb%mol, tb%rcache, tb%wfn, tb%grad, tb%sigma)
+            CALL tb_dump_sigma_component("after_gxtb_repulsion", tb%sigma, para_env)
+            CALL tb_grad2force(qs_env, tb, para_env, 1)
+         END IF
+#endif
       END IF
 
       IF (ALLOCATED(ao_dip_spin)) DEALLOCATE (ao_dip_spin)
@@ -2249,7 +2415,7 @@ CONTAINS
 
       INTEGER                                            :: ikind, jkind, iatom, jatom, icol, irow
       INTEGER                                            :: ic, id1, id2, id3, iq1, iq2, iq3, iq4, iq5, iq6, &
-                                                            is, nimg, ni, nj, i, j, nspin
+                                                            is, nimg, ni, nj, i, j, nspin, first_i, first_j
       INTEGER                                            :: la, lb, za, zb
       LOGICAL                                            :: found
       INTEGER, DIMENSION(3)                              :: cellind
@@ -2462,6 +2628,27 @@ CONTAINS
             END DO
             CALL dbcsr_iterator_stop(iter)
          END IF
+
+#if defined(__TBLITE_GXTB)
+         IF (dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. &
+             ALLOCATED(tb%calc%exchange)) THEN
+            CALL dbcsr_iterator_start(iter, matrix_s(1, 1)%matrix)
+            DO WHILE (dbcsr_iterator_blocks_left(iter))
+               CALL dbcsr_iterator_next_block(iter, irow, icol, sblock)
+               CALL tb_atom_ao_range(tb, irow, first_i, ni)
+               CALL tb_atom_ao_range(tb, icol, first_j, nj)
+               DO is = 1, nspin
+                  NULLIFY (ksblock)
+                  CALL dbcsr_get_block_p(matrix=ks_matrix(is, 1)%matrix, &
+                                         row=irow, col=icol, block=ksblock, found=found)
+                  CPASSERT(found)
+                  ksblock = ksblock + tb%pot%kao(first_i:first_i + ni - 1, &
+                                                 first_j:first_j + nj - 1, is)
+               END DO
+            END DO
+            CALL dbcsr_iterator_stop(iter)
+         END IF
+#endif
 
       ELSE
          NULLIFY (kpoints)
@@ -3014,6 +3201,51 @@ CONTAINS
 #endif
 
    END SUBROUTINE tb_get_multipole
+
+! **************************************************************************************************
+!> Complete save_tblite Gamma-point response for g-xTB.
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_gamma_gradient(qs_env, tb)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(tblite_type), POINTER                         :: tb
+
+#if defined(__TBLITE_GXTB)
+      INTEGER                                            :: ispin, nao, nspin
+      REAL(KIND=dp), ALLOCATABLE                         :: dense_w(:, :, :), gamma_sigma(:, :)
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_w
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      NULLIFY (dft_control, matrix_w, para_env)
+      CALL get_qs_env(qs_env=qs_env, dft_control=dft_control, matrix_w_kp=matrix_w, &
+                      para_env=para_env)
+      IF (dft_control%nimages /= 1) &
+         CPABORT("g-xTB Gamma gradient received k-point image matrices")
+
+      nao = tb%calc%bas%nao
+      nspin = tb%wfn%nspin
+      ALLOCATE (dense_w(nao, nao, nspin), gamma_sigma(3, 3))
+      DO ispin = 1, nspin
+         CALL tb_dbcsr_to_dense(tb, matrix_w(ispin, 1)%matrix, dense_w(:, :, ispin), para_env)
+      END DO
+      tb%grad = 0.0_dp
+      CALL cp2k_gamma_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, tb%ecache, &
+                               tb%wfn_aux, tb%accuracy, tb%selfenergy, tb%dsedcn, &
+                               tb%overlap_dense, tb%pot, tb%wfn, dense_w, tb%grad, gamma_sigma)
+      CALL tb_grad2force(qs_env, tb, para_env, 4)
+      tb%sigma = tb%sigma + gamma_sigma
+      CALL tb_dump_sigma_component("after_gxtb_gamma_response", tb%sigma, para_env)
+      IF (tb%use_virial) CALL tb_add_stress(qs_env, tb, para_env)
+
+      DEALLOCATE (dense_w, gamma_sigma)
+#else
+      MARK_USED(qs_env)
+      MARK_USED(tb)
+      CPABORT("Built without save_tblite g-xTB support")
+#endif
+
+   END SUBROUTINE tb_gxtb_gamma_gradient
 
 ! **************************************************************************************************
 !> \brief Shift a multipole operator from one center to the other.
@@ -3904,7 +4136,7 @@ CONTAINS
       CHARACTER(LEN=16)                                  :: solvation_model_name
       CHARACTER(LEN=32) :: acc_str, charge_str, efield_x_str, efield_y_str, efield_z_str, &
          etemp_guess_val_str, etemp_str, iter_str, spin_str, spinpol_str
-      CHARACTER(LEN=4*default_path_length+16) :: efield_str, etemp_guess_str, param_str, &
+      CHARACTER(LEN=4*default_path_length+16) :: efield_str, etemp_guess_str, guess_str, param_str, &
          post_processing_output_str, post_processing_str, restart_str, solvation_str, verbosity_str
       CHARACTER(LEN=8)                                   :: guess, method, solver
       CHARACTER(LEN=8*default_path_length)               :: command
@@ -3963,10 +4195,20 @@ CONTAINS
                logger%iter_info%print_level == debug_print_level) THEN
          verbosity_str = " --verbose"
       END IF
+      periodic = 0
+      IF (ASSOCIATED(cell)) CALL get_cell(cell=cell, periodic=periodic)
+      n_periodic = COUNT(periodic == 1)
+      IF (n_periodic == 1 .OR. n_periodic == 2) THEN
+         WRITE (UNIT=iounit, FMT="(/,T2,A)") &
+            "tblite reference CLI check skipped: partial periodicity cannot be represented faithfully."
+         WRITE (UNIT=iounit, FMT="(T2,A)") &
+            "DFTB+ GEN distinguishes only molecular and fully three-dimensional periodic geometries."
+         IF (ref%stop_on_error) &
+            CPABORT("REFERENCE_CLI cannot represent one- or two-dimensional periodicity")
+         CALL timestop(handle)
+         RETURN
+      END IF
       IF (ref%solvation_active) THEN
-         periodic = 0
-         IF (ASSOCIATED(cell)) CALL get_cell(cell=cell, periodic=periodic)
-         n_periodic = COUNT(periodic == 1)
          IF (n_periodic == 3) THEN
             WRITE (UNIT=iounit, FMT="(/,T2,A)") &
                "tblite reference CLI implicit solvation is not supported for PERIODIC XYZ."
@@ -4007,6 +4249,8 @@ CONTAINS
       natom = SIZE(particle_set)
       method = tb_reference_method_name(dft_control%qs_control%xtb_control%tblite_method)
       guess = tb_reference_guess_name(ref%guess)
+      guess_str = ""
+      IF (ref%guess /= tblite_guess_auto) guess_str = " --guess "//TRIM(guess)
       solver = tb_reference_solver_name(dft_control%qs_control%xtb_control%tblite_mixer_solver)
       file_base = tb_join_path(ref%work_directory, ref%prefix)
       gen_file = TRIM(file_base)//".gen"
@@ -4183,7 +4427,7 @@ CONTAINS
                 " --charge "//TRIM(ADJUSTL(charge_str))// &
                 " --spin "//TRIM(ADJUSTL(spin_str))// &
                 " --acc "//TRIM(ADJUSTL(acc_str))// &
-                " --guess "//TRIM(guess)// &
+                TRIM(guess_str)// &
                 " --solver "//TRIM(solver)// &
                 " --iterations "//TRIM(ADJUSTL(iter_str))// &
                 " --etemp "//TRIM(ADJUSTL(etemp_str))// &
@@ -4246,6 +4490,7 @@ CONTAINS
             too_large = too_large .OR. ediff > ref%error_limit
          ELSE
             WRITE (UNIT=iounit, FMT="(T2,A)") "Energy check skipped: no CLI energy found."
+            too_large = .TRUE.
          END IF
       END IF
 
@@ -4258,8 +4503,12 @@ CONTAINS
             WRITE (UNIT=iounit, FMT="(T2,A,2ES22.12)") "Gradient diff sum/max:", fsum, fmax
             too_large = too_large .OR. fmax > ref%error_limit
             DEALLOCATE (cp_gradient)
+         ELSE IF (ASSOCIATED(force)) THEN
+            WRITE (UNIT=iounit, FMT="(T2,A)") "Gradient check failed: no CLI gradient found."
+            too_large = .TRUE.
          ELSE
-            WRITE (UNIT=iounit, FMT="(T2,A)") "Gradient check skipped: no CLI gradient or CP2K force found."
+            WRITE (UNIT=iounit, FMT="(T2,A)") &
+               "Gradient check skipped: this CP2K calculation did not request forces."
          END IF
       END IF
 
@@ -4271,8 +4520,12 @@ CONTAINS
             vmax = MAXVAL(ABS(-virial%pv_virial - cli_virial))
             WRITE (UNIT=iounit, FMT="(T2,A,2ES22.12)") "Virial diff sum/max:", vsum, vmax
             too_large = too_large .OR. vmax > ref%error_limit
+         ELSE IF (ASSOCIATED(virial)) THEN
+            WRITE (UNIT=iounit, FMT="(T2,A)") "Virial check failed: no CLI virial found."
+            too_large = .TRUE.
          ELSE
-            WRITE (UNIT=iounit, FMT="(T2,A)") "Virial check skipped: no CLI virial or CP2K virial found."
+            WRITE (UNIT=iounit, FMT="(T2,A)") &
+               "Virial check skipped: this CP2K calculation did not request a virial."
          END IF
       END IF
 
@@ -4325,6 +4578,8 @@ CONTAINS
       CHARACTER(LEN=8)                                   :: guess
 
       SELECT CASE (guess_id)
+      CASE (tblite_guess_auto)
+         guess = "auto"
       CASE (tblite_guess_sad)
          guess = "sad"
       CASE (tblite_guess_eeq)

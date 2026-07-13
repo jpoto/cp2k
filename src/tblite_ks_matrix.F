@@ -20,6 +20,7 @@ MODULE tblite_ks_matrix
                                               dbcsr_p_type,&
                                               dbcsr_type
    USE cp_dbcsr_contrib,                ONLY: dbcsr_dot
+   USE input_constants,                 ONLY: gxtb
    USE kinds,                           ONLY: dp
    USE message_passing,                 ONLY: mp_para_env_type
    USE qs_energy_types,                 ONLY: qs_energy_type
@@ -31,6 +32,7 @@ MODULE tblite_ks_matrix
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE tblite_interface,                ONLY: tb_derive_dH_off,&
+                                              tb_gxtb_gamma_gradient,&
                                               tb_ham_add_coulomb,&
                                               tb_update_charges
 #include "./base/base_uses.f90"
@@ -138,7 +140,11 @@ CONTAINS
       END IF
 
       IF (calculate_forces) THEN
-         CALL tb_derive_dH_off(qs_env, force_use_rho, nimg)
+         IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+            CALL tb_gxtb_gamma_gradient(qs_env, qs_env%tb_tblite)
+         ELSE
+            CALL tb_derive_dH_off(qs_env, force_use_rho, nimg)
+         END IF
       END IF
 
       ! here we compute dE/dC if needed. Assumes dE/dC is H_{ks}C

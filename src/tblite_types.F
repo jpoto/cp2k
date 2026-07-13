@@ -16,6 +16,7 @@ MODULE tblite_types
 #if defined(__TBLITE)
    USE mctc_io, ONLY: structure_type, new
 #if defined(__TBLITE_GXTB)
+   USE tblite_acp_cache, ONLY: acp_cache
    USE tblite_basis_cache, ONLY: basis_cache
 #endif
    USE tblite_xtb_calculator, ONLY: xtb_calculator
@@ -59,6 +60,9 @@ MODULE tblite_types
       REAL(KIND=dp), ALLOCATABLE                         :: e_scd(:)
       REAL(KIND=dp), ALLOCATABLE                         :: e_es(:)
       REAL(KIND=dp), ALLOCATABLE                         :: e_int(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: e_inc(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: e_exchange(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: e_spin(:)
       REAL(KIND=dp), ALLOCATABLE                         :: selfenergy(:)
       REAL(KIND=dp), ALLOCATABLE                         :: cn(:)
 
@@ -83,6 +87,9 @@ MODULE tblite_types
 
 #if defined(__TBLITE_GXTB)
       TYPE(basis_cache)                                  :: bcache = basis_cache()
+      TYPE(acp_cache)                                    :: acache = acp_cache()
+      REAL(KIND=dp), ALLOCATABLE                         :: overlap_dense(:, :)
+      TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()
 #endif
 #if defined(__TBLITE)
       TYPE(structure_type)                               :: mol = structure_type()
@@ -90,6 +97,11 @@ MODULE tblite_types
       TYPE(container_cache)                              :: cache = container_cache()
       TYPE(container_cache)                              :: dcache = container_cache()
       TYPE(container_cache)                              :: icache = container_cache()
+#if defined(__TBLITE_GXTB)
+      TYPE(container_cache)                              :: ecache = container_cache()
+      TYPE(container_cache)                              :: rcache = container_cache()
+      TYPE(container_cache)                              :: scache = container_cache()
+#endif
       TYPE(wavefunction_type)                            :: wfn = wavefunction_type()
       TYPE(potential_type)                               :: pot = potential_type()
       TYPE(cp2k_tblite_broyden_mixer_type), ALLOCATABLE  :: mixer
@@ -131,6 +143,9 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%e_scd)) DEALLOCATE (tb_tblite%e_scd)
          IF (ALLOCATED(tb_tblite%e_es)) DEALLOCATE (tb_tblite%e_es)
          IF (ALLOCATED(tb_tblite%e_int)) DEALLOCATE (tb_tblite%e_int)
+         IF (ALLOCATED(tb_tblite%e_inc)) DEALLOCATE (tb_tblite%e_inc)
+         IF (ALLOCATED(tb_tblite%e_exchange)) DEALLOCATE (tb_tblite%e_exchange)
+         IF (ALLOCATED(tb_tblite%e_spin)) DEALLOCATE (tb_tblite%e_spin)
          IF (ALLOCATED(tb_tblite%selfenergy)) DEALLOCATE (tb_tblite%selfenergy)
          IF (ALLOCATED(tb_tblite%cn)) DEALLOCATE (tb_tblite%cn)
 
@@ -138,6 +153,9 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%dsedcn)) DEALLOCATE (tb_tblite%dsedcn)
          IF (ALLOCATED(tb_tblite%dcndr)) DEALLOCATE (tb_tblite%dcndr)
          IF (ALLOCATED(tb_tblite%dcndL)) DEALLOCATE (tb_tblite%dcndL)
+#if defined(__TBLITE_GXTB)
+         IF (ALLOCATED(tb_tblite%overlap_dense)) DEALLOCATE (tb_tblite%overlap_dense)
+#endif
 
          IF (ASSOCIATED(tb_tblite%dipbra)) &
             CALL dbcsr_deallocate_matrix_set(tb_tblite%dipbra)
