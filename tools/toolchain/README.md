@@ -65,6 +65,14 @@ CP2K k-point sampling. Transition-metal and f-element calculations can converge 
 roots, so sensitive single points should be checked from more than one initial density and
 trajectories should use restarts to follow the intended root.
 
+For g-xTB, `SCC_MIXER AUTO` and `TBLITE` use save_tblite's complete-Fock potential mixer: the first
+Fock matrix is used raw, builds two and three use simple damping 0.2, and DIIS starts with build
+four. `SCC_MIXER CP2K` selects the regular CP2K alternatives instead: density-matrix mixing from
+`DFT/SCF/MIXING` and CP2K's KS/Fock DIIS. g-xTB diagonalization requires
+`METHOD DIRECT_P_MIXING`; multi-k-point Fock DIIS also requires `KPOINTS/WAVEFUNCTIONS COMPLEX`.
+This method-specific dispatch does not change the established density and modified-Broyden paths
+used by DFT, GFN1-xTB, GFN2-xTB, or IPEA1-xTB.
+
 ### MPI implementation choice
 
 If you do not have an MPI installation, by default the `--install-all` option will install MPICH for

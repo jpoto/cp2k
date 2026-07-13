@@ -344,6 +344,27 @@ symbols, and Fortran modules.
   charge- and environment-dependent basis coefficients separately for every atom. The Gamma-point
   response includes the corresponding coefficient derivatives; this distinction must be preserved
   when extending the k-point derivatives.
+- Mixer selection is model dependent. For GFN1/GFN2/IPEA1, `SCC_MIXER TBLITE` retains tblite's
+  modified-Broyden population/multipole mixer. For g-xTB, `AUTO` and `TBLITE` instead reproduce
+  save_tblite's potential mixer: two damped updates of the complete Fock matrix (damping 0.2), then
+  DIIS from the fourth Fock build with a seven-vector history. `SCC_MIXER CP2K` is an explicitly
+  different alternative: `DFT/SCF/MIXING` acts on the density matrix and CP2K's regular SCF DIIS can
+  extrapolate the complete KS/Fock matrix. In particular, this option does not apply the GFN1/GFN2
+  SCC-variable Broyden mixer to g-xTB.
+- With multiple k-points, the save_tblite potential-mixer extension packs the real and imaginary
+  parts of every irreducible k-point and spin block into one Brillouin-zone-weighted DIIS vector.
+  This preserves the full-star Frobenius metric under K290 or SPGLIB symmetry reduction. Native
+  save_tblite currently provides no multi-k-point SCF reference, so this extension is validated
+  against equivalent full and symmetry-reduced CP2K meshes.
+- g-xTB diagonalization requires `SCF/MIXING METHOD DIRECT_P_MIXING`. Pulay, Broyden, and Kerker
+  are rejected only for this method because the TB path does not apply them to the AO density
+  matrix. This does not change their use by DFT or the established population/multipole mixer used
+  by GFN1/GFN2/IPEA1. At multiple k-points, CP2K Fock CDIIS additionally requires
+  `KPOINTS/WAVEFUNCTIONS COMPLEX`; real k-point wavefunctions can use the Direct-P alternative.
+- Post-SCF diagonalization on a newly generated k-point grid (for example a band-structure path) is
+  rejected for now. The explicit g-xTB exchange Fock matrix and native mixer state belong to the
+  converged SCF grid; silently reusing them on a different grid would be incorrect. Exporting the
+  already converged SCF orbitals does not require this extra diagonalization.
 - `XTB/TBLITE/REFERENCE_CLI` can optionally cross-check the native result with the save_tblite CLI
   for molecular and 3D-periodic Gamma-point calculations. The CLI cannot reproduce CP2K k-point
   sampling, so such a reference check is skipped or rejected according to `STOP_ON_ERROR` when

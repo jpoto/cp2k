@@ -1,6 +1,6 @@
 &GLOBAL
   PRINT_LEVEL LOW
-  PROJECT H2O_gxtb_pbc
+  PROJECT H2O_gxtb_cp2k_fock_diis
   RUN_TYPE ENERGY
 &END GLOBAL
 
@@ -11,7 +11,7 @@
       METHOD xTB
       &XTB
         GFN_TYPE TBLITE
-        SCC_MIXER TBLITE
+        SCC_MIXER CP2K
         &TBLITE
           ACCURACY 1.0
           METHOD GXTB
@@ -19,12 +19,16 @@
       &END XTB
     &END QS
     &SCF
+      EPS_DIIS 0.1
       EPS_SCF 1.0E-7
-      MAX_SCF 100
+      MAX_DIIS 7
+      MAX_SCF 200
       SCF_GUESS MOPAC
       &MIXING
-        ALPHA 0.2
+        ! ALPHA 1 removes density damping; convergence acceleration is CP2K's KS/Fock DIIS.
+        ALPHA 1.0
         METHOD DIRECT_P_MIXING
+        NMIXING 2
       &END MIXING
     &END SCF
   &END DFT

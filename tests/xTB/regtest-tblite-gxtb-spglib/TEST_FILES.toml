@@ -1,3 +1,3 @@
-# Add an energy matcher after the final native k-point exchange bridge has been validated.
-"Si_prim_gxtb_kp_spglib.inp" = [{matcher="N_special_kpoints", tol=0.0, ref=2}]
+"Si_prim_gxtb_kp_spglib.inp" = [{matcher="E_total", tol=1.0E-10, ref=-584.0958656688803},
+                                  {matcher="N_special_kpoints", tol=0.0, ref=2}]
 #EOF

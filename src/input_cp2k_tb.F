@@ -612,14 +612,20 @@ CONTAINS
                           "for example DFT/SCF/SCF_GUESS, not by a separate tblite guess in this section. "// &
                           "Spin-polarized CP2K/tblite calculations are selected with the regular DFT/UKS keyword "// &
                           "or its LSD/SPIN_POLARIZED aliases; DFT/MULTIPLICITY sets the number of unpaired "// &
-                          "electrons. UKS uses tblite's spin-polarized Hamiltonian; AUTO selects the native tblite "// &
-                          "SCC mixer for XTB/GFN_TYPE TBLITE, while SCC_MIXER CP2K mixes both total-charge and "// &
-                          "magnetization SCC variables through CP2K's TB charge-mixing infrastructure. Native "// &
-                          "tblite SCC convergence follows ACCURACY; SCC_MIXER CP2K follows the regular CP2K "// &
-                          "SCF convergence settings such as DFT/SCF/EPS_SCF. With QS/LS_SCF, CP2K disables the "// &
+                          "electrons. UKS uses tblite's spin-polarized Hamiltonian. AUTO selects the native, "// &
+                          "method-specific mixer: modified Broyden over populations and multipoles for "// &
+                          "GFN1/GFN2/IPEA1, and complete-Fock simple-to-DIIS potential mixing for GXTB. For the "// &
+                          "former methods, SCC_MIXER CP2K maps charge and magnetization SCC variables onto CP2K's "// &
+                          "TB charge-mixing infrastructure. For GXTB it instead bypasses separate SCC-variable "// &
+                          "mixing and uses the regular CP2K density-matrix mixing and KS/Fock DIIS controlled by "// &
+                          "DFT/SCF. Native model-mixer convergence follows ACCURACY; SCC_MIXER CP2K follows the "// &
+                          "regular CP2K SCF settings such as DFT/SCF/EPS_SCF. With QS/LS_SCF, CP2K disables the "// &
                           "separate SCC-variable mixer and lets LS_SCF optimize the density matrix directly. "// &
-                          "The same direct SCC-variable update is available for Gamma-point OT calculations, "// &
-                          "where smearing and ADDED_MOS are not supported.", &
+                          "For GFN1/GFN2/IPEA1, the same direct SCC-variable update is available for Gamma-point "// &
+                          "OT calculations, where smearing and ADDED_MOS are not supported. The native GXTB "// &
+                          "potential mixer instead requires standard diagonalization. GXTB diagonalization accepts "// &
+                          "only SCF/MIXING METHOD DIRECT_P_MIXING; this restriction does not alter the DFT or "// &
+                          "GFN1/GFN2 mixer paths.", &
                           n_keywords=1, n_subsections=1, repeats=.FALSE., citations=[Katbashev2025])
 
       NULLIFY (keyword)
@@ -663,7 +669,7 @@ CONTAINS
       NULLIFY (keyword)
       CALL keyword_create(keyword, __LOCATION__, name="ACCURACY", &
                           description="Numerical accuracy factor for the CP2K/tblite backend. This scales tblite's "// &
-                          "internal accuracy-dependent thresholds. With the native tblite SCC mixer, this is the "// &
+                          "internal accuracy-dependent thresholds. With the native method-specific mixer, this is the "// &
                           "user-visible convergence control and corresponds to native tblite's --acc setting. With "// &
                           "SCC_MIXER CP2K, SCF convergence instead follows DFT/SCF/EPS_SCF; ACCURACY still controls "// &
                           "the tblite numerical setup, such as the distance cutoff used to build the xTB basis and "// &
@@ -702,7 +708,7 @@ CONTAINS
    END SUBROUTINE create_xtb_tblite_section
 
 ! **************************************************************************************************
-!> \brief Creates the common &TBLITE_MIXER section for TB SCC-variable mixing.
+!> \brief Creates the common &TBLITE_MIXER section for native TB mixing.
 !> \param section section to create
 ! **************************************************************************************************
    SUBROUTINE create_tblite_mixer_section(section)
@@ -712,22 +718,29 @@ CONTAINS
 
       CPASSERT(.NOT. ASSOCIATED(section))
       CALL section_create(section, __LOCATION__, name="TBLITE_MIXER", &
-                          description="Controls tblite's modified Broyden SCC-variable mixer when SCC_MIXER is set "// &
-                          "to TBLITE, either explicitly or through AUTO where AUTO selects tblite. The mixer "// &
-                          "variables are the self-consistent "// &
-                          "xTB/DFTB populations and, for methods that require them, atomic multipoles. ITERATIONS "// &
+                          description="Controls the native model mixer when SCC_MIXER is set to TBLITE, either "// &
+                          "explicitly or through AUTO. For GFN1/GFN2/IPEA1 and DFTB, this is tblite's modified "// &
+                          "Broyden mixer over self-consistent populations and, where required, atomic multipoles. "// &
+                          "For GXTB, the native algorithm instead mixes the complete Fock matrix: simple updates "// &
+                          "with damping 0.2 for builds two and three, followed by DIIS from build four with fixed "// &
+                          "memory seven, damping one, and output fraction one. ITERATIONS "// &
                           "limits the number of tblite SCC-mixer updates, while MEMORY controls how many previous "// &
                           "Broyden update vectors are retained. These are independent quantities when MEMORY is set "// &
                           "explicitly; otherwise MEMORY follows ITERATIONS, matching the tblite library default. "// &
                           "DAMPING controls the size of the retained population/multipole update. OMEGA0, "// &
                           "MIN_WEIGHT, MAX_WEIGHT, and WEIGHT_FACTOR expose tblite's modified-Broyden weighting "// &
-                          "constants. ITERATIONS is the tblite-side SCC-mixer update limit and defaults to the "// &
+                          "constants. MEMORY, DAMPING, and these Broyden weights do not alter GXTB's fixed "// &
+                          "potential-mixer schedule. ITERATIONS is the tblite-side model-mixer update limit and "// &
+                          "defaults to the "// &
                           "native tblite value of 250. When SCC_MIXER is explicitly set to TBLITE, CP2K also "// &
                           "sets the regular DFT/SCF/MAX_SCF limit to ITERATIONS so that the tblite SCC cycle is "// &
                           "not truncated by CP2K's default SCF limit. With SCC_MIXER AUTO or CP2K, DFT/SCF/MAX_SCF "// &
                           "keeps its normal CP2K meaning. This section configures the tblite SCC mixer, not the "// &
-                          "regular CP2K charge mixer. With SCC_MIXER CP2K, the CP2K-side SCC-variable mixer is "// &
-                          "controlled by DFT/SCF/MIXING. With QS/LS_SCF, this section is ignored and CP2K resets "// &
+                          "regular CP2K mixer. With SCC_MIXER CP2K, DFT/SCF/MIXING controls density-matrix mixing; "// &
+                          "for GXTB the regular CP2K SCF DIIS can additionally extrapolate the complete KS/Fock "// &
+                          "matrix. At multiple k-points, CP2K Fock DIIS requires KPOINTS/WAVEFUNCTIONS COMPLEX; "// &
+                          "real k-point wavefunctions retain the density-matrix path without Fock DIIS. With "// &
+                          "QS/LS_SCF, this section is ignored and CP2K resets "// &
                           "SCC_MIXER to NONE internally, because LS_SCF performs the density-matrix optimization "// &
                           "instead of a separate SCC-variable mixing step. Native tblite "// &
                           "REFERENCE_CLI diagnostics inherit this section. ITERATIONS and SOLVER are representable "// &
@@ -737,7 +750,7 @@ CONTAINS
 
       NULLIFY (keyword)
       CALL keyword_create(keyword, __LOCATION__, name="ITERATIONS", &
-                          description="Maximum number of tblite SCC-mixer updates. This is the tblite-side SCC "// &
+                          description="Maximum number of native tblite model-mixer updates. This is the tblite-side "// &
                           "iteration limit, matching native tblite's --iterations setting for reference CLI "// &
                           "diagnostics. For explicit SCC_MIXER TBLITE runs, CP2K synchronizes DFT/SCF/MAX_SCF to "// &
                           "this value. For SCC_MIXER AUTO or CP2K, DFT/SCF/MAX_SCF remains the normal CP2K "// &
@@ -752,7 +765,8 @@ CONTAINS
                           "mixer. This is a history length, not an iteration limit. Larger values retain more "// &
                           "history and use more memory; smaller values reduce the history and can be more robust for "// &
                           "difficult SCC cycles. A value of zero means library default: inherit ITERATIONS, as native "// &
-                          "tblite does when it constructs the Broyden mixer from calc%max_iter.", &
+                          "tblite does when it constructs the Broyden mixer from calc%max_iter. GXTB does not use "// &
+                          "this value; its potential DIIS history is fixed at seven.", &
                           usage="MEMORY 250", default_i_val=tblite_mixer_memory_inherit)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -779,7 +793,8 @@ CONTAINS
                           "iterations. Smaller values damp oscillatory SCC cycles more strongly but may slow "// &
                           "convergence; larger values can accelerate well-behaved cases but may destabilize difficult "// &
                           "ones. For CP2K-internal GFN1-xTB UKS k-point calculations with explicit SCC_MIXER TBLITE, "// &
-                          "CP2K uses a conservative damping of 0.25 unless DAMPING is set explicitly.", &
+                          "CP2K uses a conservative damping of 0.25 unless DAMPING is set explicitly. GXTB ignores "// &
+                          "this keyword and uses simple damping 0.2 followed by undamped DIIS.", &
                           usage="DAMPING 0.4", default_r_val=tblite_mixer_damping_default)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -787,7 +802,8 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="OMEGA0", &
                           description="Regularization weight added to the diagonal of tblite's modified-Broyden "// &
                           "linear system. The default matches the hard-coded value in native tblite and damps nearly "// &
-                          "singular history updates without changing the first simple-damping step.", &
+                          "singular history updates without changing the first simple-damping step. It is not used "// &
+                          "by the GXTB potential DIIS mixer.", &
                           usage="OMEGA0 0.01", default_r_val=tblite_mixer_omega0_default)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -795,7 +811,7 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="MIN_WEIGHT", &
                           description="Lower bound for the dynamic Broyden history weight derived from the current "// &
                           "SCC residual. The default matches native tblite and prevents tiny weights from removing "// &
-                          "history vectors from the update.", &
+                          "history vectors from the update. It is not used by the GXTB potential DIIS mixer.", &
                           usage="MIN_WEIGHT 1.0", default_r_val=tblite_mixer_min_weight_default)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -803,7 +819,7 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="MAX_WEIGHT", &
                           description="Upper bound for the dynamic Broyden history weight derived from the current "// &
                           "SCC residual. The default matches native tblite and caps the influence of very small "// &
-                          "residual norms.", &
+                          "residual norms. It is not used by the GXTB potential DIIS mixer.", &
                           usage="MAX_WEIGHT 100000.0", default_r_val=tblite_mixer_max_weight_default)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -812,7 +828,8 @@ CONTAINS
                           description="Residual-to-weight scaling factor used by tblite's modified Broyden mixer. "// &
                           "For a residual norm above WEIGHT_FACTOR/MAX_WEIGHT, the dynamic weight is approximately "// &
                           "WEIGHT_FACTOR divided by that residual norm; otherwise MAX_WEIGHT is used before applying "// &
-                          "MIN_WEIGHT. The default matches native tblite.", &
+                          "MIN_WEIGHT. The default matches native tblite. It is not used by the GXTB potential "// &
+                          "DIIS mixer.", &
                           usage="WEIGHT_FACTOR 0.01", default_r_val=tblite_mixer_weight_factor_default)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -833,12 +850,14 @@ CONTAINS
 
       NULLIFY (keyword)
       CALL keyword_create(keyword, __LOCATION__, name="SCC_MIXER", &
-                          description="Selects the SCC variable mixer for "//TARGET//" calculations. "// &
-                          auto_desc//" The SCC variables are the model populations and, where required by the "// &
-                          "selected method, atomic multipoles that feed the self-consistent xTB potential. TBLITE "// &
-                          "uses tblite's modified Broyden mixer for those variables inside the CP2K SCF cycle. CP2K "// &
-                          "maps the variables onto CP2K's charge-mixing infrastructure. When TBLITE is active, the "// &
-                          "native SCC convergence follows XTB/TBLITE/ACCURACY and the tblite-side SCC update limit "// &
+                          description="Selects the model-specific mixer for "//TARGET//" calculations. "// &
+                          auto_desc//" For GFN1/GFN2/IPEA1 and DFTB, the SCC variables are model populations and, "// &
+                          "where required, atomic multipoles. TBLITE applies tblite's modified Broyden mixer to "// &
+                          "those variables, while CP2K maps them onto CP2K's charge-mixing infrastructure. GXTB is "// &
+                          "different: TBLITE mixes the complete Fock matrix using save_tblite's simple-to-DIIS "// &
+                          "potential schedule, while CP2K uses DFT/SCF density-matrix mixing and the regular CP2K "// &
+                          "KS/Fock DIIS without an additional SCC-variable mixer. When TBLITE is active, native "// &
+                          "model convergence follows XTB/TBLITE/ACCURACY and the tblite-side update limit "// &
                           "follows TBLITE_MIXER/ITERATIONS. If SCC_MIXER is explicitly set to TBLITE, CP2K also "// &
                           "sets DFT/SCF/MAX_SCF to TBLITE_MIXER/ITERATIONS. With SCC_MIXER AUTO or CP2K, MAX_SCF "// &
                           "keeps its normal CP2K meaning. With QS/LS_SCF, explicit SCC_MIXER settings are reset to "// &
@@ -850,16 +869,17 @@ CONTAINS
                           "equivalent there and explicit CP2K or TBLITE mixer choices are reset to NONE. For "// &
                           "CP2K-internal GFN1 and DFTB/DFTB3, the SCC variables are only charge or shell-charge like. The "// &
                           "initial SCC variables are seeded from CP2K's current density, so DFT/SCF/SCF_GUESS and "// &
-                          "DFT/WFN_RESTART_FILE_NAME define the starting point. NONE performs direct updates without "// &
-                          "mixing and is intended for debugging, since it can be unstable.", &
+                          "DFT/WFN_RESTART_FILE_NAME define the starting point. NONE disables the model-specific "// &
+                          "population/potential mixer and is intended for debugging; regular DFT/SCF mixing remains "// &
+                          "controlled independently by its own input.", &
                           usage="SCC_MIXER (AUTO|TBLITE|CP2K|NONE)", &
                           enum_c_vals=s2a("AUTO", "TBLITE", "CP2K", "NONE"), &
                           enum_i_vals=[tblite_scc_mixer_auto, tblite_scc_mixer_tblite, &
                                        tblite_scc_mixer_cp2k, tblite_scc_mixer_none], &
                           enum_desc=s2a("Default method-dependent choice.", &
-                                        "Use the tblite modified Broyden SCC mixer.", &
-                                        "Use CP2K charge mixing for SCC variables.", &
-                                        "Do not mix SCC variables; for debugging."), &
+                                        "Use the native tblite/save_tblite model mixer.", &
+                                        "Use regular CP2K SCF mixing for the model variables.", &
+                                        "Disable the model-specific mixer; for debugging."), &
                           default_i_val=tblite_scc_mixer_auto)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
