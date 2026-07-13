@@ -10,6 +10,7 @@
 ! **************************************************************************************************
 MODULE tblite_scc_mixer
 #if defined(__TBLITE)
+   USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
    USE mctc_env, ONLY: error_type, &
                        fatal_error, &
                        wp
@@ -36,6 +37,7 @@ MODULE tblite_scc_mixer
       REAL(wp)                                           :: min_weight = 0.0_wp
       REAL(wp)                                           :: omega0 = 0.0_wp
       REAL(wp)                                           :: weight_factor = 0.0_wp
+      LOGICAL                                            :: layout_error = .FALSE.
       REAL(wp), ALLOCATABLE, DIMENSION(:, :)             :: a, df, u
       REAL(wp), ALLOCATABLE, DIMENSION(:)                :: dq, dqlast, omega, q_in, qlast_in
    CONTAINS
@@ -88,14 +90,14 @@ CONTAINS
       broyden%min_weight = min_weight
       broyden%max_weight = max_weight
       broyden%weight_factor = weight_factor
-      ALLOCATE (broyden%a(memory, memory))
-      ALLOCATE (broyden%df(ndim, memory))
-      ALLOCATE (broyden%u(ndim, memory))
-      ALLOCATE (broyden%dq(ndim))
-      ALLOCATE (broyden%dqlast(ndim))
-      ALLOCATE (broyden%omega(memory))
-      ALLOCATE (broyden%q_in(ndim))
-      ALLOCATE (broyden%qlast_in(ndim))
+      ALLOCATE (broyden%a(memory, memory), SOURCE=0.0_wp)
+      ALLOCATE (broyden%df(ndim, memory), SOURCE=0.0_wp)
+      ALLOCATE (broyden%u(ndim, memory), SOURCE=0.0_wp)
+      ALLOCATE (broyden%dq(ndim), SOURCE=0.0_wp)
+      ALLOCATE (broyden%dqlast(ndim), SOURCE=0.0_wp)
+      ALLOCATE (broyden%omega(memory), SOURCE=0.0_wp)
+      ALLOCATE (broyden%q_in(ndim), SOURCE=0.0_wp)
+      ALLOCATE (broyden%qlast_in(ndim), SOURCE=0.0_wp)
       CALL MOVE_ALLOC(broyden, mixer)
 
    END SUBROUTINE new_cp2k_tblite_mixer
@@ -109,6 +111,15 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:), INTENT(IN)                  :: qvec
 
+      IF (self%layout_error) RETURN
+      IF (self%iset > self%ndim .OR. SIZE(qvec) > self%ndim - self%iset) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(qvec))) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
       self%q_in(self%iset + 1:self%iset + SIZE(qvec)) = qvec
       self%iset = self%iset + SIZE(qvec)
 
@@ -123,6 +134,15 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:, :), INTENT(IN)               :: qvec
 
+      IF (self%layout_error) RETURN
+      IF (self%iset > self%ndim .OR. SIZE(qvec) > self%ndim - self%iset) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(qvec))) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
       self%q_in(self%iset + 1:self%iset + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)])
       self%iset = self%iset + SIZE(qvec)
 
@@ -137,6 +157,15 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:, :, :), INTENT(IN)            :: qvec
 
+      IF (self%layout_error) RETURN
+      IF (self%iset > self%ndim .OR. SIZE(qvec) > self%ndim - self%iset) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(qvec))) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
       self%q_in(self%iset + 1:self%iset + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)])
       self%iset = self%iset + SIZE(qvec)
 
@@ -151,6 +180,15 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:), INTENT(IN)                  :: qvec
 
+      IF (self%layout_error) RETURN
+      IF (self%idif > self%ndim .OR. SIZE(qvec) > self%ndim - self%idif) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(qvec))) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
       self%dq(self%idif + 1:self%idif + SIZE(qvec)) = &
          qvec - self%q_in(self%idif + 1:self%idif + SIZE(qvec))
       self%idif = self%idif + SIZE(qvec)
@@ -166,6 +204,15 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:, :), INTENT(IN)               :: qvec
 
+      IF (self%layout_error) RETURN
+      IF (self%idif > self%ndim .OR. SIZE(qvec) > self%ndim - self%idif) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(qvec))) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
       self%dq(self%idif + 1:self%idif + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)]) - &
                                                       self%q_in(self%idif + 1:self%idif + SIZE(qvec))
       self%idif = self%idif + SIZE(qvec)
@@ -181,6 +228,15 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:, :, :), INTENT(IN)            :: qvec
 
+      IF (self%layout_error) RETURN
+      IF (self%idif > self%ndim .OR. SIZE(qvec) > self%ndim - self%idif) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(qvec))) THEN
+         self%layout_error = .TRUE.
+         RETURN
+      END IF
       self%dq(self%idif + 1:self%idif + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)]) - &
                                                       self%q_in(self%idif + 1:self%idif + SIZE(qvec))
       self%idif = self%idif + SIZE(qvec)
@@ -196,7 +252,47 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       TYPE(error_type), ALLOCATABLE, INTENT(OUT)          :: error
 
+      CHARACTER(LEN=192)                                 :: message
       INTEGER                                            :: info
+
+      IF (self%layout_error) THEN
+         CALL fatal_error(error, "Invalid or non-finite tblite SCC mixer set/diff/get input")
+         RETURN
+      END IF
+      IF (self%idif /= self%ndim) THEN
+         WRITE (message, "(A,I0,A,I0)") "Incomplete tblite SCC mixer residual: got ", &
+            self%idif, " values, expected ", self%ndim
+         CALL fatal_error(error, TRIM(message))
+         RETURN
+      END IF
+      IF (self%iter == 0) THEN
+         IF (self%iset /= self%ndim) THEN
+            WRITE (message, "(A,I0,A,I0)") "Incomplete initial tblite SCC mixer input: got ", &
+               self%iset, " values, expected ", self%ndim
+            CALL fatal_error(error, TRIM(message))
+            RETURN
+         END IF
+      ELSE
+         ! qs_charge_mixing keeps q_in inside the mixer after its initial set, whereas the native
+         ! tblite path replaces all components before every update.  Reject partial replacement.
+         IF (self%iset /= 0 .AND. self%iset /= self%ndim) THEN
+            WRITE (message, "(A,I0,A,I0)") "Partial tblite SCC mixer input: got ", &
+               self%iset, " values, expected either 0 or ", self%ndim
+            CALL fatal_error(error, TRIM(message))
+            RETURN
+         END IF
+         IF (self%iget /= self%ndim) THEN
+            WRITE (message, "(A,I0,A,I0)") "Incomplete tblite SCC mixer output read: got ", &
+               self%iget, " values, expected ", self%ndim
+            CALL fatal_error(error, TRIM(message))
+            RETURN
+         END IF
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(self%q_in)) .OR. &
+          .NOT. ALL(ieee_is_finite(self%dq))) THEN
+         CALL fatal_error(error, "Non-finite tblite SCC mixer vector before Broyden update")
+         RETURN
+      END IF
 
       self%iset = 0
       self%idif = 0
@@ -206,7 +302,20 @@ CONTAINS
                                self%iter, self%memory, self%damp, self%omega0, &
                                self%min_weight, self%max_weight, self%weight_factor, &
                                self%omega, self%df, self%u, self%a, info)
-      IF (info /= 0) CALL fatal_error(error, "Broyden mixing failed to obtain next iteration")
+      SELECT CASE (info)
+      CASE (0)
+         IF (.NOT. ALL(ieee_is_finite(self%q_in))) THEN
+            CALL fatal_error(error, "Non-finite tblite SCC mixer vector after Broyden update")
+         END IF
+      CASE (-1)
+         CALL fatal_error(error, "Invalid dimensions or parameters in tblite Broyden mixer")
+      CASE (-2)
+         CALL fatal_error(error, "Non-finite input or history in tblite Broyden mixer")
+      CASE (-3)
+         CALL fatal_error(error, "Non-finite intermediate or output in tblite Broyden mixer")
+      CASE DEFAULT
+         CALL fatal_error(error, "Broyden linear solve failed to obtain next iteration")
+      END SELECT
 
    END SUBROUTINE cp2k_tblite_mixer_next
 
@@ -219,7 +328,17 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:), INTENT(OUT)                 :: qvec
 
+      IF (self%layout_error) THEN
+         qvec = 0.0_wp
+         RETURN
+      END IF
+      IF (self%iget > self%ndim .OR. SIZE(qvec) > self%ndim - self%iget) THEN
+         self%layout_error = .TRUE.
+         qvec = 0.0_wp
+         RETURN
+      END IF
       qvec(:) = self%q_in(self%iget + 1:self%iget + SIZE(qvec))
+      IF (.NOT. ALL(ieee_is_finite(qvec))) self%layout_error = .TRUE.
       self%iget = self%iget + SIZE(qvec)
 
    END SUBROUTINE cp2k_tblite_mixer_get_1d
@@ -233,7 +352,17 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:, :), INTENT(OUT)              :: qvec
 
+      IF (self%layout_error) THEN
+         qvec = 0.0_wp
+         RETURN
+      END IF
+      IF (self%iget > self%ndim .OR. SIZE(qvec) > self%ndim - self%iget) THEN
+         self%layout_error = .TRUE.
+         qvec = 0.0_wp
+         RETURN
+      END IF
       qvec = RESHAPE(self%q_in(self%iget + 1:self%iget + SIZE(qvec)), SHAPE(qvec))
+      IF (.NOT. ALL(ieee_is_finite(qvec))) self%layout_error = .TRUE.
       self%iget = self%iget + SIZE(qvec)
 
    END SUBROUTINE cp2k_tblite_mixer_get_2d
@@ -247,7 +376,17 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
       REAL(wp), DIMENSION(:, :, :), INTENT(OUT)           :: qvec
 
+      IF (self%layout_error) THEN
+         qvec = 0.0_wp
+         RETURN
+      END IF
+      IF (self%iget > self%ndim .OR. SIZE(qvec) > self%ndim - self%iget) THEN
+         self%layout_error = .TRUE.
+         qvec = 0.0_wp
+         RETURN
+      END IF
       qvec = RESHAPE(self%q_in(self%iget + 1:self%iget + SIZE(qvec)), SHAPE(qvec))
+      IF (.NOT. ALL(ieee_is_finite(qvec))) self%layout_error = .TRUE.
       self%iget = self%iget + SIZE(qvec)
 
    END SUBROUTINE cp2k_tblite_mixer_get_3d
@@ -261,7 +400,13 @@ CONTAINS
       CLASS(cp2k_tblite_broyden_mixer_type), INTENT(IN)  :: self
       REAL(wp)                                           :: error
 
-      error = SQRT(SUM(self%dq**2)/SIZE(self%dq))
+      IF (self%layout_error .OR. .NOT. ALL(ieee_is_finite(self%dq))) THEN
+         ! Keep the convergence metric finite; next() reports the detailed fatal mixer error.
+         error = HUGE(1.0_wp)
+      ELSE
+         error = SQRT(SUM(self%dq**2)/SIZE(self%dq))
+         IF (.NOT. ieee_is_finite(error)) error = HUGE(1.0_wp)
+      END IF
 
    END FUNCTION cp2k_tblite_mixer_get_error
 
@@ -298,61 +443,119 @@ CONTAINS
       REAL(wp), DIMENSION(memory, memory), INTENT(INOUT) :: a
       INTEGER, INTENT(OUT)                               :: info
 
-      INTEGER                                            :: i, it1, itn, j
-      REAL(wp)                                           :: inv
+      INTEGER                                            :: current_memory, i, it1, j, sloti, slotj, start_index
+      REAL(wp)                                           :: inv, norm_dq, norm_dqlast, norm_dr, norm_dr_tol
       REAL(wp), ALLOCATABLE, DIMENSION(:, :)             :: beta, c
 
       info = 0
-      itn = iter - 1
-      it1 = MOD(itn - 1, memory) + 1
+      IF (n < 1 .OR. memory < 1 .OR. iter < 1 .OR. maxw <= 0.0_wp .OR. &
+          minw < 0.0_wp .OR. minw > maxw .OR. omega0 <= 0.0_wp) THEN
+         info = -1
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite([alpha, omega0, minw, maxw, wfac])) .OR. &
+          .NOT. ALL(ieee_is_finite(q)) .OR. .NOT. ALL(ieee_is_finite(dq))) THEN
+         info = -2
+         RETURN
+      END IF
 
       IF (iter == 1) THEN
          dqlast(:) = dq
          qlast(:) = q
          q(:) = q + alpha*dq
+         IF (.NOT. ALL(ieee_is_finite(q))) info = -3
          RETURN
       END IF
 
-      ALLOCATE (beta(MIN(memory, itn), MIN(memory, itn)), c(MIN(memory, itn), 1))
-
-      omega(it1) = SQRT(DOT_PRODUCT(dq, dq))
-      IF (omega(it1) > (wfac/maxw)) THEN
-         omega(it1) = wfac/omega(it1)
-      ELSE
-         omega(it1) = maxw
+      IF (.NOT. ALL(ieee_is_finite(qlast)) .OR. &
+          .NOT. ALL(ieee_is_finite(dqlast))) THEN
+         info = -2
+         RETURN
       END IF
-      IF (omega(it1) < minw) omega(it1) = minw
 
+      ! Store the new secant in a cyclic buffer, but expose the active history to LAPACK as a
+      ! compact matrix.  The latter is essential once the physical slots wrap around memory.
+      it1 = MOD(iter - 2, memory) + 1
+      current_memory = MIN(iter - 1, memory)
+      start_index = iter - 1 - current_memory
+      ALLOCATE (beta(current_memory, current_memory), SOURCE=0.0_wp)
+      ALLOCATE (c(current_memory, 1), SOURCE=0.0_wp)
+
+      norm_dq = SQRT(DOT_PRODUCT(dq, dq))
+      norm_dqlast = SQRT(DOT_PRODUCT(dqlast, dqlast))
       df(:, it1) = dq - dqlast
-      inv = MAX(SQRT(DOT_PRODUCT(df(:, it1), df(:, it1))), EPSILON(1.0_wp))
-      inv = 1.0_wp/inv
-      df(:, it1) = inv*df(:, it1)
+      norm_dr = SQRT(DOT_PRODUCT(df(:, it1), df(:, it1)))
+      IF (.NOT. ALL(ieee_is_finite([norm_dq, norm_dqlast, norm_dr]))) THEN
+         info = -3
+         RETURN
+      END IF
+      norm_dr_tol = EPSILON(1.0_wp)*MAX(1.0_wp, norm_dq, norm_dqlast)
 
-      DO j = MAX(1, itn - memory + 1), itn
-         i = MOD(j - 1, memory) + 1
-         a(i, it1) = DOT_PRODUCT(df(:, i), df(:, it1))
-         a(it1, i) = a(i, it1)
-         c(i, 1) = omega(i)*DOT_PRODUCT(df(:, i), dq)
+      IF (norm_dr <= norm_dr_tol) THEN
+         ! A degenerate secant carries no Broyden information.  Give its slot zero weight instead
+         ! of forming (q-qlast)/norm_dr; older non-degenerate history remains usable.
+         omega(it1) = 0.0_wp
+         df(:, it1) = 0.0_wp
+         u(:, it1) = 0.0_wp
+      ELSE
+         omega(it1) = norm_dq
+         IF (omega(it1) > (wfac/maxw)) THEN
+            omega(it1) = wfac/omega(it1)
+         ELSE
+            omega(it1) = maxw
+         END IF
+         omega(it1) = MIN(MAX(omega(it1), minw), maxw)
+
+         inv = 1.0_wp/norm_dr
+         df(:, it1) = inv*df(:, it1)
+         u(:, it1) = alpha*df(:, it1) + inv*(q - qlast)
+      END IF
+
+      IF (.NOT. ieee_is_finite(omega(it1)) .OR. &
+          .NOT. ALL(ieee_is_finite(df(:, it1))) .OR. &
+          .NOT. ALL(ieee_is_finite(u(:, it1)))) THEN
+         info = -3
+         RETURN
+      END IF
+
+      DO i = 1, current_memory
+         sloti = MOD(start_index + i - 1, memory) + 1
+         a(sloti, it1) = DOT_PRODUCT(df(:, sloti), df(:, it1))
+         a(it1, sloti) = a(sloti, it1)
       END DO
 
-      DO j = MAX(1, itn - memory + 1), itn
-         i = MOD(j - 1, memory) + 1
-         beta(:it1, i) = omega(:it1)*omega(i)*a(:it1, i)
+      dqlast(:) = dq
+      qlast(:) = q
+
+      DO i = 1, current_memory
+         sloti = MOD(start_index + i - 1, memory) + 1
+         c(i, 1) = omega(sloti)*DOT_PRODUCT(df(:, sloti), dq)
+         DO j = 1, current_memory
+            slotj = MOD(start_index + j - 1, memory) + 1
+            beta(i, j) = omega(sloti)*omega(slotj)*a(sloti, slotj)
+         END DO
          beta(i, i) = beta(i, i) + omega0*omega0
       END DO
 
+      IF (.NOT. ALL(ieee_is_finite(beta)) .OR. .NOT. ALL(ieee_is_finite(c))) THEN
+         info = -3
+         RETURN
+      END IF
+
       CALL cp2k_tblite_lineq(beta, c, info)
       IF (info /= 0) RETURN
+      IF (.NOT. ALL(ieee_is_finite(c))) THEN
+         info = -3
+         RETURN
+      END IF
 
-      u(:, it1) = alpha*df(:, it1) + inv*(q - qlast)
-      dqlast(:) = dq
-      qlast(:) = q
       q(:) = q + alpha*dq
 
-      DO j = MAX(1, itn - memory + 1), itn
-         i = MOD(j - 1, memory) + 1
-         q(:) = q - omega(i)*c(i, 1)*u(:, i)
+      DO i = 1, current_memory
+         sloti = MOD(start_index + i - 1, memory) + 1
+         q(:) = q - omega(sloti)*c(i, 1)*u(:, sloti)
       END DO
+      IF (.NOT. ALL(ieee_is_finite(q))) info = -3
 
    END SUBROUTINE cp2k_tblite_broyden
 

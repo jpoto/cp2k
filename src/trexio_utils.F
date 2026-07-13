@@ -1273,7 +1273,7 @@ CONTAINS
       diis_step = .FALSE.
       IF (reuse_scf_mos) THEN
          CALL do_general_diag_kp(matrix_ks, matrix_s, kpoints_scf, scf_env, scf_control, .FALSE., &
-                                 diis_step)
+                                 diis_step, qs_env=qs_env)
          CALL get_kpoint_info(kpoints_out, cell_to_index=cell_to_index)
          CALL prepare_wannier90_scf_mos(kpoints_out, kpoints_scf, matrix_s, matrix_ks, &
                                         cell_to_index, sab_nl, para_env, reused_scf_mos, &
@@ -1302,7 +1302,7 @@ CONTAINS
          END IF
          diis_step = .FALSE.
          CALL do_general_diag_kp(matrix_ks, matrix_s, kpoints_out, scf_env, scf_control, .FALSE., &
-                                 diis_step)
+                                 diis_step, qs_env=qs_env)
       END IF
       created = .TRUE.
 

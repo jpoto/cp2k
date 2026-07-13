@@ -16,9 +16,15 @@ MODULE qs_scf_loop_utils
                                               dbcsr_type
    USE cp_external_control,             ONLY: external_control
    USE cp_log_handling,                 ONLY: cp_to_string
+#if defined(__TBLITE_GXTB)
+   USE input_constants,                 ONLY: gxtb
+#endif
    USE input_section_types,             ONLY: section_vals_type
    USE kinds,                           ONLY: default_string_length,&
                                               dp
+#if defined(__TBLITE_GXTB)
+   USE kpoint_methods,                  ONLY: kpoint_density_matrices
+#endif
    USE kpoint_types,                    ONLY: kpoint_type
    USE message_passing,                 ONLY: mp_para_env_type
    USE qs_density_matrices,             ONLY: calculate_density_matrix
@@ -223,11 +229,11 @@ CONTAINS
                   CALL do_general_diag(scf_env, mos, matrix_ks, &
                                        matrix_s, scf_control, scf_section, &
                                        diis_step, &
-                                       probe)
+                                       probe, qs_env)
                ELSE
                   CALL do_general_diag(scf_env, mos, matrix_ks, &
                                        matrix_s, scf_control, scf_section, &
-                                       diis_step)
+                                       diis_step, qs_env=qs_env)
                END IF
             END IF
             IF (scf_control%do_diag_sub) THEN
@@ -263,7 +269,7 @@ CONTAINS
                                          scf_control, scf_section, check_moconv_only=.TRUE.)
             END IF
             CALL do_general_diag(scf_env, mos, matrix_ks, &
-                                 matrix_s, scf_control, scf_section, diis_step)
+                                 matrix_s, scf_control, scf_section, diis_step, qs_env=qs_env)
          ELSE
             CALL do_block_krylov_diag(scf_env, mos, matrix_ks, &
                                       scf_control, scf_section)
@@ -712,12 +718,13 @@ CONTAINS
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(kpoint_type), POINTER                         :: kpoints
 
-      NULLIFY (energy, rho, dft_control, ks_env)
+      NULLIFY (energy, rho, dft_control, kpoints, ks_env)
 
       CALL get_qs_env(qs_env=qs_env, energy=energy, ks_env=ks_env, &
                       rho=rho, dft_control=dft_control, para_env=para_env, &
-                      do_kpoints=do_kpoints)
+                      do_kpoints=do_kpoints, kpoints=kpoints)
 
       CALL cleanup_scf_loop(scf_env)
 
@@ -726,6 +733,15 @@ CONTAINS
       CALL qs_scf_print_summary(output_unit, qs_env)
 
       CALL qs_scf_undo_mixing(scf_env, rho, dft_control, para_env, diis_step)
+
+#if defined(__TBLITE_GXTB)
+      IF (do_kpoints .AND. dft_control%qs_control%xtb_control%do_tblite .AND. &
+          dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. &
+          .NOT. tb_native_scc_mixer_active(dft_control)) THEN
+         CPASSERT(ASSOCIATED(kpoints))
+         CALL kpoint_density_matrices(kpoints)
+      END IF
+#endif
 
       !   *** update rspace rho since the mo changed
       !   *** this might not always be needed (i.e. no post calculation / no forces )

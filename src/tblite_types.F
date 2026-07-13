@@ -18,6 +18,7 @@ MODULE tblite_types
 #if defined(__TBLITE_GXTB)
    USE tblite_acp_cache, ONLY: acp_cache
    USE tblite_basis_cache, ONLY: basis_cache
+   USE tblite_cp2k_compat, ONLY: cp2k_potential_mixer_type
 #endif
    USE tblite_xtb_calculator, ONLY: xtb_calculator
    USE tblite_container, ONLY: container_cache
@@ -89,6 +90,14 @@ MODULE tblite_types
       TYPE(basis_cache)                                  :: bcache = basis_cache()
       TYPE(acp_cache)                                    :: acache = acp_cache()
       REAL(KIND=dp), ALLOCATABLE                         :: overlap_dense(:, :)
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: exchange_fock_kp(:, :, :, :)
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: mixed_fock_kp(:, :, :, :)
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: previous_density_kp(:, :, :, :)
+      LOGICAL                                            :: exchange_fock_kp_valid = .FALSE.
+      LOGICAL                                            :: mixed_fock_kp_valid = .FALSE.
+      LOGICAL                                            :: previous_density_kp_valid = .FALSE.
+      INTEGER                                            :: potential_mixer_dimension = 0
+      TYPE(cp2k_potential_mixer_type), ALLOCATABLE       :: potential_mixer
       TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()
 #endif
 #if defined(__TBLITE)
@@ -155,6 +164,14 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%dcndL)) DEALLOCATE (tb_tblite%dcndL)
 #if defined(__TBLITE_GXTB)
          IF (ALLOCATED(tb_tblite%overlap_dense)) DEALLOCATE (tb_tblite%overlap_dense)
+         IF (ALLOCATED(tb_tblite%exchange_fock_kp)) DEALLOCATE (tb_tblite%exchange_fock_kp)
+         IF (ALLOCATED(tb_tblite%mixed_fock_kp)) DEALLOCATE (tb_tblite%mixed_fock_kp)
+         IF (ALLOCATED(tb_tblite%previous_density_kp)) DEALLOCATE (tb_tblite%previous_density_kp)
+         tb_tblite%exchange_fock_kp_valid = .FALSE.
+         tb_tblite%mixed_fock_kp_valid = .FALSE.
+         tb_tblite%previous_density_kp_valid = .FALSE.
+         IF (ALLOCATED(tb_tblite%potential_mixer)) DEALLOCATE (tb_tblite%potential_mixer)
+         tb_tblite%potential_mixer_dimension = 0
 #endif
 
          IF (ASSOCIATED(tb_tblite%dipbra)) &

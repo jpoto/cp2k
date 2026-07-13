@@ -557,13 +557,14 @@ CONTAINS
       IF (reuse_scf_mos) THEN
          CALL get_kpoint_info(kpoint=kpoint, cell_to_index=cell_to_index)
          CALL do_general_diag_kp(matrix_ks, matrix_s, qs_kpoint, scf_env, scf_control, .FALSE., &
-                                 diis_step)
+                                 diis_step, qs_env=qs_env_kp)
          IF (validate_reuse_scf_mos) THEN
             IF (iw > 0) THEN
                WRITE (iw, '(T2,A)') &
                   "WANNIER90| Validating SCF MO reuse against a full-mesh diagonalization reference."
             END IF
-            CALL do_general_diag_kp(matrix_ks, matrix_s, kpoint, scf_env, scf_control, .FALSE., diis_step)
+            CALL do_general_diag_kp(matrix_ks, matrix_s, kpoint, scf_env, scf_control, .FALSE., diis_step, &
+                                    qs_env=qs_env_kp)
             full_mesh_diagonalized = .TRUE.
             nspins = dft_control%nspins
             CALL save_wannier90_mo_snapshot(kpoint, nspins, para_env, reference_mo_real, &
@@ -639,7 +640,8 @@ CONTAINS
          END IF
       END IF
       IF (.NOT. reused_scf_mos .AND. .NOT. full_mesh_diagonalized) THEN
-         CALL do_general_diag_kp(matrix_ks, matrix_s, kpoint, scf_env, scf_control, .FALSE., diis_step)
+         CALL do_general_diag_kp(matrix_ks, matrix_s, kpoint, scf_env, scf_control, .FALSE., diis_step, &
+                                 qs_env=qs_env_kp)
       END IF
       IF (ALLOCATED(reference_mo_real)) DEALLOCATE (reference_mo_real)
       IF (ALLOCATED(reference_mo_imag)) DEALLOCATE (reference_mo_imag)

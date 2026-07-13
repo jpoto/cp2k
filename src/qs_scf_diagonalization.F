@@ -65,7 +65,7 @@ MODULE qs_scf_diagonalization
                                               cp_print_key_unit_nr
    USE input_constants,                 ONLY: &
         cholesky_dbcsr, cholesky_inverse, cholesky_off, cholesky_reduce, cholesky_restore, &
-        core_guess, general_roks, high_spin_roks, restart_guess
+        core_guess, general_roks, gxtb, high_spin_roks, restart_guess
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type
    USE kinds,                           ONLY: dp
@@ -129,6 +129,12 @@ MODULE qs_scf_diagonalization
    USE qs_scf_types,                    ONLY: qs_scf_env_type,&
                                               subspace_env_type
    USE scf_control_types,               ONLY: scf_control_type
+#if defined(__TBLITE_GXTB)
+   USE tblite_interface,                ONLY: tb_apply_gxtb_kpoint_fm,&
+                                              tb_mix_gxtb_gamma_fm,&
+                                              tb_native_scc_mixer_active,&
+                                              tb_prepare_gxtb_kpoint_mixer
+#endif
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -154,13 +160,14 @@ CONTAINS
 !> \param scf_control ...
 !> \param scf_section ...
 !> \param diis_step ...
+!> \param qs_env ...
 !> \par History
 !>      03.2006 created [Joost VandeVondele]
 ! **************************************************************************************************
 
    SUBROUTINE general_eigenproblem(scf_env, mos, matrix_ks, &
                                    matrix_s, scf_control, scf_section, &
-                                   diis_step)
+                                   diis_step, qs_env)
 
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(mo_set_type), DIMENSION(:), INTENT(IN)        :: mos
@@ -168,24 +175,40 @@ CONTAINS
       TYPE(scf_control_type), POINTER                    :: scf_control
       TYPE(section_vals_type), POINTER                   :: scf_section
       LOGICAL, INTENT(INOUT)                             :: diis_step
+      TYPE(qs_environment_type), OPTIONAL, POINTER       :: qs_env
 
       INTEGER                                            :: ispin, nao, nspin
-      LOGICAL                                            :: do_level_shift, owns_ortho, use_jacobi
+      LOGICAL                                            :: do_level_shift, owns_ortho, use_cp2k_diis, use_jacobi
       REAL(KIND=dp)                                      :: diis_error, eps_diis
       TYPE(cp_fm_type), POINTER                          :: ortho
+      TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(dbcsr_type), POINTER                          :: ortho_dbcsr
 
       nspin = SIZE(matrix_ks)
-      NULLIFY (ortho, ortho_dbcsr)
+      NULLIFY (dft_control, ortho, ortho_dbcsr)
 
       DO ispin = 1, nspin
          CALL copy_dbcsr_to_fm(matrix_ks(ispin)%matrix, &
                                scf_env%scf_work1(ispin))
       END DO
+#if defined(__TBLITE_GXTB)
+      IF (PRESENT(qs_env)) CALL tb_mix_gxtb_gamma_fm(qs_env, matrix_ks, scf_env%scf_work1)
+#endif
 
       eps_diis = scf_control%eps_diis
 
-      IF (scf_env%iter_count > 1 .AND. .NOT. scf_env%skip_diis) THEN
+      use_cp2k_diis = .NOT. scf_env%skip_diis
+#if defined(__TBLITE_GXTB)
+      IF (PRESENT(qs_env)) THEN
+         CALL get_qs_env(qs_env, dft_control=dft_control)
+         IF (ASSOCIATED(dft_control)) THEN
+            IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
+                dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. &
+                tb_native_scc_mixer_active(dft_control)) use_cp2k_diis = .FALSE.
+         END IF
+      END IF
+#endif
+      IF (scf_env%iter_count > 1 .AND. use_cp2k_diis) THEN
          CALL qs_diis_b_step(scf_env%scf_diis_buffer, mos, scf_env%scf_work1, &
                              scf_env%scf_work2, scf_env%iter_delta, diis_error, diis_step, &
                              eps_diis, scf_control%nmixing, &
@@ -369,10 +392,11 @@ CONTAINS
 !> \param scf_section ...
 !> \param diis_step ...
 !> \param probe ...
+!> \param qs_env ...
 ! **************************************************************************************************
    SUBROUTINE do_general_diag(scf_env, mos, matrix_ks, &
                               matrix_s, scf_control, scf_section, &
-                              diis_step, probe)
+                              diis_step, probe, qs_env)
 
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(mo_set_type), DIMENSION(:), INTENT(INOUT)     :: mos
@@ -382,14 +406,20 @@ CONTAINS
       LOGICAL, INTENT(INOUT)                             :: diis_step
       TYPE(hairy_probes_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: probe
+      TYPE(qs_environment_type), OPTIONAL, POINTER       :: qs_env
 
       INTEGER                                            :: ispin, nspin
       REAL(KIND=dp)                                      :: total_zeff_corr
 
       nspin = SIZE(matrix_ks)
 
-      CALL general_eigenproblem(scf_env, mos, matrix_ks, &
-                                matrix_s, scf_control, scf_section, diis_step)
+      IF (PRESENT(qs_env)) THEN
+         CALL general_eigenproblem(scf_env, mos, matrix_ks, &
+                                   matrix_s, scf_control, scf_section, diis_step, qs_env)
+      ELSE
+         CALL general_eigenproblem(scf_env, mos, matrix_ks, &
+                                   matrix_s, scf_control, scf_section, diis_step)
+      END IF
 
       total_zeff_corr = 0.0_dp
       total_zeff_corr = scf_env%sum_zeff_corr
@@ -451,7 +481,7 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: update_p
       LOGICAL, INTENT(INOUT)                             :: diis_step
       REAL(dp), INTENT(INOUT), OPTIONAL                  :: diis_error
-      TYPE(qs_environment_type), OPTIONAL, POINTER       :: qs_env
+      TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(hairy_probes_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: probe
 
@@ -481,20 +511,39 @@ CONTAINS
          POINTER                                         :: sab_nl
       TYPE(qs_matrix_pools_type), POINTER                :: mpools
       TYPE(section_vals_type), POINTER                   :: scf_section
+      TYPE(dft_control_type), POINTER                    :: dft_control
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (sab_nl)
+      NULLIFY (dft_control, sab_nl)
       CALL get_kpoint_info(kpoints, nkp=nkp, xkp=xkp, use_real_wfn=use_real_wfn, kp_range=kp_range, &
                            nkp_groups=nkp_groups, kp_dist=kp_dist, sab_nl=sab_nl, &
                            cell_to_index=cell_to_index)
       CPASSERT(ASSOCIATED(sab_nl))
       kplocal = kp_range(2) - kp_range(1) + 1
 
+#if defined(__TBLITE_GXTB)
+      CALL get_qs_env(qs_env, dft_control=dft_control)
+      IF (ASSOCIATED(dft_control)) THEN
+         IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
+             dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. .NOT. update_p) &
+            CPABORT("Post-SCF g-xTB k-point diagonalization is not yet implemented")
+      END IF
+#endif
+
       !Whether we use DIIS for k-points
       do_diis = .FALSE.
       IF (scf_env%iter_count > 1 .AND. .NOT. scf_env%skip_diis .AND. .NOT. use_real_wfn &
-          .AND. PRESENT(diis_error) .AND. PRESENT(qs_env)) do_diis = .TRUE.
+          .AND. PRESENT(diis_error)) do_diis = .TRUE.
+#if defined(__TBLITE_GXTB)
+      IF (do_diis) THEN
+         IF (ASSOCIATED(dft_control)) THEN
+            IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
+                dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. &
+                tb_native_scc_mixer_active(dft_control)) do_diis = .FALSE.
+         END IF
+      END IF
+#endif
 
       ! allocate some work matrices
       ALLOCATE (rmatrix, cmatrix, tmpmat)
@@ -533,6 +582,10 @@ CONTAINS
       nspin = SIZE(matrix_ks, 1)
       ALLOCATE (info(kplocal*nspin*nkp_groups, 4))
 
+#if defined(__TBLITE_GXTB)
+      CALL tb_prepare_gxtb_kpoint_mixer(qs_env, matrix_ks, kpoints, scf_env)
+#endif
+
       ! Setup and start all the communication
       indx = 0
       DO ikp = 1, kplocal
@@ -549,6 +602,9 @@ CONTAINS
                                       xkp=xkp(1:3, ik), cell_to_index=cell_to_index, sab_nl=sab_nl)
                   CALL dbcsr_desymmetrize(rmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(1))
+#if defined(__TBLITE_GXTB)
+                  CALL tb_apply_gxtb_kpoint_fm(qs_env, ik, ispin, fmwork(1))
+#endif
                   ! s matrix is not spin dependent
                   CALL dbcsr_set(rmatrix, 0.0_dp)
                   CALL rskp_transform(rmatrix=rmatrix, rsmat=matrix_s, ispin=1, &
@@ -565,6 +621,9 @@ CONTAINS
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(1))
                   CALL dbcsr_desymmetrize(cmatrix, tmpmat)
                   CALL copy_dbcsr_to_fm(tmpmat, fmwork(2))
+#if defined(__TBLITE_GXTB)
+                  CALL tb_apply_gxtb_kpoint_fm(qs_env, ik, ispin, fmwork(1), fmwork(2))
+#endif
                   ! s matrix is not spin dependent, double the work
                   CALL dbcsr_set(rmatrix, 0.0_dp)
                   CALL dbcsr_set(cmatrix, 0.0_dp)

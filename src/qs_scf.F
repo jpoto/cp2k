@@ -83,7 +83,7 @@ MODULE qs_scf
         cdft2ot, history_guess, ot2cdft, ot_precond_full_all, ot_precond_full_single, &
         ot_precond_full_single_inverse, ot_precond_none, ot_precond_s_inverse, &
         outer_scf_becke_constraint, outer_scf_hirshfeld_constraint, outer_scf_optimizer_broyden, &
-        outer_scf_optimizer_newton_ls, tblite_scc_mixer_tblite
+        gxtb, outer_scf_optimizer_newton_ls, tblite_scc_mixer_tblite
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type
    USE kinds,                           ONLY: default_path_length,&
@@ -180,6 +180,9 @@ MODULE qs_scf
                                               tb_native_scc_mixer_active,&
                                               tb_scf_mixer_error,&
                                               tb_update_charges
+#if defined(__TBLITE_GXTB)
+   USE tblite_interface,                ONLY: tb_sync_gxtb_kpoint_density
+#endif
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -363,8 +366,9 @@ CONTAINS
                                                             ic, ispin, iter_count, output_unit, &
                                                             scf_energy_message_tag, total_steps
       LOGICAL :: density_full_step, diis_step, do_kpoints, energy_only, exit_inner_loop, &
-         exit_outer_loop, inner_loop_converged, internal_tblite_density_full_step, &
-         internal_tblite_mixer, just_energy, outer_loop_converged, tblite_native_mixer
+         exit_outer_loop, inner_loop_converged, &
+         internal_tblite_density_full_step, internal_tblite_mixer, just_energy, &
+         outer_loop_converged, tblite_native_mixer
       REAL(KIND=dp)                                      :: t1, t2
       REAL(KIND=dp), DIMENSION(3)                        :: res_val_3
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
@@ -427,7 +431,6 @@ CONTAINS
       internal_tblite_density_full_step = dft_control%qs_control%xtb .AND. &
                                           .NOT. dft_control%qs_control%xtb_control%do_tblite .AND. &
                                           dft_control%qs_control%xtb_control%tblite_scc_mixer == tblite_scc_mixer_tblite
-
       CALL qs_rho_get(rho, rho_ao_kp=rho_ao_kp)
 
       dft_section => section_vals_get_subs_vals(input, "DFT")
@@ -562,8 +565,13 @@ CONTAINS
                CALL tb_get_energy(qs_env, qs_env%tb_tblite, energy)
             END IF
 
-            density_full_step = diis_step .OR. tblite_native_mixer .OR. internal_tblite_density_full_step
+            density_full_step = diis_step .OR. tblite_native_mixer .OR. &
+                                internal_tblite_density_full_step
             CALL qs_scf_density_mixing(scf_env, rho, para_env, density_full_step)
+#if defined(__TBLITE_GXTB)
+            IF (do_kpoints .AND. dft_control%qs_control%xtb_control%do_tblite) &
+               CALL tb_sync_gxtb_kpoint_density(qs_env, diis_step)
+#endif
             IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
                 .NOT. (dft_control%qs_control%do_ls_scf .OR. scf_control%use_ot)) THEN
                scf_env%iter_delta = MAX(scf_env%iter_delta, &
@@ -576,8 +584,21 @@ CONTAINS
                                         charge_mixing_scc_error(scf_env%mixing_store, scf_control%eps_scf))
             END IF
             IF (tblite_native_mixer) THEN
-               scf_env%iter_param = dft_control%qs_control%xtb_control%tblite_mixer_damping
-               scf_env%iter_method = "TBLite/Diag"
+               IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+                  IF (scf_env%iter_count == 1) THEN
+                     scf_env%iter_param = 1.0_dp
+                     scf_env%iter_method = "GXTB-Raw"
+                  ELSEIF (scf_env%iter_count <= 3) THEN
+                     scf_env%iter_param = 0.2_dp
+                     scf_env%iter_method = "GXTB-Simple"
+                  ELSE
+                     scf_env%iter_param = 1.0_dp
+                     scf_env%iter_method = "GXTB-FDIIS"
+                  END IF
+               ELSE
+                  scf_env%iter_param = dft_control%qs_control%xtb_control%tblite_mixer_damping
+                  scf_env%iter_method = "TBLite/Diag"
+               END IF
             ELSEIF (internal_tblite_mixer) THEN
                scf_env%iter_method = "TBLite/Diag"
                IF (dft_control%qs_control%dftb) THEN
@@ -769,6 +790,15 @@ CONTAINS
                       do_kpoints=do_kpoints, &
                       kpoints=kpoints, &
                       mos=mos)
+
+      IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
+          dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+         IF (tb_native_scc_mixer_active(dft_control)) THEN
+            IF (scf_env%method /= general_diag_method_nr .OR. dft_control%roks .OR. &
+                scf_control%diagonalization%mom) &
+               CPABORT("The native g-xTB potential mixer requires standard diagonalization without ROKS or MOM")
+         END IF
+      END IF
 
       ! if using mo_coeff_b then copy to fm
       DO ispin = 1, SIZE(mos) !fm->dbcsr
