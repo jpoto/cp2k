@@ -951,6 +951,9 @@ if(CP2K_USE_TBLITE)
   CHECK_Fortran_SOURCE_COMPILES(
     "program check_tblite_gxtb
        use tblite_xtb_gxtb, only : new_gxtb_calculator
+       use tblite_cp2k_compat, only : cp2k_exchange_kpoint, &
+          cp2k_get_scc_mixer_dimension, cp2k_potential_mixer_type, &
+          cp2k_prepare_exchange, new_cp2k_potential_mixer
        implicit none
      end program check_tblite_gxtb"
     CP2K_TBLITE_HAS_GXTB
@@ -961,7 +964,7 @@ if(CP2K_USE_TBLITE)
   if(CP2K_TBLITE_PROVIDER STREQUAL "SAVE" AND NOT CP2K_TBLITE_HAS_GXTB)
     message(
       FATAL_ERROR
-        "The SAVE tblite provider was selected, but the detected library does not export tblite_xtb_gxtb"
+        "The SAVE tblite provider was selected, but the detected library does not export the required g-xTB/CP2K compatibility and potential-mixer API"
     )
   endif()
 endif()
