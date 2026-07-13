@@ -1868,7 +1868,9 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: k_gradient, k_sigma, overlap_imag, &
                                                             overlap_real
       REAL(KIND=dp), DIMENSION(3, 3)                     :: rotated_sigma
+      TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_ao_fm_pools
       TYPE(cp_fm_struct_type), POINTER                   :: matrix_struct
+      TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:)        :: fmwork
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :, :)  :: pmat_ext
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: exchange_w_rs, matrix_s, matrix_w
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
@@ -1879,24 +1881,26 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
 
-      NULLIFY (cell_to_index, cmatrix, exchange_w_rs, kp, kpoints, kpsym, matrix_s, &
-               matrix_struct, matrix_w, para_env, rmatrix, sab_nl, scf_env)
+      NULLIFY (ao_ao_fm_pools, cell_to_index, cmatrix, exchange_w_rs, kp, kpoints, &
+               kpsym, matrix_s, matrix_struct, matrix_w, para_env, rmatrix, sab_nl)
       gradient = 0.0_dp
       sigma = 0.0_dp
 
       CALL get_qs_env(qs_env, kpoints=kpoints, matrix_s_kp=matrix_s, matrix_w_kp=matrix_w, &
-                      para_env=para_env, scf_env=scf_env)
+                      para_env=para_env)
       IF (.NOT. ASSOCIATED(kpoints)) CPABORT("Missing k-point environment for g-xTB exchange gradient")
       IF (.NOT. ASSOCIATED(matrix_s)) CPABORT("Missing overlap images for g-xTB exchange gradient")
       IF (.NOT. ASSOCIATED(matrix_w)) &
          CPABORT("Missing energy-weighted density images for g-xTB exchange gradient")
       IF (.NOT. ASSOCIATED(para_env)) &
          CPABORT("Missing parallel environment for g-xTB exchange gradient")
-      IF (.NOT. ASSOCIATED(scf_env)) CPABORT("Missing SCF environment for g-xTB exchange gradient")
-      IF (.NOT. ASSOCIATED(scf_env%scf_work1)) &
-         CPABORT("Missing full-matrix work space for g-xTB exchange gradient")
+      CALL mpools_get(qs_env%mpools, ao_ao_fm_pools=ao_ao_fm_pools)
+      IF (.NOT. ASSOCIATED(ao_ao_fm_pools)) &
+         CPABORT("Missing AO full-matrix pool for g-xTB exchange gradient")
+      CPASSERT(SIZE(ao_ao_fm_pools) >= 1)
+      IF (.NOT. ASSOCIATED(ao_ao_fm_pools(1)%pool)) &
+         CPABORT("Uninitialized AO full-matrix pool for g-xTB exchange gradient")
 
       CALL get_kpoint_info(kpoints, nkp=nkp, kp_range=kp_range, full_grid=full_grid, &
                            use_real_wfn=use_real_wfn, cell_to_index=cell_to_index, sab_nl=sab_nl)
@@ -1915,7 +1919,6 @@ CONTAINS
       CPASSERT(SIZE(sigma, 1) == 3 .AND. SIZE(sigma, 2) == 3)
       CPASSERT(SIZE(matrix_s, 1) >= 1)
       CPASSERT(SIZE(matrix_w, 1) >= nspin .AND. SIZE(matrix_w, 2) == nimg)
-      CPASSERT(SIZE(scf_env%scf_work1) >= nc)
       CPASSERT(kplocal > 0)
 
       ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao), &
@@ -2052,9 +2055,19 @@ CONTAINS
          END DO
       END DO
 
+      ! SCF work matrices are released before force evaluation.  Borrow a force-safe AO full-
+      ! matrix workspace from the persistent pool for the inverse k-point transform instead.
+      ALLOCATE (fmwork(nc))
+      DO ic = 1, nc
+         CALL fm_pool_create_fm(ao_ao_fm_pools(1)%pool, fmwork(ic))
+      END DO
       CALL kpoint_density_transform(kpoints, exchange_w_rs, .TRUE., &
-                                    matrix_s(1, 1)%matrix, sab_nl, scf_env%scf_work1, &
+                                    matrix_s(1, 1)%matrix, sab_nl, fmwork, &
                                     pmat_ext=pmat_ext, overlap_rs=matrix_s)
+      DO ic = 1, nc
+         CALL fm_pool_give_back_fm(ao_ao_fm_pools(1)%pool, fmwork(ic))
+      END DO
+      DEALLOCATE (fmwork)
       DO img = 1, nimg
          ! At Gamma save_tblite gives G_k=dE_exchange/dS=-ao_grad_gamma, while the established
          ! Gamma path adds ao_grad_gamma to W.  Hence the image convention is W_exchange=-G_k,
