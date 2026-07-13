@@ -33,6 +33,7 @@ MODULE tblite_ks_matrix
                                               qs_rho_type
    USE tblite_interface,                ONLY: tb_derive_dH_off,&
                                               tb_gxtb_gamma_gradient,&
+                                              tb_gxtb_kpoint_gradient,&
                                               tb_ham_add_coulomb,&
                                               tb_update_charges
 #include "./base/base_uses.f90"
@@ -63,7 +64,7 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'build_tblite_ks_matrix'
 
       INTEGER                                            :: handle, img, ispin, nimg, ns, nspins
-      LOGICAL                                            :: do_efield, force_use_rho
+      LOGICAL                                            :: do_efield, do_kpoints, force_use_rho
       REAL(KIND=dp)                                      :: pc_ener, qmmm_el
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_p1, mo_derivs
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: ks_matrix, matrix_h
@@ -85,6 +86,7 @@ CONTAINS
                       para_env=para_env, &
                       ks_env=ks_env, &
                       matrix_ks_kp=ks_matrix, &
+                      do_kpoints=do_kpoints, &
                       rho=rho, &
                       energy=energy)
 
@@ -141,7 +143,11 @@ CONTAINS
 
       IF (calculate_forces) THEN
          IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
-            CALL tb_gxtb_gamma_gradient(qs_env, qs_env%tb_tblite)
+            IF (do_kpoints) THEN
+               CALL tb_gxtb_kpoint_gradient(qs_env, qs_env%tb_tblite)
+            ELSE
+               CALL tb_gxtb_gamma_gradient(qs_env, qs_env%tb_tblite)
+            END IF
          ELSE
             CALL tb_derive_dH_off(qs_env, force_use_rho, nimg)
          END IF

@@ -28,10 +28,12 @@ MODULE tblite_interface
 #if defined(__TBLITE_GXTB)
    USE tblite_cp2k_compat, ONLY: get_mixer_dimension => cp2k_get_scc_mixer_dimension, &
                                  acp_image_type, hamiltonian_image_type, &
+                                 cp2k_acp_image_gradient, cp2k_apply_basis_gradient, &
                                  cp2k_build_gamma_h0, cp2k_build_image_acp, &
                                  cp2k_build_image_h0, cp2k_exchange_kpoint, &
                                  cp2k_exchange_kpoint_gradient, &
-                                 cp2k_gamma_gradient, cp2k_prepare_exchange, &
+                                 cp2k_gamma_gradient, cp2k_image_h0_gradient, &
+                                 cp2k_prepare_exchange, &
                                  cp2k_get_cgto, cp2k_multipole_cgto, &
                                  cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
                                  cp2k_update_basis, new_cp2k_potential_mixer
@@ -163,7 +165,7 @@ MODULE tblite_interface
    PUBLIC :: tb_scf_mixer_error
    PUBLIC :: tb_get_multipole
    PUBLIC :: tb_derive_dH_off
-   PUBLIC :: tb_gxtb_gamma_gradient
+   PUBLIC :: tb_gxtb_gamma_gradient, tb_gxtb_kpoint_gradient
 #if defined(__TBLITE_GXTB)
    PUBLIC :: tb_apply_gxtb_kpoint_fm, tb_mix_gxtb_gamma_fm, tb_prepare_gxtb_kpoint_mixer, &
              tb_sync_gxtb_kpoint_density, tb_gxtb_kpoint_exchange_gradient
@@ -1099,6 +1101,71 @@ CONTAINS
       CALL para_env%sum(dense)
 
    END SUBROUTINE tb_dbcsr_to_dense
+
+! **************************************************************************************************
+!> Gather CP2K real-space image matrices in save_tblite's AO/image orientation.
+!>
+!> This is the exact inverse of `tb_scatter_gxtb_images`.  An individual CP2K image matrix is
+!> not a symmetric dense matrix: its upper-triangular atom blocks encode the atom/cell
+!> canonicalization of the k-point neighbour list.  Expanding it with `tb_dbcsr_to_dense` would
+!> therefore put the transpose into the wrong image.  The returned arrays instead obey the dual
+!> convention used by save_tblite, E=sum_R,ij P(i,j,R)*H(i,j,R).
+! **************************************************************************************************
+   SUBROUTINE tb_gather_gxtb_images(tb, matrices, sab_kp, cell_to_index, dense, para_env)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrices
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_kp
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      REAL(KIND=dp), DIMENSION(:, :, :, :), INTENT(OUT)  :: dense
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      INTEGER                                            :: col_first, col_nao, iatom, ic, ispin, &
+                                                            irow, icol, jatom, row_first, row_nao
+      INTEGER, DIMENSION(3)                              :: cell
+      LOGICAL                                            :: found
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
+      TYPE(neighbor_list_iterator_p_type), &
+         DIMENSION(:), POINTER                           :: nl_iterator
+
+      CPASSERT(SIZE(dense, 1) == tb%calc%bas%nao)
+      CPASSERT(SIZE(dense, 2) == tb%calc%bas%nao)
+      CPASSERT(SIZE(dense, 3) == SIZE(matrices, 2))
+      CPASSERT(SIZE(dense, 4) == SIZE(matrices, 1))
+
+      dense = 0.0_dp
+      NULLIFY (nl_iterator)
+      CALL neighbor_list_iterator_create(nl_iterator, sab_kp)
+      DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
+         CALL get_iterator_info(nl_iterator, iatom=iatom, jatom=jatom, cell=cell)
+         ic = cell_to_index(cell(1), cell(2), cell(3))
+         CPASSERT(ic > 0 .AND. ic <= SIZE(matrices, 2))
+         irow = MIN(iatom, jatom)
+         icol = MAX(iatom, jatom)
+         CALL tb_atom_ao_range(tb, iatom, row_first, row_nao)
+         CALL tb_atom_ao_range(tb, jatom, col_first, col_nao)
+
+         DO ispin = 1, SIZE(matrices, 1)
+            NULLIFY (block)
+            CALL dbcsr_get_block_p(matrix=matrices(ispin, ic)%matrix, row=irow, col=icol, &
+                                   BLOCK=block, found=found)
+            CPASSERT(found)
+            IF (iatom <= jatom) THEN
+               CPASSERT(SIZE(block, 1) == row_nao .AND. SIZE(block, 2) == col_nao)
+               dense(col_first:col_first + col_nao - 1, &
+                     row_first:row_first + row_nao - 1, ic, ispin) = TRANSPOSE(block)
+            ELSE
+               CPASSERT(SIZE(block, 1) == col_nao .AND. SIZE(block, 2) == row_nao)
+               dense(col_first:col_first + col_nao - 1, &
+                     row_first:row_first + row_nao - 1, ic, ispin) = block
+            END IF
+         END DO
+      END DO
+      CALL neighbor_list_iterator_release(nl_iterator)
+      CALL para_env%sum(dense)
+
+   END SUBROUTINE tb_gather_gxtb_images
 
 ! **************************************************************************************************
 !> Gather one distributed full matrix into a dense array replicated on the global communicator.
@@ -2451,8 +2518,6 @@ CONTAINS
       use_gxtb_gamma = dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. .NOT. do_kpoints
       use_gxtb_images = dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. do_kpoints
       IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
-         IF (use_gxtb_images .AND. calculate_forces) &
-            CPABORT("g-xTB k-point force and stress response is not yet implemented")
          CALL cp2k_update_basis(tb%calc, tb%mol, tb%bcache, error, calculate_forces, tb%wfn_aux)
          IF (ALLOCATED(error)) CPABORT("save_tblite q-vSZP basis update failed")
       END IF
@@ -2477,7 +2542,7 @@ CONTAINS
                          matrix_w_kp=matrix_w, &
                          virial=virial, force=force)
 
-         IF (SIZE(matrix_p, 1) == 2 .AND. .NOT. use_gxtb_gamma) THEN
+         IF (SIZE(matrix_p, 1) == 2 .AND. .NOT. (use_gxtb_gamma .OR. use_gxtb_images)) THEN
             DO img = 1, nimg
                CALL dbcsr_add(matrix_p(1, img)%matrix, matrix_p(2, img)%matrix, &
                               alpha_scalar=1.0_dp, beta_scalar=1.0_dp)
@@ -2488,7 +2553,7 @@ CONTAINS
          tb%use_virial = virial%pv_availability .AND. (.NOT. virial%pv_numer)
       END IF
 
-      IF (calculate_forces .AND. .NOT. use_gxtb_gamma) THEN
+      IF (calculate_forces .AND. .NOT. (use_gxtb_gamma .OR. use_gxtb_images)) THEN
          CALL dbcsr_allocate_matrix_set(matrix_q_native, 1, nimg)
          DO img = 1, nimg
             ALLOCATE (matrix_q_native(1, img)%matrix)
@@ -2498,7 +2563,7 @@ CONTAINS
       END IF
 
       CALL get_atomic_kind_set(atomic_kind_set=atomic_kind_set, atom_of_kind=atom_of_kind, kind_of=kind_of)
-      IF (calculate_forces .AND. .NOT. use_gxtb_gamma) THEN
+      IF (calculate_forces .AND. .NOT. (use_gxtb_gamma .OR. use_gxtb_images)) THEN
          ALLOCATE (native_radial_force_thread(3, SIZE(atom_of_kind)))
          ALLOCATE (native_cn_deriv_thread(SIZE(atom_of_kind)))
          native_cn_deriv_thread = 0.0_dp
@@ -2953,7 +3018,7 @@ CONTAINS
          END DO
       END DO
 
-      IF (calculate_forces .AND. .NOT. use_gxtb_gamma) THEN
+      IF (calculate_forces .AND. .NOT. (use_gxtb_gamma .OR. use_gxtb_images)) THEN
          CALL build_overlap_matrix(ks_env, matrixkp_s=matrix_s_native, &
                                    matrix_name="OVERLAP MATRIX", nderivative=nderivatives, &
                                    basis_type_a="ORB", basis_type_b="ORB", sab_nl=sab_orb, &
@@ -4580,6 +4645,116 @@ CONTAINS
 #endif
 
    END SUBROUTINE tb_gxtb_gamma_gradient
+
+! **************************************************************************************************
+!> Complete the image-resolved, non-exchange g-xTB response for CP2K k points.
+!>
+!> CP2K's real-space P(R) and W(R) already contain the irreducible-star weights and symmetry
+!> expansion.  They are gathered without symmetrizing individual images, then passed in their
+!> original up/down spin representation to save_tblite.  The explicit nonlinear exchange response
+!> is a separate contribution: add its overlap response to matrix_w before this routine is called,
+!> and dispatch its direct atomic and stress derivatives independently.
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_kpoint_gradient(qs_env, tb)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(tblite_type), POINTER                         :: tb
+
+#if defined(__TBLITE_GXTB)
+      INTEGER                                            :: img, nao, nimg, nspin
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      REAL(KIND=dp), ALLOCATABLE                         :: acp_gradient(:, :), acp_sigma(:, :), &
+                                                            dEdcnbas(:), dEdqbas(:), &
+                                                            density_images(:, :, :, :), &
+                                                            gradient(:, :), overlap_gamma(:, :), &
+                                                            overlap_images(:, :, :, :), &
+                                                            projector_translations(:, :), &
+                                                            sigma(:, :), translations(:, :), &
+                                                            wdensity_images(:, :, :, :)
+      TYPE(acp_image_type)                               :: acp_images
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_p, matrix_s, matrix_w
+      TYPE(error_type), ALLOCATABLE                      :: error
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_kp
+      TYPE(qs_rho_type), POINTER                         :: rho
+
+      NULLIFY (cell, cell_to_index, index_to_cell, kpoints, matrix_p, matrix_s, matrix_w, &
+               para_env, rho, sab_kp)
+      CALL get_qs_env(qs_env=qs_env, cell=cell, kpoints=kpoints, matrix_s_kp=matrix_s, &
+                      matrix_w_kp=matrix_w, para_env=para_env, rho=rho, sab_kp=sab_kp)
+      CALL qs_rho_get(rho, rho_ao_kp=matrix_p)
+      CALL get_kpoint_info(kpoint=kpoints, cell_to_index=cell_to_index, index_to_cell=index_to_cell)
+
+      IF (.NOT. ASSOCIATED(cell) .OR. .NOT. ASSOCIATED(sab_kp) .OR. &
+          .NOT. ASSOCIATED(cell_to_index) .OR. .NOT. ASSOCIATED(index_to_cell)) &
+         CPABORT("Incomplete CP2K k-point image data for the g-xTB gradient")
+
+      nao = tb%calc%bas%nao
+      nspin = SIZE(matrix_p, 1)
+      nimg = SIZE(matrix_p, 2)
+      CPASSERT(nspin == tb%wfn%nspin)
+      CPASSERT(SIZE(matrix_s, 1) == 1 .AND. SIZE(matrix_s, 2) == nimg)
+      CPASSERT(SIZE(matrix_w, 1) == nspin .AND. SIZE(matrix_w, 2) == nimg)
+      CPASSERT(SIZE(index_to_cell, 2) == nimg)
+
+      ALLOCATE (density_images(nao, nao, nimg, nspin), &
+                wdensity_images(nao, nao, nimg, nspin), &
+                overlap_images(nao, nao, nimg, 1), overlap_gamma(nao, nao), &
+                translations(3, nimg), gradient(3, tb%mol%nat), sigma(3, 3))
+      DO img = 1, nimg
+         translations(:, img) = MATMUL(cell%hmat, REAL(index_to_cell(:, img), dp))
+      END DO
+
+      CALL tb_gather_gxtb_images(tb, matrix_p, sab_kp, cell_to_index, density_images, para_env)
+      CALL tb_gather_gxtb_images(tb, matrix_w, sab_kp, cell_to_index, wdensity_images, para_env)
+      CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, overlap_images, para_env)
+      overlap_gamma = SUM(overlap_images(:, :, :, 1), DIM=3)
+
+      CALL cp2k_image_h0_gradient(tb%calc, tb%mol, tb%bcache, tb%wfn_aux, tb%accuracy, &
+                                  translations, tb%selfenergy, tb%dsedcn, overlap_gamma, &
+                                  tb%pot, density_images, wdensity_images, gradient, sigma)
+
+      IF (ALLOCATED(tb%calc%acp)) THEN
+         CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
+                                 get_cutoff(tb%calc%bas, tb%accuracy), projector_translations)
+         CALL cp2k_build_image_acp(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                   projector_translations, acp_images)
+         ALLOCATE (dEdcnbas(tb%mol%nat), dEdqbas(tb%mol%nat), &
+                   acp_gradient(3, tb%mol%nat), acp_sigma(3, 3))
+         dEdcnbas = 0.0_dp
+         dEdqbas = 0.0_dp
+         acp_gradient = 0.0_dp
+         acp_sigma = 0.0_dp
+         CALL cp2k_acp_image_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, acp_images, &
+                                      translations, density_images, dEdcnbas, dEdqbas, &
+                                      acp_gradient, acp_sigma, error)
+         IF (ALLOCATED(error)) CPABORT("save_tblite g-xTB ACP image gradient failed")
+         CALL cp2k_apply_basis_gradient(tb%calc, tb%mol, tb%wfn_aux, dEdcnbas, dEdqbas, &
+                                        acp_gradient, acp_sigma)
+         gradient = gradient + acp_gradient
+         sigma = sigma + acp_sigma
+         DEALLOCATE (acp_gradient, acp_sigma, dEdcnbas, dEdqbas, projector_translations)
+      END IF
+
+      tb%grad = gradient
+      CALL tb_grad2force(qs_env, tb, para_env, 4)
+      tb%sigma = tb%sigma + sigma
+      CALL tb_dump_sigma_component("after_gxtb_kpoint_response", tb%sigma, para_env)
+      IF (tb%use_virial) CALL tb_add_stress(qs_env, tb, para_env)
+
+      DEALLOCATE (density_images, gradient, overlap_gamma, overlap_images, sigma, &
+                  translations, wdensity_images)
+#else
+      MARK_USED(qs_env)
+      MARK_USED(tb)
+      CPABORT("Built without save_tblite g-xTB support")
+#endif
+
+   END SUBROUTINE tb_gxtb_kpoint_gradient
 
 ! **************************************************************************************************
 !> \brief Shift a multipole operator from one center to the other.
