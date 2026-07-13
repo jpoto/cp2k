@@ -1020,6 +1020,11 @@ CONTAINS
 
 #if defined(__TBLITE_GXTB)
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param iatom ...
+!> \param first_ao ...
+!> \param nao ...
 !> Return the dense tblite AO range belonging to one CP2K atom block.
 ! **************************************************************************************************
    SUBROUTINE tb_atom_ao_range(tb, iatom, first_ao, nao)
@@ -1038,6 +1043,10 @@ CONTAINS
    END SUBROUTINE tb_atom_ao_range
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param dense ...
+!> \param matrix ...
 !> Scatter a dense tblite Gamma matrix into locally owned CP2K atom blocks.
 ! **************************************************************************************************
    SUBROUTINE tb_dense_to_dbcsr(tb, dense, matrix)
@@ -1067,6 +1076,11 @@ CONTAINS
    END SUBROUTINE tb_dense_to_dbcsr
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param matrix ...
+!> \param dense ...
+!> \param para_env ...
 !> Gather a symmetric CP2K Gamma matrix into tblite atom/AO ordering.
 ! **************************************************************************************************
    SUBROUTINE tb_dbcsr_to_dense(tb, matrix, dense, para_env)
@@ -1103,26 +1117,119 @@ CONTAINS
    END SUBROUTINE tb_dbcsr_to_dense
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param index_to_cell ...
+!> \param cell_to_index ...
+!> \param closed_index_to_cell ...
+!> \param closed_cell_to_index ...
+!> \param nimg_closed ...
+!> Close CP2K's compact k-point image set under lattice inversion for save_tblite.
+!>
+!> Original cells retain their CP2K image indices.  Missing inverse cells are appended in original
+!> order, yielding a deterministic response/build view on every MPI rank without changing CP2K's
+!> DBCSR storage.  The returned dense lookup preserves the possibly negative bounds of CP2K's map.
+! **************************************************************************************************
+   SUBROUTINE tb_close_gxtb_image_cells(index_to_cell, cell_to_index, &
+                                        closed_index_to_cell, closed_cell_to_index, nimg_closed)
+
+      INTEGER, DIMENSION(:, :), INTENT(IN), POINTER      :: index_to_cell
+      INTEGER, DIMENSION(:, :, :), INTENT(IN), POINTER   :: cell_to_index
+      INTEGER, ALLOCATABLE, DIMENSION(:, :), INTENT(OUT) :: closed_index_to_cell
+      INTEGER, DIMENSION(:, :, :), INTENT(OUT), POINTER  :: closed_cell_to_index
+      INTEGER, INTENT(OUT)                               :: nimg_closed
+
+      INTEGER                                            :: ic, img, inv, nimg
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: image_work
+      INTEGER, DIMENSION(3)                              :: image_cell
+      LOGICAL                                            :: image_in_bounds
+
+      nimg = SIZE(index_to_cell, 2)
+      CPASSERT(nimg > 0)
+      ALLOCATE (image_work(3, 2*nimg))
+      image_work(:, 1:nimg) = index_to_cell
+      nimg_closed = nimg
+      DO img = 1, nimg
+         image_cell = index_to_cell(:, img)
+         image_in_bounds = &
+            cell_to_index(image_cell(1), image_cell(2), image_cell(3)) == img
+         CPASSERT(image_in_bounds)
+         image_cell = -image_cell
+         IF (cell_to_index(image_cell(1), image_cell(2), image_cell(3)) == 0) THEN
+            nimg_closed = nimg_closed + 1
+            CPASSERT(nimg_closed <= SIZE(image_work, 2))
+            image_work(:, nimg_closed) = image_cell
+         END IF
+      END DO
+      ALLOCATE (closed_index_to_cell(3, nimg_closed))
+      closed_index_to_cell = image_work(:, 1:nimg_closed)
+      DEALLOCATE (image_work)
+
+      ALLOCATE (closed_cell_to_index( &
+                LBOUND(cell_to_index, 1):UBOUND(cell_to_index, 1), &
+                LBOUND(cell_to_index, 2):UBOUND(cell_to_index, 2), &
+                LBOUND(cell_to_index, 3):UBOUND(cell_to_index, 3)))
+      closed_cell_to_index = 0
+      DO ic = 1, nimg_closed
+         image_cell = closed_index_to_cell(:, ic)
+         image_in_bounds = &
+            image_cell(1) >= LBOUND(closed_cell_to_index, 1) .AND. &
+            image_cell(1) <= UBOUND(closed_cell_to_index, 1) .AND. &
+            image_cell(2) >= LBOUND(closed_cell_to_index, 2) .AND. &
+            image_cell(2) <= UBOUND(closed_cell_to_index, 2) .AND. &
+            image_cell(3) >= LBOUND(closed_cell_to_index, 3) .AND. &
+            image_cell(3) <= UBOUND(closed_cell_to_index, 3)
+         CPASSERT(image_in_bounds)
+         closed_cell_to_index(image_cell(1), image_cell(2), image_cell(3)) = ic
+      END DO
+      CPASSERT(MAXVAL(closed_cell_to_index) == nimg_closed)
+      DO ic = 1, nimg_closed
+         image_cell = closed_index_to_cell(:, ic)
+         image_in_bounds = &
+            closed_cell_to_index(image_cell(1), image_cell(2), image_cell(3)) == ic
+         CPASSERT(image_in_bounds)
+         inv = closed_cell_to_index(-image_cell(1), -image_cell(2), -image_cell(3))
+         image_in_bounds = inv > 0 .AND. inv <= nimg_closed
+         CPASSERT(image_in_bounds)
+         image_in_bounds = ALL(closed_index_to_cell(:, inv) == -image_cell)
+         CPASSERT(image_in_bounds)
+      END DO
+
+   END SUBROUTINE tb_close_gxtb_image_cells
+
+! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param matrices ...
+!> \param sab_kp ...
+!> \param cell_to_index ...
+!> \param dense_cell_to_index ...
+!> \param dense ...
+!> \param para_env ...
 !> Gather CP2K real-space image matrices in save_tblite's AO/image orientation.
 !>
-!> This is the exact inverse of `tb_scatter_gxtb_images`.  An individual CP2K image matrix is
-!> not a symmetric dense matrix: its upper-triangular atom blocks encode the atom/cell
+!> This restores the complete dual representation of `tb_scatter_gxtb_images`.  An individual
+!> CP2K image matrix is not a symmetric dense matrix: its upper-triangular atom blocks encode the atom/cell
 !> canonicalization of the k-point neighbour list.  Expanding it with `tb_dbcsr_to_dense` would
 !> therefore put the transpose into the wrong image.  The returned arrays instead obey the dual
-!> convention used by save_tblite, E=sum_R,ij P(i,j,R)*H(i,j,R).
+!> convention used by save_tblite, E=sum_R,ij P(i,j,R)*H(i,j,R).  For different atoms CP2K's
+!> symmetric neighbour list retains only one member of the (i,j,R)/(j,i,-R) pair, so the missing
+!> inverse-cell transpose is reconstructed explicitly.  Same-atom +/-R entries are already
+!> present explicitly and need no reconstruction.
 ! **************************************************************************************************
-   SUBROUTINE tb_gather_gxtb_images(tb, matrices, sab_kp, cell_to_index, dense, para_env)
+   SUBROUTINE tb_gather_gxtb_images(tb, matrices, sab_kp, cell_to_index, &
+                                    dense_cell_to_index, dense, para_env)
 
       TYPE(tblite_type), POINTER                         :: tb
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrices
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_kp
-      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index, dense_cell_to_index
       REAL(KIND=dp), DIMENSION(:, :, :, :), INTENT(OUT)  :: dense
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
-      INTEGER                                            :: col_first, col_nao, iatom, ic, ispin, &
-                                                            irow, icol, jatom, row_first, row_nao
+      INTEGER                                            :: col_first, col_nao, iatom, ic, ic_dense, &
+                                                            ic_inv, icol, irow, ispin, jatom, &
+                                                            row_first, row_nao
       INTEGER, DIMENSION(3)                              :: cell
       LOGICAL                                            :: found
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block
@@ -1131,7 +1238,8 @@ CONTAINS
 
       CPASSERT(SIZE(dense, 1) == tb%calc%bas%nao)
       CPASSERT(SIZE(dense, 2) == tb%calc%bas%nao)
-      CPASSERT(SIZE(dense, 3) == SIZE(matrices, 2))
+      found = MAXVAL(dense_cell_to_index) == SIZE(dense, 3)
+      CPASSERT(found)
       CPASSERT(SIZE(dense, 4) == SIZE(matrices, 1))
 
       dense = 0.0_dp
@@ -1141,6 +1249,15 @@ CONTAINS
          CALL get_iterator_info(nl_iterator, iatom=iatom, jatom=jatom, cell=cell)
          ic = cell_to_index(cell(1), cell(2), cell(3))
          CPASSERT(ic > 0 .AND. ic <= SIZE(matrices, 2))
+         ic_dense = dense_cell_to_index(cell(1), cell(2), cell(3))
+         CPASSERT(ic_dense > 0 .AND. ic_dense <= SIZE(dense, 3))
+         IF (iatom /= jatom) THEN
+            ic_inv = dense_cell_to_index(-cell(1), -cell(2), -cell(3))
+            CPASSERT(ic_inv > 0 .AND. ic_inv <= SIZE(dense, 3))
+         ELSE
+            ic_inv = cell_to_index(-cell(1), -cell(2), -cell(3))
+            CPASSERT(ic_inv > 0 .AND. ic_inv <= SIZE(matrices, 2))
+         END IF
          irow = MIN(iatom, jatom)
          icol = MAX(iatom, jatom)
          CALL tb_atom_ao_range(tb, iatom, row_first, row_nao)
@@ -1154,11 +1271,17 @@ CONTAINS
             IF (iatom <= jatom) THEN
                CPASSERT(SIZE(block, 1) == row_nao .AND. SIZE(block, 2) == col_nao)
                dense(col_first:col_first + col_nao - 1, &
-                     row_first:row_first + row_nao - 1, ic, ispin) = TRANSPOSE(block)
+                     row_first:row_first + row_nao - 1, ic_dense, ispin) = TRANSPOSE(block)
+               IF (iatom /= jatom) &
+                  dense(row_first:row_first + row_nao - 1, &
+                        col_first:col_first + col_nao - 1, ic_inv, ispin) = block
             ELSE
                CPASSERT(SIZE(block, 1) == col_nao .AND. SIZE(block, 2) == row_nao)
                dense(col_first:col_first + col_nao - 1, &
-                     row_first:row_first + row_nao - 1, ic, ispin) = block
+                     row_first:row_first + row_nao - 1, ic_dense, ispin) = block
+               IF (iatom /= jatom) &
+                  dense(row_first:row_first + row_nao - 1, &
+                        col_first:col_first + col_nao - 1, ic_inv, ispin) = TRANSPOSE(block)
             END IF
          END DO
       END DO
@@ -1168,6 +1291,10 @@ CONTAINS
    END SUBROUTINE tb_gather_gxtb_images
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param matrix ...
+!> \param dense ...
+!> \param para_env ...
 !> Gather one distributed full matrix into a dense array replicated on the global communicator.
 ! **************************************************************************************************
    SUBROUTINE tb_fm_to_dense(matrix, dense, para_env)
@@ -1196,6 +1323,9 @@ CONTAINS
 
 #if defined(__TBLITE_GXTB)
 ! **************************************************************************************************
+!> \brief ...
+!> \param dense ...
+!> \param matrix ...
 !> Scatter a replicated dense matrix into one distributed full matrix.
 ! **************************************************************************************************
    SUBROUTINE tb_dense_to_fm(dense, matrix)
@@ -1224,6 +1354,11 @@ CONTAINS
    END SUBROUTINE tb_dense_to_fm
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param raw_fock ...
+!> \param mixed_fock ...
+!> \param iter_count ...
 !> Advance save_tblite's native g-xTB potential mixer on one replicated real vector.
 ! **************************************************************************************************
    SUBROUTINE tb_advance_gxtb_potential_mixer(tb, raw_fock, mixed_fock, iter_count)
@@ -1261,6 +1396,12 @@ CONTAINS
 #endif
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param matrix ...
+!> \param dense ...
+!> \param para_env ...
+!> \param antisymmetric ...
 !> Gather a symmetric or antisymmetric DBCSR k-point component into a replicated dense array.
 ! **************************************************************************************************
    SUBROUTINE tb_dbcsr_component_to_dense(tb, matrix, dense, para_env, antisymmetric)
@@ -1299,6 +1440,11 @@ CONTAINS
    END SUBROUTINE tb_dbcsr_component_to_dense
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param tb ...
+!> \param kpoints ...
+!> \param density ...
 !> Collect the unweighted complex density P(k) of every irreducible k-point.
 !>
 !> CP2K stores these matrices in the owning k-point group.  This follows the communication pattern
@@ -1397,6 +1543,10 @@ CONTAINS
    END SUBROUTINE tb_collect_kpoint_density
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param matrix_ks ...
+!> \param fmwork ...
 !> Apply save_tblite's native potential mixer to the complete Gamma-point Fock matrices.
 ! **************************************************************************************************
    SUBROUTINE tb_mix_gxtb_gamma_fm(qs_env, matrix_ks, fmwork)
@@ -1453,6 +1603,11 @@ CONTAINS
    END SUBROUTINE tb_mix_gxtb_gamma_fm
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param matrix_ks ...
+!> \param kpoints ...
+!> \param scf_env ...
 !> Build and mix all complete irreducible-k g-xTB Fock matrices as one weighted vector.
 ! **************************************************************************************************
    SUBROUTINE tb_prepare_gxtb_kpoint_mixer(qs_env, matrix_ks, kpoints, scf_env)
@@ -1599,6 +1754,9 @@ CONTAINS
    END SUBROUTINE tb_prepare_gxtb_kpoint_mixer
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param diis_step ...
 !> Keep P(k) consistent with CP2K's real-space DIRECT_P mixing for a non-native g-xTB backend.
 !>
 !> CP2K's standard density mixer updates only the real-space image matrices, while g-xTB exchange
@@ -1679,6 +1837,11 @@ CONTAINS
    END SUBROUTINE tb_sync_gxtb_kpoint_density
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param tb ...
+!> \param matrix_s ...
+!> \param para_env ...
 !> Build g-xTB exchange directly at the irreducible k-points of the current CP2K density.
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env)
@@ -1837,6 +2000,11 @@ CONTAINS
    END SUBROUTINE tb_build_gxtb_kpoint_exchange
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param tb ...
+!> \param gradient ...
+!> \param sigma ...
 !> Differentiate the explicit g-xTB exchange contribution on a CP2K k-point mesh.
 !>
 !> The save_tblite kernel returns the response of one irreducible k-point without its mesh weight.
@@ -2091,6 +2259,12 @@ CONTAINS
    END SUBROUTINE tb_gxtb_kpoint_exchange_gradient
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param ik ...
+!> \param ispin ...
+!> \param fm_real ...
+!> \param fm_imag ...
 !> Apply the complete mixed g-xTB F(k), or add explicit exchange for a non-native backend.
 !>
 !> This hook is called after the ordinary real-space KS matrix has been Bloch summed, but before it
@@ -2191,6 +2365,11 @@ CONTAINS
    END SUBROUTINE tb_apply_gxtb_kpoint_fm
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param matrix_s ...
+!> \param sab_orb ...
+!> \param nimg ...
 !> Allocate the image-resolved multipole matrices used by the SCC potential.
 ! **************************************************************************************************
    SUBROUTINE tb_allocate_image_multipoles(tb, matrix_s, sab_orb, nimg)
@@ -2238,6 +2417,16 @@ CONTAINS
    END SUBROUTINE tb_allocate_image_multipoles
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param tb ...
+!> \param images ...
+!> \param acp_images ...
+!> \param translations ...
+!> \param matrix_s ...
+!> \param matrix_h ...
+!> \param sab_orb ...
+!> \param cell_to_index ...
+!> \param nimg ...
 !> Scatter save_tblite's full AO image matrices into CP2K's symmetric DBCSR representation.
 !>
 !> save_tblite returns A(R) with the translated AO on the row and the home-cell AO on the
@@ -2265,7 +2454,7 @@ CONTAINS
 
       INTEGER                                            :: acp_img, i, i_first, i_nao, iatom, ic, &
                                                             icol, id, img, iq, irow, j_first, &
-                                                            j_nao, jatom
+                                                            j_nao, jatom, ntranslations
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: acp_map
       INTEGER, DIMENSION(3)                              :: cell
       LOGICAL                                            :: found, matched
@@ -2274,13 +2463,15 @@ CONTAINS
       TYPE(neighbor_list_iterator_p_type), &
          DIMENSION(:), POINTER                           :: nl_iterator
 
-      CPASSERT(SIZE(images%overlap, 3) == nimg)
-      CPASSERT(SIZE(images%translation, 2) == nimg)
-      ALLOCATE (acp_map(nimg), source=0)
+      CPASSERT(SIZE(images%overlap, 3) == SIZE(translations, 2))
+      CPASSERT(SIZE(images%translation, 2) == SIZE(translations, 2))
+      CPASSERT(SIZE(translations, 2) >= nimg)
+      ntranslations = SIZE(translations, 2)
+      ALLOCATE (acp_map(ntranslations), source=0)
       IF (PRESENT(acp_images)) THEN
          scale = MAX(1.0_dp, MAXVAL(ABS(translations)))
          tol2 = (2048.0_dp*EPSILON(1.0_dp)*scale)**2
-         DO img = 1, nimg
+         DO img = 1, ntranslations
             DO acp_img = 1, SIZE(acp_images%translation, 2)
                IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
                   acp_map(img) = acp_img
@@ -2293,7 +2484,7 @@ CONTAINS
          ! be silently lost and produce a k-dependent error. Reject such a basis/list mismatch.
          DO acp_img = 1, SIZE(acp_images%translation, 2)
             matched = .FALSE.
-            DO img = 1, nimg
+            DO img = 1, ntranslations
                IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
                   matched = .TRUE.
                   EXIT
@@ -2436,6 +2627,9 @@ CONTAINS
       INTEGER, DIMENSION(:, :), POINTER                   :: index_to_cell
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: owork
 #if defined(__TBLITE_GXTB)
+      INTEGER                                            :: nimg_gxtb
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: gxtb_index_to_cell
+      INTEGER, DIMENSION(:, :, :), POINTER               :: gxtb_cell_to_index
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_h, projector_translations, translations
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dense_dipole, dense_quadrupole
       TYPE(error_type), ALLOCATABLE                      :: error
@@ -2486,6 +2680,9 @@ CONTAINS
       NULLIFY (ks_env, energy, atomic_kind_set, qs_kind_set)
       NULLIFY (matrix_dh_native, matrix_h, matrix_q_native, matrix_s, matrix_s_native, atprop, dft_control)
       NULLIFY (sab_orb, sab_kp, rho, tb, kpoints, cell_to_index, index_to_cell, cell_obj)
+#if defined(__TBLITE_GXTB)
+      NULLIFY (gxtb_cell_to_index)
+#endif
 
       CALL get_qs_env(qs_env=qs_env, &
                       ks_env=ks_env, para_env=para_env, &
@@ -2616,16 +2813,18 @@ CONTAINS
          DEALLOCATE (dense_h, dense_dipole, dense_quadrupole)
          GOTO 900
       ELSEIF (use_gxtb_images) THEN
-         ! index_to_cell is CP2K's exact integer image set.  Converting it with
-         ! hmat preserves the +2*pi*k.R convention for arbitrary GENERAL k
-         ! points as well as full or symmetry-reduced regular meshes; no
+         ! Preserve CP2K's compact image order as a prefix and append any missing inverse cells.
+         ! Converting these exact integer cells with hmat preserves the +2*pi*k.R convention for
+         ! arbitrary GENERAL k points as well as full or symmetry-reduced regular meshes; no
          ! modulo folding or grid-dependent aliasing is used here.
          CPASSERT(ASSOCIATED(index_to_cell))
          CPASSERT(ASSOCIATED(cell_obj))
          CPASSERT(SIZE(index_to_cell, 2) == nimg)
-         ALLOCATE (translations(3, nimg))
-         DO img = 1, nimg
-            translations(:, img) = MATMUL(cell_obj%hmat, REAL(index_to_cell(:, img), dp))
+         CALL tb_close_gxtb_image_cells(index_to_cell, cell_to_index, &
+                                        gxtb_index_to_cell, gxtb_cell_to_index, nimg_gxtb)
+         ALLOCATE (translations(3, nimg_gxtb))
+         DO img = 1, nimg_gxtb
+            translations(:, img) = MATMUL(cell_obj%hmat, REAL(gxtb_index_to_cell(:, img), dp))
          END DO
          CALL cp2k_build_image_h0(tb%calc, tb%mol, tb%bcache, tb%accuracy, tb%selfenergy, &
                                   translations, h0_images)
@@ -2648,7 +2847,7 @@ CONTAINS
                                         matrix_s=matrix_s, matrix_h=matrix_h, sab_orb=sab_orb, &
                                         cell_to_index=cell_to_index, nimg=nimg)
          END IF
-         DEALLOCATE (translations)
+         DEALLOCATE (gxtb_cell_to_index, gxtb_index_to_cell, translations)
          GOTO 900
       END IF
 #endif
@@ -4615,6 +4814,9 @@ CONTAINS
    END SUBROUTINE tb_get_multipole
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param tb ...
 !> Complete save_tblite Gamma-point response for g-xTB.
 ! **************************************************************************************************
    SUBROUTINE tb_gxtb_gamma_gradient(qs_env, tb)
@@ -4660,6 +4862,9 @@ CONTAINS
    END SUBROUTINE tb_gxtb_gamma_gradient
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param tb ...
 !> Complete the image-resolved, non-exchange g-xTB response for CP2K k points.
 !>
 !> CP2K's real-space P(R) and W(R) already contain the irreducible-star weights and symmetry
@@ -4674,9 +4879,10 @@ CONTAINS
       TYPE(tblite_type), POINTER                         :: tb
 
 #if defined(__TBLITE_GXTB)
-      INTEGER                                            :: img, nao, nimg, nspin
-      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER                                            :: img, nao, nimg, nimg_response, nspin
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index, response_cell_to_index
       INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: response_index_to_cell
       REAL(KIND=dp), ALLOCATABLE                         :: acp_gradient(:, :), acp_sigma(:, :), &
                                                             dEdcnbas(:), dEdqbas(:), &
                                                             density_images(:, :, :, :), &
@@ -4698,7 +4904,7 @@ CONTAINS
       TYPE(qs_rho_type), POINTER                         :: rho
 
       NULLIFY (cell, cell_to_index, index_to_cell, kpoints, matrix_p, matrix_s, matrix_w, &
-               para_env, rho, sab_kp)
+               para_env, response_cell_to_index, rho, sab_kp)
       CALL get_qs_env(qs_env=qs_env, cell=cell, kpoints=kpoints, matrix_s_kp=matrix_s, &
                       matrix_w_kp=matrix_w, para_env=para_env, rho=rho, sab_kp=sab_kp)
       CALL qs_rho_get(rho, rho_ao_kp=matrix_p)
@@ -4716,12 +4922,15 @@ CONTAINS
       CPASSERT(SIZE(matrix_w, 1) == nspin .AND. SIZE(matrix_w, 2) == nimg)
       CPASSERT(SIZE(index_to_cell, 2) == nimg)
 
-      ALLOCATE (density_images(nao, nao, nimg, nspin), &
-                wdensity_images(nao, nao, nimg, nspin), &
-                overlap_images(nao, nao, nimg, 1), overlap_gamma(nao, nao), &
-                translations(3, nimg), gradient(3, tb%mol%nat), sigma(3, 3))
-      DO img = 1, nimg
-         translations(:, img) = MATMUL(cell%hmat, REAL(index_to_cell(:, img), dp))
+      CALL tb_close_gxtb_image_cells(index_to_cell, cell_to_index, &
+                                     response_index_to_cell, response_cell_to_index, nimg_response)
+
+      ALLOCATE (density_images(nao, nao, nimg_response, nspin), &
+                wdensity_images(nao, nao, nimg_response, nspin), &
+                overlap_images(nao, nao, nimg_response, 1), overlap_gamma(nao, nao), &
+                translations(3, nimg_response), gradient(3, tb%mol%nat), sigma(3, 3))
+      DO img = 1, nimg_response
+         translations(:, img) = MATMUL(cell%hmat, REAL(response_index_to_cell(:, img), dp))
       END DO
 
       IF (ALLOCATED(tb%calc%exchange)) THEN
@@ -4729,9 +4938,12 @@ CONTAINS
          CALL tb_gxtb_kpoint_exchange_gradient(qs_env, tb, exchange_gradient, exchange_sigma)
       END IF
 
-      CALL tb_gather_gxtb_images(tb, matrix_p, sab_kp, cell_to_index, density_images, para_env)
-      CALL tb_gather_gxtb_images(tb, matrix_w, sab_kp, cell_to_index, wdensity_images, para_env)
-      CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, overlap_images, para_env)
+      CALL tb_gather_gxtb_images(tb, matrix_p, sab_kp, cell_to_index, &
+                                 response_cell_to_index, density_images, para_env)
+      CALL tb_gather_gxtb_images(tb, matrix_w, sab_kp, cell_to_index, &
+                                 response_cell_to_index, wdensity_images, para_env)
+      CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, &
+                                 response_cell_to_index, overlap_images, para_env)
       overlap_gamma = SUM(overlap_images(:, :, :, 1), DIM=3)
 
       CALL cp2k_image_h0_gradient(tb%calc, tb%mol, tb%bcache, tb%wfn_aux, tb%accuracy, &
@@ -4773,7 +4985,7 @@ CONTAINS
       IF (tb%use_virial) CALL tb_add_stress(qs_env, tb, para_env)
 
       DEALLOCATE (density_images, gradient, overlap_gamma, overlap_images, sigma, &
-                  translations, wdensity_images)
+                  translations, wdensity_images, response_cell_to_index, response_index_to_cell)
 #else
       MARK_USED(qs_env)
       MARK_USED(tb)
