@@ -334,16 +334,15 @@ symbols, and Fortran modules.
   Consequently, SAVE builds require `-DCP2K_USE_DFTD4=OFF`; the toolchain sets this automatically.
 - Use `XTB/GFN_TYPE TBLITE` together with `XTB/TBLITE/METHOD GXTB` to select g-xTB. Builds without
   the g-xTB capability reject this method with an explicit diagnostic.
-- The native CP2K path supports g-xTB energies and analytical forces at the Gamma point for
-  non-periodic (0D) and fully periodic (3D) systems, as well as analytical stress for 3D systems.
-  Fully periodic energy and SCC calculations also support general k-point sets, including symmetry
-  reduction with the K290 and SPGLIB backends. Analytical forces and stress with more than one
-  k-point are explicitly rejected until all image-resolved derivatives are available. Partially
+- The native CP2K path supports g-xTB energies and analytical forces for non-periodic (0D) and fully
+  periodic (3D) systems. Fully periodic calculations support Gamma and general k-point sets,
+  analytical stress, and full, K290, or SPGLIB-reduced meshes. The k-point force and stress path
+  differentiates the image-resolved H0, Pulay, q-vSZP/ACP, and nonlinear exchange terms. Partially
   periodic (1D or 2D) g-xTB calculations are not supported.
-- CP2K stores the structural q-vSZP basis layout per element kind, while save_tblite constructs its
-  charge- and environment-dependent basis coefficients separately for every atom. The Gamma-point
-  response includes the corresponding coefficient derivatives; this distinction must be preserved
-  when extending the k-point derivatives.
+- CP2K stores the structural q-vSZP orbital layout per element kind, while save_tblite evaluates its
+  charge- and environment-dependent coefficients separately for every atom. Atoms in one CP2K kind
+  therefore share the structural layout, but both the Gamma and k-point response retain the
+  atom-resolved coefficient derivatives supplied by save_tblite.
 - Mixer selection is model dependent. For GFN1/GFN2/IPEA1, `SCC_MIXER TBLITE` retains tblite's
   modified-Broyden population/multipole mixer. For g-xTB, `AUTO` and `TBLITE` instead reproduce
   save_tblite's potential mixer: two damped updates of the complete Fock matrix (damping 0.2), then

@@ -52,11 +52,11 @@ private `DCM-Uni-Paderborn/save_tblite` repository and requires GitHub read cred
 `--tblite-provider=upstream` path remains unchanged and uses the public tblite release. Because
 save_tblite's internal experimental DFTD API is not compatible with CP2K's standalone DFTD4 API, the
 save provider disables the latter while retaining dispersion within its xTB methods. The native
-g-xTB path supports Gamma-point energies and analytical forces for molecular (0D) and fully periodic
-(3D) systems, plus analytical stress for 3D systems. Fully periodic energy and SCC calculations
-can also use general k-point sets and K290 or SPGLIB symmetry reduction. K-point forces and stress
-remain explicitly disabled until the complete image-resolved response is available. Partially
-periodic (1D or 2D) calculations are not supported.
+g-xTB path supports energies and analytical forces for molecular (0D) and fully periodic (3D)
+systems, plus analytical stress for 3D systems. Fully periodic calculations can use Gamma or
+general k-point sets and full, K290, or SPGLIB-reduced meshes. The k-point response includes the
+image-resolved H0, Pulay, q-vSZP/ACP, and nonlinear exchange derivatives. Partially periodic (1D or
+2D) calculations are not supported.
 
 The q-vSZP basis dimensions and orbital layout are structural data shared per element kind, whereas
 save_tblite evaluates the charge- and environment-dependent coefficients per atom. An optional
