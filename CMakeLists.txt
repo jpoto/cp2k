@@ -967,6 +967,12 @@ if(CP2K_USE_TBLITE)
         "The SAVE tblite provider was selected, but the detected library does not export the required g-xTB/CP2K compatibility and potential-mixer API"
     )
   endif()
+  if(CP2K_TBLITE_PROVIDER STREQUAL "UPSTREAM" AND CP2K_TBLITE_HAS_GXTB)
+    message(
+      FATAL_ERROR
+        "The UPSTREAM tblite provider was selected, but the detected library exports the save_tblite g-xTB/CP2K compatibility API. Select CP2K_TBLITE_PROVIDER=SAVE or remove save_tblite from the package search path."
+    )
+  endif()
 endif()
 
 # SIRIUS
