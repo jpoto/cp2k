@@ -5,8 +5,16 @@
 "H2O_gxtb_kp_gamma.inp"      = [{matcher="E_total", tol=1.0E-8, ref=-76.49208605064729}]
 "H2O_gxtb_force.inp"         = [{matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
 "H2O_gxtb_stress.inp"        = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_gamma_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                       {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_kp_gamma_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                          {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
 "H2O_gxtb_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346}]
 "O2_gxtb_uks_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-150.34083895130186}]
+"O2_gxtb_uks_kp_general_debug.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                        {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
+                                        {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
+                                        {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0}]
 "H2O_gxtb_cp2k_density_mixer.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
                                       {matcher="GXTB_cp2k_pmix"}]
 "H2O_gxtb_cp2k_fock_diis.inp"     = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
@@ -19,4 +27,10 @@
 "Si_prim_gxtb_kp_k290.inp"   = [{matcher="E_total", tol=1.0E-10, ref=-584.0958656688803},
                                   {matcher="N_special_kpoints", tol=0.0, ref=3}]
 "Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-583.4313225014603}]
+"CH4_gxtb_kp_k290.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.52393556502825},
+                             {matcher="N_special_kpoints", tol=0.0, ref=1}]
+"CH4_gxtb_kp_k290_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                          {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2_gxtb_kp_general_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                           {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
 #EOF

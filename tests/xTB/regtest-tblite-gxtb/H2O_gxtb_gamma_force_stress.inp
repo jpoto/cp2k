@@ -1,6 +1,5 @@
-# Paired with H2O_gxtb_kp_gamma_force_stress.inp.disabled.  Activate both in
-# TEST_FILES.toml only after the explicit exchange-gradient bridge is merged
-# and the finite-difference tolerances have been measured.
+# Implicit-Gamma (no KPOINTS section) finite differences paired with the
+# otherwise identical explicit-Gamma k-point input.
 &GLOBAL
   PRINT_LEVEL MEDIUM
   PROJECT H2O_gxtb_gamma_force_stress

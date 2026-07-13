@@ -325,7 +325,9 @@ symbols, and Fortran modules.
 - Select the implementation with `-DCP2K_TBLITE_PROVIDER=UPSTREAM` (default) or
   `-DCP2K_TBLITE_PROVIDER=SAVE`. The SAVE provider is accepted only when CMake detects the
   `tblite_xtb_gxtb` module; g-xTB is enabled from this capability check rather than from the
-  provider name alone.
+  provider name alone. Conversely, an UPSTREAM configuration rejects a detected save_tblite
+  compatibility API, preventing an unrelated package-search path from silently selecting the wrong
+  implementation.
 - The toolchain equivalent is `--with-tblite=install --tblite-provider=save`. This checks out a
   pinned revision from the private `DCM-Uni-Paderborn/save_tblite` repository and therefore needs
   suitable GitHub credentials. Its non-release dependencies are pinned by commit as well.
@@ -338,7 +340,9 @@ symbols, and Fortran modules.
   periodic (3D) systems. Fully periodic calculations support Gamma and general k-point sets,
   analytical stress, and full, K290, or SPGLIB-reduced meshes. The k-point force and stress path
   differentiates the image-resolved H0, Pulay, q-vSZP/ACP, and nonlinear exchange terms. Partially
-  periodic (1D or 2D) g-xTB calculations are not supported.
+  periodic (1D or 2D) g-xTB calculations are not supported. For reduced meshes, overlap-covariance
+  calibration selects between CP2K's internally wrapped atom gauge and save_tblite's
+  input-coordinate Bloch gauge, using the latter when required by the symmetry transformation.
 - CP2K stores the structural q-vSZP orbital layout per element kind, while save_tblite evaluates its
   charge- and environment-dependent coefficients separately for every atom. Atoms in one CP2K kind
   therefore share the structural layout, but both the Gamma and k-point response retain the
@@ -355,10 +359,10 @@ symbols, and Fortran modules.
   This preserves the full-star Frobenius metric under K290 or SPGLIB symmetry reduction. Native
   save_tblite currently provides no multi-k-point SCF reference, so this extension is validated
   against equivalent full and symmetry-reduced CP2K meshes.
-- g-xTB diagonalization requires `SCF/MIXING METHOD DIRECT_P_MIXING`. Pulay, Broyden, and Kerker
-  are rejected only for this method because the TB path does not apply them to the AO density
-  matrix. This does not change their use by DFT or the established population/multipole mixer used
-  by GFN1/GFN2/IPEA1. At multiple k-points, CP2K Fock CDIIS additionally requires
+- g-xTB diagonalization requires `SCF/MIXING METHOD DIRECT_P_MIXING`. Pulay, Broyden, and Kerker are
+  rejected only for this method because the TB path does not apply them to the AO density matrix.
+  This does not change their use by DFT or the established population/multipole mixer used by
+  GFN1/GFN2/IPEA1. At multiple k-points, CP2K Fock CDIIS additionally requires
   `KPOINTS/WAVEFUNCTIONS COMPLEX`; real k-point wavefunctions can use the Direct-P alternative.
 - Post-SCF diagonalization on a newly generated k-point grid (for example a band-structure path) is
   rejected for now. The explicit g-xTB exchange Fock matrix and native mixer state belong to the
@@ -372,7 +376,9 @@ symbols, and Fortran modules.
   selected solution can therefore depend on the initial density or restart. For sensitive
   single-point calculations, compare multiple starting guesses; for trajectories, use restarts to
   follow the intended SCC root.
-- GFN1/GFN2 behavior with the upstream provider is unaffected.
+- GFN1/GFN2 Hamiltonian and mixer behavior with the upstream provider is unaffected. The generic
+  k-point occupation path now also preserves the requested UKS populations when
+  `FIXED_MAGNETIC_MOMENT -1` is used with smearing.
 
 ## openPMD (structured output)
 

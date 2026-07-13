@@ -46,6 +46,14 @@ registry["GXTB_native_simple"] = TextPresenceMatcher("GXTB-Simple")
 registry["GXTB_native_fdiis"] = TextPresenceMatcher("GXTB-FDIIS")
 registry["GXTB_cp2k_pmix"] = TextPresenceMatcher("P_Mix/Diag.")
 registry["GXTB_cp2k_fdiis"] = TextPresenceMatcher("DIIS/Diag.")
+registry["TBLITE_alpha_population"] = GenericMatcher(
+    r"# Total charge and spin\s+([-+0-9.EeDd]+)", col=1, regex=True
+)
+registry["TBLITE_beta_population"] = GenericMatcher(
+    r"# Total charge and spin\s+[-+0-9.EeDd]+\s+([-+0-9.EeDd]+)",
+    col=1,
+    regex=True,
+)
 registry["Kubo_sigma_iso"] = GenericMatcher(r"KUBO_TRANSPORT| sigma_iso[S/cm]", col=3)
 registry["Kubo_sigma_iso_2d"] = GenericMatcher(r"KUBO_TRANSPORT| sigma_iso[S]", col=3)
 registry["Kubo_sigma_iso_1d"] = GenericMatcher(r"KUBO_TRANSPORT| sigma_iso[S*m]", col=3)

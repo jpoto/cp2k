@@ -1,3 +1,5 @@
 "Si_prim_gxtb_kp_spglib.inp" = [{matcher="E_total", tol=1.0E-10, ref=-584.0958656688803},
                                   {matcher="N_special_kpoints", tol=0.0, ref=2}]
+"CH4_gxtb_kp_spglib.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.52393556502825},
+                              {matcher="N_special_kpoints", tol=0.0, ref=1}]
 #EOF
