@@ -4652,8 +4652,8 @@ CONTAINS
 !> CP2K's real-space P(R) and W(R) already contain the irreducible-star weights and symmetry
 !> expansion.  They are gathered without symmetrizing individual images, then passed in their
 !> original up/down spin representation to save_tblite.  The explicit nonlinear exchange response
-!> is a separate contribution: add its overlap response to matrix_w before this routine is called,
-!> and dispatch its direct atomic and stress derivatives independently.
+!> first augments matrix_w with its overlap derivative; its direct atomic and stress derivatives
+!> are then accumulated with the image-resolved H0/Pulay and ACP response.
 ! **************************************************************************************************
    SUBROUTINE tb_gxtb_kpoint_gradient(qs_env, tb)
 
@@ -4667,6 +4667,8 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE                         :: acp_gradient(:, :), acp_sigma(:, :), &
                                                             dEdcnbas(:), dEdqbas(:), &
                                                             density_images(:, :, :, :), &
+                                                            exchange_gradient(:, :), &
+                                                            exchange_sigma(:, :), &
                                                             gradient(:, :), overlap_gamma(:, :), &
                                                             overlap_images(:, :, :, :), &
                                                             projector_translations(:, :), &
@@ -4709,6 +4711,11 @@ CONTAINS
          translations(:, img) = MATMUL(cell%hmat, REAL(index_to_cell(:, img), dp))
       END DO
 
+      IF (ALLOCATED(tb%calc%exchange)) THEN
+         ALLOCATE (exchange_gradient(3, tb%mol%nat), exchange_sigma(3, 3))
+         CALL tb_gxtb_kpoint_exchange_gradient(qs_env, tb, exchange_gradient, exchange_sigma)
+      END IF
+
       CALL tb_gather_gxtb_images(tb, matrix_p, sab_kp, cell_to_index, density_images, para_env)
       CALL tb_gather_gxtb_images(tb, matrix_w, sab_kp, cell_to_index, wdensity_images, para_env)
       CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, overlap_images, para_env)
@@ -4717,6 +4724,12 @@ CONTAINS
       CALL cp2k_image_h0_gradient(tb%calc, tb%mol, tb%bcache, tb%wfn_aux, tb%accuracy, &
                                   translations, tb%selfenergy, tb%dsedcn, overlap_gamma, &
                                   tb%pot, density_images, wdensity_images, gradient, sigma)
+
+      IF (ALLOCATED(exchange_gradient)) THEN
+         gradient = gradient + exchange_gradient
+         sigma = sigma + exchange_sigma
+         DEALLOCATE (exchange_gradient, exchange_sigma)
+      END IF
 
       IF (ALLOCATED(tb%calc%acp)) THEN
          CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
