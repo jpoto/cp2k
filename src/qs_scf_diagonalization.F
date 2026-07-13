@@ -512,10 +512,16 @@ CONTAINS
       TYPE(qs_matrix_pools_type), POINTER                :: mpools
       TYPE(section_vals_type), POINTER                   :: scf_section
       TYPE(dft_control_type), POINTER                    :: dft_control
+#if defined(__TBLITE_GXTB)
+      TYPE(kpoint_type), POINTER                         :: scf_kpoints
+#endif
 
       CALL timeset(routineN, handle)
 
       NULLIFY (dft_control, sab_nl)
+#if defined(__TBLITE_GXTB)
+      NULLIFY (scf_kpoints)
+#endif
       CALL get_kpoint_info(kpoints, nkp=nkp, xkp=xkp, use_real_wfn=use_real_wfn, kp_range=kp_range, &
                            nkp_groups=nkp_groups, kp_dist=kp_dist, sab_nl=sab_nl, &
                            cell_to_index=cell_to_index)
@@ -523,11 +529,13 @@ CONTAINS
       kplocal = kp_range(2) - kp_range(1) + 1
 
 #if defined(__TBLITE_GXTB)
-      CALL get_qs_env(qs_env, dft_control=dft_control)
+      CALL get_qs_env(qs_env, dft_control=dft_control, kpoints=scf_kpoints)
       IF (ASSOCIATED(dft_control)) THEN
          IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
-             dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. .NOT. update_p) &
-            CPABORT("Post-SCF g-xTB k-point diagonalization is not yet implemented")
+             dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. .NOT. update_p) THEN
+            IF (.NOT. ASSOCIATED(scf_kpoints, kpoints)) &
+               CPABORT("Post-SCF g-xTB new k-point grid is not yet implemented")
+         END IF
       END IF
 #endif
 
@@ -583,7 +591,10 @@ CONTAINS
       ALLOCATE (info(kplocal*nspin*nkp_groups, 4))
 
 #if defined(__TBLITE_GXTB)
-      CALL tb_prepare_gxtb_kpoint_mixer(qs_env, matrix_ks, kpoints, scf_env)
+      ! A same-grid post-SCF diagonalization must reuse the converged exchange
+      ! and mixed F(k).  Advancing the model-native mixer here would create an
+      ! additional, non-SCF iteration and invalidate the cached potential.
+      IF (update_p) CALL tb_prepare_gxtb_kpoint_mixer(qs_env, matrix_ks, kpoints, scf_env)
 #endif
 
       ! Setup and start all the communication
