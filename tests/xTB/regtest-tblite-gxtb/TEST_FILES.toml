@@ -3,4 +3,8 @@
 "H2O_gxtb_stress.inp"        = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0}]
 "H2O_gxtb_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346}]
 "O2_gxtb_uks_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-150.34083895130186}]
+# Add energy matchers after the final native k-point exchange bridge has been validated.
+"Si_prim_gxtb_kp_full.inp"   = []
+"Si_prim_gxtb_kp_k290.inp"   = [{matcher="N_special_kpoints", tol=0.0, ref=3}]
+"Si_prim_gxtb_kp_general.inp" = []
 #EOF

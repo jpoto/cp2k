@@ -51,9 +51,19 @@ The two providers are mutually exclusive. The save provider checks out a pinned 
 private `DCM-Uni-Paderborn/save_tblite` repository and requires GitHub read credentials. The default
 `--tblite-provider=upstream` path remains unchanged and uses the public tblite release. Because
 save_tblite's internal experimental DFTD API is not compatible with CP2K's standalone DFTD4 API, the
-save provider disables the latter while retaining dispersion within its xTB methods. The first g-xTB
-integration is intended for periodic and non-periodic single-point energies; forces and stress
-require the still-missing derivative of its charge-dependent q-vSZP basis.
+save provider disables the latter while retaining dispersion within its xTB methods. The native
+g-xTB path supports Gamma-point energies and analytical forces for molecular (0D) and fully periodic
+(3D) systems, plus analytical stress for 3D systems. Fully periodic energy and SCC calculations
+can also use general k-point sets and K290 or SPGLIB symmetry reduction. K-point forces and stress
+remain explicitly disabled until the complete image-resolved response is available. Partially
+periodic (1D or 2D) calculations are not supported.
+
+The q-vSZP basis dimensions and orbital layout are structural data shared per element kind, whereas
+save_tblite evaluates the charge- and environment-dependent coefficients per atom. An optional
+`XTB/TBLITE/REFERENCE_CLI` check is available for Gamma-point calculations only and does not emulate
+CP2K k-point sampling. Transition-metal and f-element calculations can converge to multiple SCC
+roots, so sensitive single points should be checked from more than one initial density and
+trajectories should use restarts to follow the intended root.
 
 ### MPI implementation choice
 

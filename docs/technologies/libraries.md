@@ -334,10 +334,25 @@ symbols, and Fortran modules.
   Consequently, SAVE builds require `-DCP2K_USE_DFTD4=OFF`; the toolchain sets this automatically.
 - Use `XTB/GFN_TYPE TBLITE` together with `XTB/TBLITE/METHOD GXTB` to select g-xTB. Builds without
   the g-xTB capability reject this method with an explicit diagnostic.
-- The initial SAVE integration supports periodic and non-periodic g-xTB single-point energies.
-  Forces and stress are deliberately rejected because the derivative of g-xTB's charge-dependent
-  q-vSZP basis is not yet exposed by save_tblite. GFN1/GFN2 behavior with the upstream provider is
-  unaffected.
+- The native CP2K path supports g-xTB energies and analytical forces at the Gamma point for
+  non-periodic (0D) and fully periodic (3D) systems, as well as analytical stress for 3D systems.
+  Fully periodic energy and SCC calculations also support general k-point sets, including symmetry
+  reduction with the K290 and SPGLIB backends. Analytical forces and stress with more than one
+  k-point are explicitly rejected until all image-resolved derivatives are available. Partially
+  periodic (1D or 2D) g-xTB calculations are not supported.
+- CP2K stores the structural q-vSZP basis layout per element kind, while save_tblite constructs its
+  charge- and environment-dependent basis coefficients separately for every atom. The Gamma-point
+  response includes the corresponding coefficient derivatives; this distinction must be preserved
+  when extending the k-point derivatives.
+- `XTB/TBLITE/REFERENCE_CLI` can optionally cross-check the native result with the save_tblite CLI
+  for molecular and 3D-periodic Gamma-point calculations. The CLI cannot reproduce CP2K k-point
+  sampling, so such a reference check is skipped or rejected according to `STOP_ON_ERROR` when
+  multiple k-points are active.
+- Transition-metal and f-element systems can have more than one converged g-xTB SCC solution. The
+  selected solution can therefore depend on the initial density or restart. For sensitive
+  single-point calculations, compare multiple starting guesses; for trajectories, use restarts to
+  follow the intended SCC root.
+- GFN1/GFN2 behavior with the upstream provider is unaffected.
 
 ## openPMD (structured output)
 
