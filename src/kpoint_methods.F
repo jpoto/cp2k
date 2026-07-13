@@ -61,14 +61,10 @@ MODULE kpoint_methods
    USE input_cp2k_kpoints,              ONLY: use_spglib_kpoint_backend,&
                                               use_spglib_kpoint_symmetry
    USE kinds,                           ONLY: dp
-   USE kpoint_types,                    ONLY: get_kpoint_info,&
-                                              kind_rotmat_type,&
-                                              kpoint_env_create,&
-                                              kpoint_env_p_type,&
-                                              kpoint_env_type,&
-                                              kpoint_sym_create,&
-                                              kpoint_sym_type,&
-                                              kpoint_type
+   USE kpoint_types,                    ONLY: &
+        get_kpoint_info, kind_rotmat_type, kpoint_env_create, kpoint_env_p_type, kpoint_env_type, &
+        kpoint_phase_gauge_input, kpoint_phase_gauge_pbc, kpoint_sym_create, kpoint_sym_type, &
+        kpoint_type
    USE mathconstants,                   ONLY: twopi
    USE mathlib,                         ONLY: inv_3x3
    USE memory_utilities,                ONLY: reallocate
@@ -259,9 +255,10 @@ CONTAINS
                   ALLOCATE (kpsym%f0(natom, ns))
                   ALLOCATE (kpsym%fcell(3, natom, ns))
                   ALLOCATE (kpsym%fcell_gauge(3, natom, ns))
-                  ALLOCATE (kpsym%phase_mode(ns))
+                  ALLOCATE (kpsym%phase_mode(ns), kpsym%phase_gauge(ns))
                   kpsym%phase_mode = 0
-                  ALLOCATE (kpsym%kgphase(natom, ns))
+                  kpsym%phase_gauge = 0
+                  ALLOCATE (kpsym%kgphase(natom, ns), kpsym%kgphase_input(natom, ns))
                   nr = 0
                   DO is = 1, SIZE(crys_sym%kplink, 2)
                      IF (crys_sym%kplink(2, is) == ik) THEN
@@ -293,6 +290,8 @@ CONTAINS
                                  kpsym%kgphase(j, nr) = DOT_PRODUCT(kgvec(1:3), &
                                                                     scoord(1:3, j) + &
                                                                     REAL(agauge(1:3, j), KIND=dp))
+                                 kpsym%kgphase_input(j, nr) = &
+                                    DOT_PRODUCT(kgvec(1:3), scoord(1:3, j))
                               END DO
                               EXIT
                            END IF
@@ -332,12 +331,15 @@ CONTAINS
                                     kpsym%kgphase(j, nr) = DOT_PRODUCT(kgvec(1:3), &
                                                                        scoord(1:3, j) + &
                                                                        REAL(agauge(1:3, j), KIND=dp))
+                                    kpsym%kgphase_input(j, nr) = &
+                                       DOT_PRODUCT(kgvec(1:3), scoord(1:3, j))
                                  END DO
                               END IF
                            END DO
                         END DO
                      END IF
                   END DO
+                  CPASSERT(nr == ns)
                   kpsym%nwred = nr
                END IF
             END IF
@@ -477,9 +479,10 @@ CONTAINS
                      ALLOCATE (kpsym%f0(natom, ns))
                      ALLOCATE (kpsym%fcell(3, natom, ns))
                      ALLOCATE (kpsym%fcell_gauge(3, natom, ns))
-                     ALLOCATE (kpsym%phase_mode(ns))
+                     ALLOCATE (kpsym%phase_mode(ns), kpsym%phase_gauge(ns))
                      kpsym%phase_mode = 0
-                     ALLOCATE (kpsym%kgphase(natom, ns))
+                     kpsym%phase_gauge = 0
+                     ALLOCATE (kpsym%kgphase(natom, ns), kpsym%kgphase_input(natom, ns))
                      nr = 0
                      DO is = 1, SIZE(crys_sym%kplink, 2)
                         IF (crys_sym%kplink(2, is) == ik) THEN
@@ -511,6 +514,8 @@ CONTAINS
                                     kpsym%kgphase(j, nr) = DOT_PRODUCT(kgvec(1:3), &
                                                                        scoord(1:3, j) + &
                                                                        REAL(agauge(1:3, j), KIND=dp))
+                                    kpsym%kgphase_input(j, nr) = &
+                                       DOT_PRODUCT(kgvec(1:3), scoord(1:3, j))
                                  END DO
                                  EXIT
                               END IF
@@ -550,12 +555,15 @@ CONTAINS
                                        kpsym%kgphase(j, nr) = DOT_PRODUCT(kgvec(1:3), &
                                                                           scoord(1:3, j) + &
                                                                           REAL(agauge(1:3, j), KIND=dp))
+                                       kpsym%kgphase_input(j, nr) = &
+                                          DOT_PRODUCT(kgvec(1:3), scoord(1:3, j))
                                     END DO
                                  END IF
                               END DO
                            END DO
                         END IF
                      END DO
+                     CPASSERT(nr == ns)
                      kpsym%nwred = nr
                   END IF
                END IF
@@ -1248,7 +1256,9 @@ CONTAINS
                                                             nb, ncol_global, ne_a, ne_b, &
                                                             nelectron, nkp, nmo, nrow_global, nspin
       INTEGER, DIMENSION(2)                              :: kp_range
-      REAL(KIND=dp)                                      :: kTS, kTS_spin(2), mu, mus(2), nel
+      LOGICAL                                            :: fixed_spin_counts
+      REAL(KIND=dp)                                      :: kTS, kTS_spin(2), mu, mus(2), nel, &
+                                                            nel_alpha, nel_beta
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: smatrix
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: weig, wocc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :)  :: icoeff, rcoeff
@@ -1390,6 +1400,24 @@ CONTAINS
 
       IF (PRESENT(probe) .EQV. .FALSE.) THEN
          IF (smear%do_smear) THEN
+            ! Match the Gamma-point convention: -1 preserves the initialized alpha/beta
+            ! electron counts, nonnegative values impose a magnetic moment, and all other
+            ! negative values allow occupations to relax jointly across both spin channels.
+            fixed_spin_counts = nspin == 2 .AND. &
+                                (smear%fixed_mag_mom == -1.0_dp .OR. &
+                                 smear%fixed_mag_mom >= 0.0_dp)
+            IF (fixed_spin_counts) THEN
+               IF (smear%fixed_mag_mom == -1.0_dp) THEN
+                  nel_alpha = REAL(ne_a, KIND=dp)
+                  nel_beta = REAL(ne_b, KIND=dp)
+               ELSE
+                  nel = REAL(ne_a + ne_b, KIND=dp)
+                  nel_alpha = 0.5_dp*(nel + smear%fixed_mag_mom)
+                  nel_beta = 0.5_dp*(nel - smear%fixed_mag_mom)
+                  IF (nel_beta < 0.0_dp) &
+                     CPABORT("K-point fixed magnetic moment exceeds the electron count")
+               END IF
+            END IF
             SELECT CASE (smear%method)
             CASE (smear_fermi_dirac)
                ! finite electronic temperature
@@ -1398,13 +1426,11 @@ CONTAINS
                   CALL Smearkp(wocc(:, :, 1), mus(1), kTS, weig(:, :, 1), nel, wkp, &
                                smear%electronic_temperature, 2.0_dp, smear_fermi_dirac)
                   kTS_spin(1) = kTS
-               ELSE IF (smear%fixed_mag_mom > 0.0_dp) THEN
-                  nel = REAL(ne_a, KIND=dp)
-                  CALL Smearkp(wocc(:, :, 1), mus(1), kTS, weig(:, :, 1), nel, wkp, &
+               ELSE IF (fixed_spin_counts) THEN
+                  CALL Smearkp(wocc(:, :, 1), mus(1), kTS, weig(:, :, 1), nel_alpha, wkp, &
                                smear%electronic_temperature, 1.0_dp, smear_fermi_dirac)
                   kTS_spin(1) = kTS
-                  nel = REAL(ne_b, KIND=dp)
-                  CALL Smearkp(wocc(:, :, 2), mus(2), kTS, weig(:, :, 2), nel, wkp, &
+                  CALL Smearkp(wocc(:, :, 2), mus(2), kTS, weig(:, :, 2), nel_beta, wkp, &
                                smear%electronic_temperature, 1.0_dp, smear_fermi_dirac)
                   kTS_spin(2) = kTS
                ELSE
@@ -1421,13 +1447,11 @@ CONTAINS
                   CALL Smearkp(wocc(:, :, 1), mus(1), kTS, weig(:, :, 1), nel, wkp, &
                                smear%smearing_width, 2.0_dp, smear%method)
                   kTS_spin(1) = kTS
-               ELSE IF (smear%fixed_mag_mom > 0.0_dp) THEN
-                  nel = REAL(ne_a, KIND=dp)
-                  CALL Smearkp(wocc(:, :, 1), mus(1), kTS, weig(:, :, 1), nel, wkp, &
+               ELSE IF (fixed_spin_counts) THEN
+                  CALL Smearkp(wocc(:, :, 1), mus(1), kTS, weig(:, :, 1), nel_alpha, wkp, &
                                smear%smearing_width, 1.0_dp, smear%method)
                   kTS_spin(1) = kTS
-                  nel = REAL(ne_b, KIND=dp)
-                  CALL Smearkp(wocc(:, :, 2), mus(2), kTS, weig(:, :, 2), nel, wkp, &
+                  CALL Smearkp(wocc(:, :, 2), mus(2), kTS, weig(:, :, 2), nel_beta, wkp, &
                                smear%smearing_width, 1.0_dp, smear%method)
                   kTS_spin(2) = kTS
                ELSE
@@ -1783,6 +1807,7 @@ CONTAINS
 
       INTEGER                                            :: handle, ic, ik, ikk, indx, ir, ira, is, &
                                                             ispin, jr, nc, nimg, nkp, nspin
+      INTEGER, DIMENSION(:, :), POINTER                  :: phase_fcell
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: aux_fit, do_ext, do_symmetric, my_kpgrp, &
                                                             real_only, reverse_phase
@@ -1931,10 +1956,19 @@ CONTAINS
                   CPASSERT(ira > 0)
                   kind_rot => kpoint%kind_rotmat(ira, :)
                   CPASSERT(kpsym%phase_mode(is) > 0)
+                  CPASSERT(kpsym%phase_gauge(is) > 0)
                   reverse_phase = kpsym%phase_mode(is) == 2
+                  SELECT CASE (kpsym%phase_gauge(is))
+                  CASE (kpoint_phase_gauge_pbc)
+                     phase_fcell => kpsym%fcell_gauge(:, :, is)
+                  CASE (kpoint_phase_gauge_input)
+                     phase_fcell => kpsym%fcell(:, :, is)
+                  CASE DEFAULT
+                     CPABORT("Unknown k-point atom-cell phase gauge")
+                  END SELECT
                   CALL symtrans_phase(srpmat, scpmat, rpmat, cpmat, real_only, kind_rot, &
                                       kpsym%rot(1:3, 1:3, is), kpsym%f0(:, is), &
-                                      kpsym%fcell_gauge(:, :, is), kpoint%atype, &
+                                      phase_fcell, kpoint%atype, &
                                       kpsym%xkp(1:3, is), kpsym%rotp(is) < 0, reverse_phase)
                   CALL transform_dmat(denmat, srpmat, scpmat, ispin, real_only, sab_nl, &
                                       cell_to_index, kpsym%xkp(1:3, is), wkpx)
@@ -2113,11 +2147,14 @@ CONTAINS
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
 
       CHARACTER(LEN=256)                                 :: phase_error
-      INTEGER                                            :: best_mode, ik, ir, ira, is, jr, mode
+      INTEGER                                            :: best_gauge, best_mode, gauge, ik, ir, &
+                                                            ira, is, jr, mode
+      INTEGER, DIMENSION(:, :), POINTER                  :: phase_fcell
       LOGICAL                                            :: needs_calibration, reverse
       REAL(KIND=dp)                                      :: best_residual, candidate_norm, &
                                                             direct_norm, overlap_dot, &
-                                                            phase_tolerance, relative_residual
+                                                            phase_tolerance, relative_residual, &
+                                                            tie_tolerance
       TYPE(dbcsr_type), POINTER                          :: direct_c, direct_r, source_c, source_r, &
                                                             sym_c, sym_r
       TYPE(kind_rotmat_type), DIMENSION(:), POINTER      :: kind_rot
@@ -2127,7 +2164,9 @@ CONTAINS
       DO ik = 1, kpoint%nkp
          kpsym => kpoint%kp_sym(ik)%kpoint_sym
          IF (kpsym%apply_symmetry) THEN
-            IF (ANY(kpsym%phase_mode == 0)) THEN
+            CPASSERT(ASSOCIATED(kpsym%phase_mode))
+            CPASSERT(ASSOCIATED(kpsym%phase_gauge))
+            IF (ANY(kpsym%phase_mode == 0 .OR. kpsym%phase_gauge == 0)) THEN
                needs_calibration = .TRUE.
                EXIT
             END IF
@@ -2153,15 +2192,25 @@ CONTAINS
       DO ik = 1, kpoint%nkp
          kpsym => kpoint%kp_sym(ik)%kpoint_sym
          IF (.NOT. kpsym%apply_symmetry) CYCLE
-         IF (ALL(kpsym%phase_mode > 0)) CYCLE
+         IF (ALL(kpsym%phase_mode > 0 .AND. kpsym%phase_gauge > 0)) CYCLE
 
          CALL dbcsr_set(source_r, 0.0_dp)
          CALL dbcsr_set(source_c, 0.0_dp)
          CALL rskp_transform(source_r, source_c, overlap_rs, 1, kpoint%xkp(1:3, ik), &
                              cell_to_index, sab_nl)
 
-         DO is = 1, kpsym%nwght
-            IF (kpsym%phase_mode(is) > 0) CYCLE
+         CPASSERT(kpsym%nwred == SIZE(kpsym%phase_mode))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%phase_gauge))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%xkp, 2))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%rot, 3))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%f0, 2))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%fcell, 3))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%fcell_gauge, 3))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%kgphase, 2))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%kgphase_input, 2))
+         CPASSERT(kpsym%nwred == SIZE(kpsym%rotp))
+         DO is = 1, kpsym%nwred
+            IF (kpsym%phase_mode(is) > 0 .AND. kpsym%phase_gauge(is) > 0) CYCLE
             CALL dbcsr_set(direct_r, 0.0_dp)
             CALL dbcsr_set(direct_c, 0.0_dp)
             CALL rskp_transform(direct_r, direct_c, overlap_rs, 1, kpsym%xkp(1:3, is), &
@@ -2178,34 +2227,50 @@ CONTAINS
             CPASSERT(ira > 0)
             kind_rot => kpoint%kind_rotmat(ira, :)
 
+            best_gauge = 0
             best_mode = 0
             best_residual = HUGE(1.0_dp)
-            DO mode = 1, 2
-               reverse = mode == 2
-               CALL symtrans_phase(sym_r, sym_c, source_r, source_c, .FALSE., kind_rot, &
-                                   kpsym%rot(1:3, 1:3, is), kpsym%f0(:, is), &
-                                   kpsym%fcell_gauge(:, :, is), kpoint%atype, &
-                                   kpsym%xkp(1:3, is), kpsym%rotp(is) < 0, reverse)
-               CALL dbcsr_dot(sym_r, sym_r, candidate_norm)
-               CALL dbcsr_dot(sym_c, sym_c, relative_residual)
-               candidate_norm = candidate_norm + relative_residual
-               CALL dbcsr_dot(sym_r, direct_r, overlap_dot)
-               CALL dbcsr_dot(sym_c, direct_c, relative_residual)
-               overlap_dot = overlap_dot + relative_residual
-               relative_residual = SQRT(MAX(0.0_dp, candidate_norm + direct_norm - &
-                                            2.0_dp*overlap_dot)/MAX(direct_norm, TINY(1.0_dp)))
-               IF (relative_residual < best_residual) THEN
-                  best_residual = relative_residual
-                  best_mode = mode
-               END IF
+            DO gauge = kpoint_phase_gauge_pbc, kpoint_phase_gauge_input
+               SELECT CASE (gauge)
+               CASE (kpoint_phase_gauge_pbc)
+                  phase_fcell => kpsym%fcell_gauge(:, :, is)
+               CASE (kpoint_phase_gauge_input)
+                  phase_fcell => kpsym%fcell(:, :, is)
+               CASE DEFAULT
+                  CPABORT("Unknown k-point atom-cell phase gauge")
+               END SELECT
+               DO mode = 1, 2
+                  reverse = mode == 2
+                  CALL symtrans_phase(sym_r, sym_c, source_r, source_c, .FALSE., kind_rot, &
+                                      kpsym%rot(1:3, 1:3, is), kpsym%f0(:, is), &
+                                      phase_fcell, kpoint%atype, &
+                                      kpsym%xkp(1:3, is), kpsym%rotp(is) < 0, reverse)
+                  CALL dbcsr_dot(sym_r, sym_r, candidate_norm)
+                  CALL dbcsr_dot(sym_c, sym_c, relative_residual)
+                  candidate_norm = candidate_norm + relative_residual
+                  CALL dbcsr_dot(sym_r, direct_r, overlap_dot)
+                  CALL dbcsr_dot(sym_c, direct_c, relative_residual)
+                  overlap_dot = overlap_dot + relative_residual
+                  relative_residual = SQRT(MAX(0.0_dp, candidate_norm + direct_norm - &
+                                               2.0_dp*overlap_dot)/MAX(direct_norm, TINY(1.0_dp)))
+                  tie_tolerance = 64.0_dp*EPSILON(1.0_dp)* &
+                                  MAX(1.0_dp, ABS(best_residual), ABS(relative_residual))
+                  IF (best_gauge == 0 .OR. relative_residual < best_residual - tie_tolerance) THEN
+                     best_residual = relative_residual
+                     best_gauge = gauge
+                     best_mode = mode
+                  END IF
+               END DO
             END DO
             IF (best_residual > phase_tolerance) THEN
                WRITE (phase_error, '(A,ES12.4,A,I0,A,I0)') &
-                  "No Bloch-phase direction preserves overlap covariance; residual=", &
+                  "No Bloch-phase/gauge convention preserves overlap covariance; residual=", &
                   best_residual, ", irreducible k-point=", ik, ", operation=", is
                CALL cp_abort(__LOCATION__, TRIM(phase_error))
             END IF
+            CPASSERT(best_gauge > 0)
             kpsym%phase_mode(is) = best_mode
+            kpsym%phase_gauge(is) = best_gauge
          END DO
       END DO
 
