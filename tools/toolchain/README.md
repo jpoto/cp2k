@@ -41,6 +41,20 @@ One can then change settings for some packages, by setting `--with-PKG` options 
 will set the script to look for a system MKL library to link, while compile other packages from
 scratch.
 
+To build the experimental g-xTB-capable save_tblite provider instead of upstream tblite, use:
+
+```shell
+> ./install_cp2k_toolchain.sh --with-tblite=install --tblite-provider=save
+```
+
+The two providers are mutually exclusive. The save provider checks out a pinned revision from the
+private `DCM-Uni-Paderborn/save_tblite` repository and requires GitHub read credentials. The default
+`--tblite-provider=upstream` path remains unchanged and uses the public tblite release. Because
+save_tblite's internal experimental DFTD API is not compatible with CP2K's standalone DFTD4 API, the
+save provider disables the latter while retaining dispersion within its xTB methods. The first g-xTB
+integration is intended for periodic and non-periodic single-point energies; forces and stress
+require the still-missing derivative of its charge-dependent q-vSZP basis.
+
 ### MPI implementation choice
 
 If you do not have an MPI installation, by default the `--install-all` option will install MPICH for

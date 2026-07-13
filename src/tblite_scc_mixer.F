@@ -15,7 +15,6 @@ MODULE tblite_scc_mixer
                        wp
    USE tblite_lapack, ONLY: getrf, &
                             getrs
-   USE tblite_scf_mixer_type, ONLY: mixer_type
 #endif
 
    IMPLICIT NONE
@@ -23,9 +22,9 @@ MODULE tblite_scc_mixer
    PRIVATE
 
 #if defined(__TBLITE)
-   PUBLIC :: new_cp2k_tblite_mixer
+   PUBLIC :: cp2k_tblite_broyden_mixer_type, new_cp2k_tblite_mixer
 
-   TYPE, EXTENDS(mixer_type) :: cp2k_tblite_broyden_mixer_type
+   TYPE :: cp2k_tblite_broyden_mixer_type
       INTEGER                                            :: idif = 0
       INTEGER                                            :: iget = 0
       INTEGER                                            :: iset = 0
@@ -41,10 +40,19 @@ MODULE tblite_scc_mixer
       REAL(wp), ALLOCATABLE, DIMENSION(:)                :: dq, dqlast, omega, q_in, qlast_in
    CONTAINS
       PROCEDURE                                          :: diff_1d => cp2k_tblite_mixer_diff_1d
+      PROCEDURE                                          :: diff_2d => cp2k_tblite_mixer_diff_2d
+      PROCEDURE                                          :: diff_3d => cp2k_tblite_mixer_diff_3d
+      GENERIC                                            :: diff => diff_1d, diff_2d, diff_3d
       PROCEDURE                                          :: get_1d => cp2k_tblite_mixer_get_1d
+      PROCEDURE                                          :: get_2d => cp2k_tblite_mixer_get_2d
+      PROCEDURE                                          :: get_3d => cp2k_tblite_mixer_get_3d
+      GENERIC                                            :: get => get_1d, get_2d, get_3d
       PROCEDURE                                          :: get_error => cp2k_tblite_mixer_get_error
       PROCEDURE                                          :: next => cp2k_tblite_mixer_next
       PROCEDURE                                          :: set_1d => cp2k_tblite_mixer_set_1d
+      PROCEDURE                                          :: set_2d => cp2k_tblite_mixer_set_2d
+      PROCEDURE                                          :: set_3d => cp2k_tblite_mixer_set_3d
+      GENERIC                                            :: set => set_1d, set_2d, set_3d
    END TYPE cp2k_tblite_broyden_mixer_type
 #endif
 
@@ -64,7 +72,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE new_cp2k_tblite_mixer(mixer, memory, ndim, damping, omega0, min_weight, max_weight, &
                                     weight_factor)
-      CLASS(mixer_type), ALLOCATABLE, INTENT(OUT)        :: mixer
+      TYPE(cp2k_tblite_broyden_mixer_type), &
+         ALLOCATABLE, INTENT(OUT)                        :: mixer
       INTEGER, INTENT(IN)                                :: memory, ndim
       REAL(wp), INTENT(IN)                               :: damping, omega0, min_weight, max_weight, &
                                                             weight_factor
@@ -106,6 +115,34 @@ CONTAINS
    END SUBROUTINE cp2k_tblite_mixer_set_1d
 
 ! **************************************************************************************************
+!> \brief Set a rank-two input SCC-variable array.
+!> \param self mixer
+!> \param qvec SCC-variable array
+! **************************************************************************************************
+   SUBROUTINE cp2k_tblite_mixer_set_2d(self, qvec)
+      CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
+      REAL(wp), DIMENSION(:, :), INTENT(IN)               :: qvec
+
+      self%q_in(self%iset + 1:self%iset + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)])
+      self%iset = self%iset + SIZE(qvec)
+
+   END SUBROUTINE cp2k_tblite_mixer_set_2d
+
+! **************************************************************************************************
+!> \brief Set a rank-three input SCC-variable array.
+!> \param self mixer
+!> \param qvec SCC-variable array
+! **************************************************************************************************
+   SUBROUTINE cp2k_tblite_mixer_set_3d(self, qvec)
+      CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
+      REAL(wp), DIMENSION(:, :, :), INTENT(IN)            :: qvec
+
+      self%q_in(self%iset + 1:self%iset + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)])
+      self%iset = self%iset + SIZE(qvec)
+
+   END SUBROUTINE cp2k_tblite_mixer_set_3d
+
+! **************************************************************************************************
 !> \brief Set SCC residual.
 !> \param self mixer
 !> \param qvec output SCC-variable vector before mixing
@@ -119,6 +156,36 @@ CONTAINS
       self%idif = self%idif + SIZE(qvec)
 
    END SUBROUTINE cp2k_tblite_mixer_diff_1d
+
+! **************************************************************************************************
+!> \brief Set a rank-two SCC residual.
+!> \param self mixer
+!> \param qvec output SCC-variable array before mixing
+! **************************************************************************************************
+   SUBROUTINE cp2k_tblite_mixer_diff_2d(self, qvec)
+      CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
+      REAL(wp), DIMENSION(:, :), INTENT(IN)               :: qvec
+
+      self%dq(self%idif + 1:self%idif + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)]) - &
+                                                      self%q_in(self%idif + 1:self%idif + SIZE(qvec))
+      self%idif = self%idif + SIZE(qvec)
+
+   END SUBROUTINE cp2k_tblite_mixer_diff_2d
+
+! **************************************************************************************************
+!> \brief Set a rank-three SCC residual.
+!> \param self mixer
+!> \param qvec output SCC-variable array before mixing
+! **************************************************************************************************
+   SUBROUTINE cp2k_tblite_mixer_diff_3d(self, qvec)
+      CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
+      REAL(wp), DIMENSION(:, :, :), INTENT(IN)            :: qvec
+
+      self%dq(self%idif + 1:self%idif + SIZE(qvec)) = RESHAPE(qvec, [SIZE(qvec)]) - &
+                                                      self%q_in(self%idif + 1:self%idif + SIZE(qvec))
+      self%idif = self%idif + SIZE(qvec)
+
+   END SUBROUTINE cp2k_tblite_mixer_diff_3d
 
 ! **************************************************************************************************
 !> \brief Apply the next Broyden update.
@@ -156,6 +223,34 @@ CONTAINS
       self%iget = self%iget + SIZE(qvec)
 
    END SUBROUTINE cp2k_tblite_mixer_get_1d
+
+! **************************************************************************************************
+!> \brief Get a rank-two mixed SCC-variable array.
+!> \param self mixer
+!> \param qvec mixed SCC-variable array
+! **************************************************************************************************
+   SUBROUTINE cp2k_tblite_mixer_get_2d(self, qvec)
+      CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
+      REAL(wp), DIMENSION(:, :), INTENT(OUT)              :: qvec
+
+      qvec = RESHAPE(self%q_in(self%iget + 1:self%iget + SIZE(qvec)), SHAPE(qvec))
+      self%iget = self%iget + SIZE(qvec)
+
+   END SUBROUTINE cp2k_tblite_mixer_get_2d
+
+! **************************************************************************************************
+!> \brief Get a rank-three mixed SCC-variable array.
+!> \param self mixer
+!> \param qvec mixed SCC-variable array
+! **************************************************************************************************
+   SUBROUTINE cp2k_tblite_mixer_get_3d(self, qvec)
+      CLASS(cp2k_tblite_broyden_mixer_type), INTENT(INOUT) :: self
+      REAL(wp), DIMENSION(:, :, :), INTENT(OUT)           :: qvec
+
+      qvec = RESHAPE(self%q_in(self%iget + 1:self%iget + SIZE(qvec)), SHAPE(qvec))
+      self%iget = self%iget + SIZE(qvec)
+
+   END SUBROUTINE cp2k_tblite_mixer_get_3d
 
 ! **************************************************************************************************
 !> \brief Get RMS SCC residual.

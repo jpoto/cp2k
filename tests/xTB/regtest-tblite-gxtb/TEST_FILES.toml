@@ -1,0 +1,2 @@
+"H2O_gxtb_pbc.inp" = [{matcher="E_total", tol=1.0E-8, ref=-4.065297749760279}]
+#EOF

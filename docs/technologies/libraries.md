@@ -309,9 +309,12 @@ enabled by passing `-DCP2K_USE_GREENX=ON` to CMake.
 - GREENX library can be downloaded from <https://github.com/nomad-coe/greenX>
 - For more information see <https://nomad-coe.github.io/greenX/>.
 
-## TBLITE (semiempirical method)
+## TBLITE and save_tblite (semiempirical methods)
 
-TBLITE is a lightweight tight-binding framework that provides the GFN2-xTB method.
+TBLITE is a lightweight tight-binding framework that provides GFN1-xTB, GFN2-xTB, and IPEA1. The
+experimental save_tblite provider is a mutually exclusive drop-in replacement that also provides
+g-xTB. A CP2K binary links exactly one of the two providers because both export the same library, C
+symbols, and Fortran modules.
 
 - Please always use the CMake-built tblite package rather than the Meson-built one for CP2K.
 - A CMake build of tblite from source also installs DFT-D4 and s-dftd3. Therefore, no separate DFTD4
@@ -319,6 +322,22 @@ TBLITE is a lightweight tight-binding framework that provides the GFN2-xTB metho
   functionals.
 - For more information see <https://github.com/tblite/tblite>
 - Pass `-DCP2K_USE_TBLITE=ON` to CMake.
+- Select the implementation with `-DCP2K_TBLITE_PROVIDER=UPSTREAM` (default) or
+  `-DCP2K_TBLITE_PROVIDER=SAVE`. The SAVE provider is accepted only when CMake detects the
+  `tblite_xtb_gxtb` module; g-xTB is enabled from this capability check rather than from the
+  provider name alone.
+- The toolchain equivalent is `--with-tblite=install --tblite-provider=save`. This checks out a
+  pinned revision from the private `DCM-Uni-Paderborn/save_tblite` repository and therefore needs
+  suitable GitHub credentials. Its non-release dependencies are pinned by commit as well.
+- `save_tblite` uses the experimental `grimme-lab/dftd` API internally. This dispersion remains
+  available to its xTB methods, but it is not API-compatible with CP2K's standalone DFTD4 feature.
+  Consequently, SAVE builds require `-DCP2K_USE_DFTD4=OFF`; the toolchain sets this automatically.
+- Use `XTB/GFN_TYPE TBLITE` together with `XTB/TBLITE/METHOD GXTB` to select g-xTB. Builds without
+  the g-xTB capability reject this method with an explicit diagnostic.
+- The initial SAVE integration supports periodic and non-periodic g-xTB single-point energies.
+  Forces and stress are deliberately rejected because the derivative of g-xTB's charge-dependent
+  q-vSZP basis is not yet exposed by save_tblite. GFN1/GFN2 behavior with the upstream provider is
+  unaffected.
 
 ## openPMD (structured output)
 

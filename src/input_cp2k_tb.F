@@ -23,14 +23,14 @@ MODULE input_cp2k_tb
    USE eeq_input,                       ONLY: create_eeq_control_section
    USE input_constants,                 ONLY: &
         dispersion_d2, dispersion_d3, dispersion_d3bj, dispersion_uff, gfn1xtb, gfn2xtb, &
-        gfn_tblite, ipea1xtb, slater, tblite_cli_born_kernel_auto, tblite_cli_born_kernel_p16, &
-        tblite_cli_born_kernel_still, tblite_cli_solution_state_bar1mol, &
-        tblite_cli_solution_state_gsolv, tblite_cli_solution_state_reference, &
-        tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, tblite_cli_solvation_gb, &
-        tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, tblite_guess_ceh, tblite_guess_eeq, &
-        tblite_guess_sad, tblite_mixer_damping_default, tblite_mixer_iterations_default, &
-        tblite_mixer_max_weight_default, tblite_mixer_memory_inherit, &
-        tblite_mixer_min_weight_default, tblite_mixer_omega0_default, &
+        gfn_tblite, gxtb, ipea1xtb, slater, tblite_cli_born_kernel_auto, &
+        tblite_cli_born_kernel_p16, tblite_cli_born_kernel_still, &
+        tblite_cli_solution_state_bar1mol, tblite_cli_solution_state_gsolv, &
+        tblite_cli_solution_state_reference, tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
+        tblite_cli_solvation_gb, tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, &
+        tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, tblite_mixer_damping_default, &
+        tblite_mixer_iterations_default, tblite_mixer_max_weight_default, &
+        tblite_mixer_memory_inherit, tblite_mixer_min_weight_default, tblite_mixer_omega0_default, &
         tblite_mixer_weight_factor_default, tblite_scc_mixer_auto, tblite_scc_mixer_cp2k, &
         tblite_scc_mixer_none, tblite_scc_mixer_tblite, tblite_solver_gvd, tblite_solver_gvr
    USE input_cp2k_mm,                   ONLY: create_GENPOT_section
@@ -637,12 +637,13 @@ CONTAINS
                           "repulsion, dispersion, electrostatic, and coordination-number dependent terms. When PARAM "// &
                           "is given, METHOD remains the declared model family that the custom parametrization is "// &
                           "expected to implement and that CP2K uses for method-dependent setup and diagnostics.", &
-                          usage="METHOD (GFN1|GFN2|IPEA1)", &
-                          enum_c_vals=s2a("GFN1", "GFN2", "IPEA1"), &
-                          enum_i_vals=[gfn1xtb, gfn2xtb, ipea1xtb], &
+                          usage="METHOD (GFN1|GFN2|IPEA1|GXTB)", &
+                          enum_c_vals=s2a("GFN1", "GFN2", "IPEA1", "GXTB"), &
+                          enum_i_vals=[gfn1xtb, gfn2xtb, ipea1xtb, gxtb], &
                           enum_desc=s2a("Uses the GFN1-XTB method by Grimme.", &
                                         "Uses the GFN2-XTB method by Grimme.", &
-                                        "Uses the IPEA1 method by Grimme."), &
+                                        "Uses the IPEA1 method by Grimme.", &
+                                        "Uses g-xTB; requires a tblite build with g-xTB support."), &
                           default_i_val=gfn2xtb)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -1254,12 +1255,13 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="METHOD", &
                           description="Base parametrization passed to native tblite param as --method. If omitted, "// &
                           "CP2K uses the surrounding XTB/TBLITE/METHOD.", &
-                          usage="METHOD (GFN1|GFN2|IPEA1)", &
-                          enum_c_vals=s2a("GFN1", "GFN2", "IPEA1"), &
-                          enum_i_vals=[gfn1xtb, gfn2xtb, ipea1xtb], &
+                          usage="METHOD (GFN1|GFN2|IPEA1|GXTB)", &
+                          enum_c_vals=s2a("GFN1", "GFN2", "IPEA1", "GXTB"), &
+                          enum_i_vals=[gfn1xtb, gfn2xtb, ipea1xtb, gxtb], &
                           enum_desc=s2a("Use the GFN1-xTB base parametrization.", &
                                         "Use the GFN2-xTB base parametrization.", &
-                                        "Use the IPEA1 base parametrization."), &
+                                        "Use the IPEA1 base parametrization.", &
+                                        "Use the g-xTB base parametrization when available."), &
                           default_i_val=gfn2xtb)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)

@@ -15,9 +15,12 @@ MODULE tblite_types
 
 #if defined(__TBLITE)
    USE mctc_io, ONLY: structure_type, new
+#if defined(__TBLITE_GXTB)
+   USE tblite_basis_cache, ONLY: basis_cache
+#endif
    USE tblite_xtb_calculator, ONLY: xtb_calculator
    USE tblite_container, ONLY: container_cache
-   USE tblite_scf_mixer, ONLY: mixer_type
+   USE tblite_scc_mixer, ONLY: cp2k_tblite_broyden_mixer_type
    USE tblite_wavefunction_type, ONLY: wavefunction_type
    USE tblite_scf_potential, ONLY: potential_type
    USE tblite_param, ONLY: param_record
@@ -78,6 +81,9 @@ MODULE tblite_types
       REAL(KIND=dp)                                      :: mixer_omega0 = tblite_mixer_omega0_default
       REAL(KIND=dp)                                      :: mixer_weight_factor = tblite_mixer_weight_factor_default
 
+#if defined(__TBLITE_GXTB)
+      TYPE(basis_cache)                                  :: bcache = basis_cache()
+#endif
 #if defined(__TBLITE)
       TYPE(structure_type)                               :: mol = structure_type()
       TYPE(xtb_calculator)                               :: calc = xtb_calculator()
@@ -86,7 +92,7 @@ MODULE tblite_types
       TYPE(container_cache)                              :: icache = container_cache()
       TYPE(wavefunction_type)                            :: wfn = wavefunction_type()
       TYPE(potential_type)                               :: pot = potential_type()
-      CLASS(mixer_type), ALLOCATABLE                     :: mixer
+      TYPE(cp2k_tblite_broyden_mixer_type), ALLOCATABLE  :: mixer
       TYPE(param_record), ALLOCATABLE                    :: param
 #endif
 

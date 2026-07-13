@@ -335,6 +335,12 @@ Specific options of --with-PKG:
                           by --with-dftd4 will not be used.
                           This package requires CMake.
                           Default = install
+  --tblite-provider       Select the mutually exclusive tblite implementation:
+                          upstream for the official release, or save for the
+                          pinned save_tblite PBC branch with g-xTB support.
+                          The save provider requires GitHub read access to the
+                          private DCM-Uni-Paderborn/save_tblite repository.
+                          Default = upstream
   --with-sirius           Enable interface to the plane wave SIRIUS library.
                           This package requires Libxc, ScaLAPACK, ELPA, GSL,
                           libspg, HDF5, pugixml, and libvdwxc.
@@ -526,6 +532,7 @@ with_libtorch="__DONTUSE__"
 with_ninja="__DONTUSE__"
 with_dftd4="__DONTUSE__"
 with_tblite="__INSTALL__"
+tblite_provider="upstream"
 with_libsmeagol="__DONTUSE__"
 with_mcl="__DONTUSE__"
 with_libgint="__DONTUSE__"
@@ -935,6 +942,15 @@ Otherwise use option no."
       ;;
     --with-tblite*)
       with_tblite=$(read_with "${1}")
+      ;;
+    --tblite-provider=*)
+      tblite_provider="${1#*=}"
+      case "${tblite_provider}" in
+        upstream | save) ;;
+        *)
+          report_error ${LINENO} "Invalid --tblite-provider=${tblite_provider}; use upstream or save."
+          ;;
+      esac
       ;;
     --with-libsmeagol*)
       with_libsmeagol=$(read_with "${1}")
@@ -1387,6 +1403,7 @@ echo "ENABLE_CUDA=\"${ENABLE_CUDA}\"" >> "${INSTALLDIR}"/toolchain.conf
 echo "ENABLE_GAUXC_CUTLASS=\"${ENABLE_GAUXC_CUTLASS}\"" >> "${INSTALLDIR}"/toolchain.conf
 echo "ENABLE_HIP=\"${ENABLE_HIP}\"" >> "${INSTALLDIR}"/toolchain.conf
 echo "ENABLE_OPENCL=\"${ENABLE_OPENCL}\"" >> "${INSTALLDIR}"/toolchain.conf
+echo "tblite_provider=\"${tblite_provider}\"" >> "${INSTALLDIR}"/toolchain.conf
 if [ "${ENABLE_CUDA}" == "__TRUE__" ] || [ "${ENABLE_HIP}" == "__TRUE__" ]; then
   echo "GPU_VER=\"${GPUVER}\"" >> "${INSTALLDIR}"/toolchain.conf
 fi
@@ -1550,6 +1567,7 @@ print_toolchain_summary() {
   printf '  --%-20s = %s\n' "gpu-ver" "${GPUVER}"
   printf '  --%-20s = %s\n' "mpi-mode" "${MPI_MODE}"
   printf '  --%-20s = %s\n' "math-mode" "${MATH_MODE}"
+  printf '  --%-20s = %s\n' "tblite-provider" "${tblite_provider}"
   printf '\nEnabled features:\n'
   printf '  --%-20s = %s\n' "enable-tsan" "$(format_bool "${enable_tsan}")"
   printf '  --%-20s = %s\n' "enable-cuda" "$(format_bool "${enable_cuda}")"

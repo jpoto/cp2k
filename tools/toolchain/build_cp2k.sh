@@ -238,11 +238,21 @@ else
     fi
   done
 fi
+if [ "${with_tblite}" != "__DONTUSE__" ]; then
+  CMAKE_OPTIONS+=" -DCP2K_TBLITE_PROVIDER=${tblite_provider}"
+  CMAKE_OPTIONS+=" -DCP2K_TBLITE_REVISION=${TBLITE_SOURCE_REVISION}"
+  if [ "${tblite_provider}" = "save" ]; then
+    CMAKE_OPTIONS+=" -DCP2K_USE_DFTD4=OFF"
+  fi
+fi
 # Additional feature of SIRIUS
 if [ "${with_sirius}" = "__INSTALL__" ]; then
   CMAKE_OPTIONS+=" -DCP2K_USE_SIRIUS_VCSQNM=ON"
   if [ "${with_tblite}" != "__DONTUSE__" ]; then
-    CMAKE_OPTIONS+=" -DCP2K_USE_SIRIUS_DFTD3=ON -DCP2K_USE_SIRIUS_DFTD4=ON"
+    CMAKE_OPTIONS+=" -DCP2K_USE_SIRIUS_DFTD3=ON"
+    if [ "${tblite_provider}" = "upstream" ]; then
+      CMAKE_OPTIONS+=" -DCP2K_USE_SIRIUS_DFTD4=ON"
+    fi
   elif [ "${with_dftd4}" != "__DONTUSE__" ]; then
     CMAKE_OPTIONS+=" -DCP2K_USE_SIRIUS_DFTD4=ON"
   fi

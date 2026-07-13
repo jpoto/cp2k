@@ -23,9 +23,19 @@ MODULE tblite_interface
    USE tblite_container_type, ONLY: container_type
    USE tblite_cutoff, ONLY: get_lattice_points
    USE tblite_data_spin, ONLY: get_spin_constant
-   USE tblite_integral_multipole, ONLY: multipole_cgto, multipole_grad_cgto, maxl, msao
+#if defined(__TBLITE_GXTB)
+   USE tblite_cp2k_compat, ONLY: get_mixer_dimension => cp2k_get_mixer_dimension, &
+                                 cp2k_get_cgto, cp2k_multipole_cgto, &
+                                 cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
+                                 cp2k_update_basis
+#else
+   USE tblite_integral_multipole, ONLY: multipole_cgto, multipole_grad_cgto
+#endif
+   USE tblite_integral_multipole, ONLY: maxl, msao
    USE tblite_integral_type, ONLY: integral_type, new_integral
+#if !defined(__TBLITE_GXTB)
    USE tblite_scf, ONLY: get_mixer_dimension
+#endif
    USE tblite_scf_info, ONLY: scf_info, atom_resolved, shell_resolved, &
                               orbital_resolved, not_used
    USE tblite_scf_potential, ONLY: potential_type, new_potential, add_pot_to_h1
@@ -34,6 +44,9 @@ MODULE tblite_interface
    USE tblite_xtb_calculator, ONLY: xtb_calculator, new_xtb_calculator
    USE tblite_xtb_gfn1, ONLY: new_gfn1_calculator
    USE tblite_xtb_gfn2, ONLY: new_gfn2_calculator
+#if defined(__TBLITE_GXTB)
+   USE tblite_xtb_gxtb, ONLY: new_gxtb_calculator
+#endif
    USE tblite_xtb_h0, ONLY: get_selfenergy, get_hamiltonian, get_occupation, &
                             get_hamiltonian_gradient, tb_hamiltonian
    USE tblite_xtb_ipea1, ONLY: new_ipea1_calculator
@@ -63,7 +76,7 @@ MODULE tblite_interface
                                  cp_print_key_unit_nr, cp_print_key_finished_output, &
                                  debug_print_level, high_print_level, silent_print_level
    USE cp_units, ONLY: cp_unit_from_cp2k
-   USE input_constants, ONLY: gfn1xtb, gfn2xtb, ipea1xtb, smear_energy_window, &
+   USE input_constants, ONLY: gfn1xtb, gfn2xtb, gxtb, ipea1xtb, smear_energy_window, &
                               smear_fermi_dirac, smear_gaussian, smear_list, smear_mp, smear_mv, &
                               tblite_cli_born_kernel_auto, tblite_cli_born_kernel_p16, &
                               tblite_cli_born_kernel_still, tblite_cli_solution_state_bar1mol, &
@@ -126,6 +139,9 @@ MODULE tblite_interface
    INTEGER, PARAMETER                                 :: quad_n = 6
    REAL(KIND=dp), PARAMETER                           :: same_atom = 0.00001_dp
    REAL(KIND=dp), PARAMETER                           :: tblite_scc_pconv = 2.0E-5_dp
+   CHARACTER(len=*), PARAMETER                        :: gxtb_force_error = &
+                                                        "CP2K/save_tblite g-xTB currently supports single-point energies only; "// &
+                                                      "the charge-dependent q-vSZP basis response is not yet implemented for forces"
 
    PUBLIC :: tb_set_calculator, tb_init_geometry, tb_init_wf
    PUBLIC :: tb_get_basis, build_tblite_matrices
@@ -398,9 +414,17 @@ CONTAINS
       wll = 0.0_dp
       DO izp = 1, tb%mol%nid
          DO ish = 1, tb%calc%bas%nsh_id(izp)
+#if defined(__TBLITE_GXTB)
+            il = tb%calc%bas%cgto(ish, izp)%raw%ang
+#else
             il = tb%calc%bas%cgto(ish, izp)%ang
+#endif
             DO jsh = 1, tb%calc%bas%nsh_id(izp)
+#if defined(__TBLITE_GXTB)
+               jl = tb%calc%bas%cgto(jsh, izp)%raw%ang
+#else
                jl = tb%calc%bas%cgto(jsh, izp)%ang
+#endif
                wll(jsh, ish, izp) = get_spin_constant(jl, il, tb%mol%num(izp))
             END DO
          END DO
@@ -472,11 +496,15 @@ CONTAINS
          CPABORT("Unknown tblite SCC mixer SOLVER")
       END SELECT
 
-      tb%calc%max_iter = iterations
       tb%mixer_memory = memory
       tb%mixer_solver = solver
       tb%mixer_damping = damping
+#if defined(__TBLITE_GXTB)
+      CALL cp2k_set_scf_options(tb%calc, iterations, damping)
+#else
+      tb%calc%max_iter = iterations
       tb%calc%mixer_damping = damping
+#endif
       tb%mixer_omega0 = omega0
       tb%mixer_min_weight = min_weight
       tb%mixer_max_weight = max_weight
@@ -598,11 +626,22 @@ CONTAINS
             CALL new_gfn2_calculator(tb%calc, tb%mol, error)
          CASE (ipea1xtb)
             CALL new_ipea1_calculator(tb%calc, tb%mol, error)
+         CASE (gxtb)
+#if defined(__TBLITE_GXTB)
+            CALL new_gxtb_calculator(tb%calc, tb%mol, error)
+#else
+            CPABORT("METHOD GXTB requires a tblite provider with g-xTB support; rebuild with "// &
+                    "CP2K_TBLITE_PROVIDER=SAVE")
+#endif
          END SELECT
       END IF
       IF (ALLOCATED(error)) CPABORT("tblite calculator setup failed")
 
       tb%accuracy = accuracy
+#if defined(__TBLITE_GXTB)
+      CALL cp2k_update_basis(tb%calc, tb%mol, tb%bcache, error)
+      IF (ALLOCATED(error)) CPABORT("save_tblite basis setup failed")
+#endif
 
 #else
       MARK_USED(tb)
@@ -808,6 +847,9 @@ CONTAINS
                                                             ishell, ityp, maxl, mprim, natorb, &
                                                             nset, nshell
       LOGICAL                                            :: do_ortho
+#if defined(__TBLITE_GXTB)
+      REAL(KIND=dp), ALLOCATABLE                         :: tb_alpha(:), tb_coeff(:)
+#endif
 
       CALL allocate_gto_basis_set(gto_basis_set)
 
@@ -826,7 +868,11 @@ CONTAINS
       nshell = 1
       mprim = 0
       DO ishell = 1, nset
+#if defined(__TBLITE_GXTB)
+         mprim = MAX(mprim, tb%calc%bas%cgto(ishell, ityp)%raw%nprim)
+#else
          mprim = MAX(mprim, tb%calc%bas%cgto(ishell, ityp)%nprim)
+#endif
       END DO
       param%nshell = nset
       natorb = 0
@@ -846,20 +892,35 @@ CONTAINS
 
       ind_ao = 0
       maxl = 0
+#if defined(__TBLITE_GXTB)
+      ALLOCATE (tb_alpha(mprim), tb_coeff(mprim))
+#endif
       DO ishell = 1, nset
+#if defined(__TBLITE_GXTB)
+         CALL cp2k_get_cgto(tb%calc%bas, tb%bcache, ishell, ityp, id_atom, &
+                            ang, gto_basis_set%npgf(ishell), tb_alpha, tb_coeff)
+#else
          ang = tb%calc%bas%cgto(ishell, ityp)%ang
+#endif
          natorb = natorb + (2*ang + 1)
          param%lval(ishell) = ang
          maxl = MAX(ang, maxl)
          gto_basis_set%lmax(ishell) = ang
          gto_basis_set%lmin(ishell) = ang
+#if !defined(__TBLITE_GXTB)
          gto_basis_set%npgf(ishell) = tb%calc%bas%cgto(ishell, ityp)%nprim
+#endif
          gto_basis_set%nshell(ishell) = nshell
          gto_basis_set%n(1, ishell) = ang + 1
          gto_basis_set%l(1, ishell) = ang
          DO ipgf = 1, gto_basis_set%npgf(ishell)
+#if defined(__TBLITE_GXTB)
+            gto_basis_set%gcc(ipgf, 1, ishell) = tb_coeff(ipgf)
+            gto_basis_set%zet(ipgf, ishell) = tb_alpha(ipgf)
+#else
             gto_basis_set%gcc(ipgf, 1, ishell) = tb%calc%bas%cgto(ishell, ityp)%coeff(ipgf)
             gto_basis_set%zet(ipgf, ishell) = tb%calc%bas%cgto(ishell, ityp)%alpha(ipgf)
+#endif
          END DO
          DO ipgf = 1, (2*ang + 1)
             ind_ao = ind_ao + 1
@@ -993,6 +1054,12 @@ CONTAINS
 
       !update geometry (required for debug / geometry optimization)
       CALL tb_update_geometry(qs_env, tb)
+#if defined(__TBLITE_GXTB)
+      IF (calculate_forces .AND. ALLOCATED(tb%calc%method)) THEN
+         IF (tb%calc%method == "gxtb") &
+            CPABORT(gxtb_force_error)
+      END IF
+#endif
 
       nkind = SIZE(atomic_kind_set)
       nderivatives = 0
@@ -1470,7 +1537,7 @@ CONTAINS
       END IF
 
       !compute multipole moments for gfn2
-      IF (dft_control%qs_control%xtb_control%tblite_method == gfn2xtb) &
+      IF (ANY(dft_control%qs_control%xtb_control%tblite_method == [gfn2xtb, gxtb])) &
          CALL tb_get_multipole(qs_env, tb)
 
       ! output overlap information
@@ -2839,8 +2906,13 @@ CONTAINS
          IF (icol == irow .AND. r2 < same_atom**2) THEN
             DO iset = 1, nseta
                DO jset = 1, nsetb
+#if defined(__TBLITE_GXTB)
+                  CALL cp2k_multipole_cgto(tb%calc%bas, tb%bcache, jset, ityp, irow, &
+                       & iset, ityp, icol, r2, -rij, stmp, dtmp, qtmp)
+#else
                   CALL multipole_cgto(tb%calc%bas%cgto(jset, ityp), tb%calc%bas%cgto(iset, ityp), &
                        & r2, -rij, tb%calc%bas%intcut, stmp, dtmp, qtmp)
+#endif
 
                   DO inda = 1, nsgfa(iset)
                      ia = first_sgfa(1, iset) - first_sgfa(1, 1) + inda
@@ -2876,8 +2948,13 @@ CONTAINS
          ELSE
             DO iset = 1, nseta
                DO jset = 1, nsetb
+#if defined(__TBLITE_GXTB)
+                  CALL cp2k_multipole_cgto(tb%calc%bas, tb%bcache, jset, jtyp, irow, &
+                      & iset, ityp, icol, r2, -rij, stmp, dtmp, qtmp)
+#else
                   CALL multipole_cgto(tb%calc%bas%cgto(jset, jtyp), tb%calc%bas%cgto(iset, ityp), &
                       & r2, -rij, tb%calc%bas%intcut, stmp, dtmp, qtmp)
+#endif
 
                   DO inda = 1, nsgfa(iset)
                      ia = first_sgfa(1, iset) - first_sgfa(1, 1) + inda
@@ -3665,9 +3742,15 @@ CONTAINS
                IF (SIZE(tb%pot%vsh, 2) > 1) jshift_mag = j_a_shift_mag + tb%pot%vsh(nj + jset, 2)
 
                !get integrals and derivatives
+#if defined(__TBLITE_GXTB)
+               CALL cp2k_multipole_grad_cgto(tb%calc%bas, tb%bcache, iset, ityp, icol, &
+                  & jset, jtyp, jrow, r2, rij, t_ov, t_dip, t_quad, t_d_ov, &
+                  & t_i_dip, t_i_quad, t_j_dip, t_j_quad)
+#else
                CALL multipole_grad_cgto(tb%calc%bas%cgto(iset, ityp), tb%calc%bas%cgto(jset, jtyp), &
                   & r2, rij, tb%calc%bas%intcut, t_ov, t_dip, t_quad, t_d_ov, t_i_dip, t_i_quad, &
                   & t_j_dip, t_j_quad)
+#endif
 
                dgrad = 0.0_dp
                DO inda = 1, nsgfa(iset)
@@ -4224,6 +4307,8 @@ CONTAINS
          method = "gfn2"
       CASE (ipea1xtb)
          method = "ipea1"
+      CASE (gxtb)
+         method = "gxtb"
       CASE DEFAULT
          CPABORT("Unknown tblite reference CLI method")
       END SELECT
