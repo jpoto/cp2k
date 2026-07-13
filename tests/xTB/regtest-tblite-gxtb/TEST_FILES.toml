@@ -26,11 +26,12 @@
 "Si_prim_gxtb_kp_full.inp"   = [{matcher="E_total", tol=1.0E-10, ref=-584.0958656688799}]
 "Si_prim_gxtb_kp_k290.inp"   = [{matcher="E_total", tol=1.0E-10, ref=-584.0958656688803},
                                   {matcher="N_special_kpoints", tol=0.0, ref=3}]
-"Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-583.4313225014603}]
+"Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.2398358304411}]
 "CH4_gxtb_kp_k290.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.52393556502825},
                              {matcher="N_special_kpoints", tol=0.0, ref=1}]
 "CH4_gxtb_kp_k290_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
                                           {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
 "H2_gxtb_kp_general_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
                                            {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-1.197156105656828}]
 #EOF

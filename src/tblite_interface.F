@@ -2469,12 +2469,20 @@ CONTAINS
       ntranslations = SIZE(translations, 2)
       ALLOCATE (acp_map(ntranslations), source=0)
       IF (PRESENT(acp_images)) THEN
+         IF (.NOT. acp_images%inversion_closed) &
+            CPABORT("g-xTB ACP image set is not closed under lattice inversion")
          scale = MAX(1.0_dp, MAXVAL(ABS(translations)))
          tol2 = (2048.0_dp*EPSILON(1.0_dp)*scale)**2
          DO img = 1, ntranslations
             DO acp_img = 1, SIZE(acp_images%translation, 2)
                IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
-                  acp_map(img) = acp_img
+                  ! save_tblite's ACP convolution stores H_R in the direct Bloch convention,
+                  ! whereas the dense image blocks scattered below carry the translated AO on
+                  ! the row and the home-cell AO on the column.  Convert between those dual
+                  ! orientations by selecting H_-R; at Gamma and real boundary k points this is
+                  ! invisible, but it is essential for general complex Bloch phases.
+                  acp_map(img) = acp_images%inverse(acp_img)
+                  CPASSERT(acp_map(img) > 0)
                   EXIT
                END IF
             END DO
@@ -4879,11 +4887,12 @@ CONTAINS
       TYPE(tblite_type), POINTER                         :: tb
 
 #if defined(__TBLITE_GXTB)
-      INTEGER                                            :: img, nao, nimg, nimg_response, nspin
+      INTEGER                                            :: img, ispin, nao, nimg, nimg_response, nspin
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index, response_cell_to_index
       INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: response_index_to_cell
       REAL(KIND=dp), ALLOCATABLE                         :: acp_gradient(:, :), acp_sigma(:, :), &
+                                                            acp_density_images(:, :, :, :), &
                                                             dEdcnbas(:), dEdqbas(:), &
                                                             density_images(:, :, :, :), &
                                                             exchange_gradient(:, :), &
@@ -4961,21 +4970,32 @@ CONTAINS
                                  get_cutoff(tb%calc%bas, tb%accuracy), projector_translations)
          CALL cp2k_build_image_acp(tb%calc, tb%mol, tb%bcache, tb%acache, &
                                    projector_translations, acp_images)
-         ALLOCATE (dEdcnbas(tb%mol%nat), dEdqbas(tb%mol%nat), &
+         ALLOCATE (acp_density_images(nao, nao, nimg_response, nspin), &
+                   dEdcnbas(tb%mol%nat), dEdqbas(tb%mol%nat), &
                    acp_gradient(3, tb%mol%nat), acp_sigma(3, 3))
+         ! The H0 response uses translated-row/home-column images.  ACP stores the
+         ! dual home-row/translated-column convention, matching the inverse-image
+         ! selection used when its Hamiltonian is scattered above.
+         DO ispin = 1, nspin
+            DO img = 1, nimg_response
+               acp_density_images(:, :, img, ispin) = &
+                  TRANSPOSE(density_images(:, :, img, ispin))
+            END DO
+         END DO
          dEdcnbas = 0.0_dp
          dEdqbas = 0.0_dp
          acp_gradient = 0.0_dp
          acp_sigma = 0.0_dp
          CALL cp2k_acp_image_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, acp_images, &
-                                      translations, density_images, dEdcnbas, dEdqbas, &
+                                      translations, acp_density_images, dEdcnbas, dEdqbas, &
                                       acp_gradient, acp_sigma, error)
          IF (ALLOCATED(error)) CPABORT("save_tblite g-xTB ACP image gradient failed")
          CALL cp2k_apply_basis_gradient(tb%calc, tb%mol, tb%wfn_aux, dEdcnbas, dEdqbas, &
                                         acp_gradient, acp_sigma)
          gradient = gradient + acp_gradient
          sigma = sigma + acp_sigma
-         DEALLOCATE (acp_gradient, acp_sigma, dEdcnbas, dEdqbas, projector_translations)
+         DEALLOCATE (acp_density_images, acp_gradient, acp_sigma, dEdcnbas, dEdqbas, &
+                     projector_translations)
       END IF
 
       tb%grad = gradient
