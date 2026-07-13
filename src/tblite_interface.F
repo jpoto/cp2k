@@ -25,7 +25,9 @@ MODULE tblite_interface
    USE tblite_data_spin, ONLY: get_spin_constant
 #if defined(__TBLITE_GXTB)
    USE tblite_cp2k_compat, ONLY: get_mixer_dimension => cp2k_get_mixer_dimension, &
-                                 cp2k_build_gamma_h0, cp2k_gamma_gradient, &
+                                 acp_image_type, hamiltonian_image_type, &
+                                 cp2k_build_gamma_h0, cp2k_build_image_acp, &
+                                 cp2k_build_image_h0, cp2k_gamma_gradient, &
                                  cp2k_get_cgto, cp2k_multipole_cgto, &
                                  cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
                                  cp2k_update_basis
@@ -1059,6 +1061,217 @@ CONTAINS
       CALL para_env%sum(dense)
 
    END SUBROUTINE tb_dbcsr_to_dense
+
+! **************************************************************************************************
+!> Allocate the image-resolved multipole matrices used by the SCC potential.
+! **************************************************************************************************
+   SUBROUTINE tb_allocate_image_multipoles(tb, matrix_s, sab_orb, nimg)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      INTEGER, INTENT(IN)                                :: nimg
+
+      INTEGER                                            :: i, idx, img
+
+      IF (ASSOCIATED(tb%dipbra)) CALL dbcsr_deallocate_matrix_set(tb%dipbra)
+      IF (ASSOCIATED(tb%dipket)) CALL dbcsr_deallocate_matrix_set(tb%dipket)
+      IF (ASSOCIATED(tb%quadbra)) CALL dbcsr_deallocate_matrix_set(tb%quadbra)
+      IF (ASSOCIATED(tb%quadket)) CALL dbcsr_deallocate_matrix_set(tb%quadket)
+
+      CALL dbcsr_allocate_matrix_set(tb%dipbra, dip_n*nimg)
+      CALL dbcsr_allocate_matrix_set(tb%dipket, dip_n*nimg)
+      CALL dbcsr_allocate_matrix_set(tb%quadbra, quad_n*nimg)
+      CALL dbcsr_allocate_matrix_set(tb%quadket, quad_n*nimg)
+      DO img = 1, nimg
+         DO i = 1, dip_n
+            idx = i + dip_n*(img - 1)
+            ALLOCATE (tb%dipbra(idx)%matrix, tb%dipket(idx)%matrix)
+            CALL dbcsr_create(tb%dipbra(idx)%matrix, template=matrix_s(1, img)%matrix, &
+                              name="DIPOLE BRA MATRIX")
+            CALL dbcsr_create(tb%dipket(idx)%matrix, template=matrix_s(1, img)%matrix, &
+                              name="DIPOLE KET MATRIX")
+            CALL cp_dbcsr_alloc_block_from_nbl(tb%dipbra(idx)%matrix, sab_orb)
+            CALL cp_dbcsr_alloc_block_from_nbl(tb%dipket(idx)%matrix, sab_orb)
+         END DO
+         DO i = 1, quad_n
+            idx = i + quad_n*(img - 1)
+            ALLOCATE (tb%quadbra(idx)%matrix, tb%quadket(idx)%matrix)
+            CALL dbcsr_create(tb%quadbra(idx)%matrix, template=matrix_s(1, img)%matrix, &
+                              name="QUADRUPOLE BRA MATRIX")
+            CALL dbcsr_create(tb%quadket(idx)%matrix, template=matrix_s(1, img)%matrix, &
+                              name="QUADRUPOLE KET MATRIX")
+            CALL cp_dbcsr_alloc_block_from_nbl(tb%quadbra(idx)%matrix, sab_orb)
+            CALL cp_dbcsr_alloc_block_from_nbl(tb%quadket(idx)%matrix, sab_orb)
+         END DO
+      END DO
+
+   END SUBROUTINE tb_allocate_image_multipoles
+
+! **************************************************************************************************
+!> Scatter save_tblite's full AO image matrices into CP2K's symmetric DBCSR representation.
+!>
+!> save_tblite returns A(R) with the translated AO on the row and the home-cell AO on the
+!> column. CP2K stores S_mu^0,nu^R in an upper-triangular atom block. Hence entries whose
+!> neighbour-list atom order is already upper triangular are transposed. The bra/ket gauges
+!> of the multipoles have to be exchanged under the same transpose.
+!>
+!> rskp_transform subsequently uses H(k)=sum_R H(R)*exp(+2*pi*i*k.R).  There is no k-point
+!> weight in H0, S, ACP, or the multipole operators; irreducible-star weights belong only to
+!> density/energy contractions.  Every MPI rank evaluates the same small dense save_tblite
+!> images and writes only its locally owned DBCSR blocks.
+! **************************************************************************************************
+   SUBROUTINE tb_scatter_gxtb_images(tb, images, acp_images, translations, &
+                                     matrix_s, matrix_h, sab_orb, cell_to_index, nimg)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      TYPE(hamiltonian_image_type), INTENT(IN)           :: images
+      TYPE(acp_image_type), INTENT(IN), OPTIONAL         :: acp_images
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: translations
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s, matrix_h
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER, INTENT(IN)                                :: nimg
+
+      INTEGER                                            :: acp_img, i, i_first, i_nao, iatom, ic, &
+                                                            id, img, iq, j, j_first, j_nao, jatom, &
+                                                            icol, irow
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: acp_map
+      INTEGER, DIMENSION(3)                              :: cell
+      LOGICAL                                            :: found, matched
+      REAL(KIND=dp)                                      :: scale, tol2
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block, hblock, sblock
+      TYPE(neighbor_list_iterator_p_type), &
+         DIMENSION(:), POINTER                           :: nl_iterator
+
+      CPASSERT(SIZE(images%overlap, 3) == nimg)
+      CPASSERT(SIZE(images%translation, 2) == nimg)
+      ALLOCATE (acp_map(nimg), source=0)
+      IF (PRESENT(acp_images)) THEN
+         scale = MAX(1.0_dp, MAXVAL(ABS(translations)))
+         tol2 = (2048.0_dp*EPSILON(1.0_dp)*scale)**2
+         DO img = 1, nimg
+            DO acp_img = 1, SIZE(acp_images%translation, 2)
+               IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
+                  acp_map(img) = acp_img
+                  EXIT
+               END IF
+            END DO
+         END DO
+
+         ! A non-zero ACP image outside CP2K's real-space neighbour-list representation would
+         ! be silently lost and produce a k-dependent error. Reject such a basis/list mismatch.
+         DO acp_img = 1, SIZE(acp_images%translation, 2)
+            matched = .FALSE.
+            DO img = 1, nimg
+               IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
+                  matched = .TRUE.
+                  EXIT
+               END IF
+            END DO
+            IF (.NOT. matched .AND. ANY(acp_images%hamiltonian(:, :, acp_img) /= 0.0_dp)) &
+               CPABORT("g-xTB ACP image exceeds CP2K k-point neighbour-list range")
+         END DO
+      END IF
+
+      NULLIFY (nl_iterator)
+      CALL neighbor_list_iterator_create(nl_iterator, sab_orb)
+      DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
+         CALL get_iterator_info(nl_iterator, iatom=iatom, jatom=jatom, cell=cell)
+         ic = cell_to_index(cell(1), cell(2), cell(3))
+         CPASSERT(ic > 0 .AND. ic <= nimg)
+         irow = MIN(iatom, jatom)
+         icol = MAX(iatom, jatom)
+         CALL tb_atom_ao_range(tb, iatom, i_first, i_nao)
+         CALL tb_atom_ao_range(tb, jatom, j_first, j_nao)
+
+         NULLIFY (sblock, hblock)
+         CALL dbcsr_get_block_p(matrix_s(1, ic)%matrix, irow, icol, sblock, found)
+         CPASSERT(found)
+         CALL dbcsr_get_block_p(matrix_h(1, ic)%matrix, irow, icol, hblock, found)
+         CPASSERT(found)
+
+         IF (iatom <= jatom) THEN
+            CPASSERT(SIZE(sblock, 1) == i_nao .AND. SIZE(sblock, 2) == j_nao)
+            sblock = TRANSPOSE(images%overlap(j_first:j_first + j_nao - 1, &
+                                              i_first:i_first + i_nao - 1, ic))
+            hblock = TRANSPOSE(images%hamiltonian(j_first:j_first + j_nao - 1, &
+                                                  i_first:i_first + i_nao - 1, ic))
+            IF (acp_map(ic) > 0) hblock = hblock + &
+               TRANSPOSE(acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
+                                                i_first:i_first + i_nao - 1, acp_map(ic)))
+
+            DO i = 1, dip_n
+               id = i + dip_n*(ic - 1)
+               CALL dbcsr_get_block_p(tb%dipket(id)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = TRANSPOSE(images%dipole_bra(i, j_first:j_first + j_nao - 1, &
+                                                   i_first:i_first + i_nao - 1, ic))
+               CALL dbcsr_get_block_p(tb%dipbra(id)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = TRANSPOSE(images%dipole_ket(i, j_first:j_first + j_nao - 1, &
+                                                   i_first:i_first + i_nao - 1, ic))
+            END DO
+            DO i = 1, quad_n
+               iq = i + quad_n*(ic - 1)
+               CALL dbcsr_get_block_p(tb%quadket(iq)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = TRANSPOSE(images%quadrupole_bra(i, j_first:j_first + j_nao - 1, &
+                                                       i_first:i_first + i_nao - 1, ic))
+               CALL dbcsr_get_block_p(tb%quadbra(iq)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = TRANSPOSE(images%quadrupole_ket(i, j_first:j_first + j_nao - 1, &
+                                                       i_first:i_first + i_nao - 1, ic))
+            END DO
+         ELSE
+            CPASSERT(SIZE(sblock, 1) == j_nao .AND. SIZE(sblock, 2) == i_nao)
+            sblock = images%overlap(j_first:j_first + j_nao - 1, &
+                                    i_first:i_first + i_nao - 1, ic)
+            hblock = images%hamiltonian(j_first:j_first + j_nao - 1, &
+                                        i_first:i_first + i_nao - 1, ic)
+            IF (acp_map(ic) > 0) hblock = hblock + &
+               acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
+                                      i_first:i_first + i_nao - 1, acp_map(ic))
+
+            DO i = 1, dip_n
+               id = i + dip_n*(ic - 1)
+               CALL dbcsr_get_block_p(tb%dipbra(id)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = images%dipole_bra(i, j_first:j_first + j_nao - 1, &
+                                         i_first:i_first + i_nao - 1, ic)
+               CALL dbcsr_get_block_p(tb%dipket(id)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = images%dipole_ket(i, j_first:j_first + j_nao - 1, &
+                                         i_first:i_first + i_nao - 1, ic)
+            END DO
+            DO i = 1, quad_n
+               iq = i + quad_n*(ic - 1)
+               CALL dbcsr_get_block_p(tb%quadbra(iq)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = images%quadrupole_bra(i, j_first:j_first + j_nao - 1, &
+                                             i_first:i_first + i_nao - 1, ic)
+               CALL dbcsr_get_block_p(tb%quadket(iq)%matrix, irow, icol, block, found)
+               CPASSERT(found)
+               block = images%quadrupole_ket(i, j_first:j_first + j_nao - 1, &
+                                             i_first:i_first + i_nao - 1, ic)
+            END DO
+         END IF
+      END DO
+      CALL neighbor_list_iterator_release(nl_iterator)
+
+      DO i = 1, SIZE(tb%dipbra)
+         CALL dbcsr_finalize(tb%dipbra(i)%matrix)
+         CALL dbcsr_finalize(tb%dipket(i)%matrix)
+      END DO
+      DO i = 1, SIZE(tb%quadbra)
+         CALL dbcsr_finalize(tb%quadbra(i)%matrix)
+         CALL dbcsr_finalize(tb%quadket(i)%matrix)
+      END DO
+      DEALLOCATE (acp_map)
+
+   END SUBROUTINE tb_scatter_gxtb_images
 #endif
 
 ! **************************************************************************************************
@@ -1080,7 +1293,8 @@ CONTAINS
                                                             irow, ia, ib, sgfa, sgfb, ldsab, nseta, nsetb, &
                                                             natorb_a, natorb_b, raw_iatom, raw_jatom, &
                                                             slot, idim, jdim
-      LOGICAL                                            :: found, norml1, norml2, use_arnoldi, use_gxtb_gamma
+      LOGICAL                                            :: found, norml1, norml2, use_arnoldi, use_gxtb_gamma, &
+                                                            use_gxtb_images
       REAL(KIND=dp)                                      :: dr, dshpoly, ff, hij_base, r2, rr
       REAL(KIND=dp)                                      :: native_dot_tmp, native_cn_icol, native_cn_irow, &
                                                             native_dot_weight
@@ -1091,11 +1305,14 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(3, 3)                     :: native_radial_dot
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: atom_of_kind, kind_of
       INTEGER, DIMENSION(:, :, :), POINTER                :: cell_to_index
+      INTEGER, DIMENSION(:, :), POINTER                   :: index_to_cell
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: owork
 #if defined(__TBLITE_GXTB)
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_h
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_h, projector_translations, translations
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dense_dipole, dense_quadrupole
       TYPE(error_type), ALLOCATABLE                      :: error
+      TYPE(acp_image_type)                               :: acp_images
+      TYPE(hamiltonian_image_type)                       :: h0_images
 #endif
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: native_cn_deriv_thread
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: native_radial_force_thread
@@ -1115,6 +1332,7 @@ CONTAINS
 
       TYPE(atomic_kind_type), DIMENSION(:), POINTER         :: atomic_kind_set
       TYPE(atprop_type), POINTER                            :: atprop
+      TYPE(cell_type), POINTER                              :: cell_obj
       TYPE(cp_blacs_env_type), POINTER                      :: blacs_env
       TYPE(cp_logger_type), POINTER                         :: logger
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER          :: matrix_dh_native, matrix_h, matrix_p, &
@@ -1139,7 +1357,7 @@ CONTAINS
 
       NULLIFY (ks_env, energy, atomic_kind_set, qs_kind_set)
       NULLIFY (matrix_dh_native, matrix_h, matrix_q_native, matrix_s, matrix_s_native, atprop, dft_control)
-      NULLIFY (sab_orb, sab_kp, rho, tb, kpoints, cell_to_index)
+      NULLIFY (sab_orb, sab_kp, rho, tb, kpoints, cell_to_index, index_to_cell, cell_obj)
 
       CALL get_qs_env(qs_env=qs_env, &
                       ks_env=ks_env, para_env=para_env, &
@@ -1152,7 +1370,7 @@ CONTAINS
                       dft_control=dft_control, &
                       sab_orb=sab_orb, &
                       sab_kp=sab_kp, &
-                      rho=rho, tb_tblite=tb)
+                      rho=rho, tb_tblite=tb, cell=cell_obj)
       h0 => tb%calc%h0
 
       !update geometry (required for debug / geometry optimization)
@@ -1179,10 +1397,13 @@ CONTAINS
       maxder = ncoset(nderivatives)
       nimg = dft_control%nimages
       use_gxtb_gamma = .FALSE.
+      use_gxtb_images = .FALSE.
 #if defined(__TBLITE_GXTB)
       use_gxtb_gamma = dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. nimg == 1
+      use_gxtb_images = dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. nimg > 1
       IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
-         IF (nimg > 1) CPABORT("g-xTB k-point matrices are not yet implemented; use Gamma only")
+         IF (use_gxtb_images .AND. calculate_forces) &
+            CPABORT("g-xTB k-point force response is not yet implemented")
          CALL cp2k_update_basis(tb%calc, tb%mol, tb%bcache, error, calculate_forces, tb%wfn_aux)
          IF (ALLOCATED(error)) CPABORT("save_tblite q-vSZP basis update failed")
       END IF
@@ -1191,7 +1412,7 @@ CONTAINS
          IF (.NOT. ASSOCIATED(sab_kp)) CPABORT("Missing k-point neighbor list for tblite")
          sab_orb => sab_kp
          CALL get_ks_env(ks_env=ks_env, kpoints=kpoints)
-         CALL get_kpoint_info(kpoint=kpoints, cell_to_index=cell_to_index)
+         CALL get_kpoint_info(kpoint=kpoints, cell_to_index=cell_to_index, index_to_cell=index_to_cell)
       END IF
 
       !intialise hamiltonian
@@ -1266,6 +1487,41 @@ CONTAINS
          CALL tb_dense_to_dbcsr(tb, tb%overlap_dense, matrix_s(1, 1)%matrix)
          CALL tb_dense_to_dbcsr(tb, dense_h, matrix_h(1, 1)%matrix)
          DEALLOCATE (dense_h, dense_dipole, dense_quadrupole)
+         GOTO 900
+      ELSEIF (use_gxtb_images) THEN
+         ! index_to_cell is CP2K's exact integer image set.  Converting it with
+         ! hmat preserves the +2*pi*k.R convention for arbitrary GENERAL k
+         ! points as well as full or symmetry-reduced regular meshes; no
+         ! modulo folding or grid-dependent aliasing is used here.
+         CPASSERT(ASSOCIATED(index_to_cell))
+         CPASSERT(ASSOCIATED(cell_obj))
+         CPASSERT(SIZE(index_to_cell, 2) == nimg)
+         ALLOCATE (translations(3, nimg))
+         DO img = 1, nimg
+            translations(:, img) = MATMUL(cell_obj%hmat, REAL(index_to_cell(:, img), dp))
+         END DO
+         CALL cp2k_build_image_h0(tb%calc, tb%mol, tb%bcache, tb%accuracy, tb%selfenergy, &
+                                  translations, h0_images)
+         CALL tb_allocate_image_multipoles(tb, matrix_s, sab_orb, nimg)
+         IF (ALLOCATED(tb%calc%acp)) THEN
+            ! ACP is a convolution of projector/valence overlaps.  Build C(T)
+            ! only on save_tblite's one-overlap cutoff, while SAB_KP above
+            ! represents its larger T-V difference set.  Passing the expanded
+            ! CP2K image set here would allocate an unnecessary difference of
+            ! an already doubled range.
+            CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
+                                    get_cutoff(tb%calc%bas, tb%accuracy), projector_translations)
+            CALL cp2k_build_image_acp(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                      projector_translations, acp_images)
+            CALL tb_scatter_gxtb_images(tb, h0_images, acp_images, translations, &
+                                        matrix_s, matrix_h, sab_orb, cell_to_index, nimg)
+            DEALLOCATE (projector_translations)
+         ELSE
+            CALL tb_scatter_gxtb_images(tb, h0_images, translations=translations, &
+                                        matrix_s=matrix_s, matrix_h=matrix_h, sab_orb=sab_orb, &
+                                        cell_to_index=cell_to_index, nimg=nimg)
+         END IF
+         DEALLOCATE (translations)
          GOTO 900
       END IF
 #endif
@@ -1658,8 +1914,9 @@ CONTAINS
       END IF
 
       !compute multipole moments for gfn2
-      IF (ANY(dft_control%qs_control%xtb_control%tblite_method == [gfn2xtb, gxtb])) &
-         CALL tb_get_multipole(qs_env, tb)
+      IF (ANY(dft_control%qs_control%xtb_control%tblite_method == [gfn2xtb, gxtb])) THEN
+         IF (.NOT. use_gxtb_images) CALL tb_get_multipole(qs_env, tb)
+      END IF
 
       ! output overlap information
       NULLIFY (logger)
