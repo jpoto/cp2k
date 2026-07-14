@@ -152,6 +152,9 @@ CONTAINS
       ! local_gemm_ctx has a very footprint the first time this routine is
       ! called.
       CALL mp2_env%local_gemm_ctx%create(LOCAL_GEMM_PU_GPU)
+
+      !=====***** MODIFICATION ***** =====
+      ! modify from (128*128*128*2) to (1)
       CALL mp2_env%local_gemm_ctx%set_op_threshold_gpu(128*128*128*2)
 
       CALL mp2_ri_get_integ_group_size( &
