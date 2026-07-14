@@ -11,7 +11,8 @@ MODULE qs_basis_rotation_methods
                                               gto_basis_set_type
    USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
-   USE input_constants,                 ONLY: do_method_dftb
+   USE input_constants,                 ONLY: do_method_dftb,&
+                                              gxtb
    USE kinds,                           ONLY: dp
    USE kpoint_types,                    ONLY: kpoint_sym_type,&
                                               kpoint_type
@@ -57,6 +58,7 @@ CONTAINS
       CHARACTER(LEN=12)                                  :: my_basis
       INTEGER                                            :: ik, ikind, ir, ira, irot, jr, lval, &
                                                             nkind, nrot
+      LOGICAL                                            :: gxtb_stabilizers
       REAL(KIND=dp), DIMENSION(3, 3)                     :: rotmat
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -90,9 +92,12 @@ CONTAINS
          ! check all rotations needed
          NULLIFY (orbrot)
          CALL get_qs_env(qs_env, dft_control=dft_control)
+         gxtb_stabilizers = dft_control%qs_control%xtb_control%tblite_method == gxtb
          DO ik = 1, kpoints%nkp
             kpsym => kpoints%kp_sym(ik)%kpoint_sym
-            IF (kpsym%apply_symmetry) THEN
+            IF ((kpsym%apply_symmetry .OR. (gxtb_stabilizers .AND. kpsym%nwred > 0)) .AND. &
+                ASSOCIATED(kpsym%rotp) .AND. &
+                ASSOCIATED(kpsym%rot)) THEN
                DO irot = 1, SIZE(kpsym%rotp)
                   ir = ABS(kpsym%rotp(irot))
                   ira = 0

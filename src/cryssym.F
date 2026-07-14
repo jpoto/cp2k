@@ -32,7 +32,7 @@ MODULE cryssym
    IMPLICIT NONE
    PRIVATE
    PUBLIC :: csym_type, release_csym_type, print_crys_symmetry, print_kp_symmetry
-   PUBLIC :: crys_sym_gen, kpoint_gen, kpoint_gen_general
+   PUBLIC :: crys_sym_gen, full_grid_gen, kpoint_gen, kpoint_gen_general
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'cryssym'
 

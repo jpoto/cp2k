@@ -337,12 +337,17 @@ symbols, and Fortran modules.
 - Use `XTB/GFN_TYPE TBLITE` together with `XTB/TBLITE/METHOD GXTB` to select g-xTB. Builds without
   the g-xTB capability reject this method with an explicit diagnostic.
 - The native CP2K path supports g-xTB energies and analytical forces for non-periodic (0D) and fully
-  periodic (3D) systems. Fully periodic calculations support Gamma and general k-point sets,
-  analytical stress, and full, K290, or SPGLIB-reduced meshes. The k-point force and stress path
-  differentiates the image-resolved H0, Pulay, q-vSZP/ACP, and nonlinear exchange terms. Partially
-  periodic (1D or 2D) g-xTB calculations are not supported. For reduced meshes, overlap-covariance
-  calibration selects between CP2K's internally wrapped atom gauge and save_tblite's
-  input-coordinate Bloch gauge, using the latter when required by the symmetry transformation.
+  periodic (3D) systems. Fully periodic calculations support Gamma and regular Cartesian k-point
+  meshes with analytical stress and full, K290, or SPGLIB reduction. Explicit `GENERAL` input is
+  accepted only when the original list is a complete, uniformly weighted Cartesian product; its
+  points can be given in any order. Already reduced, nonuniform, or nonregular `GENERAL` lists are
+  rejected because save_tblite's coupled exchange needs an unambiguous Born-von Karman mesh. The
+  k-point force and stress path differentiates the image-resolved H0, Pulay, q-vSZP/ACP, and
+  nonlinear exchange terms. Partially periodic (1D or 2D) g-xTB calculations are not supported. For
+  reduced meshes, overlap-covariance calibration selects between CP2K's internally wrapped atom
+  gauge and save_tblite's input-coordinate Bloch gauge, using the latter when required by the
+  symmetry transformation. Geometry and cell changes rebuild these symmetry data; a 1x1x1 Gamma mesh
+  also retains its little-group operations for force and stress projection.
 - CP2K stores the structural q-vSZP orbital layout per element kind, while save_tblite evaluates its
   charge- and environment-dependent coefficients separately for every atom. Atoms in one CP2K kind
   therefore share the structural layout, but both the Gamma and k-point response retain the

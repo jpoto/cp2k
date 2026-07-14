@@ -91,9 +91,9 @@ MODULE force_env_methods
    USE input_constants,                 ONLY: &
         cell_opt_run, debug_run, dfet, dmfet, do_method_gapw, do_method_gapw_xc, do_method_gpw, &
         do_method_lrigpw, do_method_ofgpw, do_method_rigpw, driver_run, ehrenfest, geo_opt_run, &
-        mix_cdft, mix_coupled, mix_generic, mix_linear_combination, mix_minimum, mix_restrained, &
-        mixed_cdft_serial, mol_dyn_run, use_bazant_eip, use_lenosky_eip, use_stillinger_weber_eip, &
-        use_tersoff_eip
+        gxtb, mix_cdft, mix_coupled, mix_generic, mix_linear_combination, mix_minimum, &
+        mix_restrained, mixed_cdft_serial, mol_dyn_run, use_bazant_eip, use_lenosky_eip, &
+        use_stillinger_weber_eip, use_tersoff_eip
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_retain,&
                                               section_vals_type,&
@@ -549,8 +549,9 @@ CONTAINS
       INTEGER                                            :: run_type_id
       LOGICAL :: debug_full_kpoint_symmetry, debug_full_kpoint_symmetry_explicit, &
          debug_inversion_only, do_kpoints, dynamic_symmetry, force_full_debug_symmetry, full_grid, &
-         input_full_grid, input_inversion_symmetry_only, inversion_symmetry_only, kpoint_symmetry, &
-         moving_geometry, non_lower_triangular_cell, use_full_grid, use_inversion_symmetry_only
+         gxtb_symmetry_data, input_full_grid, input_inversion_symmetry_only, &
+         inversion_symmetry_only, kpoint_symmetry, moving_geometry, non_lower_triangular_cell, &
+         use_full_grid, use_inversion_symmetry_only
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -592,6 +593,7 @@ CONTAINS
                       particle_set=particle_set, &
                       wf_history=wf_history)
       IF (.NOT. do_kpoints) RETURN
+      gxtb_symmetry_data = dft_control%qs_control%xtb_control%tblite_method == gxtb
 
       CALL get_kpoint_info(kpoints, kp_scheme=kp_scheme, symmetry=kpoint_symmetry, full_grid=full_grid, &
                            inversion_symmetry_only=inversion_symmetry_only)
@@ -641,7 +643,8 @@ CONTAINS
          RETURN
       END IF
       IF (moving_geometry .AND. .NOT. dynamic_symmetry) RETURN
-      IF (moving_geometry .AND. .NOT. kpoint_has_nontrivial_atomic_symmetry(kpoints)) RETURN
+      IF (moving_geometry .AND. .NOT. gxtb_symmetry_data .AND. &
+          .NOT. kpoint_has_nontrivial_atomic_symmetry(kpoints)) RETURN
       CALL set_kpoint_info(kpoints, full_grid=use_full_grid, &
                            inversion_symmetry_only=use_inversion_symmetry_only)
 

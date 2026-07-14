@@ -10,7 +10,7 @@ tblite_ver="0.6.0"
 tblite_sha256="372281aedb89234168d00eb691addb303197a9462a9c55d145c835f2cf5e8b42"
 tblite_sdftd3_ver="1.4.0"
 tblite_dftd4_ver="4.2.0"
-save_tblite_rev="1b5d50163edb14bd4f381c67492f3f486461547f"
+save_tblite_rev="1449febde312874cd0fac4227919f5ba4e4b69b8"
 save_tblite_repo="${SAVE_TBLITE_REPOSITORY:-https://github.com/DCM-Uni-Paderborn/save_tblite.git}"
 save_tblite_src_dir="save_tblite-${save_tblite_rev}"
 
@@ -50,6 +50,7 @@ case "$with_tblite" in
           -DCMAKE_VERBOSE_MAKEFILE=ON \
           -DBUILD_TESTING=OFF \
           -DWITH_TESTS=OFF \
+          -DWITH_OpenMP=ON \
           -DWITH_DDX=OFF \
           -Dtblite-dependency-method=fetch \
           .. \

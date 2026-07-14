@@ -92,6 +92,9 @@ MODULE tblite_interface
                                  cp_print_key_unit_nr, cp_print_key_finished_output, &
                                  debug_print_level, high_print_level, silent_print_level
    USE cp_units, ONLY: cp_unit_from_cp2k
+#if defined(__TBLITE_GXTB)
+   USE cryssym, ONLY: full_grid_gen
+#endif
    USE input_constants, ONLY: gfn1xtb, gfn2xtb, gxtb, ipea1xtb, smear_energy_window, &
                               smear_fermi_dirac, smear_gaussian, smear_list, smear_mp, smear_mv, &
                               tblite_cli_born_kernel_auto, tblite_cli_born_kernel_p16, &
@@ -109,8 +112,13 @@ MODULE tblite_interface
                               tblite_solver_gvd, tblite_solver_gvr
    USE input_section_types, ONLY: section_vals_val_get
    USE kinds, ONLY: default_path_length, default_string_length, dp, int_8
-   USE kpoint_methods, ONLY: kpoint_density_transform, rskp_transform
-   USE kpoint_types, ONLY: get_kpoint_info, kpoint_env_type, kpoint_sym_type, kpoint_type
+   USE kpoint_methods, ONLY: calibrate_symmetry_phases, kpoint_density_transform, rskp_transform
+   USE kpoint_types, ONLY: get_kpoint_info, kind_rotmat_type, kpoint_env_type, &
+                           kpoint_phase_gauge_input, kpoint_phase_gauge_pbc, &
+                           kpoint_sym_type, kpoint_type
+#if defined(__TBLITE_GXTB)
+   USE mathconstants, ONLY: twopi
+#endif
    USE memory_utilities, ONLY: reallocate
    USE message_passing, ONLY: mp_para_env_type
    USE mulliken, ONLY: ao_charges
@@ -158,6 +166,17 @@ MODULE tblite_interface
    INTEGER, PARAMETER                                 :: quad_n = 6
    REAL(KIND=dp), PARAMETER                           :: same_atom = 0.00001_dp
    REAL(KIND=dp), PARAMETER                           :: tblite_scc_pconv = 2.0E-5_dp
+#if defined(__TBLITE_GXTB)
+   TYPE tb_gxtb_kmesh_map_type
+      INTEGER                                          :: nfull = 0
+      LOGICAL                                          :: identity = .FALSE.
+      INTEGER, DIMENSION(3)                            :: nmesh = 1
+      INTEGER, ALLOCATABLE, DIMENSION(:)               :: op_count, source, symop
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: symops
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)      :: xkp
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)         :: weight, fold_factor
+   END TYPE tb_gxtb_kmesh_map_type
+#endif
    PUBLIC :: tb_set_calculator, tb_init_geometry, tb_init_wf
    PUBLIC :: tb_get_basis, build_tblite_matrices
    PUBLIC :: tb_get_energy, tb_update_charges, tb_ham_add_coulomb
@@ -1543,6 +1562,780 @@ CONTAINS
    END SUBROUTINE tb_collect_kpoint_density
 
 ! **************************************************************************************************
+!> \brief Compare two fractional k-points modulo reciprocal lattice vectors.
+!> \param xkp_a ...
+!> \param xkp_b ...
+!> \return true when both points are equivalent
+! **************************************************************************************************
+   LOGICAL FUNCTION tb_same_periodic_kpoint(xkp_a, xkp_b) RESULT(same)
+
+      REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: xkp_a, xkp_b
+
+      REAL(KIND=dp), DIMENSION(3)                        :: diff
+
+      diff = xkp_a - xkp_b
+      diff = diff - REAL(NINT(diff), KIND=dp)
+      same = SUM(ABS(diff)) < 1.0E-8_dp
+
+   END FUNCTION tb_same_periodic_kpoint
+
+! **************************************************************************************************
+!> \brief Find a fractional k-point in a complete periodic mesh.
+!> \param xkp_mesh ...
+!> \param xkp_search ...
+!> \return matching mesh index, or zero
+! **************************************************************************************************
+   INTEGER FUNCTION tb_find_periodic_kpoint(xkp_mesh, xkp_search) RESULT(ik_match)
+
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: xkp_mesh
+      REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: xkp_search
+
+      INTEGER                                            :: ik
+
+      ik_match = 0
+      DO ik = 1, SIZE(xkp_mesh, 2)
+         IF (tb_same_periodic_kpoint(xkp_mesh(1:3, ik), xkp_search)) THEN
+            ik_match = ik
+            RETURN
+         END IF
+      END DO
+
+   END FUNCTION tb_find_periodic_kpoint
+
+! **************************************************************************************************
+!> \brief Recover a complete uniform Cartesian mesh from explicit GENERAL k-points.
+!> \param kpoints ...
+!> \param nmesh number of distinct equally spaced points along each reciprocal axis
+!>
+!> save_tblite's coupled exchange needs the Born-von Karman mesh dimensions.  CP2K deliberately
+!> leaves nkp_grid unset for GENERAL input, so accept that input only when its original, unreduced
+!> list is a complete Cartesian product with uniform weights.  The caller retains the original
+!> input ordering; this routine supplies only the validated mesh descriptor.
+! **************************************************************************************************
+   SUBROUTINE tb_infer_gxtb_general_mesh(kpoints, nmesh)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, DIMENSION(3), INTENT(OUT)                 :: nmesh
+
+      INTEGER                                            :: iaxis, ik, inext, inode, nfull, slot
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: occupied
+      INTEGER, DIMENSION(3)                              :: node_index
+      REAL(KIND=dp)                                      :: distance, expected_spacing, gap, q, &
+                                                            swap, tol
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: nodes
+
+      IF (TRIM(kpoints%kp_scheme) /= "GENERAL" .OR. &
+          .NOT. ASSOCIATED(kpoints%xkp_input) .OR. &
+          .NOT. ASSOCIATED(kpoints%wkp_input)) &
+         CPABORT("g-XTB GENERAL meshes require the original explicit k-point list")
+      nfull = SIZE(kpoints%wkp_input)
+      IF (nfull < 1 .OR. SIZE(kpoints%xkp_input, 1) < 3 .OR. &
+          SIZE(kpoints%xkp_input, 2) /= nfull) &
+         CPABORT("Incomplete explicit GENERAL k-point list for g-XTB exchange")
+      IF (.NOT. ALL(ieee_is_finite(kpoints%xkp_input(1:3, 1:nfull))) .OR. &
+          .NOT. ALL(ieee_is_finite(kpoints%wkp_input(1:nfull)))) &
+         CPABORT("Non-finite explicit GENERAL k-point list for g-XTB exchange")
+
+      ! This descriptor is passed directly to save_tblite's Fourier mesh, whose
+      ! periodic indexing is defined at 1e-10.  Reject a coarser approximate
+      ! GENERAL grid here instead of accepting it under CP2K's geometry tolerance.
+      tol = 1.0E-10_dp
+      IF (MAXVAL(ABS(kpoints%wkp_input(1:nfull) - &
+                     1.0_dp/REAL(nfull, KIND=dp))) > tol) &
+         CPABORT("g-XTB GENERAL meshes require uniform full-mesh weights")
+
+      ALLOCATE (nodes(nfull, 3), source=0.0_dp)
+      nmesh = 0
+      DO iaxis = 1, 3
+         DO ik = 1, nfull
+            q = MODULO(kpoints%xkp_input(iaxis, ik), 1.0_dp)
+            IF (ABS(q - 1.0_dp) < tol) q = 0.0_dp
+            DO inode = 1, nmesh(iaxis)
+               distance = ABS(q - nodes(inode, iaxis))
+               distance = MIN(distance, ABS(distance - 1.0_dp))
+               IF (distance < tol) EXIT
+            END DO
+            IF (inode > nmesh(iaxis)) THEN
+               nmesh(iaxis) = nmesh(iaxis) + 1
+               nodes(nmesh(iaxis), iaxis) = q
+            END IF
+         END DO
+
+         ! Sort the distinct coordinates before checking all circular spacings.
+         DO inode = 2, nmesh(iaxis)
+            inext = inode
+            DO WHILE (inext > 1 .AND. nodes(inext, iaxis) < nodes(inext - 1, iaxis))
+               swap = nodes(inext, iaxis)
+               nodes(inext, iaxis) = nodes(inext - 1, iaxis)
+               nodes(inext - 1, iaxis) = swap
+               inext = inext - 1
+            END DO
+         END DO
+         expected_spacing = 1.0_dp/REAL(nmesh(iaxis), KIND=dp)
+         DO inode = 1, nmesh(iaxis)
+            inext = MOD(inode, nmesh(iaxis)) + 1
+            gap = nodes(inext, iaxis) - nodes(inode, iaxis)
+            IF (inext == 1) gap = gap + 1.0_dp
+            IF (ABS(gap - expected_spacing) > tol) &
+               CPABORT("g-XTB GENERAL k-points are not an equally spaced Cartesian mesh")
+         END DO
+      END DO
+      IF (PRODUCT(nmesh) /= nfull) &
+         CPABORT("g-XTB GENERAL k-points do not form a complete Cartesian mesh")
+
+      ALLOCATE (occupied(nfull), source=0)
+      DO ik = 1, nfull
+         DO iaxis = 1, 3
+            q = MODULO(kpoints%xkp_input(iaxis, ik), 1.0_dp)
+            IF (ABS(q - 1.0_dp) < tol) q = 0.0_dp
+            node_index(iaxis) = 0
+            DO inode = 1, nmesh(iaxis)
+               distance = ABS(q - nodes(inode, iaxis))
+               distance = MIN(distance, ABS(distance - 1.0_dp))
+               IF (distance < tol) THEN
+                  node_index(iaxis) = inode
+                  EXIT
+               END IF
+            END DO
+            IF (node_index(iaxis) == 0) &
+               CPABORT("Failed to index an explicit g-XTB GENERAL k-point")
+         END DO
+         slot = node_index(1) + nmesh(1)*((node_index(2) - 1) + &
+                                          nmesh(2)*(node_index(3) - 1))
+         occupied(slot) = occupied(slot) + 1
+      END DO
+      IF (ANY(occupied /= 1)) &
+         CPABORT("g-XTB GENERAL k-points contain duplicate or missing Cartesian mesh points")
+      DEALLOCATE (nodes, occupied)
+
+   END SUBROUTINE tb_infer_gxtb_general_mesh
+
+! **************************************************************************************************
+!> \brief Build the complete regular mesh represented by CP2K's irreducible k-points.
+!> \param kpoints ...
+!> \param kmap ...
+!>
+!> symop=0 is a direct representative, symop=-1 is pure time reversal, and a positive value is
+!> the corresponding entry of source(k)%kp_sym.  Direct and pure-time-reversal matches take
+!> precedence over atom/AO operations, following the full-mesh Wannier90 reconstruction.
+! **************************************************************************************************
+   SUBROUTINE tb_build_gxtb_kmesh_map(kpoints, kmap)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(OUT)          :: kmap
+
+      INTEGER                                            :: expected_ops, ifull, ikred, imatch, iop, &
+                                                            isym, max_ops, nred
+      LOGICAL                                            :: explicit_general_mesh
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: reduced_weight
+      TYPE(kpoint_sym_type), POINTER                     :: kpsym
+
+      NULLIFY (kpsym)
+      nred = kpoints%nkp
+      IF (nred < 1 .OR. .NOT. ASSOCIATED(kpoints%xkp) .OR. &
+          .NOT. ASSOCIATED(kpoints%wkp)) &
+         CPABORT("Incomplete CP2K k-point set for g-xTB exchange")
+      IF (ANY(kpoints%wkp(1:nred) <= 0.0_dp) .OR. &
+          ABS(SUM(kpoints%wkp(1:nred)) - 1.0_dp) > 1.0E-10_dp) &
+         CPABORT("Invalid irreducible CP2K k-point weights for g-xTB exchange")
+
+      explicit_general_mesh = TRIM(kpoints%kp_scheme) == "GENERAL" .AND. &
+                              ASSOCIATED(kpoints%xkp_input) .AND. &
+                              ASSOCIATED(kpoints%wkp_input)
+      IF (explicit_general_mesh) THEN
+         CALL tb_infer_gxtb_general_mesh(kpoints, kmap%nmesh)
+      ELSE
+         kmap%nmesh = kpoints%nkp_grid
+      END IF
+      IF (ANY(kmap%nmesh < 1)) THEN
+         IF (nred /= 1 .OR. &
+             .NOT. tb_same_periodic_kpoint(kpoints%xkp(1:3, 1), [0.0_dp, 0.0_dp, 0.0_dp]) .OR. &
+             ABS(kpoints%wkp(1) - 1.0_dp) > 1.0E-10_dp) &
+            CPABORT("Descriptorless g-XTB k-point input requires a unit-weight Gamma point")
+         kmap%nmesh = 1
+      END IF
+      kmap%nfull = PRODUCT(kmap%nmesh)
+      IF (kmap%nfull < 1) CPABORT("Invalid complete g-xTB k-point mesh")
+      ALLOCATE (kmap%xkp(3, kmap%nfull), kmap%weight(kmap%nfull), &
+                kmap%source(kmap%nfull), kmap%symop(kmap%nfull), &
+                kmap%fold_factor(kmap%nfull), reduced_weight(nred))
+
+      IF (explicit_general_mesh) THEN
+         IF (SIZE(kpoints%xkp_input, 2) /= kmap%nfull) &
+            CPABORT("Explicit GENERAL mesh size changed during g-XTB reconstruction")
+         kmap%xkp(1:3, 1:kmap%nfull) = kpoints%xkp_input(1:3, 1:kmap%nfull)
+      ELSEIF (kmap%nfull == 1) THEN
+         kmap%xkp(1:3, 1) = kpoints%xkp(1:3, 1)
+      ELSE
+         CALL full_grid_gen(kmap%nmesh, kmap%xkp, kmap%weight, kpoints%kp_shift, &
+                            kpoints%gamma_centered)
+      END IF
+      kmap%weight = 1.0_dp/REAL(kmap%nfull, KIND=dp)
+      kmap%source = 0
+      kmap%symop = 0
+
+      ! Representatives themselves.
+      DO ikred = 1, nred
+         imatch = tb_find_periodic_kpoint(kmap%xkp, kpoints%xkp(1:3, ikred))
+         IF (imatch > 0 .AND. kmap%source(imatch) == 0) THEN
+            kmap%source(imatch) = ikred
+            kmap%symop(imatch) = 0
+         END IF
+      END DO
+
+      ! CP2K applies this reduction even when atom symmetry is disabled.
+      DO ikred = 1, nred
+         imatch = tb_find_periodic_kpoint(kmap%xkp, -kpoints%xkp(1:3, ikred))
+         IF (imatch > 0 .AND. kmap%source(imatch) == 0) THEN
+            kmap%source(imatch) = ikred
+            kmap%symop(imatch) = -1
+         END IF
+      END DO
+
+      ! Atomic stars (including antiunitary operations) complete the remaining mesh.
+      IF (ASSOCIATED(kpoints%kp_sym)) THEN
+         DO ikred = 1, nred
+            kpsym => kpoints%kp_sym(ikred)%kpoint_sym
+            IF (.NOT. ASSOCIATED(kpsym)) CYCLE
+            IF (kpsym%nwred < 1) CYCLE
+            DO isym = 1, kpsym%nwred
+               imatch = tb_find_periodic_kpoint(kmap%xkp, kpsym%xkp(1:3, isym))
+               IF (imatch > 0 .AND. kmap%source(imatch) == 0) THEN
+                  kmap%source(imatch) = ikred
+                  kmap%symop(imatch) = isym
+               END IF
+            END DO
+         END DO
+      END IF
+
+      reduced_weight = 0.0_dp
+      DO ifull = 1, kmap%nfull
+         IF (kmap%source(ifull) == 0) &
+            CPABORT("CP2K symmetry orbits do not span the complete g-xTB k-point mesh")
+         ikred = kmap%source(ifull)
+         reduced_weight(ikred) = reduced_weight(ikred) + kmap%weight(ifull)
+         kmap%fold_factor(ifull) = kmap%weight(ifull)/kpoints%wkp(ikred)
+      END DO
+      IF (MAXVAL(ABS(reduced_weight - kpoints%wkp(1:nred))) > 1.0E-8_dp) &
+         CPABORT("CP2K irreducible k-point weights disagree with their reconstructed stars")
+
+      ! Retain every group operation that maps a representative onto a full point.  The first
+      ! nwght entries contain one operation per distinct star member; nwred also contains the
+      ! alternative little-group operations.  Averaging all of them projects an SCF density that
+      ! is not itself little-group invariant onto the symmetry-reduced complete mesh.
+      ALLOCATE (kmap%op_count(kmap%nfull), source=0)
+      max_ops = 1
+      DO ifull = 1, kmap%nfull
+         ikred = kmap%source(ifull)
+         IF (ASSOCIATED(kpoints%kp_sym)) THEN
+            kpsym => kpoints%kp_sym(ikred)%kpoint_sym
+         ELSE
+            NULLIFY (kpsym)
+         END IF
+         IF (ASSOCIATED(kpsym)) THEN
+            IF (kpsym%nwred > 0) THEN
+               IF (kpsym%nwght < 1 .OR. MOD(kpsym%nwred, kpsym%nwght) /= 0) &
+                  CPABORT("Inconsistent CP2K g-XTB k-point orbit dimensions")
+               expected_ops = kpsym%nwred/kpsym%nwght
+               DO isym = 1, kpsym%nwred
+                  IF (tb_same_periodic_kpoint(kpsym%xkp(1:3, isym), &
+                                              kmap%xkp(1:3, ifull))) &
+                     kmap%op_count(ifull) = kmap%op_count(ifull) + 1
+               END DO
+               IF (kmap%op_count(ifull) /= expected_ops) &
+                  CPABORT("Incomplete CP2K operation coset for a g-XTB k-point star member")
+            END IF
+         END IF
+         IF (kmap%op_count(ifull) == 0) kmap%op_count(ifull) = 1
+         max_ops = MAX(max_ops, kmap%op_count(ifull))
+      END DO
+      ALLOCATE (kmap%symops(max_ops, kmap%nfull), source=0)
+      DO ifull = 1, kmap%nfull
+         ikred = kmap%source(ifull)
+         iop = 0
+         IF (ASSOCIATED(kpoints%kp_sym)) THEN
+            kpsym => kpoints%kp_sym(ikred)%kpoint_sym
+         ELSE
+            NULLIFY (kpsym)
+         END IF
+         IF (ASSOCIATED(kpsym)) THEN
+            IF (kpsym%nwred > 0) THEN
+               DO isym = 1, kpsym%nwred
+                  IF (tb_same_periodic_kpoint(kpsym%xkp(1:3, isym), &
+                                              kmap%xkp(1:3, ifull))) THEN
+                     iop = iop + 1
+                     kmap%symops(iop, ifull) = isym
+                  END IF
+               END DO
+            END IF
+         END IF
+         IF (iop == 0) THEN
+            iop = 1
+            IF (tb_same_periodic_kpoint(kmap%xkp(1:3, ifull), &
+                                        kpoints%xkp(1:3, ikred))) THEN
+               kmap%symops(iop, ifull) = 0
+            ELSEIF (tb_same_periodic_kpoint(kmap%xkp(1:3, ifull), &
+                                            -kpoints%xkp(1:3, ikred))) THEN
+               kmap%symops(iop, ifull) = -1
+            ELSE
+               CPABORT("No CP2K operation maps an irreducible g-xTB k-point onto its full mesh")
+            END IF
+         END IF
+         CPASSERT(iop == kmap%op_count(ifull))
+         kmap%symop(ifull) = kmap%symops(1, ifull)
+      END DO
+
+      kmap%identity = kmap%nfull == nred
+      IF (kmap%identity) THEN
+         DO ifull = 1, kmap%nfull
+            IF (kmap%source(ifull) /= ifull .OR. kmap%op_count(ifull) /= 1 .OR. &
+                kmap%symops(1, ifull) /= 0) THEN
+               kmap%identity = .FALSE.
+               EXIT
+            END IF
+         END DO
+      END IF
+      DEALLOCATE (reduced_weight)
+
+   END SUBROUTINE tb_build_gxtb_kmesh_map
+
+! **************************************************************************************************
+!> \brief Return the dense tblite AO layout for all primitive-cell atoms.
+!> \param tb ...
+!> \param ao_first ...
+!> \param ao_size ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_ao_layout(tb, ao_first, ao_size)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(OUT)    :: ao_first, ao_size
+
+      INTEGER                                            :: iatom, nat
+
+      nat = tb%mol%nat
+      ALLOCATE (ao_first(nat), ao_size(nat))
+      DO iatom = 1, nat
+         CALL tb_atom_ao_range(tb, iatom, ao_first(iatom), ao_size(iatom))
+         IF (iatom > 1) THEN
+            CPASSERT(ao_first(iatom) == ao_first(iatom - 1) + ao_size(iatom - 1))
+         END IF
+      END DO
+      CPASSERT(ao_first(nat) + ao_size(nat) - 1 == tb%calc%bas%nao)
+
+   END SUBROUTINE tb_gxtb_ao_layout
+
+! **************************************************************************************************
+!> \brief Apply a CP2K atom/AO k-point symmetry transform or its real adjoint.
+!> \param kpoints ...
+!> \param ikred ...
+!> \param isym 0 direct, -1 pure time reversal, positive kp_sym entry
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param source ...
+!> \param TARGET ...
+!> \param adjoint apply the adjoint needed to fold a full-mesh response
+!>
+!> This is the dense Hermitian-matrix analogue of kpoint_methods::symtrans_phase.  In particular,
+!> phase_mode and phase_gauge are selected by CP2K's overlap-covariance calibration; no tblite
+!> phase convention is introduced here.  The kgphase used by CP2K's Wannier-MO transform belongs
+!> to a different gauge and is deliberately not part of this AO-matrix transform.
+! **************************************************************************************************
+   SUBROUTINE tb_transform_gxtb_kpoint_matrix(kpoints, ikred, isym, ao_first, ao_size, &
+                                              source, TARGET, adjoint)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, INTENT(IN)                                :: ikred, isym
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(IN)      :: source
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(OUT)     :: target
+      LOGICAL, INTENT(IN)                                :: adjoint
+
+      COMPLEX(KIND=dp)                                   :: phase
+      INTEGER                                            :: i_first, i_last, iatom, ikind, ip, &
+                                                            ip_first, ip_last, ir, ira, j_first, &
+                                                            j_last, jatom, jkind, jp, jp_first, &
+                                                            jp_last, jr
+      INTEGER, DIMENSION(3)                              :: shift
+      INTEGER, DIMENSION(:, :), POINTER                  :: phase_fcell
+      LOGICAL                                            :: reverse_phase, time_reversal
+      REAL(KIND=dp)                                      :: arg
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: kroti, krotj
+      TYPE(kind_rotmat_type), DIMENSION(:), POINTER      :: kind_rot
+      TYPE(kpoint_sym_type), POINTER                     :: kpsym
+
+      CPASSERT(SIZE(source, 1) == SIZE(source, 2))
+      CPASSERT(ALL(SHAPE(source) == SHAPE(TARGET)))
+      IF (isym == 0) THEN
+         TARGET = source
+         RETURN
+      ELSEIF (isym == -1) THEN
+         TARGET = CONJG(source)
+         RETURN
+      END IF
+
+      CPASSERT(ikred >= 1 .AND. ikred <= kpoints%nkp)
+      CPASSERT(ASSOCIATED(kpoints%kp_sym))
+      kpsym => kpoints%kp_sym(ikred)%kpoint_sym
+      CPASSERT(ASSOCIATED(kpsym))
+      CPASSERT(kpsym%nwred > 0)
+      CPASSERT(isym >= 1 .AND. isym <= kpsym%nwred)
+      CPASSERT(ASSOCIATED(kpsym%phase_mode) .AND. ASSOCIATED(kpsym%phase_gauge))
+      CPASSERT(kpsym%phase_mode(isym) > 0 .AND. kpsym%phase_gauge(isym) > 0)
+      CPASSERT(ASSOCIATED(kpoints%atype) .AND. ASSOCIATED(kpoints%ibrot))
+      CPASSERT(ASSOCIATED(kpoints%kind_rotmat))
+      CPASSERT(SIZE(ao_first) == SIZE(kpoints%atype))
+      CPASSERT(SIZE(ao_size) == SIZE(kpoints%atype))
+
+      reverse_phase = kpsym%phase_mode(isym) == 2
+      SELECT CASE (kpsym%phase_gauge(isym))
+      CASE (kpoint_phase_gauge_pbc)
+         phase_fcell => kpsym%fcell_gauge(:, :, isym)
+      CASE (kpoint_phase_gauge_input)
+         phase_fcell => kpsym%fcell(:, :, isym)
+      CASE DEFAULT
+         CPABORT("Unknown calibrated CP2K k-point phase gauge")
+      END SELECT
+
+      ir = ABS(kpsym%rotp(isym))
+      ira = 0
+      DO jr = 1, SIZE(kpoints%ibrot)
+         IF (ir == kpoints%ibrot(jr)) ira = jr
+      END DO
+      IF (ira == 0) CPABORT("Missing CP2K AO rotation for a g-xTB k-point symmetry operation")
+      kind_rot => kpoints%kind_rotmat(ira, :)
+      time_reversal = kpsym%rotp(isym) < 0
+      TARGET = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+
+      DO iatom = 1, SIZE(ao_first)
+         ip = kpsym%f0(iatom, isym)
+         CPASSERT(ip >= 1 .AND. ip <= SIZE(ao_first))
+         ikind = kpoints%atype(iatom)
+         kroti => kind_rot(ikind)%rmat
+         CPASSERT(ASSOCIATED(kroti))
+         i_first = ao_first(iatom)
+         i_last = i_first + ao_size(iatom) - 1
+         ip_first = ao_first(ip)
+         ip_last = ip_first + ao_size(ip) - 1
+         CPASSERT(SIZE(kroti, 1) == ao_size(ip) .AND. SIZE(kroti, 2) == ao_size(iatom))
+         DO jatom = 1, SIZE(ao_first)
+            jp = kpsym%f0(jatom, isym)
+            CPASSERT(jp >= 1 .AND. jp <= SIZE(ao_first))
+            jkind = kpoints%atype(jatom)
+            krotj => kind_rot(jkind)%rmat
+            CPASSERT(ASSOCIATED(krotj))
+            j_first = ao_first(jatom)
+            j_last = j_first + ao_size(jatom) - 1
+            jp_first = ao_first(jp)
+            jp_last = jp_first + ao_size(jp) - 1
+            CPASSERT(SIZE(krotj, 1) == ao_size(jp) .AND. SIZE(krotj, 2) == ao_size(jatom))
+
+            IF (reverse_phase) THEN
+               shift = phase_fcell(1:3, iatom) - phase_fcell(1:3, jatom)
+               arg = DOT_PRODUCT(REAL(shift, KIND=dp), kpsym%xkp(1:3, isym))
+            ELSE
+               shift = phase_fcell(1:3, jatom) - phase_fcell(1:3, iatom)
+               arg = DOT_PRODUCT(REAL(shift, KIND=dp), kpsym%xkp(1:3, isym))
+            END IF
+            phase = CMPLX(COS(twopi*arg), -SIN(twopi*arg), KIND=dp)
+
+            IF (.NOT. adjoint) THEN
+               IF (time_reversal) THEN
+                  TARGET(ip_first:ip_last, jp_first:jp_last) = phase* &
+                                                               MATMUL(kroti, MATMUL(CONJG(source(i_first:i_last, j_first:j_last)), &
+                                                                                    TRANSPOSE(krotj)))
+               ELSE
+                  TARGET(ip_first:ip_last, jp_first:jp_last) = phase* &
+                                                               MATMUL(kroti, MATMUL(source(i_first:i_last, j_first:j_last), &
+                                                                                    TRANSPOSE(krotj)))
+               END IF
+            ELSE
+               IF (time_reversal) THEN
+                  TARGET(i_first:i_last, j_first:j_last) = phase*CONJG( &
+                                                           MATMUL(TRANSPOSE(kroti), &
+                                                                  MATMUL(source(ip_first:ip_last, jp_first:jp_last), krotj)))
+               ELSE
+                  TARGET(i_first:i_last, j_first:j_last) = CONJG(phase)* &
+                                                           MATMUL(TRANSPOSE(kroti), &
+                                                                  MATMUL(source(ip_first:ip_last, jp_first:jp_last), krotj))
+               END IF
+            END IF
+         END DO
+      END DO
+
+   END SUBROUTINE tb_transform_gxtb_kpoint_matrix
+
+! **************************************************************************************************
+!> \brief Expand irreducible spin densities to the complete regular k mesh.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param density_red ...
+!> \param density_full ...
+! **************************************************************************************************
+   SUBROUTINE tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
+                                            density_red, density_full)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :, :), &
+         INTENT(IN)                                      :: density_red
+      COMPLEX(KIND=dp), DIMENSION(:, :, :, :), &
+         INTENT(OUT)                                     :: density_full
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: transformed
+      INTEGER                                            :: ifull, iop, irepresentative, ispin
+      REAL(KIND=dp)                                      :: residual, scale, symmetry_tolerance
+
+      CPASSERT(SIZE(density_red, 4) == kpoints%nkp)
+      CPASSERT(SIZE(density_full, 4) == kmap%nfull)
+      CPASSERT(SIZE(density_red, 3) == SIZE(density_full, 3))
+      ALLOCATE (transformed(SIZE(density_full, 1), SIZE(density_full, 2)))
+      symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
+      density_full = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      DO ifull = 1, kmap%nfull
+         DO ispin = 1, SIZE(density_full, 3)
+            DO iop = 1, kmap%op_count(ifull)
+               CALL tb_transform_gxtb_kpoint_matrix(kpoints, kmap%source(ifull), &
+                                                    kmap%symops(iop, ifull), ao_first, ao_size, &
+                                                    density_red(:, :, ispin, kmap%source(ifull)), &
+                                                    transformed, .FALSE.)
+               density_full(:, :, ispin, ifull) = density_full(:, :, ispin, ifull) + &
+                                                  transformed/REAL(kmap%op_count(ifull), KIND=dp)
+            END DO
+            density_full(:, :, ispin, ifull) = 0.5_dp*(density_full(:, :, ispin, ifull) + &
+                                                       CONJG(TRANSPOSE(density_full(:, :, ispin, ifull))))
+         END DO
+      END DO
+
+      ! Verify that the group projector made every alternative little-group path equivalent.
+      DO ifull = 1, kmap%nfull
+         irepresentative = tb_find_periodic_kpoint(kmap%xkp, &
+                                                   kpoints%xkp(1:3, kmap%source(ifull)))
+         CPASSERT(irepresentative > 0)
+         DO iop = 1, kmap%op_count(ifull)
+            DO ispin = 1, SIZE(density_full, 3)
+               CALL tb_transform_gxtb_kpoint_matrix(kpoints, kmap%source(ifull), &
+                                                    kmap%symops(iop, ifull), ao_first, ao_size, &
+                                                    density_full(:, :, ispin, irepresentative), &
+                                                    transformed, .FALSE.)
+               scale = MAX(1.0_dp, MAXVAL(ABS(density_full(:, :, ispin, ifull))))
+               residual = MAXVAL(ABS(transformed - density_full(:, :, ispin, ifull)))/scale
+               IF (residual > symmetry_tolerance) &
+                  CPABORT("Projected g-xTB density is not invariant under its CP2K little group")
+            END DO
+         END DO
+      END DO
+      DEALLOCATE (transformed)
+
+   END SUBROUTINE tb_expand_gxtb_kpoint_density
+
+! **************************************************************************************************
+!> \brief Fold an unweighted complete-mesh Hermitian response to irreducible k-points.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param full ...
+!> \param reduced ...
+! **************************************************************************************************
+   SUBROUTINE tb_fold_gxtb_kpoint_matrix(kpoints, kmap, ao_first, ao_size, full, reduced)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: full
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(OUT)  :: reduced
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: work
+      INTEGER                                            :: ifull, ikred, iop
+
+      CPASSERT(SIZE(full, 3) == kmap%nfull)
+      CPASSERT(SIZE(reduced, 3) == kpoints%nkp)
+      ALLOCATE (work(SIZE(full, 1), SIZE(full, 2)))
+      reduced = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      DO ifull = 1, kmap%nfull
+         ikred = kmap%source(ifull)
+         DO iop = 1, kmap%op_count(ifull)
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, ikred, kmap%symops(iop, ifull), &
+                                                 ao_first, ao_size, full(:, :, ifull), work, .TRUE.)
+            reduced(:, :, ikred) = reduced(:, :, ikred) + &
+                                   kmap%fold_factor(ifull)*work/ &
+                                   REAL(kmap%op_count(ifull), KIND=dp)
+         END DO
+      END DO
+      DO ikred = 1, kpoints%nkp
+         reduced(:, :, ikred) = 0.5_dp*(reduced(:, :, ikred) + &
+                                        CONJG(TRANSPOSE(reduced(:, :, ikred))))
+      END DO
+      DEALLOCATE (work)
+
+   END SUBROUTINE tb_fold_gxtb_kpoint_matrix
+
+! **************************************************************************************************
+!> \brief Validate the dense symmetry transform against direct CP2K overlap matrices.
+!>
+!> Besides checking S(k_full)=T[S(k_irred)], this verifies the real adjoint used for antiunitary
+!> fold-back through a Frobenius dot-product identity before save_tblite sees a reduced mesh.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param overlap ...
+! **************************************************************************************************
+   SUBROUTINE tb_validate_gxtb_kmesh_transform(kpoints, kmap, ao_first, ao_size, overlap)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: overlap
+
+      CHARACTER(LEN=256)                                 :: error_message
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: adjoint, transformed
+      INTEGER                                            :: ifull, iop, irepresentative, source
+      REAL(KIND=dp)                                      :: adjoint_residual, covariance_residual, &
+                                                            lhs, rhs, scale
+
+      CPASSERT(SIZE(overlap, 3) == kmap%nfull)
+      ALLOCATE (adjoint(SIZE(overlap, 1), SIZE(overlap, 2)), &
+                transformed(SIZE(overlap, 1), SIZE(overlap, 2)))
+      DO ifull = 1, kmap%nfull
+         source = kmap%source(ifull)
+         irepresentative = tb_find_periodic_kpoint(kmap%xkp, kpoints%xkp(1:3, source))
+         IF (irepresentative == 0) &
+            CPABORT("Could not locate an irreducible representative in the complete g-xTB mesh")
+         DO iop = 1, kmap%op_count(ifull)
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
+                                                 ao_first, ao_size, overlap(:, :, irepresentative), &
+                                                 transformed, .FALSE.)
+            scale = MAX(1.0_dp, MAXVAL(ABS(overlap(:, :, ifull))))
+            covariance_residual = MAXVAL(ABS(transformed - overlap(:, :, ifull)))/scale
+            IF (covariance_residual > MAX(1.0E-6_dp, 100.0_dp*kpoints%eps_geo)) THEN
+               WRITE (error_message, '(A,I0,A,I0,A,I0,A,ES12.4)') &
+                  "Dense CP2K overlap symmetry failed for full k-point ", ifull, &
+                  ", irreducible source ", source, ", symmetry operation ", &
+                  kmap%symops(iop, ifull), "; residual=", covariance_residual
+               CALL cp_abort(__LOCATION__, TRIM(error_message))
+            END IF
+
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
+                                                 ao_first, ao_size, overlap(:, :, ifull), &
+                                                 adjoint, .TRUE.)
+            lhs = REAL(SUM(CONJG(overlap(:, :, ifull))*transformed), KIND=dp)
+            rhs = REAL(SUM(CONJG(adjoint)*overlap(:, :, irepresentative)), KIND=dp)
+            adjoint_residual = ABS(lhs - rhs)/MAX(1.0_dp, ABS(lhs), ABS(rhs))
+            IF (adjoint_residual > 1.0E-10_dp) THEN
+               WRITE (error_message, '(A,I0,A,I0,A,I0,A,ES12.4)') &
+                  "Dense CP2K symmetry adjoint failed for full k-point ", ifull, &
+                  ", irreducible source ", source, ", symmetry operation ", &
+                  kmap%symops(iop, ifull), "; residual=", adjoint_residual
+               CALL cp_abort(__LOCATION__, TRIM(error_message))
+            END IF
+         END DO
+      END DO
+      DEALLOCATE (adjoint, transformed)
+
+   END SUBROUTINE tb_validate_gxtb_kmesh_transform
+
+! **************************************************************************************************
+!> \brief Check that a complete-mesh response is covariant before symmetry folding.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param full ...
+!> \param label ...
+! **************************************************************************************************
+   SUBROUTINE tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, full, label)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: full
+      CHARACTER(LEN=*), INTENT(IN)                       :: label
+
+      CHARACTER(LEN=256)                                 :: error_message
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: transformed
+      INTEGER                                            :: ifull, iop, irepresentative, source
+      REAL(KIND=dp)                                      :: residual, scale, symmetry_tolerance
+
+      CPASSERT(SIZE(full, 3) == kmap%nfull)
+      ALLOCATE (transformed(SIZE(full, 1), SIZE(full, 2)))
+      symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
+      DO ifull = 1, kmap%nfull
+         source = kmap%source(ifull)
+         irepresentative = tb_find_periodic_kpoint(kmap%xkp, kpoints%xkp(1:3, source))
+         IF (irepresentative == 0) &
+            CPABORT("Could not locate an irreducible representative in the complete g-xTB mesh")
+         DO iop = 1, kmap%op_count(ifull)
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
+                                                 ao_first, ao_size, full(:, :, irepresentative), &
+                                                 transformed, .FALSE.)
+            scale = MAX(1.0_dp, MAXVAL(ABS(full(:, :, ifull))))
+            residual = MAXVAL(ABS(transformed - full(:, :, ifull)))/scale
+            IF (residual > symmetry_tolerance) THEN
+               WRITE (error_message, '(A,A,A,I0,A,I0,A,I0,A,I0,A,ES12.4)') &
+                  "Complete-mesh g-xTB ", TRIM(label), " violates CP2K symmetry at full k-point ", &
+                  ifull, ", representative ", irepresentative, ", irreducible source ", source, &
+                  ", symmetry operation ", kmap%symops(iop, ifull), "; residual=", residual
+               CALL cp_abort(__LOCATION__, TRIM(error_message))
+            END IF
+         END DO
+      END DO
+      DEALLOCATE (transformed)
+
+   END SUBROUTINE tb_validate_gxtb_full_response
+
+! **************************************************************************************************
+!> \brief Check that a folded response reproduces every complete-mesh symmetry image.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param full ...
+!> \param reduced ...
+!> \param label ...
+! **************************************************************************************************
+   SUBROUTINE tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, full, reduced, label)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: full, reduced
+      CHARACTER(LEN=*), INTENT(IN)                       :: label
+
+      CHARACTER(LEN=256)                                 :: error_message
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: transformed
+      INTEGER                                            :: ifull, iop, source
+      REAL(KIND=dp)                                      :: residual, scale, symmetry_tolerance
+
+      CPASSERT(SIZE(full, 3) == kmap%nfull)
+      CPASSERT(SIZE(reduced, 3) == kpoints%nkp)
+      ALLOCATE (transformed(SIZE(full, 1), SIZE(full, 2)))
+      symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
+      DO ifull = 1, kmap%nfull
+         source = kmap%source(ifull)
+         DO iop = 1, kmap%op_count(ifull)
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
+                                                 ao_first, ao_size, reduced(:, :, source), &
+                                                 transformed, .FALSE.)
+            scale = MAX(1.0_dp, MAXVAL(ABS(full(:, :, ifull))))
+            residual = MAXVAL(ABS(transformed - full(:, :, ifull)))/scale
+            IF (residual > symmetry_tolerance) THEN
+               WRITE (error_message, '(A,A,A,I0,A,I0,A,I0,A,ES12.4)') &
+                  "Folded g-xTB ", TRIM(label), " violates CP2K symmetry at full k-point ", &
+                  ifull, ", irreducible source ", source, ", symmetry operation ", &
+                  kmap%symops(iop, ifull), "; residual=", residual
+               CALL cp_abort(__LOCATION__, TRIM(error_message))
+            END IF
+         END DO
+      END DO
+      DEALLOCATE (transformed)
+
+   END SUBROUTINE tb_validate_gxtb_folded_response
+
+! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
 !> \param matrix_ks ...
@@ -1842,7 +2635,7 @@ CONTAINS
 !> \param tb ...
 !> \param matrix_s ...
 !> \param para_env ...
-!> Build g-xTB exchange from every point of the current complete regular k mesh.
+!> Build g-xTB exchange from the complete regular mesh represented by CP2K's k-points.
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env)
 
@@ -1853,11 +2646,11 @@ CONTAINS
 
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap
       COMPLEX(KIND=dp), ALLOCATABLE, &
-         DIMENSION(:, :, :, :)                           :: density
-      INTEGER                                            :: ik, ispin, nao, nkp, nspin
-      INTEGER, DIMENSION(3)                              :: nmesh
+         DIMENSION(:, :, :, :)                           :: density, density_red, exchange_fock_full
+      INTEGER                                            :: ik, ispin, nao, nred, nspin
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: full_grid, use_real_wfn
+      LOGICAL                                            :: use_real_wfn
       REAL(KIND=dp)                                      :: exchange_energy, hermitian_error
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_imag, overlap_real
@@ -1866,34 +2659,39 @@ CONTAINS
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
+      TYPE(tb_gxtb_kmesh_map_type)                       :: kmap
 
       NULLIFY (cell_to_index, cmatrix, kpoints, rmatrix, sab_nl)
       CALL get_qs_env(qs_env, kpoints=kpoints)
       CPASSERT(ASSOCIATED(kpoints))
-      CALL get_kpoint_info(kpoints, nkp=nkp, nkp_grid=nmesh, full_grid=full_grid, &
+      CALL get_kpoint_info(kpoints, nkp=nred, &
                            use_real_wfn=use_real_wfn, cell_to_index=cell_to_index, sab_nl=sab_nl)
-      ! CP2K's implicit Gamma environment already contains the physical point k=(0,0,0) with
-      ! weight one, but does not carry a mesh descriptor.  Supply only the missing local BvK
-      ! topology; kpoints%xkp itself is passed through unchanged below.  Multi-k calculations still
-      ! require the complete explicit product grid.
-      IF (nkp == 1) THEN
-         nmesh = 1
-      ELSEIF (.NOT. full_grid .OR. ANY(nmesh < 1) .OR. PRODUCT(nmesh) /= nkp) THEN
-         CPABORT("g-XTB exchange requires FULL_GRID on a complete regular k-point mesh")
-      END IF
-      IF (ABS(SUM(kpoints%wkp(1:nkp)) - 1.0_dp) > 1.0E-10_dp) &
-         CPABORT("g-xTB k-point weights do not sum to one")
+      IF (.NOT. ASSOCIATED(cell_to_index) .OR. .NOT. ASSOCIATED(sab_nl)) &
+         CPABORT("Incomplete CP2K image map for g-xTB exchange")
+      CALL tb_build_gxtb_kmesh_map(kpoints, kmap)
+      IF (ANY(kmap%symop > 0)) &
+         CALL calibrate_symmetry_phases(kpoints, matrix_s, matrix_s(1, 1)%matrix, &
+                                        sab_nl, cell_to_index, include_inactive=.TRUE.)
 
       nao = tb%calc%bas%nao
       nspin = tb%wfn%nspin
-      ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao, nkp), &
+      CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
+      ALLOCATE (density(nao, nao, nspin, kmap%nfull), overlap(nao, nao, kmap%nfull), &
+                exchange_fock_full(nao, nao, nspin, kmap%nfull), &
                 overlap_real(nao, nao), overlap_imag(nao, nao), &
                 exchange_vsh(tb%calc%bas%nsh))
       ! Before the first diagonalization of a freshly initialized k-point SCF (including an
       ! RS-only restart), CP2K has no P(k) yet.  The zero pmat is a deliberate initial Hamiltonian;
       ! every subsequent SCC step uses the exact P(k) produced by the preceding diagonalization,
       ! without an alias-prone inverse image transform.
-      CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+      IF (kmap%identity) THEN
+         CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+      ELSE
+         ALLOCATE (density_red(nao, nao, nspin, nred))
+         CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density_red)
+         CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, density_red, density)
+         DEALLOCATE (density_red)
+      END IF
       IF (.NOT. ALL(ieee_is_finite(REAL(density, KIND=dp))) .OR. &
           .NOT. ALL(ieee_is_finite(AIMAG(density)))) &
          CPABORT("CP2K supplied a non-finite k-point density matrix to save_tblite")
@@ -1901,7 +2699,7 @@ CONTAINS
       tb%exchange_fock_kp_valid = .FALSE.
       tb%mixed_fock_kp_valid = .FALSE.
       IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
-      ALLOCATE (tb%exchange_fock_kp(nao, nao, nspin, nkp), &
+      ALLOCATE (tb%exchange_fock_kp(nao, nao, nspin, nred), &
                 source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
       IF (.NOT. ALL(ieee_is_finite(tb%wfn%qsh))) &
          CPABORT("CP2K supplied non-finite shell charges to save_tblite exchange")
@@ -1914,10 +2712,10 @@ CONTAINS
       CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
       CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
 
-      DO ik = 1, nkp
+      DO ik = 1, kmap%nfull
          CALL dbcsr_set(rmatrix, 0.0_dp)
          CALL dbcsr_set(cmatrix, 0.0_dp)
-         CALL rskp_transform(rmatrix, cmatrix, matrix_s, 1, kpoints%xkp(1:3, ik), &
+         CALL rskp_transform(rmatrix, cmatrix, matrix_s, 1, kmap%xkp(1:3, ik), &
                              cell_to_index, sab_nl)
          CALL tb_dbcsr_component_to_dense(tb, rmatrix, overlap_real, para_env, .FALSE.)
          CALL tb_dbcsr_component_to_dense(tb, cmatrix, overlap_imag, para_env, .TRUE.)
@@ -1939,23 +2737,44 @@ CONTAINS
 
       END DO
 
-      CALL cp2k_exchange_kmesh(tb%calc, tb%mol, tb%ecache, tb%wfn, nmesh, &
-                               kpoints%xkp(1:3, 1:nkp), kpoints%wkp(1:nkp), &
-                               density, overlap, tb%exchange_fock_kp, exchange_vsh, &
+      IF (.NOT. kmap%identity) &
+         CALL tb_validate_gxtb_kmesh_transform(kpoints, kmap, ao_first, ao_size, overlap)
+      CALL cp2k_exchange_kmesh(tb%calc, tb%mol, tb%ecache, tb%wfn, kmap%nmesh, &
+                               kmap%xkp, kmap%weight, density, overlap, exchange_fock_full, exchange_vsh, &
                                exchange_energy, error)
       IF (ALLOCATED(error)) CPABORT("save_tblite whole-mesh exchange evaluation failed")
-      IF (.NOT. ALL(ieee_is_finite(REAL(tb%exchange_fock_kp, KIND=dp))) .OR. &
-          .NOT. ALL(ieee_is_finite(AIMAG(tb%exchange_fock_kp)))) &
+      IF (.NOT. ALL(ieee_is_finite(REAL(exchange_fock_full, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(exchange_fock_full)))) &
          CPABORT("save_tblite returned a non-finite whole-mesh exchange matrix")
       IF (.NOT. ALL(ieee_is_finite(exchange_vsh)) .OR. &
           .NOT. ieee_is_finite(exchange_energy)) &
          CPABORT("save_tblite returned a non-finite whole-mesh exchange response")
-      DO ik = 1, nkp
+      DO ik = 1, kmap%nfull
+         DO ispin = 1, nspin
+            hermitian_error = MAXVAL(ABS(exchange_fock_full(:, :, ispin, ik) - &
+                                         CONJG(TRANSPOSE(exchange_fock_full(:, :, ispin, ik)))))
+            IF (hermitian_error > 1.0E-10_dp) &
+               CPABORT("save_tblite returned a non-Hermitian k-point exchange matrix")
+         END DO
+      END DO
+      DO ispin = 1, nspin
+         IF (.NOT. kmap%identity) &
+            CALL tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, &
+                                                exchange_fock_full(:, :, ispin, :), "Fock")
+         CALL tb_fold_gxtb_kpoint_matrix(kpoints, kmap, ao_first, ao_size, &
+                                         exchange_fock_full(:, :, ispin, :), &
+                                         tb%exchange_fock_kp(:, :, ispin, :))
+         IF (.NOT. kmap%identity) &
+            CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
+                                                  exchange_fock_full(:, :, ispin, :), &
+                                                  tb%exchange_fock_kp(:, :, ispin, :), "Fock")
+      END DO
+      DO ik = 1, nred
          DO ispin = 1, nspin
             hermitian_error = MAXVAL(ABS(tb%exchange_fock_kp(:, :, ispin, ik) - &
                                          CONJG(TRANSPOSE(tb%exchange_fock_kp(:, :, ispin, ik)))))
             IF (hermitian_error > 1.0E-10_dp) &
-               CPABORT("save_tblite returned a non-Hermitian k-point exchange matrix")
+               CPABORT("Folded g-xTB exchange matrix is not Hermitian")
          END DO
          IF (use_real_wfn .AND. &
              MAXVAL(ABS(AIMAG(tb%exchange_fock_kp(:, :, :, ik)))) > 1.0E-10_dp) &
@@ -1970,7 +2789,8 @@ CONTAINS
 
       CALL dbcsr_deallocate_matrix(rmatrix)
       CALL dbcsr_deallocate_matrix(cmatrix)
-      DEALLOCATE (density, overlap, overlap_real, overlap_imag, exchange_vsh)
+      DEALLOCATE (ao_first, ao_size, density, exchange_fock_full, overlap, overlap_real, &
+                  overlap_imag, exchange_vsh)
       tb%exchange_fock_kp_valid = .TRUE.
 
    END SUBROUTINE tb_build_gxtb_kpoint_exchange
@@ -2001,14 +2821,14 @@ CONTAINS
       TYPE(tblite_type), POINTER                         :: tb
       REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: gradient, sigma
 
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap, overlap_grad
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap, overlap_grad, overlap_grad_full
       COMPLEX(KIND=dp), ALLOCATABLE, &
-         DIMENSION(:, :, :, :)                           :: density
+         DIMENSION(:, :, :, :)                           :: density, density_red
       INTEGER                                            :: ic, ik, ikk, img, ispin, isym, kplocal, &
-                                                            nao, nat, nc, nimg, nkp, nspin, &
+                                                            nao, nat, nc, nimg, nred, nspin, &
                                                             source_atom, target_atom
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(2)                              :: kp_range
-      INTEGER, DIMENSION(3)                              :: nmesh
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: full_grid, use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error, star_weight
@@ -2028,6 +2848,7 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
+      TYPE(tb_gxtb_kmesh_map_type)                       :: kmap
 
       NULLIFY (ao_ao_fm_pools, cell_to_index, cmatrix, exchange_w_rs, kp, kpoints, &
                kpsym, matrix_s, matrix_struct, matrix_w, para_env, rmatrix, sab_nl)
@@ -2049,18 +2870,15 @@ CONTAINS
       IF (.NOT. ASSOCIATED(ao_ao_fm_pools(1)%pool)) &
          CPABORT("Uninitialized AO full-matrix pool for g-xTB exchange gradient")
 
-      CALL get_kpoint_info(kpoints, nkp=nkp, nkp_grid=nmesh, kp_range=kp_range, &
+      CALL get_kpoint_info(kpoints, nkp=nred, kp_range=kp_range, &
                            full_grid=full_grid, use_real_wfn=use_real_wfn, &
                            cell_to_index=cell_to_index, sab_nl=sab_nl)
-      IF (nkp == 1) THEN
-         nmesh = 1
-      ELSEIF (.NOT. full_grid .OR. ANY(nmesh < 1) .OR. PRODUCT(nmesh) /= nkp) THEN
-         CPABORT("g-XTB exchange gradients require FULL_GRID on a complete regular k-point mesh")
-      END IF
       IF (.NOT. ASSOCIATED(cell_to_index) .OR. .NOT. ASSOCIATED(sab_nl)) &
          CPABORT("Incomplete k-point image map for g-xTB exchange gradient")
-      IF (ABS(SUM(kpoints%wkp(1:nkp)) - 1.0_dp) > 1.0E-10_dp) &
-         CPABORT("g-xTB k-point weights do not sum to one")
+      CALL tb_build_gxtb_kmesh_map(kpoints, kmap)
+      IF (ANY(kmap%symop > 0)) &
+         CALL calibrate_symmetry_phases(kpoints, matrix_s, matrix_s(1, 1)%matrix, &
+                                        sab_nl, cell_to_index, include_inactive=.TRUE.)
 
       nao = tb%calc%bas%nao
       nat = tb%mol%nat
@@ -2068,17 +2886,27 @@ CONTAINS
       nimg = SIZE(matrix_s, 2)
       nc = MERGE(1, 2, use_real_wfn)
       kplocal = kp_range(2) - kp_range(1) + 1
+      CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
       CPASSERT(SIZE(gradient, 1) == 3 .AND. SIZE(gradient, 2) == nat)
       CPASSERT(SIZE(sigma, 1) == 3 .AND. SIZE(sigma, 2) == 3)
       CPASSERT(SIZE(matrix_s, 1) >= 1)
       CPASSERT(SIZE(matrix_w, 1) >= nspin .AND. SIZE(matrix_w, 2) == nimg)
       CPASSERT(kplocal > 0)
 
-      ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao, nkp), &
-                overlap_grad(nao, nao, nkp), overlap_real(nao, nao), overlap_imag(nao, nao), &
+      ALLOCATE (density(nao, nao, nspin, kmap%nfull), overlap(nao, nao, kmap%nfull), &
+                overlap_grad_full(nao, nao, kmap%nfull), overlap_grad(nao, nao, nred), &
+                overlap_real(nao, nao), overlap_imag(nao, nao), &
                 k_gradient(3, nat), k_sigma(3, 3))
+      overlap_grad_full = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
       overlap_grad = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
-      CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+      IF (kmap%identity) THEN
+         CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+      ELSE
+         ALLOCATE (density_red(nao, nao, nspin, nred))
+         CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density_red)
+         CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, density_red, density)
+         DEALLOCATE (density_red)
+      END IF
       IF (.NOT. ALL(ieee_is_finite(REAL(density, KIND=dp))) .OR. &
           .NOT. ALL(ieee_is_finite(AIMAG(density)))) &
          CPABORT("CP2K supplied a non-finite k-point density to the exchange gradient")
@@ -2108,10 +2936,10 @@ CONTAINS
       CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
       CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
 
-      DO ik = 1, nkp
+      DO ik = 1, kmap%nfull
          CALL dbcsr_set(rmatrix, 0.0_dp)
          CALL dbcsr_set(cmatrix, 0.0_dp)
-         CALL rskp_transform(rmatrix, cmatrix, matrix_s, 1, kpoints%xkp(1:3, ik), &
+         CALL rskp_transform(rmatrix, cmatrix, matrix_s, 1, kmap%xkp(1:3, ik), &
                              cell_to_index, sab_nl)
          CALL tb_dbcsr_component_to_dense(tb, rmatrix, overlap_real, para_env, .FALSE.)
          CALL tb_dbcsr_component_to_dense(tb, cmatrix, overlap_imag, para_env, .TRUE.)
@@ -2131,12 +2959,12 @@ CONTAINS
          END DO
       END DO
 
-      IF (nkp == 1) THEN
+      IF (kmap%nfull == 1) THEN
          ! Preserve the established Gamma/one-point response, including its existing symmetry
          ! expansion.  Both the response and the direct derivatives are unweighted here.
          CALL cp2k_exchange_kpoint_gradient(tb%calc, tb%mol, tb%ecache, &
                                             density(:, :, :, 1), overlap(:, :, 1), &
-                                            overlap_grad(:, :, 1), &
+                                            overlap_grad_full(:, :, 1), &
                                             k_gradient, k_sigma, error)
          IF (ALLOCATED(error)) CPABORT("save_tblite k-point exchange gradient failed")
          ik = 1
@@ -2146,17 +2974,16 @@ CONTAINS
          ELSE
             kpsym => kpoints%kp_sym(ik)%kpoint_sym
             CPASSERT(ASSOCIATED(kpsym))
-            IF (kpsym%apply_symmetry) THEN
-               CPASSERT(kpsym%nwght > 0)
+            IF (kpsym%nwred > 0) THEN
                CPASSERT(ASSOCIATED(kpsym%f0))
                CPASSERT(ASSOCIATED(kpsym%rot))
                CPASSERT(ASSOCIATED(kpsym%rotp))
                CPASSERT(SIZE(kpsym%f0, 1) == nat)
-               CPASSERT(SIZE(kpsym%f0, 2) >= kpsym%nwght)
-               CPASSERT(SIZE(kpsym%rot, 3) >= kpsym%nwght)
-               CPASSERT(SIZE(kpsym%rotp) >= kpsym%nwght)
-               star_weight = kpoints%wkp(ik)/REAL(kpsym%nwght, KIND=dp)
-               DO isym = 1, kpsym%nwght
+               CPASSERT(SIZE(kpsym%f0, 2) >= kpsym%nwred)
+               CPASSERT(SIZE(kpsym%rot, 3) >= kpsym%nwred)
+               CPASSERT(SIZE(kpsym%rotp) >= kpsym%nwred)
+               star_weight = kpoints%wkp(ik)/REAL(kpsym%nwred, KIND=dp)
+               DO isym = 1, kpsym%nwred
                   ! A negative rotp marks time reversal.  These real nuclear and strain
                   ! derivatives transform with the spatial rotation only: there is no extra sign.
                   DO source_atom = 1, nat
@@ -2184,25 +3011,38 @@ CONTAINS
          !                              overlap, overlap_grad, gradient, sigma, error)
          ! overlap_grad is spin-summed and unweighted; k_gradient/k_sigma are already total
          ! primitive-cell responses and therefore must not receive another k-point weight here.
-         CALL cp2k_exchange_kmesh_gradient(tb%calc, tb%mol, tb%ecache, nmesh, &
-                                           kpoints%xkp(1:3, 1:nkp), kpoints%wkp(1:nkp), &
-                                           density, overlap, overlap_grad, &
+         CALL cp2k_exchange_kmesh_gradient(tb%calc, tb%mol, tb%ecache, kmap%nmesh, &
+                                           kmap%xkp, kmap%weight, density, overlap, overlap_grad_full, &
                                            k_gradient, k_sigma, error)
          IF (ALLOCATED(error)) CPABORT("save_tblite whole-mesh exchange gradient failed")
          gradient = k_gradient
          sigma = k_sigma
       END IF
 
-      IF (.NOT. ALL(ieee_is_finite(REAL(overlap_grad, KIND=dp))) .OR. &
-          .NOT. ALL(ieee_is_finite(AIMAG(overlap_grad))) .OR. &
+      IF (.NOT. ALL(ieee_is_finite(REAL(overlap_grad_full, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(overlap_grad_full))) .OR. &
           .NOT. ALL(ieee_is_finite(k_gradient)) .OR. &
           .NOT. ALL(ieee_is_finite(k_sigma))) &
          CPABORT("save_tblite returned a non-finite exchange gradient")
-      DO ik = 1, nkp
+      DO ik = 1, kmap%nfull
+         hermitian_error = MAXVAL(ABS(overlap_grad_full(:, :, ik) - &
+                                      CONJG(TRANSPOSE(overlap_grad_full(:, :, ik)))))
+         IF (hermitian_error > 1.0E-10_dp) &
+            CPABORT("save_tblite returned a non-Hermitian overlap gradient")
+      END DO
+      IF (.NOT. kmap%identity) &
+         CALL tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, &
+                                             overlap_grad_full, "overlap gradient")
+      CALL tb_fold_gxtb_kpoint_matrix(kpoints, kmap, ao_first, ao_size, &
+                                      overlap_grad_full, overlap_grad)
+      IF (.NOT. kmap%identity) &
+         CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
+                                               overlap_grad_full, overlap_grad, "overlap gradient")
+      DO ik = 1, nred
          hermitian_error = MAXVAL(ABS(overlap_grad(:, :, ik) - &
                                       CONJG(TRANSPOSE(overlap_grad(:, :, ik)))))
          IF (hermitian_error > 1.0E-10_dp) &
-            CPABORT("save_tblite returned a non-Hermitian overlap gradient")
+            CPABORT("Folded g-xTB overlap gradient is not Hermitian")
          IF (use_real_wfn .AND. MAXVAL(ABS(AIMAG(overlap_grad(:, :, ik)))) > 1.0E-10_dp) &
             CPABORT("Complex exchange overlap gradient cannot use real k-point wavefunctions")
 
@@ -2260,8 +3100,8 @@ CONTAINS
             END DO
          END DO
       END DO
-      DEALLOCATE (pmat_ext, density, overlap, overlap_grad, overlap_real, overlap_imag, &
-                  k_gradient, k_sigma)
+      DEALLOCATE (ao_first, ao_size, pmat_ext, density, overlap, overlap_grad, &
+                  overlap_grad_full, overlap_real, overlap_imag, k_gradient, k_sigma)
 
    END SUBROUTINE tb_gxtb_kpoint_exchange_gradient
 
@@ -4949,18 +5789,18 @@ CONTAINS
          translations(:, img) = MATMUL(cell%hmat, REAL(response_index_to_cell(:, img), dp))
       END DO
 
+      CALL tb_gather_gxtb_images(tb, matrix_p, sab_kp, cell_to_index, &
+                                 response_cell_to_index, density_images, para_env)
+      CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, &
+                                 response_cell_to_index, overlap_images, para_env)
+      overlap_gamma = SUM(overlap_images(:, :, :, 1), DIM=3)
+
       IF (ALLOCATED(tb%calc%exchange)) THEN
          ALLOCATE (exchange_gradient(3, tb%mol%nat), exchange_sigma(3, 3))
          CALL tb_gxtb_kpoint_exchange_gradient(qs_env, tb, exchange_gradient, exchange_sigma)
       END IF
-
-      CALL tb_gather_gxtb_images(tb, matrix_p, sab_kp, cell_to_index, &
-                                 response_cell_to_index, density_images, para_env)
       CALL tb_gather_gxtb_images(tb, matrix_w, sab_kp, cell_to_index, &
                                  response_cell_to_index, wdensity_images, para_env)
-      CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, &
-                                 response_cell_to_index, overlap_images, para_env)
-      overlap_gamma = SUM(overlap_images(:, :, :, 1), DIM=3)
 
       CALL cp2k_image_h0_gradient(tb%calc, tb%mol, tb%bcache, tb%wfn_aux, tb%accuracy, &
                                   translations, tb%selfenergy, tb%dsedcn, overlap_gamma, &

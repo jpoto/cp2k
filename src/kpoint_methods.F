@@ -102,7 +102,7 @@ MODULE kpoint_methods
 
    PUBLIC :: kpoint_initialize, kpoint_env_initialize, kpoint_initialize_mos, kpoint_initialize_mo_set
    PUBLIC :: kpoint_init_cell_index, kpoint_set_mo_occupation
-   PUBLIC :: kpoint_density_matrices, kpoint_density_transform
+   PUBLIC :: calibrate_symmetry_phases, kpoint_density_matrices, kpoint_density_transform
    PUBLIC :: rskp_transform, lowdin_kp_trans, lowdin_kp_mo_coeff
 
 ! **************************************************************************************************
@@ -227,7 +227,7 @@ CONTAINS
                kpsym%nwght = NINT(crys_sym%wkpoint(ik))
                ns = kpsym%nwght
                !
-               IF (ns > 1) THEN
+               IF (ns > 0) THEN
                   DO is = 1, SIZE(crys_sym%kplink, 2)
                      IF (crys_sym%kplink(2, is) == ik) THEN
                         DO ic = 1, crys_sym%nrtot
@@ -247,7 +247,7 @@ CONTAINS
                         END DO
                      END IF
                   END DO
-                  kpsym%apply_symmetry = .TRUE.
+                  kpsym%apply_symmetry = kpsym%nwght > 1
                   natom = SIZE(particle_set)
                   ALLOCATE (kpsym%rot(3, 3, ns))
                   ALLOCATE (kpsym%xkp(3, ns))
@@ -452,7 +452,7 @@ CONTAINS
                    crys_sym%istriz == 1 .AND. .NOT. crys_sym%inversion_only) THEN
                   kpsym%nwght = NINT(crys_sym%wkpoint(ik))
                   ns = kpsym%nwght
-                  IF (ns > 1) THEN
+                  IF (ns > 0) THEN
                      DO is = 1, SIZE(crys_sym%kplink, 2)
                         IF (crys_sym%kplink(2, is) == ik) THEN
                            DO ic = 1, crys_sym%nrtot
@@ -472,7 +472,7 @@ CONTAINS
                            END DO
                         END IF
                      END DO
-                     kpsym%apply_symmetry = .TRUE.
+                     kpsym%apply_symmetry = kpsym%nwght > 1
                      ALLOCATE (kpsym%rot(3, 3, ns))
                      ALLOCATE (kpsym%xkp(3, ns))
                      ALLOCATE (kpsym%rotp(ns))
@@ -2136,8 +2136,10 @@ CONTAINS
 !> \param tempmat ...
 !> \param sab_nl ...
 !> \param cell_to_index ...
+!> \param include_inactive also calibrate stored stabilizers that native CP2K does not apply
 ! **************************************************************************************************
-   SUBROUTINE calibrate_symmetry_phases(kpoint, overlap_rs, tempmat, sab_nl, cell_to_index)
+   SUBROUTINE calibrate_symmetry_phases(kpoint, overlap_rs, tempmat, sab_nl, cell_to_index, &
+                                        include_inactive)
 
       TYPE(kpoint_type), POINTER                         :: kpoint
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: overlap_rs
@@ -2145,12 +2147,14 @@ CONTAINS
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      LOGICAL, INTENT(IN), OPTIONAL                      :: include_inactive
 
       CHARACTER(LEN=256)                                 :: phase_error
       INTEGER                                            :: best_gauge, best_mode, gauge, ik, ir, &
                                                             ira, is, jr, mode
       INTEGER, DIMENSION(:, :), POINTER                  :: phase_fcell
-      LOGICAL                                            :: needs_calibration, reverse
+      LOGICAL                                            :: calibrate_inactive, needs_calibration, &
+                                                            reverse
       REAL(KIND=dp)                                      :: best_residual, candidate_norm, &
                                                             direct_norm, overlap_dot, &
                                                             phase_tolerance, relative_residual, &
@@ -2160,10 +2164,12 @@ CONTAINS
       TYPE(kind_rotmat_type), DIMENSION(:), POINTER      :: kind_rot
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
 
+      calibrate_inactive = .FALSE.
+      IF (PRESENT(include_inactive)) calibrate_inactive = include_inactive
       needs_calibration = .FALSE.
       DO ik = 1, kpoint%nkp
          kpsym => kpoint%kp_sym(ik)%kpoint_sym
-         IF (kpsym%apply_symmetry) THEN
+         IF (kpsym%apply_symmetry .OR. (calibrate_inactive .AND. kpsym%nwred > 0)) THEN
             CPASSERT(ASSOCIATED(kpsym%phase_mode))
             CPASSERT(ASSOCIATED(kpsym%phase_gauge))
             IF (ANY(kpsym%phase_mode == 0 .OR. kpsym%phase_gauge == 0)) THEN
@@ -2191,7 +2197,8 @@ CONTAINS
       phase_tolerance = MAX(1.0e-6_dp, 100.0_dp*kpoint%eps_geo)
       DO ik = 1, kpoint%nkp
          kpsym => kpoint%kp_sym(ik)%kpoint_sym
-         IF (.NOT. kpsym%apply_symmetry) CYCLE
+         IF (.NOT. kpsym%apply_symmetry .AND. &
+             .NOT. (calibrate_inactive .AND. kpsym%nwred > 0)) CYCLE
          IF (ALL(kpsym%phase_mode > 0 .AND. kpsym%phase_gauge > 0)) CYCLE
 
          CALL dbcsr_set(source_r, 0.0_dp)
