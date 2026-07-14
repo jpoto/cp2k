@@ -47,6 +47,24 @@ MODULE tblite_types
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'tblite_types'
 
    PUBLIC :: tblite_type, deallocate_tblite_type, allocate_tblite_type
+#if defined(__TBLITE_GXTB)
+   PUBLIC :: tb_gxtb_kmesh_map_type
+
+   TYPE tb_gxtb_kmesh_map_type
+      CHARACTER(LEN=32)                                :: scheme = ""
+      INTEGER                                          :: nfull = 0, nred = 0
+      LOGICAL                                          :: explicit_general = .FALSE.
+      LOGICAL                                          :: full_grid = .FALSE., gamma_centered = .FALSE.
+      LOGICAL                                          :: identity = .FALSE., inversion_only = .FALSE.
+      INTEGER                                          :: symmetry_backend = 0, symmetry_method = 0
+      INTEGER, DIMENSION(3)                            :: nmesh = 1
+      REAL(KIND=dp), DIMENSION(3)                      :: kp_shift = 0.0_dp
+      INTEGER, ALLOCATABLE, DIMENSION(:)               :: op_count, representative, source, symop
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: symops
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)      :: reduced_xkp, xkp
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)         :: reduced_weight, weight, fold_factor
+   END TYPE tb_gxtb_kmesh_map_type
+#endif
 
    TYPE tblite_type
 
@@ -90,15 +108,21 @@ MODULE tblite_types
       TYPE(basis_cache)                                  :: bcache = basis_cache()
       TYPE(acp_cache)                                    :: acache = acp_cache()
       REAL(KIND=dp), ALLOCATABLE                         :: overlap_dense(:, :)
+      TYPE(tb_gxtb_kmesh_map_type), ALLOCATABLE          :: gxtb_kmesh_map
       COMPLEX(KIND=dp), ALLOCATABLE                      :: exchange_fock_kp(:, :, :, :)
       COMPLEX(KIND=dp), ALLOCATABLE                      :: mixed_fock_kp(:, :, :, :)
       COMPLEX(KIND=dp), ALLOCATABLE                      :: previous_density_kp(:, :, :, :)
+      LOGICAL                                            :: gxtb_density_map_validated = .FALSE.
+      LOGICAL                                            :: gxtb_transform_validated = .FALSE.
       LOGICAL                                            :: exchange_fock_kp_valid = .FALSE.
       LOGICAL                                            :: mixed_fock_kp_valid = .FALSE.
       LOGICAL                                            :: previous_density_kp_valid = .FALSE.
       INTEGER                                            :: potential_mixer_dimension = 0
       TYPE(cp2k_potential_mixer_type), ALLOCATABLE       :: potential_mixer
       TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()
+      TYPE(container_cache)                              :: ecache = container_cache()
+      TYPE(container_cache)                              :: rcache = container_cache()
+      TYPE(container_cache)                              :: scache = container_cache()
 #endif
 #if defined(__TBLITE)
       TYPE(structure_type)                               :: mol = structure_type()
@@ -106,11 +130,6 @@ MODULE tblite_types
       TYPE(container_cache)                              :: cache = container_cache()
       TYPE(container_cache)                              :: dcache = container_cache()
       TYPE(container_cache)                              :: icache = container_cache()
-#if defined(__TBLITE_GXTB)
-      TYPE(container_cache)                              :: ecache = container_cache()
-      TYPE(container_cache)                              :: rcache = container_cache()
-      TYPE(container_cache)                              :: scache = container_cache()
-#endif
       TYPE(wavefunction_type)                            :: wfn = wavefunction_type()
       TYPE(potential_type)                               :: pot = potential_type()
       TYPE(cp2k_tblite_broyden_mixer_type), ALLOCATABLE  :: mixer
@@ -164,6 +183,7 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%dcndL)) DEALLOCATE (tb_tblite%dcndL)
 #if defined(__TBLITE_GXTB)
          IF (ALLOCATED(tb_tblite%overlap_dense)) DEALLOCATE (tb_tblite%overlap_dense)
+         IF (ALLOCATED(tb_tblite%gxtb_kmesh_map)) DEALLOCATE (tb_tblite%gxtb_kmesh_map)
          IF (ALLOCATED(tb_tblite%exchange_fock_kp)) DEALLOCATE (tb_tblite%exchange_fock_kp)
          IF (ALLOCATED(tb_tblite%mixed_fock_kp)) DEALLOCATE (tb_tblite%mixed_fock_kp)
          IF (ALLOCATED(tb_tblite%previous_density_kp)) DEALLOCATE (tb_tblite%previous_density_kp)
