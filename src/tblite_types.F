@@ -109,14 +109,18 @@ MODULE tblite_types
       TYPE(acp_cache)                                    :: acache = acp_cache()
       REAL(KIND=dp), ALLOCATABLE                         :: overlap_dense(:, :)
       TYPE(tb_gxtb_kmesh_map_type), ALLOCATABLE          :: gxtb_kmesh_map
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: acp_fock_kp(:, :, :)
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: qualification_acp_fock_full(:, :, :)
       COMPLEX(KIND=dp), ALLOCATABLE                      :: exchange_fock_kp(:, :, :, :)
       COMPLEX(KIND=dp), ALLOCATABLE                      :: mixed_fock_kp(:, :, :, :)
       COMPLEX(KIND=dp), ALLOCATABLE                      :: previous_density_kp(:, :, :, :)
       LOGICAL                                            :: gxtb_density_map_validated = .FALSE.
       LOGICAL                                            :: gxtb_transform_validated = .FALSE.
+      LOGICAL                                            :: acp_fock_kp_valid = .FALSE.
       LOGICAL                                            :: exchange_fock_kp_valid = .FALSE.
       LOGICAL                                            :: mixed_fock_kp_valid = .FALSE.
       LOGICAL                                            :: previous_density_kp_valid = .FALSE.
+      REAL(KIND=dp)                                      :: e_acp_kp = 0.0_dp
       INTEGER                                            :: potential_mixer_dimension = 0
       TYPE(cp2k_potential_mixer_type), ALLOCATABLE       :: potential_mixer
       TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()
@@ -184,9 +188,13 @@ CONTAINS
 #if defined(__TBLITE_GXTB)
          IF (ALLOCATED(tb_tblite%overlap_dense)) DEALLOCATE (tb_tblite%overlap_dense)
          IF (ALLOCATED(tb_tblite%gxtb_kmesh_map)) DEALLOCATE (tb_tblite%gxtb_kmesh_map)
+         IF (ALLOCATED(tb_tblite%acp_fock_kp)) DEALLOCATE (tb_tblite%acp_fock_kp)
+         IF (ALLOCATED(tb_tblite%qualification_acp_fock_full)) &
+            DEALLOCATE (tb_tblite%qualification_acp_fock_full)
          IF (ALLOCATED(tb_tblite%exchange_fock_kp)) DEALLOCATE (tb_tblite%exchange_fock_kp)
          IF (ALLOCATED(tb_tblite%mixed_fock_kp)) DEALLOCATE (tb_tblite%mixed_fock_kp)
          IF (ALLOCATED(tb_tblite%previous_density_kp)) DEALLOCATE (tb_tblite%previous_density_kp)
+         tb_tblite%acp_fock_kp_valid = .FALSE.
          tb_tblite%exchange_fock_kp_valid = .FALSE.
          tb_tblite%mixed_fock_kp_valid = .FALSE.
          tb_tblite%previous_density_kp_valid = .FALSE.

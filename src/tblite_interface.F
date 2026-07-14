@@ -28,13 +28,14 @@ MODULE tblite_interface
 #if defined(__TBLITE_GXTB)
    USE tblite_cp2k_compat, ONLY: get_mixer_dimension => cp2k_get_scc_mixer_dimension, &
                                  acp_image_type, hamiltonian_image_type, &
-                                 cp2k_acp_image_gradient, cp2k_apply_basis_gradient, &
-                                 cp2k_build_gamma_h0, cp2k_build_image_acp, &
+                                 cp2k_acp_kmesh, cp2k_acp_kmesh_gradient, &
+                                 cp2k_apply_basis_gradient, cp2k_build_acp_projectors, &
+                                 cp2k_build_gamma_h0, &
                                  cp2k_build_image_h0, cp2k_exchange_kmesh, &
                                  cp2k_exchange_kmesh_gradient, &
                                  cp2k_exchange_kpoint_gradient, &
                                  cp2k_gamma_gradient, cp2k_image_h0_gradient, &
-                                 cp2k_get_cgto, cp2k_multipole_cgto, &
+                                 cp2k_get_acp_cutoff, cp2k_get_cgto, cp2k_multipole_cgto, &
                                  cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
                                  cp2k_update_basis, new_cp2k_potential_mixer
 #else
@@ -854,6 +855,9 @@ CONTAINS
       energy%dispersion_sc = SUM(tb%e_scd)
       energy%xtb_xb_inter = SUM(tb%e_hal)
       xtb_inter = SUM(tb%e_int) + SUM(tb%e_inc) + SUM(tb%e_exchange) + SUM(tb%e_spin)
+#if defined(__TBLITE_GXTB)
+      xtb_inter = xtb_inter + tb%e_acp_kp
+#endif
 
       energy%total = energy%core + energy%repulsive + energy%el_stat + energy%dispersion &
                      + energy%dispersion_sc + energy%xtb_xb_inter + xtb_inter &
@@ -1007,7 +1011,11 @@ CONTAINS
       CALL process_gto_basis(gto_basis_set, do_ortho, nset, maxl)
 
       !setting additional values in parameter
+#if defined(__TBLITE_GXTB)
+      param%rcut = cp2k_get_acp_cutoff(tb%calc, tb%accuracy)
+#else
       param%rcut = get_cutoff(tb%calc%bas, tb%accuracy)
+#endif
       param%natorb = natorb
       param%lmax = maxl !max angular momentum
 
@@ -1180,7 +1188,7 @@ CONTAINS
          END IF
       END DO
       ALLOCATE (closed_index_to_cell(3, nimg_closed))
-      closed_index_to_cell = image_work(:, 1:nimg_closed)
+      closed_index_to_cell(:, :) = image_work(:, 1:nimg_closed)
       DEALLOCATE (image_work)
 
       ALLOCATE (closed_cell_to_index( &
@@ -1584,8 +1592,13 @@ CONTAINS
       TYPE(tblite_type), INTENT(INOUT)                   :: tb
 
       IF (ALLOCATED(tb%gxtb_kmesh_map)) DEALLOCATE (tb%gxtb_kmesh_map)
+      IF (ALLOCATED(tb%acp_fock_kp)) DEALLOCATE (tb%acp_fock_kp)
+      IF (ALLOCATED(tb%qualification_acp_fock_full)) &
+         DEALLOCATE (tb%qualification_acp_fock_full)
       tb%gxtb_density_map_validated = .FALSE.
       tb%gxtb_transform_validated = .FALSE.
+      tb%acp_fock_kp_valid = .FALSE.
+      tb%e_acp_kp = 0.0_dp
 
    END SUBROUTINE tb_reset_gxtb_kpoint_cache
 
@@ -1797,8 +1810,8 @@ CONTAINS
                 kmap%source(kmap%nfull), kmap%symop(kmap%nfull), &
                 kmap%fold_factor(kmap%nfull), kmap%representative(nred), &
                 kmap%reduced_xkp(3, nred), kmap%reduced_weight(nred), reduced_weight(nred))
-      kmap%reduced_xkp = kpoints%xkp(1:3, 1:nred)
-      kmap%reduced_weight = kpoints%wkp(1:nred)
+      kmap%reduced_xkp(:, :) = kpoints%xkp(1:3, 1:nred)
+      kmap%reduced_weight(:) = kpoints%wkp(1:nred)
 
       IF (explicit_general_mesh) THEN
          IF (SIZE(kpoints%xkp_input, 2) /= kmap%nfull) &
@@ -2282,7 +2295,7 @@ CONTAINS
       symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
       DO ikred = 1, kpoints%nkp
          irepresentative = kmap%representative(ikred)
-         representative_density = density_full(:, :, :, irepresentative)
+         representative_density(:, :, :) = density_full(:, :, :, irepresentative)
          DO ifull = 1, kmap%nfull
             IF (kmap%source(ifull) /= ikred) CYCLE
             DO ispin = 1, SIZE(density_full, 3)
@@ -2370,6 +2383,60 @@ CONTAINS
    END SUBROUTINE tb_fold_gxtb_kpoint_matrix
 
 ! **************************************************************************************************
+!> \brief Independently test the weighted variational duality of full and folded responses.
+!>
+!> This scalar check deliberately does not call the folding helper.  It contracts the current
+!> irreducible density and its separately expanded complete-mesh image with the two response
+!> representations, so that star weights, adjoints, and antiunitary operations are all tested.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param density_full ...
+!> \param density_reduced ...
+!> \param response_full ...
+!> \param response_reduced ...
+!> \param full_contraction ...
+!> \param reduced_contraction ...
+!> \param relative_residual ...
+! **************************************************************************************************
+   SUBROUTINE tb_qualification_gxtb_duality(kpoints, kmap, density_full, density_reduced, &
+                                             response_full, response_reduced, full_contraction, &
+                                             reduced_contraction, relative_residual)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: density_full, density_reduced, &
+                                                             response_full, response_reduced
+      REAL(KIND=dp), INTENT(OUT)                         :: full_contraction, reduced_contraction, &
+                                                             relative_residual
+
+      INTEGER                                            :: ifull, ikred
+      REAL(KIND=dp)                                      :: scale
+
+      CPASSERT(SIZE(density_full, 3) == kmap%nfull)
+      CPASSERT(SIZE(response_full, 3) == kmap%nfull)
+      CPASSERT(SIZE(density_reduced, 3) == kmap%nred)
+      CPASSERT(SIZE(response_reduced, 3) == kmap%nred)
+      CPASSERT(ALL(SHAPE(density_full) == SHAPE(response_full)))
+      CPASSERT(ALL(SHAPE(density_reduced) == SHAPE(response_reduced)))
+
+      full_contraction = 0.0_dp
+      DO ifull = 1, kmap%nfull
+         full_contraction = full_contraction + kmap%weight(ifull)* &
+                            REAL(SUM(CONJG(density_full(:, :, ifull))* &
+                                     response_full(:, :, ifull)), KIND=dp)
+      END DO
+      reduced_contraction = 0.0_dp
+      DO ikred = 1, kmap%nred
+         reduced_contraction = reduced_contraction + kpoints%wkp(ikred)* &
+                               REAL(SUM(CONJG(density_reduced(:, :, ikred))* &
+                                        response_reduced(:, :, ikred)), KIND=dp)
+      END DO
+      scale = MAX(1.0E-30_dp, ABS(full_contraction), ABS(reduced_contraction))
+      relative_residual = ABS(full_contraction - reduced_contraction)/scale
+
+   END SUBROUTINE tb_qualification_gxtb_duality
+
+! **************************************************************************************************
 !> \brief Validate the dense symmetry transform against direct CP2K overlap matrices.
 !>
 !> Besides checking S(k_full)=T[S(k_irred)], this verifies the real adjoint used for antiunitary
@@ -2443,13 +2510,14 @@ CONTAINS
 !> \param full ...
 !> \param label ...
 ! **************************************************************************************************
-   SUBROUTINE tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, full, label)
+   SUBROUTINE tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, full, label, max_residual)
 
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
       INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
       COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: full
       CHARACTER(LEN=*), INTENT(IN)                       :: label
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: max_residual
 
       CHARACTER(LEN=256)                                 :: error_message
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: transformed
@@ -2459,6 +2527,7 @@ CONTAINS
       CPASSERT(SIZE(full, 3) == kmap%nfull)
       ALLOCATE (transformed(SIZE(full, 1), SIZE(full, 2)))
       symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
+      IF (PRESENT(max_residual)) max_residual = 0.0_dp
       DO ifull = 1, kmap%nfull
          source = kmap%source(ifull)
          irepresentative = kmap%representative(source)
@@ -2470,6 +2539,7 @@ CONTAINS
                                                  transformed, .FALSE.)
             scale = MAX(1.0_dp, MAXVAL(ABS(full(:, :, ifull))))
             residual = MAXVAL(ABS(transformed - full(:, :, ifull)))/scale
+            IF (PRESENT(max_residual)) max_residual = MAX(max_residual, residual)
             IF (residual > symmetry_tolerance) THEN
                WRITE (error_message, '(A,A,A,I0,A,I0,A,I0,A,I0,A,ES12.4)') &
                   "Complete-mesh g-xTB ", TRIM(label), " violates CP2K symmetry at full k-point ", &
@@ -2493,13 +2563,15 @@ CONTAINS
 !> \param reduced ...
 !> \param label ...
 ! **************************************************************************************************
-   SUBROUTINE tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, full, reduced, label)
+   SUBROUTINE tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, full, reduced, label, &
+                                                max_residual)
 
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
       INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
       COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: full, reduced
       CHARACTER(LEN=*), INTENT(IN)                       :: label
+      REAL(KIND=dp), INTENT(OUT), OPTIONAL               :: max_residual
 
       CHARACTER(LEN=256)                                 :: error_message
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: transformed
@@ -2510,6 +2582,7 @@ CONTAINS
       CPASSERT(SIZE(reduced, 3) == kpoints%nkp)
       ALLOCATE (transformed(SIZE(full, 1), SIZE(full, 2)))
       symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
+      IF (PRESENT(max_residual)) max_residual = 0.0_dp
       DO ifull = 1, kmap%nfull
          source = kmap%source(ifull)
          DO iop = 1, kmap%op_count(ifull)
@@ -2518,6 +2591,7 @@ CONTAINS
                                                  transformed, .FALSE.)
             scale = MAX(1.0_dp, MAXVAL(ABS(full(:, :, ifull))))
             residual = MAXVAL(ABS(transformed - full(:, :, ifull)))/scale
+            IF (PRESENT(max_residual)) max_residual = MAX(max_residual, residual)
             IF (residual > symmetry_tolerance) THEN
                WRITE (error_message, '(A,A,A,I0,A,I0,A,I0,A,ES12.4)') &
                   "Folded g-xTB ", TRIM(label), " violates CP2K symmetry at full k-point ", &
@@ -2530,6 +2604,46 @@ CONTAINS
       DEALLOCATE (transformed)
 
    END SUBROUTINE tb_validate_gxtb_folded_response
+
+! **************************************************************************************************
+!> \brief Project irreducible Hermitian responses into their CP2K little-group invariant spaces.
+!>
+!> A symmetry-reduced SCF represents every star by one matrix.  Numerical diagonalization can
+!> introduce a small component that is not invariant under operations which leave that
+!> representative k point fixed.  Such a component is outside the physical reduced variational
+!> space and must not enter the model-native Fock-DIIS history.  Averaging the already calibrated
+!> CP2K AO transforms is the real-orthogonal projector for unitary and antiunitary operations.
+! **************************************************************************************************
+   SUBROUTINE tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, reduced)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT):: reduced
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: projected, source, transformed
+      INTEGER                                            :: ifull, ikred, iop
+
+      CPASSERT(SIZE(reduced, 3) == kpoints%nkp)
+      ALLOCATE (projected(SIZE(reduced, 1), SIZE(reduced, 2)), &
+                source(SIZE(reduced, 1), SIZE(reduced, 2)), &
+                transformed(SIZE(reduced, 1), SIZE(reduced, 2)))
+      DO ikred = 1, kpoints%nkp
+         ifull = kmap%representative(ikred)
+         CPASSERT(ifull >= 1 .AND. ifull <= kmap%nfull)
+         source(:, :) = reduced(:, :, ikred)
+         projected = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+         DO iop = 1, kmap%op_count(ifull)
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, ikred, &
+                                                 kmap%symops(iop, ifull), ao_first, ao_size, &
+                                                 source, transformed, .FALSE.)
+            projected(:, :) = projected + transformed/REAL(kmap%op_count(ifull), KIND=dp)
+         END DO
+         reduced(:, :, ikred) = 0.5_dp*(projected + CONJG(TRANSPOSE(projected)))
+      END DO
+      DEALLOCATE (projected, source, transformed)
+
+   END SUBROUTINE tb_project_gxtb_reduced_response
 
 ! **************************************************************************************************
 !> \brief ...
@@ -2577,9 +2691,9 @@ CONTAINS
             CPABORT("CP2K supplied a non-symmetric Gamma Fock matrix to the g-xTB mixer")
       END DO
 
-      raw_vector = RESHAPE(raw_fock, [ndim])
+      raw_vector(:) = RESHAPE(raw_fock, [ndim])
       CALL tb_advance_gxtb_potential_mixer(tb, raw_vector, mixed_vector, scf_env%iter_count)
-      mixed_fock = RESHAPE(mixed_vector, SHAPE(mixed_fock))
+      mixed_fock(:, :, :) = RESHAPE(mixed_vector, SHAPE(mixed_fock))
       DO ispin = 1, nspin
          hermitian_error = MAXVAL(ABS(mixed_fock(:, :, ispin) - &
                                       TRANSPOSE(mixed_fock(:, :, ispin))))
@@ -2607,10 +2721,11 @@ CONTAINS
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
 
       COMPLEX(KIND=dp), ALLOCATABLE, &
-         DIMENSION(:, :, :, :)                           :: raw_fock
+         DIMENSION(:, :, :, :)                           :: mixed_fock_full, raw_fock
       INTEGER                                            :: block_size, ik, ispin, nao, nc, ndim, &
                                                             nkp, nspin, offset
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       LOGICAL                                            :: use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error, scale
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: mixed_vector, raw_vector
@@ -2620,9 +2735,10 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
+      TYPE(tb_gxtb_kmesh_map_type), POINTER              :: kmap
       TYPE(tblite_type), POINTER                         :: tb
 
-      NULLIFY (cell_to_index, cmatrix, dft_control, para_env, rmatrix, sab_nl, tb)
+      NULLIFY (cell_to_index, cmatrix, dft_control, kmap, para_env, rmatrix, sab_nl, tb)
       IF (.NOT. ASSOCIATED(qs_env) .OR. .NOT. ASSOCIATED(kpoints) .OR. &
           .NOT. ASSOCIATED(scf_env)) RETURN
       CALL get_qs_env(qs_env, dft_control=dft_control)
@@ -2650,7 +2766,8 @@ CONTAINS
       END IF
       IF (ALLOCATED(tb%calc%exchange) .AND. .NOT. tb%exchange_fock_kp_valid) &
          CPABORT("Missing g-xTB exchange Fock matrices before potential mixing")
-
+      IF (ALLOCATED(tb%calc%acp) .AND. .NOT. tb%acp_fock_kp_valid) &
+         CPABORT("Missing direct k-space ACP matrices before potential mixing")
       nao = tb%calc%bas%nao
       nspin = SIZE(matrix_ks, 1)
       CPASSERT(nspin == tb%wfn%nspin)
@@ -2683,6 +2800,9 @@ CONTAINS
                CALL tb_dbcsr_component_to_dense(tb, cmatrix, fock_imag, para_env, .TRUE.)
             END IF
             raw_fock(:, :, ispin, ik) = CMPLX(fock_real, fock_imag, KIND=dp)
+            IF (tb%acp_fock_kp_valid) &
+               raw_fock(:, :, ispin, ik) = raw_fock(:, :, ispin, ik) + &
+                                           tb%acp_fock_kp(:, :, ik)
             IF (tb%exchange_fock_kp_valid) &
                raw_fock(:, :, ispin, ik) = raw_fock(:, :, ispin, ik) + &
                                            tb%exchange_fock_kp(:, :, ispin, ik)
@@ -2694,6 +2814,17 @@ CONTAINS
       END DO
       CALL dbcsr_deallocate_matrix(rmatrix)
       CALL dbcsr_deallocate_matrix(cmatrix)
+
+      IF (.NOT. ALLOCATED(tb%gxtb_kmesh_map)) &
+         CPABORT("Missing complete g-xTB k-mesh map before potential mixing")
+      kmap => tb%gxtb_kmesh_map
+      IF (.NOT. kmap%identity) THEN
+         CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
+         DO ispin = 1, nspin
+            CALL tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, &
+                                                   raw_fock(:, :, ispin, :))
+         END DO
+      END IF
 
       offset = 0
       DO ik = 1, nkp
@@ -2719,14 +2850,14 @@ CONTAINS
       DO ik = 1, nkp
          scale = SQRT(REAL(nkp*nc, KIND=dp)*kpoints%wkp(ik))
          DO ispin = 1, nspin
-            fock_real = RESHAPE(mixed_vector(offset + 1:offset + block_size)/scale, &
-                                SHAPE(fock_real))
+            fock_real(:, :) = RESHAPE(mixed_vector(offset + 1:offset + block_size)/scale, &
+                                      SHAPE(fock_real))
             offset = offset + block_size
             IF (use_real_wfn) THEN
                fock_imag = 0.0_dp
             ELSE
-               fock_imag = RESHAPE(mixed_vector(offset + 1:offset + block_size)/scale, &
-                                   SHAPE(fock_imag))
+               fock_imag(:, :) = RESHAPE(mixed_vector(offset + 1:offset + block_size)/scale, &
+                                         SHAPE(fock_imag))
                offset = offset + block_size
             END IF
             tb%mixed_fock_kp(:, :, ispin, ik) = CMPLX(fock_real, fock_imag, KIND=dp)
@@ -2737,6 +2868,27 @@ CONTAINS
          END DO
       END DO
       CPASSERT(offset == ndim)
+      IF (.NOT. kmap%identity) THEN
+         DO ispin = 1, nspin
+            CALL tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, &
+                                                   tb%mixed_fock_kp(:, :, ispin, :))
+         END DO
+         ALLOCATE (mixed_fock_full(nao, nao, nspin, kmap%nfull), &
+                   source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+         DO ik = 1, nkp
+            mixed_fock_full(:, :, :, kmap%representative(ik)) = &
+               tb%mixed_fock_kp(:, :, :, ik)
+         END DO
+         CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
+                                             mixed_fock_full, .FALSE.)
+         DO ispin = 1, nspin
+            CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
+                                                  mixed_fock_full(:, :, ispin, :), &
+                                                  tb%mixed_fock_kp(:, :, ispin, :), &
+                                                  "mixed total Fock")
+         END DO
+         DEALLOCATE (mixed_fock_full, ao_first, ao_size)
+      END IF
       tb%mixed_fock_kp_valid = .TRUE.
       DEALLOCATE (raw_fock, fock_real, fock_imag, raw_vector, mixed_vector)
 
@@ -2794,7 +2946,8 @@ CONTAINS
       IF (diis_step .OR. scf_env%iter_count < scf_env%mixing_store%nskip_mixing) alpha = 1.0_dp
       IF (alpha < 0.0_dp .OR. alpha > 1.0_dp) &
          CPABORT("g-xTB k-point DIRECT_P mixing requires 0 <= ALPHA <= 1")
-      mixed_density = alpha*current_density + (1.0_dp - alpha)*tb%previous_density_kp
+      mixed_density(:, :, :, :) = &
+         alpha*current_density + (1.0_dp - alpha)*tb%previous_density_kp
       IF (.NOT. ALL(ieee_is_finite(REAL(mixed_density, KIND=dp))) .OR. &
           .NOT. ALL(ieee_is_finite(AIMAG(mixed_density)))) &
          CPABORT("CP2K g-xTB k-point density mixing produced a non-finite P(k)")
@@ -2819,11 +2972,148 @@ CONTAINS
          END DO
       END DO
 
-      tb%previous_density_kp = mixed_density
+      tb%previous_density_kp(:, :, :, :) = mixed_density(:, :, :, :)
       tb%previous_density_kp_valid = .FALSE.
       DEALLOCATE (current_density, mixed_density)
 
    END SUBROUTINE tb_sync_gxtb_kpoint_density
+
+! **************************************************************************************************
+!> \brief Build the geometry-static separable ACP directly on the complete k mesh.
+!> \param qs_env ...
+!> \param tb ...
+!> \param matrix_s ...
+!> \param sab_nl ...
+!> \param cell_to_index ...
+!> \param projectors compact save_tblite projector images (no H(R) difference set)
+!>
+!> The full-mesh Bloch operator is folded with the real adjoint of CP2K's density expansion.
+!> It is therefore an unweighted irreducible-k response and can be added directly to every spin
+!> Fock matrix.  No Born-von-Karman modulo folding or real-space image truncation is involved.
+! **************************************************************************************************
+   SUBROUTINE tb_build_gxtb_kpoint_acp(qs_env, tb, matrix_s, sab_nl, &
+                                        cell_to_index, projectors)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(tblite_type), POINTER                         :: tb
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_nl
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      TYPE(acp_image_type), INTENT(IN)                   :: projectors
+
+      CHARACTER(LEN=32)                                  :: qualification_value
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: acp_full
+      INTEGER                                            :: ik, nao, nred, qualification_status
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
+      LOGICAL                                            :: use_real_wfn
+      REAL(KIND=dp)                                      :: hermitian_error
+      TYPE(error_type), ALLOCATABLE                      :: error
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), POINTER              :: kmap
+
+      NULLIFY (kmap, kpoints)
+      tb%acp_fock_kp_valid = .FALSE.
+      tb%e_acp_kp = 0.0_dp
+      IF (ALLOCATED(tb%acp_fock_kp)) DEALLOCATE (tb%acp_fock_kp)
+      CALL get_qs_env(qs_env, kpoints=kpoints)
+      CPASSERT(ASSOCIATED(kpoints))
+      CALL get_kpoint_info(kpoints, nkp=nred, use_real_wfn=use_real_wfn)
+      CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_nl, cell_to_index)
+      kmap => tb%gxtb_kmesh_map
+      nao = tb%calc%bas%nao
+      CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
+      ALLOCATE (acp_full(nao, nao, kmap%nfull), &
+                tb%acp_fock_kp(nao, nao, nred), &
+                source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+
+      CALL cp2k_acp_kmesh(tb%calc, tb%mol, projectors, kmap%xkp, acp_full, error)
+      IF (ALLOCATED(error)) &
+         CPABORT("save_tblite direct k-space ACP evaluation failed: "//TRIM(error%message))
+      IF (.NOT. ALL(ieee_is_finite(REAL(acp_full, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(acp_full)))) &
+         CPABORT("save_tblite returned a non-finite k-space ACP matrix")
+      DO ik = 1, kmap%nfull
+         hermitian_error = MAXVAL(ABS(acp_full(:, :, ik) - &
+                                      CONJG(TRANSPOSE(acp_full(:, :, ik)))))
+         IF (hermitian_error > 1.0E-10_dp) &
+            CPABORT("save_tblite returned a non-Hermitian k-space ACP matrix")
+      END DO
+
+      IF (.NOT. kmap%identity) &
+         CALL tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, &
+                                             acp_full, "ACP")
+      CALL tb_fold_gxtb_kpoint_matrix(kpoints, kmap, ao_first, ao_size, &
+                                      acp_full, tb%acp_fock_kp)
+      IF (.NOT. kmap%identity) &
+         CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
+                                               acp_full, tb%acp_fock_kp, "ACP")
+      qualification_value = ""
+      qualification_status = 1
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION", &
+                                    qualification_value, STATUS=qualification_status)
+      IF (ALLOCATED(tb%qualification_acp_fock_full)) &
+         DEALLOCATE (tb%qualification_acp_fock_full)
+      IF (qualification_status == 0) THEN
+         ALLOCATE (tb%qualification_acp_fock_full(nao, nao, kmap%nfull))
+         tb%qualification_acp_fock_full(:, :, :) = acp_full(:, :, :)
+      END IF
+      DO ik = 1, nred
+         hermitian_error = MAXVAL(ABS(tb%acp_fock_kp(:, :, ik) - &
+                                      CONJG(TRANSPOSE(tb%acp_fock_kp(:, :, ik)))))
+         IF (hermitian_error > 1.0E-10_dp) &
+            CPABORT("Folded g-xTB ACP matrix is not Hermitian")
+         IF (use_real_wfn .AND. MAXVAL(ABS(AIMAG(tb%acp_fock_kp(:, :, ik)))) > 1.0E-10_dp) &
+            CPABORT("Complex g-xTB ACP requires complex k-point wavefunctions")
+      END DO
+      tb%acp_fock_kp_valid = .TRUE.
+      DEALLOCATE (acp_full, ao_first, ao_size)
+
+   END SUBROUTINE tb_build_gxtb_kpoint_acp
+
+! **************************************************************************************************
+!> \brief Contract the current irreducible density with the folded k-space ACP.
+!> \param qs_env ...
+!> \param tb ...
+!> \param kpoints ...
+!>
+!> The usual real-space core-energy contraction no longer contains ACP once H(R) scattering is
+!> removed.  This exact Bloch contraction restores that one-electron energy without changing the
+!> Fock operator or applying a mesh weight twice.
+! **************************************************************************************************
+   SUBROUTINE tb_update_gxtb_kpoint_acp_energy(qs_env, tb, kpoints)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(tblite_type), POINTER                         :: tb
+      TYPE(kpoint_type), POINTER                         :: kpoints
+
+      COMPLEX(KIND=dp), ALLOCATABLE, &
+         DIMENSION(:, :, :, :)                           :: density
+      INTEGER                                            :: ik, ispin, nao, nkp, nspin
+
+      IF (.NOT. tb%acp_fock_kp_valid .OR. .NOT. ALLOCATED(tb%acp_fock_kp)) &
+         CPABORT("Missing direct k-space ACP before its energy contraction")
+      CALL get_kpoint_info(kpoints, nkp=nkp)
+      nao = tb%calc%bas%nao
+      nspin = tb%wfn%nspin
+      CPASSERT(ALL(SHAPE(tb%acp_fock_kp) == [nao, nao, nkp]))
+      ALLOCATE (density(nao, nao, nspin, nkp))
+      CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+      IF (.NOT. ALL(ieee_is_finite(REAL(density, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(density)))) &
+         CPABORT("CP2K supplied a non-finite density to the k-space ACP energy")
+      tb%e_acp_kp = 0.0_dp
+      DO ik = 1, nkp
+         DO ispin = 1, nspin
+            tb%e_acp_kp = tb%e_acp_kp + kpoints%wkp(ik)* &
+               REAL(SUM(CONJG(density(:, :, ispin, ik))*tb%acp_fock_kp(:, :, ik)), KIND=dp)
+         END DO
+      END DO
+      IF (.NOT. ieee_is_finite(tb%e_acp_kp)) &
+         CPABORT("Non-finite direct k-space ACP energy")
+      DEALLOCATE (density)
+
+   END SUBROUTINE tb_update_gxtb_kpoint_acp_energy
 
 ! **************************************************************************************************
 !> \brief ...
@@ -2833,23 +3123,42 @@ CONTAINS
 !> \param para_env ...
 !> Build g-xTB exchange from the complete regular mesh represented by CP2K's k-points.
 ! **************************************************************************************************
-   SUBROUTINE tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env)
+   SUBROUTINE tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env, iter_count)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(tblite_type), POINTER                         :: tb
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
       TYPE(mp_para_env_type), POINTER                    :: para_env
+      INTEGER, INTENT(IN)                                :: iter_count
 
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap
+      CHARACTER(LEN=32)                                  :: qualification_value
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap, overlap_oracle
       COMPLEX(KIND=dp), ALLOCATABLE, &
-         DIMENSION(:, :, :, :)                           :: density, exchange_fock_full
-      INTEGER                                            :: ik, ispin, nao, nred, nspin
+         DIMENSION(:, :, :, :)                           :: density, density_oracle, density_reduced, &
+                                                            exchange_fock_full, &
+                                                            exchange_fock_oracle, exchange_fock_unpermuted, &
+                                                            folded_fock_oracle
+      INTEGER                                            :: ik, ispin, nao, nred, nspin, qualification_iteration, &
+                                                            qualification_status, source_index
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: use_real_wfn, validate_density
-      REAL(KIND=dp)                                      :: exchange_energy, hermitian_error
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh
+      LOGICAL                                            :: run_qualification_duality, run_qualification_oracle, &
+                                                            use_real_wfn, validate_density
+      REAL(KIND=dp)                                      :: acp_duality_full, acp_duality_reduced, &
+                                                            acp_duality_relative, acp_duality_total_full, &
+                                                            acp_duality_total_reduced, duality_tolerance, &
+                                                            exchange_duality_full, exchange_duality_reduced, &
+                                                            exchange_duality_relative, exchange_duality_total_full, &
+                                                            exchange_duality_total_reduced, exchange_energy, &
+                                                            exchange_energy_oracle, hermitian_error, &
+                                                            oracle_energy_delta, oracle_fold_abs, oracle_fold_rel, &
+                                                            oracle_full_abs, oracle_full_rel, oracle_scale, &
+                                                            oracle_sym_fold, oracle_sym_full, oracle_tolerance, &
+                                                            oracle_vsh_delta, primary_sym_fold, primary_sym_full, &
+                                                            symmetry_residual
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh, exchange_vsh_oracle, weight_oracle
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_part
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: xkp_oracle
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(error_type), ALLOCATABLE                      :: error
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -2866,6 +3175,17 @@ CONTAINS
          CPABORT("Incomplete CP2K image map for g-xTB exchange")
       CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_nl, cell_to_index)
       kmap => tb%gxtb_kmesh_map
+      qualification_iteration = -1
+      qualification_status = 1
+      qualification_value = ""
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION", &
+                                    qualification_value, STATUS=qualification_status)
+      IF (qualification_status == 0) &
+         READ (qualification_value, *, IOSTAT=qualification_status) qualification_iteration
+      run_qualification_oracle = qualification_status == 0 .AND. &
+                                 qualification_iteration == iter_count
+      IF (run_qualification_oracle .AND. kmap%identity) &
+         CPABORT("QUALIFICATION_ONLY full-mesh oracle requires a symmetry-reduced k-point input")
       tb%exchange_fock_kp_valid = .FALSE.
       tb%mixed_fock_kp_valid = .FALSE.
       IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
@@ -2878,6 +3198,7 @@ CONTAINS
                 exchange_fock_full(nao, nao, nspin, kmap%nfull), &
                 overlap_part(nao, nao), &
                 exchange_vsh(tb%calc%bas%nsh))
+      IF (run_qualification_oracle) ALLOCATE (density_reduced(nao, nao, nspin, nred))
       ! Before the first diagonalization of a freshly initialized k-point SCF (including an
       ! RS-only restart), CP2K has no P(k) yet.  The zero pmat is a deliberate initial Hamiltonian;
       ! every subsequent SCC step uses the exact P(k) produced by the preceding diagonalization,
@@ -2886,6 +3207,11 @@ CONTAINS
          CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
       ELSE
          CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density, kmap%representative)
+         IF (run_qualification_oracle) THEN
+            DO ik = 1, nred
+               density_reduced(:, :, :, ik) = density(:, :, :, kmap%representative(ik))
+            END DO
+         END IF
          validate_density = .NOT. tb%gxtb_density_map_validated .AND. &
                             MAXVAL(ABS(density)) > 1.0E-14_dp
          CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, density, &
@@ -2945,7 +3271,6 @@ CONTAINS
                                kmap%xkp, kmap%weight, density, overlap, exchange_fock_full, exchange_vsh, &
                                exchange_energy, error)
       IF (ALLOCATED(error)) CPABORT("save_tblite whole-mesh exchange evaluation failed")
-      DEALLOCATE (density)
       IF (.NOT. ALL(ieee_is_finite(REAL(exchange_fock_full, KIND=dp))) .OR. &
           .NOT. ALL(ieee_is_finite(AIMAG(exchange_fock_full)))) &
          CPABORT("save_tblite returned a non-finite whole-mesh exchange matrix")
@@ -2962,17 +3287,25 @@ CONTAINS
       END DO
       ALLOCATE (tb%exchange_fock_kp(nao, nao, nspin, nred), &
                 source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+      primary_sym_full = 0.0_dp
+      primary_sym_fold = 0.0_dp
       DO ispin = 1, nspin
-         IF (.NOT. kmap%identity) &
+         IF (.NOT. kmap%identity) THEN
             CALL tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, &
-                                                exchange_fock_full(:, :, ispin, :), "Fock")
+                                                exchange_fock_full(:, :, ispin, :), "Fock", &
+                                                symmetry_residual)
+            primary_sym_full = MAX(primary_sym_full, symmetry_residual)
+         END IF
          CALL tb_fold_gxtb_kpoint_matrix(kpoints, kmap, ao_first, ao_size, &
                                          exchange_fock_full(:, :, ispin, :), &
                                          tb%exchange_fock_kp(:, :, ispin, :))
-         IF (.NOT. kmap%identity) &
+         IF (.NOT. kmap%identity) THEN
             CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
                                                   exchange_fock_full(:, :, ispin, :), &
-                                                  tb%exchange_fock_kp(:, :, ispin, :), "Fock")
+                                                  tb%exchange_fock_kp(:, :, ispin, :), "Fock", &
+                                                  symmetry_residual)
+            primary_sym_fold = MAX(primary_sym_fold, symmetry_residual)
+         END IF
       END DO
       DO ik = 1, nred
          DO ispin = 1, nspin
@@ -2986,13 +3319,152 @@ CONTAINS
             CPABORT("Complex g-xTB exchange cannot be represented by real k-point wavefunctions")
       END DO
 
+      run_qualification_duality = .FALSE.
+      IF (run_qualification_oracle) &
+         run_qualification_duality = MAXVAL(ABS(density_reduced)) > 1.0E-14_dp
+      IF (run_qualification_duality) THEN
+         IF (.NOT. ALLOCATED(tb%qualification_acp_fock_full) .OR. &
+             .NOT. ALLOCATED(tb%acp_fock_kp)) &
+            CPABORT("QUALIFICATION_ONLY duality requires full and folded direct k-space ACP")
+         CPASSERT(ALL(SHAPE(tb%qualification_acp_fock_full) == [nao, nao, kmap%nfull]))
+         CPASSERT(ALL(SHAPE(tb%acp_fock_kp) == [nao, nao, nred]))
+         duality_tolerance = 1.0E-10_dp
+         exchange_duality_total_full = 0.0_dp
+         exchange_duality_total_reduced = 0.0_dp
+         acp_duality_total_full = 0.0_dp
+         acp_duality_total_reduced = 0.0_dp
+         DO ispin = 1, nspin
+            CALL tb_qualification_gxtb_duality(kpoints, kmap, density(:, :, ispin, :), &
+                                                density_reduced(:, :, ispin, :), &
+                                                exchange_fock_full(:, :, ispin, :), &
+                                                tb%exchange_fock_kp(:, :, ispin, :), &
+                                                exchange_duality_full, exchange_duality_reduced, &
+                                                exchange_duality_relative)
+            CALL tb_qualification_gxtb_duality(kpoints, kmap, density(:, :, ispin, :), &
+                                                density_reduced(:, :, ispin, :), &
+                                                tb%qualification_acp_fock_full, tb%acp_fock_kp, &
+                                                acp_duality_full, acp_duality_reduced, &
+                                                acp_duality_relative)
+            exchange_duality_total_full = exchange_duality_total_full + exchange_duality_full
+            exchange_duality_total_reduced = exchange_duality_total_reduced + &
+                                             exchange_duality_reduced
+            acp_duality_total_full = acp_duality_total_full + acp_duality_full
+            acp_duality_total_reduced = acp_duality_total_reduced + acp_duality_reduced
+            IF (para_env%is_source()) THEN
+               WRITE (*, '(A,I0,A,I0,6(A,ES14.6))') &
+                  " GXTB-QUALIFICATION_ONLY DUALITY iter=", iter_count, " spin=", ispin, &
+                  " exFull=", exchange_duality_full, " exRed=", exchange_duality_reduced, &
+                  " exRel=", exchange_duality_relative, " acpFull=", acp_duality_full, &
+                  " acpRed=", acp_duality_reduced, " acpRel=", acp_duality_relative
+            END IF
+            IF (exchange_duality_relative > duality_tolerance .OR. &
+                acp_duality_relative > duality_tolerance) &
+               CPABORT("QUALIFICATION_ONLY spin-resolved full/reduced duality exceeded 1.0E-10")
+         END DO
+         exchange_duality_relative = ABS(exchange_duality_total_full - &
+                                          exchange_duality_total_reduced)/ &
+                                      MAX(1.0E-30_dp, ABS(exchange_duality_total_full), &
+                                          ABS(exchange_duality_total_reduced))
+         acp_duality_relative = ABS(acp_duality_total_full - acp_duality_total_reduced)/ &
+                                MAX(1.0E-30_dp, ABS(acp_duality_total_full), &
+                                    ABS(acp_duality_total_reduced))
+         IF (para_env%is_source()) THEN
+            WRITE (*, '(A,I0,A,6(A,ES14.6))') &
+               " GXTB-QUALIFICATION_ONLY DUALITY iter=", iter_count, " total", &
+               " exFull=", exchange_duality_total_full, &
+               " exRed=", exchange_duality_total_reduced, &
+               " exRel=", exchange_duality_relative, " acpFull=", acp_duality_total_full, &
+               " acpRed=", acp_duality_total_reduced, " acpRel=", acp_duality_relative
+         END IF
+         IF (exchange_duality_relative > duality_tolerance .OR. &
+             acp_duality_relative > duality_tolerance) &
+            CPABORT("QUALIFICATION_ONLY total full/reduced duality exceeded 1.0E-10")
+      END IF
+
+      ! QUALIFICATION_ONLY: this is deliberately dormant unless an exact SCC iteration is named
+      ! through the environment.  It re-evaluates the already star-expanded density on a reversed
+      ! complete mesh, restores the original ordering, folds independently, and applies strict
+      ! numerical gates.  Production calculations must never set this variable; the hook is
+      ! removed again after qualification artifacts have been frozen.
+      IF (run_qualification_oracle) THEN
+         ALLOCATE (density_oracle(nao, nao, nspin, kmap%nfull), &
+                   overlap_oracle(nao, nao, kmap%nfull), &
+                   exchange_fock_oracle(nao, nao, nspin, kmap%nfull), &
+                   exchange_fock_unpermuted(nao, nao, nspin, kmap%nfull), &
+                   folded_fock_oracle(nao, nao, nspin, nred), &
+                   exchange_vsh_oracle(SIZE(exchange_vsh)), &
+                   weight_oracle(kmap%nfull), xkp_oracle(3, kmap%nfull))
+         DO ik = 1, kmap%nfull
+            source_index = kmap%nfull + 1 - ik
+            density_oracle(:, :, :, ik) = density(:, :, :, source_index)
+            overlap_oracle(:, :, ik) = overlap(:, :, source_index)
+            weight_oracle(ik) = kmap%weight(source_index)
+            xkp_oracle(:, ik) = kmap%xkp(:, source_index)
+         END DO
+         CALL cp2k_exchange_kmesh(tb%calc, tb%mol, tb%ecache, tb%wfn, kmap%nmesh, &
+                                  xkp_oracle, weight_oracle, density_oracle, overlap_oracle, &
+                                  exchange_fock_oracle, exchange_vsh_oracle, &
+                                  exchange_energy_oracle, error)
+         IF (ALLOCATED(error)) &
+            CPABORT("QUALIFICATION_ONLY permuted full-mesh exchange evaluation failed")
+         DO ik = 1, kmap%nfull
+            source_index = kmap%nfull + 1 - ik
+            exchange_fock_unpermuted(:, :, :, source_index) = exchange_fock_oracle(:, :, :, ik)
+         END DO
+         folded_fock_oracle = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+         oracle_sym_full = 0.0_dp
+         oracle_sym_fold = 0.0_dp
+         DO ispin = 1, nspin
+            CALL tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, &
+                                                exchange_fock_unpermuted(:, :, ispin, :), &
+                                                "QUALIFICATION_ONLY oracle Fock", symmetry_residual)
+            oracle_sym_full = MAX(oracle_sym_full, symmetry_residual)
+            CALL tb_fold_gxtb_kpoint_matrix(kpoints, kmap, ao_first, ao_size, &
+                                            exchange_fock_unpermuted(:, :, ispin, :), &
+                                            folded_fock_oracle(:, :, ispin, :))
+            CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
+                                                  exchange_fock_unpermuted(:, :, ispin, :), &
+                                                  folded_fock_oracle(:, :, ispin, :), &
+                                                  "QUALIFICATION_ONLY oracle Fock", symmetry_residual)
+            oracle_sym_fold = MAX(oracle_sym_fold, symmetry_residual)
+         END DO
+         oracle_energy_delta = ABS(exchange_energy_oracle - exchange_energy)
+         oracle_vsh_delta = MAXVAL(ABS(exchange_vsh_oracle - exchange_vsh))
+         oracle_full_abs = MAXVAL(ABS(exchange_fock_unpermuted - exchange_fock_full))
+         oracle_scale = MAX(1.0_dp, MAXVAL(ABS(exchange_fock_full)))
+         oracle_full_rel = oracle_full_abs/oracle_scale
+         oracle_fold_abs = MAXVAL(ABS(folded_fock_oracle - tb%exchange_fock_kp))
+         oracle_scale = MAX(1.0_dp, MAXVAL(ABS(tb%exchange_fock_kp)))
+         oracle_fold_rel = oracle_fold_abs/oracle_scale
+         oracle_tolerance = 1.0E-10_dp
+         IF (para_env%is_source()) THEN
+            WRITE (*, '(A,I0,10(A,ES14.6))') &
+               " GXTB-QUALIFICATION_ONLY FULLMESH-ORACLE iter=", iter_count, &
+               " dE=", oracle_energy_delta, " dVsh=", oracle_vsh_delta, &
+               " dFfull=", oracle_full_abs, " rFfull=", oracle_full_rel, &
+               " dFfold=", oracle_fold_abs, " rFfold=", oracle_fold_rel, &
+               " symPfull=", primary_sym_full, " symPfold=", primary_sym_fold, &
+               " symOfull=", oracle_sym_full, " symOfold=", oracle_sym_fold
+         END IF
+         IF (oracle_energy_delta > oracle_tolerance .OR. &
+             oracle_vsh_delta > oracle_tolerance .OR. &
+             oracle_full_rel > oracle_tolerance .OR. oracle_fold_rel > oracle_tolerance .OR. &
+             primary_sym_full > oracle_tolerance .OR. primary_sym_fold > oracle_tolerance .OR. &
+             oracle_sym_full > oracle_tolerance .OR. oracle_sym_fold > oracle_tolerance) &
+            CPABORT("QUALIFICATION_ONLY permuted full-mesh oracle exceeded its 1.0E-10 gate")
+         DEALLOCATE (density_oracle, overlap_oracle, exchange_fock_oracle, &
+                     exchange_fock_unpermuted, folded_fock_oracle, exchange_vsh_oracle, &
+                     weight_oracle, xkp_oracle)
+      END IF
+
       ! F(k) is unweighted.  The energy and shell response returned by the
       ! whole-mesh API already contain the complete BZ contraction.
       tb%e_exchange = 0.0_dp
       tb%e_exchange(1) = exchange_energy
       tb%pot%vsh(:, 1) = tb%pot%vsh(:, 1) + exchange_vsh
 
-      DEALLOCATE (ao_first, ao_size, exchange_fock_full, overlap, exchange_vsh)
+      DEALLOCATE (ao_first, ao_size, density, exchange_fock_full, overlap, exchange_vsh)
+      IF (ALLOCATED(density_reduced)) DEALLOCATE (density_reduced)
       tb%exchange_fock_kp_valid = .TRUE.
 
    END SUBROUTINE tb_build_gxtb_kpoint_exchange
@@ -3346,17 +3818,25 @@ CONTAINS
       tb => qs_env%tb_tblite
       IF (.NOT. ASSOCIATED(tb)) RETURN
       use_mixed = tb%mixed_fock_kp_valid
-      IF (.NOT. use_mixed .AND. .NOT. tb%exchange_fock_kp_valid) RETURN
+      IF (.NOT. use_mixed .AND. .NOT. tb%exchange_fock_kp_valid .AND. &
+          .NOT. tb%acp_fock_kp_valid) RETURN
       IF (use_mixed) THEN
          IF (.NOT. ALLOCATED(tb%mixed_fock_kp)) &
             CPABORT("Missing mixed g-xTB k-point Fock matrix cache")
          CPASSERT(ik >= 1 .AND. ik <= SIZE(tb%mixed_fock_kp, 4))
          CPASSERT(ispin >= 1 .AND. ispin <= SIZE(tb%mixed_fock_kp, 3))
       ELSE
-         IF (.NOT. ALLOCATED(tb%exchange_fock_kp)) &
-            CPABORT("Missing g-xTB k-point exchange matrix cache")
-         CPASSERT(ik >= 1 .AND. ik <= SIZE(tb%exchange_fock_kp, 4))
-         CPASSERT(ispin >= 1 .AND. ispin <= SIZE(tb%exchange_fock_kp, 3))
+         IF (tb%exchange_fock_kp_valid) THEN
+            IF (.NOT. ALLOCATED(tb%exchange_fock_kp)) &
+               CPABORT("Missing g-xTB k-point exchange matrix cache")
+            CPASSERT(ik >= 1 .AND. ik <= SIZE(tb%exchange_fock_kp, 4))
+            CPASSERT(ispin >= 1 .AND. ispin <= SIZE(tb%exchange_fock_kp, 3))
+         END IF
+         IF (tb%acp_fock_kp_valid) THEN
+            IF (.NOT. ALLOCATED(tb%acp_fock_kp)) &
+               CPABORT("Missing direct g-xTB k-point ACP matrix cache")
+            CPASSERT(ik >= 1 .AND. ik <= SIZE(tb%acp_fock_kp, 3))
+         END IF
       END IF
 
       NULLIFY (col_indices, row_indices, local_data)
@@ -3367,8 +3847,8 @@ CONTAINS
          CPASSERT(nrow_global == SIZE(tb%mixed_fock_kp, 1))
          CPASSERT(ncol_global == SIZE(tb%mixed_fock_kp, 2))
       ELSE
-         CPASSERT(nrow_global == SIZE(tb%exchange_fock_kp, 1))
-         CPASSERT(ncol_global == SIZE(tb%exchange_fock_kp, 2))
+         CPASSERT(nrow_global == tb%calc%bas%nao)
+         CPASSERT(ncol_global == tb%calc%bas%nao)
       END IF
       IF (ANY(row_indices(1:nrow_local) < 1) .OR. &
           ANY(row_indices(1:nrow_local) > nrow_global)) &
@@ -3382,8 +3862,12 @@ CONTAINS
                local_data(iloc, jloc) = &
                   REAL(tb%mixed_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
             ELSE
-               local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                                        REAL(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
+               IF (tb%acp_fock_kp_valid) &
+                  local_data(iloc, jloc) = local_data(iloc, jloc) + &
+                     REAL(tb%acp_fock_kp(row_indices(iloc), col_indices(jloc), ik), KIND=dp)
+               IF (tb%exchange_fock_kp_valid) &
+                  local_data(iloc, jloc) = local_data(iloc, jloc) + &
+                     REAL(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
             END IF
          END DO
       END DO
@@ -3405,16 +3889,27 @@ CONTAINS
                   local_data(iloc, jloc) = &
                      AIMAG(tb%mixed_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
                ELSE
-                  local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                                           AIMAG(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
+                  IF (tb%acp_fock_kp_valid) &
+                     local_data(iloc, jloc) = local_data(iloc, jloc) + &
+                        AIMAG(tb%acp_fock_kp(row_indices(iloc), col_indices(jloc), ik))
+                  IF (tb%exchange_fock_kp_valid) &
+                     local_data(iloc, jloc) = local_data(iloc, jloc) + &
+                        AIMAG(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
                END IF
             END DO
          END DO
       ELSEIF (use_mixed) THEN
          IF (MAXVAL(ABS(AIMAG(tb%mixed_fock_kp(:, :, ispin, ik)))) > 1.0E-10_dp) &
             CPABORT("Complex mixed g-xTB Fock matrix requires complex k-point work matrices")
-      ELSEIF (MAXVAL(ABS(AIMAG(tb%exchange_fock_kp(:, :, ispin, ik)))) > 1.0E-10_dp) THEN
-         CPABORT("Complex g-xTB exchange requires complex k-point work matrices")
+      ELSE
+         IF (tb%acp_fock_kp_valid) THEN
+            IF (MAXVAL(ABS(AIMAG(tb%acp_fock_kp(:, :, ik)))) > 1.0E-10_dp) &
+               CPABORT("Complex g-xTB ACP requires complex k-point work matrices")
+         END IF
+         IF (tb%exchange_fock_kp_valid) THEN
+            IF (MAXVAL(ABS(AIMAG(tb%exchange_fock_kp(:, :, ispin, ik)))) > 1.0E-10_dp) &
+               CPABORT("Complex g-xTB exchange requires complex k-point work matrices")
+         END IF
       END IF
 
    END SUBROUTINE tb_apply_gxtb_kpoint_fm
@@ -3475,7 +3970,6 @@ CONTAINS
 !> \brief ...
 !> \param tb ...
 !> \param images ...
-!> \param acp_images ...
 !> \param translations ...
 !> \param matrix_s ...
 !> \param matrix_h ...
@@ -3490,16 +3984,16 @@ CONTAINS
 !> of the multipoles have to be exchanged under the same transpose.
 !>
 !> rskp_transform subsequently uses H(k)=sum_R H(R)*exp(+2*pi*i*k.R).  There is no k-point
-!> weight in H0, S, ACP, or the multipole operators; irreducible-star weights belong only to
-!> density/energy contractions.  Every MPI rank evaluates the same small dense save_tblite
-!> images and writes only its locally owned DBCSR blocks.
+!> weight in H0, S, or the multipole operators; irreducible-star weights belong only to
+!> density/energy contractions.  ACP is deliberately absent here and is evaluated directly on
+!> the complete Bloch mesh.  Every MPI rank evaluates the same small dense save_tblite images
+!> and writes only its locally owned DBCSR blocks.
 ! **************************************************************************************************
-   SUBROUTINE tb_scatter_gxtb_images(tb, images, acp_images, translations, &
+   SUBROUTINE tb_scatter_gxtb_images(tb, images, translations, &
                                      matrix_s, matrix_h, sab_orb, cell_to_index, nimg)
 
       TYPE(tblite_type), POINTER                         :: tb
       TYPE(hamiltonian_image_type), INTENT(IN)           :: images
-      TYPE(acp_image_type), INTENT(IN), OPTIONAL         :: acp_images
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: translations
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s, matrix_h
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
@@ -3507,13 +4001,10 @@ CONTAINS
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       INTEGER, INTENT(IN)                                :: nimg
 
-      INTEGER                                            :: acp_img, i, i_first, i_nao, iatom, ic, &
-                                                            icol, id, img, iq, irow, j_first, &
-                                                            j_nao, jatom, ntranslations
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: acp_map
+      INTEGER                                            :: i, i_first, i_nao, iatom, ic, icol, &
+                                                            id, iq, irow, j_first, j_nao, jatom
       INTEGER, DIMENSION(3)                              :: cell
-      LOGICAL                                            :: found, matched
-      REAL(KIND=dp)                                      :: scale, tol2
+      LOGICAL                                            :: found
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block, hblock, sblock
       TYPE(neighbor_list_iterator_p_type), &
          DIMENSION(:), POINTER                           :: nl_iterator
@@ -3521,42 +4012,6 @@ CONTAINS
       CPASSERT(SIZE(images%overlap, 3) == SIZE(translations, 2))
       CPASSERT(SIZE(images%translation, 2) == SIZE(translations, 2))
       CPASSERT(SIZE(translations, 2) >= nimg)
-      ntranslations = SIZE(translations, 2)
-      ALLOCATE (acp_map(ntranslations), source=0)
-      IF (PRESENT(acp_images)) THEN
-         IF (.NOT. acp_images%inversion_closed) &
-            CPABORT("g-xTB ACP image set is not closed under lattice inversion")
-         scale = MAX(1.0_dp, MAXVAL(ABS(translations)))
-         tol2 = (2048.0_dp*EPSILON(1.0_dp)*scale)**2
-         DO img = 1, ntranslations
-            DO acp_img = 1, SIZE(acp_images%translation, 2)
-               IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
-                  ! save_tblite's ACP convolution stores H_R in the direct Bloch convention,
-                  ! whereas the dense image blocks scattered below carry the translated AO on
-                  ! the row and the home-cell AO on the column.  Convert between those dual
-                  ! orientations by selecting H_-R; at Gamma and real boundary k points this is
-                  ! invisible, but it is essential for general complex Bloch phases.
-                  acp_map(img) = acp_images%inverse(acp_img)
-                  CPASSERT(acp_map(img) > 0)
-                  EXIT
-               END IF
-            END DO
-         END DO
-
-         ! A non-zero ACP image outside CP2K's real-space neighbour-list representation would
-         ! be silently lost and produce a k-dependent error. Reject such a basis/list mismatch.
-         DO acp_img = 1, SIZE(acp_images%translation, 2)
-            matched = .FALSE.
-            DO img = 1, ntranslations
-               IF (SUM((translations(:, img) - acp_images%translation(:, acp_img))**2) <= tol2) THEN
-                  matched = .TRUE.
-                  EXIT
-               END IF
-            END DO
-            IF (.NOT. matched .AND. ANY(acp_images%hamiltonian(:, :, acp_img) /= 0.0_dp)) &
-               CPABORT("g-xTB ACP image exceeds CP2K k-point neighbour-list range")
-         END DO
-      END IF
 
       NULLIFY (nl_iterator)
       CALL neighbor_list_iterator_create(nl_iterator, sab_orb)
@@ -3581,9 +4036,6 @@ CONTAINS
                                               i_first:i_first + i_nao - 1, ic))
             hblock = TRANSPOSE(images%hamiltonian(j_first:j_first + j_nao - 1, &
                                                   i_first:i_first + i_nao - 1, ic))
-            IF (acp_map(ic) > 0) hblock = hblock + &
-                                          TRANSPOSE(acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
-                                                                           i_first:i_first + i_nao - 1, acp_map(ic)))
 
             DO i = 1, dip_n
                id = i + dip_n*(ic - 1)
@@ -3613,9 +4065,6 @@ CONTAINS
                                     i_first:i_first + i_nao - 1, ic)
             hblock = images%hamiltonian(j_first:j_first + j_nao - 1, &
                                         i_first:i_first + i_nao - 1, ic)
-            IF (acp_map(ic) > 0) hblock = hblock + &
-                                          acp_images%hamiltonian(j_first:j_first + j_nao - 1, &
-                                                                 i_first:i_first + i_nao - 1, acp_map(ic))
 
             DO i = 1, dip_n
                id = i + dip_n*(ic - 1)
@@ -3651,8 +4100,6 @@ CONTAINS
          CALL dbcsr_finalize(tb%quadbra(i)%matrix)
          CALL dbcsr_finalize(tb%quadket(i)%matrix)
       END DO
-      DEALLOCATE (acp_map)
-
    END SUBROUTINE tb_scatter_gxtb_images
 #endif
 
@@ -3899,11 +4346,15 @@ CONTAINS
             ! CP2K image set here would allocate an unnecessary difference of
             ! an already doubled range.
             CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
-                                    get_cutoff(tb%calc%bas, tb%accuracy), projector_translations)
-            CALL cp2k_build_image_acp(tb%calc, tb%mol, tb%bcache, tb%acache, &
-                                      projector_translations, acp_images)
-            CALL tb_scatter_gxtb_images(tb, h0_images, acp_images, translations, &
-                                        matrix_s, matrix_h, sab_orb, cell_to_index, nimg)
+                                    cp2k_get_acp_cutoff(tb%calc, tb%accuracy), &
+                                    projector_translations)
+            CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                           projector_translations, acp_images)
+            CALL tb_scatter_gxtb_images(tb, h0_images, translations=translations, &
+                                        matrix_s=matrix_s, matrix_h=matrix_h, sab_orb=sab_orb, &
+                                        cell_to_index=cell_to_index, nimg=nimg)
+            CALL tb_build_gxtb_kpoint_acp(qs_env, tb, matrix_s, sab_orb, &
+                                          cell_to_index, acp_images)
             DEALLOCATE (projector_translations)
          ELSE
             CALL tb_scatter_gxtb_images(tb, h0_images, translations=translations, &
@@ -4385,6 +4836,7 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: p_matrix
       TYPE(dbcsr_type), POINTER                          :: s_matrix
       TYPE(error_type), ALLOCATABLE                      :: error
+      TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
@@ -4394,10 +4846,10 @@ CONTAINS
       TYPE(xtb_atom_type), POINTER                       :: xtb_kind
 
       ! compute mulliken charges required for charge update
-      NULLIFY (particle_set, qs_kind_set, atomic_kind_set, scf_control)
+      NULLIFY (kpoints, particle_set, qs_kind_set, atomic_kind_set, scf_control)
       CALL get_qs_env(qs_env=qs_env, scf_env=scf_env, particle_set=particle_set, qs_kind_set=qs_kind_set, &
                       atomic_kind_set=atomic_kind_set, matrix_s_kp=matrix_s, rho=rho, para_env=para_env, &
-                      scf_control=scf_control, do_kpoints=do_kpoints)
+                      scf_control=scf_control, do_kpoints=do_kpoints, kpoints=kpoints)
 
       ! also compute multipoles needed by GFN2
       do_dipole = .FALSE.
@@ -4994,6 +5446,7 @@ CONTAINS
       IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
          tb%e_exchange = 0.0_dp
          tb%e_spin = 0.0_dp
+         tb%e_acp_kp = 0.0_dp
          tb%exchange_fock_kp_valid = .FALSE.
          tb%mixed_fock_kp_valid = .FALSE.
          IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
@@ -5006,8 +5459,12 @@ CONTAINS
                CALL tb%calc%exchange%get_energy_w_overlap(tb%mol, tb%ecache, tb%wfn, &
                                                           tb%overlap_dense, tb%e_exchange)
             ELSE
-               CALL tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env)
+               CALL tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env, scf_env%iter_count)
             END IF
+         END IF
+         IF (do_kpoints .AND. ALLOCATED(tb%calc%acp)) THEN
+            CPASSERT(ASSOCIATED(kpoints))
+            CALL tb_update_gxtb_kpoint_acp_energy(qs_env, tb, kpoints)
          END IF
 
          IF (ALLOCATED(tb%calc%repulsion)) THEN
@@ -5942,12 +6399,14 @@ CONTAINS
       TYPE(tblite_type), POINTER                         :: tb
 
 #if defined(__TBLITE_GXTB)
-      INTEGER                                            :: img, ispin, nao, nimg, nimg_response, nspin
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: acp_density_k(:, :, :, :)
+      INTEGER                                            :: img, nao, nimg, nimg_response, nspin
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index, response_cell_to_index
       INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: response_index_to_cell
+      LOGICAL                                            :: validate_density
       REAL(KIND=dp), ALLOCATABLE                         :: acp_gradient(:, :), acp_sigma(:, :), &
-                                                            acp_density_images(:, :, :, :), &
                                                             dEdcnbas(:), dEdqbas(:), &
                                                             density_images(:, :, :, :), &
                                                             exchange_gradient(:, :), &
@@ -5966,8 +6425,9 @@ CONTAINS
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_kp
       TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(tb_gxtb_kmesh_map_type), POINTER              :: kmap
 
-      NULLIFY (cell, cell_to_index, index_to_cell, kpoints, matrix_p, matrix_s, matrix_w, &
+      NULLIFY (cell, cell_to_index, index_to_cell, kmap, kpoints, matrix_p, matrix_s, matrix_w, &
                para_env, response_cell_to_index, rho, sab_kp)
       CALL get_qs_env(qs_env=qs_env, cell=cell, kpoints=kpoints, matrix_s_kp=matrix_s, &
                       matrix_w_kp=matrix_w, para_env=para_env, rho=rho, sab_kp=sab_kp)
@@ -6001,7 +6461,7 @@ CONTAINS
                                  response_cell_to_index, density_images, para_env)
       CALL tb_gather_gxtb_images(tb, matrix_s, sab_kp, cell_to_index, &
                                  response_cell_to_index, overlap_images, para_env)
-      overlap_gamma = SUM(overlap_images(:, :, :, 1), DIM=3)
+      overlap_gamma(:, :) = SUM(overlap_images(:, :, :, 1), DIM=3)
 
       IF (ALLOCATED(tb%calc%exchange)) THEN
          ALLOCATE (exchange_gradient(3, tb%mol%nat), exchange_sigma(3, 3))
@@ -6015,45 +6475,55 @@ CONTAINS
                                   tb%pot, density_images, wdensity_images, gradient, sigma)
 
       IF (ALLOCATED(exchange_gradient)) THEN
-         gradient = gradient + exchange_gradient
-         sigma = sigma + exchange_sigma
+         gradient(:, :) = gradient(:, :) + exchange_gradient(:, :)
+         sigma(:, :) = sigma(:, :) + exchange_sigma(:, :)
          DEALLOCATE (exchange_gradient, exchange_sigma)
       END IF
 
       IF (ALLOCATED(tb%calc%acp)) THEN
          CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
-                                 get_cutoff(tb%calc%bas, tb%accuracy), projector_translations)
-         CALL cp2k_build_image_acp(tb%calc, tb%mol, tb%bcache, tb%acache, &
-                                   projector_translations, acp_images)
-         ALLOCATE (acp_density_images(nao, nao, nimg_response, nspin), &
+                                 cp2k_get_acp_cutoff(tb%calc, tb%accuracy), &
+                                 projector_translations)
+         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                        projector_translations, acp_images)
+         CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_kp, cell_to_index)
+         kmap => tb%gxtb_kmesh_map
+         CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
+         ALLOCATE (acp_density_k(nao, nao, nspin, kmap%nfull), &
                    dEdcnbas(tb%mol%nat), dEdqbas(tb%mol%nat), &
                    acp_gradient(3, tb%mol%nat), acp_sigma(3, 3))
-         ! The H0 response uses translated-row/home-column images.  ACP stores the
-         ! dual home-row/translated-column convention, matching the inverse-image
-         ! selection used when its Hamiltonian is scattered above.
-         DO ispin = 1, nspin
-            DO img = 1, nimg_response
-               acp_density_images(:, :, img, ispin) = &
-                  TRANSPOSE(density_images(:, :, img, ispin))
-            END DO
-         END DO
+         IF (kmap%identity) THEN
+            CALL tb_collect_kpoint_density(qs_env, tb, kpoints, acp_density_k)
+         ELSE
+            CALL tb_collect_kpoint_density(qs_env, tb, kpoints, acp_density_k, &
+                                           kmap%representative)
+            validate_density = .NOT. tb%gxtb_density_map_validated .AND. &
+                               MAXVAL(ABS(acp_density_k)) > 1.0E-14_dp
+            CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
+                                                acp_density_k, validate_density)
+            IF (validate_density) tb%gxtb_density_map_validated = .TRUE.
+         END IF
+         IF (.NOT. ALL(ieee_is_finite(REAL(acp_density_k, KIND=dp))) .OR. &
+             .NOT. ALL(ieee_is_finite(AIMAG(acp_density_k)))) &
+            CPABORT("CP2K supplied a non-finite k-point density to the ACP gradient")
          dEdcnbas = 0.0_dp
          dEdqbas = 0.0_dp
          acp_gradient = 0.0_dp
          acp_sigma = 0.0_dp
-         CALL cp2k_acp_image_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, acp_images, &
-                                      translations, acp_density_images, dEdcnbas, dEdqbas, &
-                                      acp_gradient, acp_sigma, error)
-         IF (ALLOCATED(error)) CPABORT("save_tblite g-xTB ACP image gradient failed")
+         CALL cp2k_acp_kmesh_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                      acp_images, kmap%xkp, kmap%weight, acp_density_k, &
+                                      dEdcnbas, dEdqbas, acp_gradient, acp_sigma, error)
+         IF (ALLOCATED(error)) &
+            CPABORT("save_tblite g-xTB ACP k-mesh gradient failed: "//TRIM(error%message))
          CALL cp2k_apply_basis_gradient(tb%calc, tb%mol, tb%wfn_aux, dEdcnbas, dEdqbas, &
                                         acp_gradient, acp_sigma)
-         gradient = gradient + acp_gradient
-         sigma = sigma + acp_sigma
-         DEALLOCATE (acp_density_images, acp_gradient, acp_sigma, dEdcnbas, dEdqbas, &
-                     projector_translations)
+         gradient(:, :) = gradient(:, :) + acp_gradient(:, :)
+         sigma(:, :) = sigma(:, :) + acp_sigma(:, :)
+         DEALLOCATE (acp_density_k, acp_gradient, acp_sigma, ao_first, ao_size, &
+                     dEdcnbas, dEdqbas, projector_translations)
       END IF
 
-      tb%grad = gradient
+      tb%grad(:, :) = gradient(:, :)
       CALL tb_grad2force(qs_env, tb, para_env, 4)
       tb%sigma = tb%sigma + sigma
       CALL tb_dump_sigma_component("after_gxtb_kpoint_response", tb%sigma, para_env)
