@@ -93,7 +93,7 @@ MODULE energy_corrections
                                               calculate_exx
    USE input_constants,                 ONLY: &
         do_admm_aux_exch_func_none, ec_diagonalization, ec_functional_dc, ec_functional_ext, &
-        ec_functional_harris, ec_matrix_sign, ec_matrix_tc2, ec_matrix_trs4, ec_ot_diag, &
+        ec_functional_harris, ec_matrix_sign, ec_matrix_tc2, ec_matrix_trs4, ec_ot_diag, gxtb, &
         vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, xc_vdw_fun_pairpot
    USE input_section_types,             ONLY: section_get_ival,&
                                               section_get_lval,&
@@ -2796,6 +2796,13 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       CALL get_qs_env(qs_env=qs_env, dft_control=dft_control)
+      IF (ec_env%do_kpoints .AND. &
+          dft_control%qs_control%xtb_control%do_tblite .AND. &
+          dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "g-xTB energy-correction k-point diagonalization is not implemented: "// &
+                       "the explicit exchange Fock matrix is available only on the SCF k-point grid")
+      END IF
       nspins = dft_control%nspins
       nhfimg = SIZE(ec_env%matrix_s, 2)
 

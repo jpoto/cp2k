@@ -21,6 +21,7 @@ MODULE qs_matrix_w
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_release,&
                                               cp_fm_type
+   USE input_constants,                 ONLY: gxtb
    USE kinds,                           ONLY: dp
    USE kpoint_methods,                  ONLY: kpoint_density_matrices,&
                                               kpoint_density_transform
@@ -90,14 +91,30 @@ CONTAINS
                TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s_kp, matrix_w_kp
                TYPE(kpoint_type), POINTER                         :: kpoints
                TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-                  POINTER                                         :: sab_nl
+                  POINTER                                         :: sab_kp, sab_nl, sab_w
 
                CALL get_qs_env(qs_env, &
+                               dft_control=dft_control, &
                                matrix_w_kp=matrix_w_kp, &
                                matrix_s_kp=matrix_s_kp, &
+                               sab_kp=sab_kp, &
                                sab_orb=sab_nl, &
                                mos=mos, &
                                kpoints=kpoints)
+
+               CPASSERT(ASSOCIATED(dft_control))
+               CPASSERT(ASSOCIATED(sab_nl))
+               sab_w => sab_nl
+               ! g-xTB's separable ACP enlarges SAB_KP to the difference set of two
+               ! projector/valence overlaps.  MATRIX_S_KP and the real-space density
+               ! matrices use that image topology, so W(R) must be transformed on the
+               ! same neighbor list as well.  Keep the established SAB_ORB path for all
+               ! other methods.
+               IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
+                   dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+                  CPASSERT(ASSOCIATED(sab_kp))
+                  sab_w => sab_kp
+               END IF
 
                CALL get_mo_set(mos(1), mo_coeff=mo_coeff, nao=nao)
                CALL cp_fm_struct_create(fmstruct=ao_ao_fmstruct, nrow_global=nao, ncol_global=nao, &
@@ -112,7 +129,7 @@ CONTAINS
                CALL kpoint_density_matrices(kpoints, energy_weighted=.TRUE.)
                ! energy weighted density matrices in real space
                CALL kpoint_density_transform(kpoints, matrix_w_kp, .TRUE., &
-                                             matrix_s_kp(1, 1)%matrix, sab_nl, fmwork)
+                                             matrix_s_kp(1, 1)%matrix, sab_w, fmwork)
 
                DO is = 1, SIZE(fmwork)
                   CALL cp_fm_release(fmwork(is))

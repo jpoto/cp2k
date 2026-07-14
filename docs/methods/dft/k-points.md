@@ -303,7 +303,10 @@ current atomic structure. Enable it with `SYMMETRY T`:
 
 This combines the default time-reversal reduction with the additional atomic symmetry operations.
 Complex wavefunctions are required for general atomic symmetry operations with nontrivial Bloch
-phases.
+phases. Before expanding an irreducible density over its symmetry star, CP2K checks overlap
+covariance to calibrate both the Bloch-phase direction and the atom-cell gauge. This supports AO
+matrices expressed either in CP2K's internally wrapped PBC gauge or in the input-coordinate gauge;
+the calculation stops explicitly if neither convention preserves the overlap.
 
 #### Compatible sampling sets
 

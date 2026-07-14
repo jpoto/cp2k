@@ -41,6 +41,40 @@ One can then change settings for some packages, by setting `--with-PKG` options 
 will set the script to look for a system MKL library to link, while compile other packages from
 scratch.
 
+To build the experimental g-xTB-capable save_tblite provider instead of upstream tblite, use:
+
+```shell
+> ./install_cp2k_toolchain.sh --with-tblite=install --tblite-provider=save
+```
+
+The two providers are mutually exclusive. The save provider checks out a pinned revision from the
+private `DCM-Uni-Paderborn/save_tblite` repository and requires GitHub read credentials. The default
+`--tblite-provider=upstream` path remains unchanged and uses the public tblite release. Because
+save_tblite's internal experimental DFTD API is not compatible with CP2K's standalone DFTD4 API, the
+save provider disables the latter while retaining dispersion within its xTB methods. The native
+g-xTB path supports energies and analytical forces for molecular (0D) and fully periodic (3D)
+systems, plus analytical stress for 3D systems. Fully periodic calculations can use Gamma or regular
+Cartesian k-point meshes and full, K290, or SPGLIB reduction. Explicit `GENERAL` input must list a
+complete, uniformly weighted Cartesian product, although the points can be in any order; already
+reduced or nonregular `GENERAL` lists are rejected. The k-point response includes the image-resolved
+H0, Pulay, q-vSZP/ACP, and nonlinear exchange derivatives. Partially periodic (1D or 2D)
+calculations are not supported.
+
+The q-vSZP basis dimensions and orbital layout are structural data shared per element kind, whereas
+save_tblite evaluates the charge- and environment-dependent coefficients per atom. An optional
+`XTB/TBLITE/REFERENCE_CLI` check is available for Gamma-point calculations only and does not emulate
+CP2K k-point sampling. Transition-metal and f-element calculations can converge to multiple SCC
+roots, so sensitive single points should be checked from more than one initial density and
+trajectories should use restarts to follow the intended root.
+
+For g-xTB, `SCC_MIXER AUTO` and `TBLITE` use save_tblite's complete-Fock potential mixer: the first
+Fock matrix is used raw, builds two and three use simple damping 0.2, and DIIS starts with build
+four. `SCC_MIXER CP2K` selects the regular CP2K alternatives instead: density-matrix mixing from
+`DFT/SCF/MIXING` and CP2K's KS/Fock DIIS. g-xTB diagonalization requires `METHOD DIRECT_P_MIXING`;
+multi-k-point Fock DIIS also requires `KPOINTS/WAVEFUNCTIONS COMPLEX`. This method-specific dispatch
+does not change the established density and modified-Broyden paths used by DFT, GFN1-xTB, GFN2-xTB,
+or IPEA1-xTB.
+
 ### MPI implementation choice
 
 If you do not have an MPI installation, by default the `--install-all` option will install MPICH for

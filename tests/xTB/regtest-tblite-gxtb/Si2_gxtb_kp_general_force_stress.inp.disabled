@@ -1,0 +1,78 @@
+# Nontrivial GENERAL-k finite-difference template.  The asymmetric two-atom
+# geometry and triclinic cell exercise nonzero image, force, and shear-stress
+# components.  Activate only with measured tolerances after the exchange
+# response is merged.
+&GLOBAL
+  PRINT_LEVEL MEDIUM
+  PROJECT Si2_gxtb_kp_general_force_stress
+  RUN_TYPE DEBUG
+&END GLOBAL
+
+&DEBUG
+  DEBUG_FORCES T
+  DEBUG_STRESS_TENSOR T
+  DX 0.0001
+  STOP_ON_MISMATCH F
+&END DEBUG
+
+&FORCE_EVAL
+  METHOD QUICKSTEP
+  STRESS_TENSOR ANALYTICAL
+  &DFT
+    &KPOINTS
+      FULL_GRID ON
+      KPOINT 0.173 -0.271 0.119 1.0
+      KPOINT -0.173 0.271 -0.119 1.0
+      PARALLEL_GROUP_SIZE -1
+      SCHEME GENERAL
+      SYMMETRY OFF
+      WAVEFUNCTIONS COMPLEX
+    &END KPOINTS
+    &POISSON
+      PERIODIC XYZ
+      POISSON_SOLVER PERIODIC
+    &END POISSON
+    &QS
+      EPS_DEFAULT 1.0E-12
+      METHOD xTB
+      &XTB
+        GFN_TYPE TBLITE
+        &TBLITE
+          ACCURACY 1.0
+          METHOD GXTB
+        &END TBLITE
+      &END XTB
+    &END QS
+    &SCF
+      ADDED_MOS -1 -1
+      EPS_SCF 1.0E-10
+      MAX_SCF 300
+      SCF_GUESS MOPAC
+      &MIXING
+        ALPHA 0.2
+        METHOD DIRECT_P_MIXING
+      &END MIXING
+      &PRINT
+        &RESTART OFF
+        &END RESTART
+      &END PRINT
+      &SMEAR ON
+        ELECTRONIC_TEMPERATURE 300
+        METHOD FERMI_DIRAC
+      &END SMEAR
+    &END SCF
+  &END DFT
+  &SUBSYS
+    &CELL
+      A 3.8402969286 0.0000000000 0.0000000000
+      B 1.9201484643 3.3257944720 0.0000000000
+      C 1.9201484643 1.1085981573 3.1355893100
+      PERIODIC XYZ
+    &END CELL
+    &COORD
+      SCALED
+      Si 0.031 0.047 0.019
+      Si 0.279 0.263 0.247
+    &END COORD
+  &END SUBSYS
+&END FORCE_EVAL

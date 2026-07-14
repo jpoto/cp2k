@@ -1,0 +1,64 @@
+"H2O_gxtb_pbc.inp"           = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
+                                  {matcher="GXTB_native_raw"},
+                                  {matcher="GXTB_native_simple"},
+                                  {matcher="GXTB_native_fdiis"}]
+"H2O_gxtb_kp_gamma.inp"      = [{matcher="E_total", tol=1.0E-8, ref=-76.49208605064729}]
+"H2O_gxtb_force.inp"         = [{matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_stress.inp"        = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_gamma_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                       {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_kp_gamma_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                          {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2O_gxtb_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346}]
+"O2_gxtb_uks_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-150.34083895130186}]
+"O2_gxtb_uks_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-150.5418927284650},
+                              {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
+                              {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0}]
+"H2O_gxtb_cp2k_density_mixer.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
+                                      {matcher="GXTB_cp2k_pmix"}]
+"H2O_gxtb_cp2k_fock_diis.inp"     = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
+                                      {matcher="GXTB_cp2k_fdiis"}]
+"H2O_gxtb_kp_cp2k_density_mixer.inp" = [{matcher="E_total", tol=1.0E-10, ref=-76.49208619395162},
+                                         {matcher="GXTB_cp2k_pmix"}]
+"H2O_gxtb_kp_cp2k_fock_diis.inp" = [{matcher="E_total", tol=1.0E-10, ref=-76.49208619395161},
+                                     {matcher="GXTB_cp2k_fdiis"}]
+"Si_prim_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.144179617249051}]
+"Si_prim_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.025502950720693}]
+"CH4_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.47375815918123}]
+"H2_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-1.196733964557302}]
+"H2_gxtb_gamma_supercell_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-3.590201893735382}]
+"H2_gxtb_kp_311_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+                                       {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
+"H2_gxtb_gamma_supercell_311_force_stress.inp" = [
+  {matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+  {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
+]
+"CH4_gxtb_gamma_force_stress.inp" = [
+  {matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+  {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
+]
+"CH4_gxtb_kp_111_force_stress.inp" = [
+  {matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+  {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
+]
+"CH4_gxtb_kp_k290.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.473758159181230},
+  {matcher="N_special_kpoints", tol=0.0, ref=1},
+]
+"CH4_gxtb_kp_k290_force_stress.inp" = [
+  {matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+  {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
+]
+"H2_gxtb_kp_311_tr.inp" = [{matcher="E_total", tol=1.0E-10, ref=-1.196733964557309}]
+"H2_gxtb_kp_311_tr_force_stress.inp" = [
+  {matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
+  {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
+]
+"O2_gxtb_uks_kp_311_tr.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-150.541892728465001},
+  {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
+  {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0},
+]
+"Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050838553817130}]
+"Si_prim_gxtb_kp_shifted_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050838553817130}]
+#EOF

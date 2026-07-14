@@ -15,9 +15,14 @@ MODULE tblite_types
 
 #if defined(__TBLITE)
    USE mctc_io, ONLY: structure_type, new
+#if defined(__TBLITE_GXTB)
+   USE tblite_acp_cache, ONLY: acp_cache
+   USE tblite_basis_cache, ONLY: basis_cache
+   USE tblite_cp2k_compat, ONLY: cp2k_potential_mixer_type
+#endif
    USE tblite_xtb_calculator, ONLY: xtb_calculator
    USE tblite_container, ONLY: container_cache
-   USE tblite_scf_mixer, ONLY: mixer_type
+   USE tblite_scc_mixer, ONLY: cp2k_tblite_broyden_mixer_type
    USE tblite_wavefunction_type, ONLY: wavefunction_type
    USE tblite_scf_potential, ONLY: potential_type
    USE tblite_param, ONLY: param_record
@@ -42,6 +47,24 @@ MODULE tblite_types
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'tblite_types'
 
    PUBLIC :: tblite_type, deallocate_tblite_type, allocate_tblite_type
+#if defined(__TBLITE_GXTB)
+   PUBLIC :: tb_gxtb_kmesh_map_type
+
+   TYPE tb_gxtb_kmesh_map_type
+      CHARACTER(LEN=32)                                :: scheme = ""
+      INTEGER                                          :: nfull = 0, nred = 0
+      LOGICAL                                          :: explicit_general = .FALSE.
+      LOGICAL                                          :: full_grid = .FALSE., gamma_centered = .FALSE.
+      LOGICAL                                          :: identity = .FALSE., inversion_only = .FALSE.
+      INTEGER                                          :: symmetry_backend = 0, symmetry_method = 0
+      INTEGER, DIMENSION(3)                            :: nmesh = 1
+      REAL(KIND=dp), DIMENSION(3)                      :: kp_shift = 0.0_dp
+      INTEGER, ALLOCATABLE, DIMENSION(:)               :: op_count, representative, source, symop
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: symops
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)      :: reduced_xkp, xkp
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)         :: reduced_weight, weight, fold_factor
+   END TYPE tb_gxtb_kmesh_map_type
+#endif
 
    TYPE tblite_type
 
@@ -56,6 +79,9 @@ MODULE tblite_types
       REAL(KIND=dp), ALLOCATABLE                         :: e_scd(:)
       REAL(KIND=dp), ALLOCATABLE                         :: e_es(:)
       REAL(KIND=dp), ALLOCATABLE                         :: e_int(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: e_inc(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: e_exchange(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: e_spin(:)
       REAL(KIND=dp), ALLOCATABLE                         :: selfenergy(:)
       REAL(KIND=dp), ALLOCATABLE                         :: cn(:)
 
@@ -78,6 +104,26 @@ MODULE tblite_types
       REAL(KIND=dp)                                      :: mixer_omega0 = tblite_mixer_omega0_default
       REAL(KIND=dp)                                      :: mixer_weight_factor = tblite_mixer_weight_factor_default
 
+#if defined(__TBLITE_GXTB)
+      TYPE(basis_cache)                                  :: bcache = basis_cache()
+      TYPE(acp_cache)                                    :: acache = acp_cache()
+      REAL(KIND=dp), ALLOCATABLE                         :: overlap_dense(:, :)
+      TYPE(tb_gxtb_kmesh_map_type), ALLOCATABLE          :: gxtb_kmesh_map
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: exchange_fock_kp(:, :, :, :)
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: mixed_fock_kp(:, :, :, :)
+      COMPLEX(KIND=dp), ALLOCATABLE                      :: previous_density_kp(:, :, :, :)
+      LOGICAL                                            :: gxtb_density_map_validated = .FALSE.
+      LOGICAL                                            :: gxtb_transform_validated = .FALSE.
+      LOGICAL                                            :: exchange_fock_kp_valid = .FALSE.
+      LOGICAL                                            :: mixed_fock_kp_valid = .FALSE.
+      LOGICAL                                            :: previous_density_kp_valid = .FALSE.
+      INTEGER                                            :: potential_mixer_dimension = 0
+      TYPE(cp2k_potential_mixer_type), ALLOCATABLE       :: potential_mixer
+      TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()
+      TYPE(container_cache)                              :: ecache = container_cache()
+      TYPE(container_cache)                              :: rcache = container_cache()
+      TYPE(container_cache)                              :: scache = container_cache()
+#endif
 #if defined(__TBLITE)
       TYPE(structure_type)                               :: mol = structure_type()
       TYPE(xtb_calculator)                               :: calc = xtb_calculator()
@@ -86,7 +132,7 @@ MODULE tblite_types
       TYPE(container_cache)                              :: icache = container_cache()
       TYPE(wavefunction_type)                            :: wfn = wavefunction_type()
       TYPE(potential_type)                               :: pot = potential_type()
-      CLASS(mixer_type), ALLOCATABLE                     :: mixer
+      TYPE(cp2k_tblite_broyden_mixer_type), ALLOCATABLE  :: mixer
       TYPE(param_record), ALLOCATABLE                    :: param
 #endif
 
@@ -125,6 +171,9 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%e_scd)) DEALLOCATE (tb_tblite%e_scd)
          IF (ALLOCATED(tb_tblite%e_es)) DEALLOCATE (tb_tblite%e_es)
          IF (ALLOCATED(tb_tblite%e_int)) DEALLOCATE (tb_tblite%e_int)
+         IF (ALLOCATED(tb_tblite%e_inc)) DEALLOCATE (tb_tblite%e_inc)
+         IF (ALLOCATED(tb_tblite%e_exchange)) DEALLOCATE (tb_tblite%e_exchange)
+         IF (ALLOCATED(tb_tblite%e_spin)) DEALLOCATE (tb_tblite%e_spin)
          IF (ALLOCATED(tb_tblite%selfenergy)) DEALLOCATE (tb_tblite%selfenergy)
          IF (ALLOCATED(tb_tblite%cn)) DEALLOCATE (tb_tblite%cn)
 
@@ -132,6 +181,18 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%dsedcn)) DEALLOCATE (tb_tblite%dsedcn)
          IF (ALLOCATED(tb_tblite%dcndr)) DEALLOCATE (tb_tblite%dcndr)
          IF (ALLOCATED(tb_tblite%dcndL)) DEALLOCATE (tb_tblite%dcndL)
+#if defined(__TBLITE_GXTB)
+         IF (ALLOCATED(tb_tblite%overlap_dense)) DEALLOCATE (tb_tblite%overlap_dense)
+         IF (ALLOCATED(tb_tblite%gxtb_kmesh_map)) DEALLOCATE (tb_tblite%gxtb_kmesh_map)
+         IF (ALLOCATED(tb_tblite%exchange_fock_kp)) DEALLOCATE (tb_tblite%exchange_fock_kp)
+         IF (ALLOCATED(tb_tblite%mixed_fock_kp)) DEALLOCATE (tb_tblite%mixed_fock_kp)
+         IF (ALLOCATED(tb_tblite%previous_density_kp)) DEALLOCATE (tb_tblite%previous_density_kp)
+         tb_tblite%exchange_fock_kp_valid = .FALSE.
+         tb_tblite%mixed_fock_kp_valid = .FALSE.
+         tb_tblite%previous_density_kp_valid = .FALSE.
+         IF (ALLOCATED(tb_tblite%potential_mixer)) DEALLOCATE (tb_tblite%potential_mixer)
+         tb_tblite%potential_mixer_dimension = 0
+#endif
 
          IF (ASSOCIATED(tb_tblite%dipbra)) &
             CALL dbcsr_deallocate_matrix_set(tb_tblite%dipbra)

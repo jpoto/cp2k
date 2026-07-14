@@ -126,6 +126,30 @@ option(CP2K_USE_ACE "Enable ACE support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_DEEPMD "Enable DeePMD support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_DFTD4 "Enable DFTD4 support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_TBLITE "Enable TBLITE support" ${CP2K_USE_EVERYTHING})
+set(CP2K_TBLITE_PROVIDER
+    "UPSTREAM"
+    CACHE STRING "tblite implementation to use: UPSTREAM or SAVE")
+set_property(CACHE CP2K_TBLITE_PROVIDER PROPERTY STRINGS "UPSTREAM" "SAVE")
+set(CP2K_TBLITE_REVISION
+    "unknown"
+    CACHE STRING "Source revision of the selected tblite implementation")
+string(TOUPPER "${CP2K_TBLITE_PROVIDER}" CP2K_TBLITE_PROVIDER)
+if(NOT CP2K_TBLITE_PROVIDER STREQUAL "UPSTREAM" AND NOT CP2K_TBLITE_PROVIDER
+                                                    STREQUAL "SAVE")
+  message(
+    FATAL_ERROR
+      "CP2K_TBLITE_PROVIDER must be either UPSTREAM or SAVE, got '${CP2K_TBLITE_PROVIDER}'"
+  )
+endif()
+if(CP2K_USE_TBLITE
+   AND CP2K_TBLITE_PROVIDER STREQUAL "SAVE"
+   AND CP2K_USE_DFTD4)
+  message(
+    FATAL_ERROR
+      "The SAVE tblite provider uses the experimental grimme-lab/dftd API, which is incompatible with CP2K's standalone DFTD4 interface. Disable CP2K_USE_DFTD4; dispersion inside save_tblite remains available."
+  )
+endif()
+set(CP2K_TBLITE_WITH_CP2K_DFTD4 OFF)
 option(CP2K_USE_FFTW3 "Enable FFTW3 support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_GREENX "Enable GreenX support" ${CP2K_USE_EVERYTHING})
 option(CP2K_USE_HDF5 "Enable HDF5 support" ${CP2K_USE_EVERYTHING})
@@ -914,7 +938,41 @@ if(CP2K_USE_TBLITE)
   target_link_libraries(
     cp2k::tblite INTERFACE tblite::tblite mctc-lib::mctc-lib dftd4::dftd4
                            toml-f::toml-f s-dftd3::s-dftd3)
-  cp2k_detect_dftd4_api()
+  if(CP2K_TBLITE_PROVIDER STREQUAL "UPSTREAM")
+    cp2k_detect_dftd4_api()
+    set(CP2K_TBLITE_WITH_CP2K_DFTD4 ON)
+  endif()
+
+  include(CheckFortranSourceCompiles)
+  include(CMakePushCheckState)
+  cmake_push_check_state(RESET)
+  set(CMAKE_REQUIRED_INCLUDES ${tblite_INCLUDE_DIRS})
+  unset(CP2K_TBLITE_HAS_GXTB CACHE)
+  CHECK_Fortran_SOURCE_COMPILES(
+    "program check_tblite_gxtb
+       use tblite_xtb_gxtb, only : new_gxtb_calculator
+       use tblite_cp2k_compat, only : cp2k_exchange_kpoint, &
+          cp2k_get_scc_mixer_dimension, cp2k_potential_mixer_type, &
+          cp2k_prepare_exchange, new_cp2k_potential_mixer
+       implicit none
+     end program check_tblite_gxtb"
+    CP2K_TBLITE_HAS_GXTB
+    SRC_EXT
+    F90)
+  cmake_pop_check_state()
+
+  if(CP2K_TBLITE_PROVIDER STREQUAL "SAVE" AND NOT CP2K_TBLITE_HAS_GXTB)
+    message(
+      FATAL_ERROR
+        "The SAVE tblite provider was selected, but the detected library does not export the required g-xTB/CP2K compatibility and potential-mixer API"
+    )
+  endif()
+  if(CP2K_TBLITE_PROVIDER STREQUAL "UPSTREAM" AND CP2K_TBLITE_HAS_GXTB)
+    message(
+      FATAL_ERROR
+        "The UPSTREAM tblite provider was selected, but the detected library exports the save_tblite g-xTB/CP2K compatibility API. Select CP2K_TBLITE_PROVIDER=SAVE or remove save_tblite from the package search path."
+    )
+  endif()
 endif()
 
 # SIRIUS
@@ -1145,9 +1203,9 @@ if(CP2K_USE_MIMIC)
           "    - Libraries: ${CP2K_MIMIC_LINK_LIBRARIES}\n")
 endif()
 
-if(CP2K_USE_DFTD4 OR CP2K_USE_TBLITE)
+if(CP2K_USE_DFTD4 OR CP2K_TBLITE_WITH_CP2K_DFTD4)
   message("  - DFTD4")
-  if(CP2K_USE_TBLITE)
+  if(CP2K_TBLITE_WITH_CP2K_DFTD4)
     message("    - Enabled via TBLITE")
   endif()
   message("    - Include directories: ${dftd4_INCLUDE_DIRS}\n"
@@ -1179,8 +1237,14 @@ if(CP2K_USE_LIBSMEAGOL)
 endif()
 
 if(CP2K_USE_TBLITE)
-  message("  - TBLITE\n" "    - Include directories: ${tblite_INCLUDE_DIRS}\n"
-          "    - Libraries: ${tblite_LINK_LIBRARIES}\n")
+  message(
+    "  - TBLITE\n"
+    "    - Provider: ${CP2K_TBLITE_PROVIDER}\n"
+    "    - Source revision: ${CP2K_TBLITE_REVISION}\n"
+    "    - g-xTB support: ${CP2K_TBLITE_HAS_GXTB}\n"
+    "    - CP2K DFTD4 interface: ${CP2K_TBLITE_WITH_CP2K_DFTD4}\n"
+    "    - Include directories: ${tblite_INCLUDE_DIRS}\n"
+    "    - Libraries: ${tblite_LINK_LIBRARIES}\n")
 endif()
 
 if(CP2K_USE_SIRIUS)

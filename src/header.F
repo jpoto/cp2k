@@ -16,6 +16,10 @@ MODULE header
                                               r_pid,&
                                               r_timestamp,&
                                               r_user_name
+   USE input_constants,                 ONLY: gfn1xtb,&
+                                              gfn2xtb,&
+                                              gxtb,&
+                                              ipea1xtb
    USE kinds,                           ONLY: default_path_length
 #include "./base/base_uses.f90"
 
@@ -263,18 +267,29 @@ CONTAINS
          '  #### #  #####  #           #   ###   ##  #   #     ###  '
 
       SELECT CASE (tb_type)
-      CASE (1)
+      CASE (gfn1xtb)
          WRITE (iw, '( 34x,a )') ' GFN1-xTB  '
-      CASE (2)
+      CASE (gfn2xtb)
          WRITE (iw, '( 34x,a )') ' GFN2-xTB  '
-      CASE (3)
+      CASE (ipea1xtb)
          WRITE (iw, '( 34x,a )') ' IPEA1-xTB '
+      CASE (gxtb)
+         WRITE (iw, '( 34x,a )') '   g-xTB   '
       CASE DEFAULT
       END SELECT
 
       WRITE (iw, '( 2(16x,a,/) )') &
          '                 Version 0.0                       ', &
          '            Johann V. Pototschnig                  '
+#if defined(__TBLITE)
+      WRITE (iw, '(16x,a,a)') 'tblite provider: ', __TBLITE_PROVIDER
+      WRITE (iw, '(16x,a,a)') 'tblite source revision: ', __TBLITE_REVISION
+#if defined(__TBLITE_GXTB)
+      WRITE (iw, '(16x,a)') 'g-xTB support: enabled'
+#else
+      WRITE (iw, '(16x,a)') 'g-xTB support: disabled'
+#endif
+#endif
 
    END SUBROUTINE tblite_header
 
@@ -528,4 +543,3 @@ CONTAINS
 
    END SUBROUTINE rixs_header
 END MODULE header
-

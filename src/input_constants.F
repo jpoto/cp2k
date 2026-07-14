@@ -1379,7 +1379,8 @@ MODULE input_constants
    INTEGER, PARAMETER, PUBLIC               :: gfn1xtb = 1, &
                                                gfn2xtb = 2, &
                                                ipea1xtb = 3, &
-                                               gfn_tblite = 4
+                                               gfn_tblite = 4, &
+                                               gxtb = 5
 
    ! tblite SCC mixer selection
    INTEGER, PARAMETER, PUBLIC               :: tblite_scc_mixer_auto = 0, &
@@ -1397,7 +1398,8 @@ MODULE input_constants
                                                tblite_mixer_weight_factor_default = 0.01_dp
 
    ! tblite reference CLI initial guess selection
-   INTEGER, PARAMETER, PUBLIC               :: tblite_guess_sad = 0, &
+   INTEGER, PARAMETER, PUBLIC               :: tblite_guess_auto = -1, &
+                                               tblite_guess_sad = 0, &
                                                tblite_guess_eeq = 1, &
                                                tblite_guess_ceh = 2
 

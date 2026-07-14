@@ -56,7 +56,7 @@ MODULE qs_scf_initialization
    USE input_constants,                 ONLY: &
         broy_mix, cholesky_dbcsr, cholesky_inverse, cholesky_off, diag_block_davidson, &
         diag_block_krylov, diag_filter_matrix, diag_ot, diag_standard, direct_p_mix, kerker_mix, &
-        modified_broy_mix, multisec_mix, new_pulay_mix, no_mix, ot2cdft, outer_scf_none, &
+        gxtb, modified_broy_mix, multisec_mix, new_pulay_mix, no_mix, ot2cdft, outer_scf_none, &
         plus_u_lowdin, pulay_mix, smeagol_runtype_emtransport, wfi_frozen_method_nr, &
         wfi_ps_method_nr, wfi_use_guess_method_nr
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
@@ -720,6 +720,15 @@ CONTAINS
       CASE DEFAULT
          CPABORT("Unknown mixing method")
       END SELECT
+
+      IF (dft_control%qs_control%xtb_control%do_tblite .AND. &
+          dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. &
+          scf_control%use_diag .AND. scf_env%mixing_method /= direct_mixing_nr) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "g-xTB mixing requires SCF/MIXING METHOD DIRECT_P_MIXING; "// &
+                       "Pulay, Broyden, and Kerker are not AO density-matrix mixers "// &
+                       "in the TB path")
+      END IF
 
       ! Disable DIIS for OT and g-space density mixing methods
       IF (scf_env%method == ot_method_nr) THEN

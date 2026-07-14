@@ -47,7 +47,7 @@ MODULE qs_neighbor_lists
                                               gth_potential_type,&
                                               sgp_potential_type
    USE input_constants,                 ONLY: &
-        dispersion_uff, do_method_lrigpw, do_method_rigpw, do_potential_id, &
+        dispersion_uff, do_method_lrigpw, do_method_rigpw, do_potential_id, gxtb, &
         do_potential_mix_cl_trunc, do_potential_short, do_potential_truncated, do_se_IS_slater, &
         vdw_pairpot_dftd4, xc_vdw_fun_pairpot
    USE input_section_types,             ONLY: section_vals_get,&
@@ -673,6 +673,26 @@ CONTAINS
             pair_radius = pair_radius + cutoff_screen_factor*roperator
          ELSE
             CALL pair_radius_setup(orb_present, orb_present, orb_radius, orb_radius, pair_radius)
+         END IF
+         ! g-xTB's separable ACP is C(k)^T L C(k).  Its real-space support is
+         ! therefore the difference set of two projector/valence overlaps.
+         ! tb_get_basis stores save_tblite's global one-overlap cutoff in rcut;
+         ! the sum below is the corresponding convolution cutoff.  SAB_KP also
+         ! defines CP2K's image-cell representation, so reserve this complete
+         ! range before kpoint_init_cell_index is called.
+         IF (xtb .AND. dft_control%qs_control%xtb_control%do_tblite .AND. &
+             dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
+            DO ikind = 1, nkind
+               CALL get_qs_kind(qs_kind_set(ikind), xtb_parameter=xtb_atom)
+               CALL get_xtb_atom_param(xtb_parameter=xtb_atom, rcut=c_radius(ikind))
+            END DO
+            DO jkind = 1, nkind
+               DO ikind = 1, nkind
+                  IF (orb_present(ikind) .AND. orb_present(jkind)) &
+                     pair_radius(ikind, jkind) = MAX(pair_radius(ikind, jkind), &
+                                                     c_radius(ikind) + c_radius(jkind))
+               END DO
+            END DO
          END IF
          CALL build_neighbor_lists(sab_kp, particle_set, atom2d, cell, pair_radius, &
                                    subcells=subcells, nlname="sab_kp")

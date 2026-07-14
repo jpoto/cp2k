@@ -309,9 +309,12 @@ enabled by passing `-DCP2K_USE_GREENX=ON` to CMake.
 - GREENX library can be downloaded from <https://github.com/nomad-coe/greenX>
 - For more information see <https://nomad-coe.github.io/greenX/>.
 
-## TBLITE (semiempirical method)
+## TBLITE and save_tblite (semiempirical methods)
 
-TBLITE is a lightweight tight-binding framework that provides the GFN2-xTB method.
+TBLITE is a lightweight tight-binding framework that provides GFN1-xTB, GFN2-xTB, and IPEA1. The
+experimental save_tblite provider is a mutually exclusive drop-in replacement that also provides
+g-xTB. A CP2K binary links exactly one of the two providers because both export the same library, C
+symbols, and Fortran modules.
 
 - Please always use the CMake-built tblite package rather than the Meson-built one for CP2K.
 - A CMake build of tblite from source also installs DFT-D4 and s-dftd3. Therefore, no separate DFTD4
@@ -319,6 +322,68 @@ TBLITE is a lightweight tight-binding framework that provides the GFN2-xTB metho
   functionals.
 - For more information see <https://github.com/tblite/tblite>
 - Pass `-DCP2K_USE_TBLITE=ON` to CMake.
+- Select the implementation with `-DCP2K_TBLITE_PROVIDER=UPSTREAM` (default) or
+  `-DCP2K_TBLITE_PROVIDER=SAVE`. The SAVE provider is accepted only when CMake detects the
+  `tblite_xtb_gxtb` module; g-xTB is enabled from this capability check rather than from the
+  provider name alone. Conversely, an UPSTREAM configuration rejects a detected save_tblite
+  compatibility API, preventing an unrelated package-search path from silently selecting the wrong
+  implementation.
+- The toolchain equivalent is `--with-tblite=install --tblite-provider=save`. This checks out a
+  pinned revision from the private `DCM-Uni-Paderborn/save_tblite` repository and therefore needs
+  suitable GitHub credentials. Its non-release dependencies are pinned by commit as well.
+- `save_tblite` uses the experimental `grimme-lab/dftd` API internally. This dispersion remains
+  available to its xTB methods, but it is not API-compatible with CP2K's standalone DFTD4 feature.
+  Consequently, SAVE builds require `-DCP2K_USE_DFTD4=OFF`; the toolchain sets this automatically.
+- Use `XTB/GFN_TYPE TBLITE` together with `XTB/TBLITE/METHOD GXTB` to select g-xTB. Builds without
+  the g-xTB capability reject this method with an explicit diagnostic.
+- The native CP2K path supports g-xTB energies and analytical forces for non-periodic (0D) and fully
+  periodic (3D) systems. Fully periodic calculations support Gamma and regular Cartesian k-point
+  meshes with analytical stress and full, K290, or SPGLIB reduction. Explicit `GENERAL` input is
+  accepted only when the original list is a complete, uniformly weighted Cartesian product; its
+  points can be given in any order. Already reduced, nonuniform, or nonregular `GENERAL` lists are
+  rejected because save_tblite's coupled exchange needs an unambiguous Born-von Karman mesh. The
+  k-point force and stress path differentiates the image-resolved H0, Pulay, q-vSZP/ACP, and
+  nonlinear exchange terms. Partially periodic (1D or 2D) g-xTB calculations are not supported. For
+  reduced meshes, overlap-covariance calibration selects between CP2K's internally wrapped atom
+  gauge and save_tblite's input-coordinate Bloch gauge, using the latter when required by the
+  symmetry transformation. Geometry and cell changes rebuild these symmetry data; a 1x1x1 Gamma mesh
+  also retains its little-group operations for force and stress projection.
+- CP2K stores the structural q-vSZP orbital layout per element kind, while save_tblite evaluates its
+  charge- and environment-dependent coefficients separately for every atom. Atoms in one CP2K kind
+  therefore share the structural layout, but both the Gamma and k-point response retain the
+  atom-resolved coefficient derivatives supplied by save_tblite.
+- Mixer selection is model dependent. For GFN1/GFN2/IPEA1, `SCC_MIXER TBLITE` retains tblite's
+  modified-Broyden population/multipole mixer. For g-xTB, `AUTO` and `TBLITE` instead reproduce
+  save_tblite's potential mixer: two damped updates of the complete Fock matrix (damping 0.2), then
+  DIIS from the fourth Fock build with a seven-vector history. `SCC_MIXER CP2K` is an explicitly
+  different alternative: `DFT/SCF/MIXING` acts on the density matrix and CP2K's regular SCF DIIS can
+  extrapolate the complete KS/Fock matrix. In particular, this option does not apply the GFN1/GFN2
+  SCC-variable Broyden mixer to g-xTB.
+- With multiple k-points, the save_tblite potential-mixer extension packs the real and imaginary
+  parts of every irreducible k-point and spin block into one Brillouin-zone-weighted DIIS vector.
+  This preserves the full-star Frobenius metric under K290 or SPGLIB symmetry reduction. Native
+  save_tblite currently provides no multi-k-point SCF reference, so this extension is validated
+  against equivalent full and symmetry-reduced CP2K meshes.
+- g-xTB diagonalization requires `SCF/MIXING METHOD DIRECT_P_MIXING`. Pulay, Broyden, and Kerker are
+  rejected only for this method because the TB path does not apply them to the AO density matrix.
+  This does not change their use by DFT or the established population/multipole mixer used by
+  GFN1/GFN2/IPEA1. At multiple k-points, CP2K Fock CDIIS additionally requires
+  `KPOINTS/WAVEFUNCTIONS COMPLEX`; real k-point wavefunctions can use the Direct-P alternative.
+- Post-SCF diagonalization on a newly generated k-point grid (for example a band-structure path) is
+  rejected for now. The explicit g-xTB exchange Fock matrix and native mixer state belong to the
+  converged SCF grid; silently reusing them on a different grid would be incorrect. Exporting the
+  already converged SCF orbitals does not require this extra diagonalization.
+- `XTB/TBLITE/REFERENCE_CLI` can optionally cross-check the native result with the save_tblite CLI
+  for molecular and 3D-periodic Gamma-point calculations. The CLI cannot reproduce CP2K k-point
+  sampling, so such a reference check is skipped or rejected according to `STOP_ON_ERROR` when
+  multiple k-points are active.
+- Transition-metal and f-element systems can have more than one converged g-xTB SCC solution. The
+  selected solution can therefore depend on the initial density or restart. For sensitive
+  single-point calculations, compare multiple starting guesses; for trajectories, use restarts to
+  follow the intended SCC root.
+- GFN1/GFN2 Hamiltonian and mixer behavior with the upstream provider is unaffected. The generic
+  k-point occupation path now also preserves the requested UKS populations when
+  `FIXED_MAGNETIC_MOMENT -1` is used with smearing.
 
 ## openPMD (structured output)
 

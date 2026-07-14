@@ -1,0 +1,44 @@
+&GLOBAL
+  PRINT_LEVEL LOW
+  PROJECT H2O_gxtb_cp2k_density_mixer
+  RUN_TYPE ENERGY
+&END GLOBAL
+
+&FORCE_EVAL
+  METHOD QUICKSTEP
+  &DFT
+    &QS
+      METHOD xTB
+      &XTB
+        GFN_TYPE TBLITE
+        SCC_MIXER CP2K
+        &TBLITE
+          ACCURACY 1.0
+          METHOD GXTB
+        &END TBLITE
+      &END XTB
+    &END QS
+    &SCF
+      ! Isolate CP2K density-matrix mixing by disabling the regular KS/Fock DIIS.
+      EPS_DIIS 0.0
+      EPS_SCF 1.0E-7
+      MAX_SCF 200
+      SCF_GUESS MOPAC
+      &MIXING
+        ALPHA 0.2
+        METHOD DIRECT_P_MIXING
+      &END MIXING
+    &END SCF
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC 10.0 10.0 10.0
+      PERIODIC XYZ
+    &END CELL
+    &COORD
+      O  5.000000  5.000000  5.000000
+      H  5.758602  5.000000  5.504284
+      H  4.241398  5.000000  5.504284
+    &END COORD
+  &END SUBSYS
+&END FORCE_EVAL
