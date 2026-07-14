@@ -30,10 +30,10 @@ MODULE tblite_interface
                                  acp_image_type, hamiltonian_image_type, &
                                  cp2k_acp_image_gradient, cp2k_apply_basis_gradient, &
                                  cp2k_build_gamma_h0, cp2k_build_image_acp, &
-                                 cp2k_build_image_h0, cp2k_exchange_kpoint, &
+                                 cp2k_build_image_h0, cp2k_exchange_kmesh, &
+                                 cp2k_exchange_kmesh_gradient, &
                                  cp2k_exchange_kpoint_gradient, &
                                  cp2k_gamma_gradient, cp2k_image_h0_gradient, &
-                                 cp2k_prepare_exchange, &
                                  cp2k_get_cgto, cp2k_multipole_cgto, &
                                  cp2k_multipole_grad_cgto, cp2k_set_scf_options, &
                                  cp2k_update_basis, new_cp2k_potential_mixer
@@ -1842,7 +1842,7 @@ CONTAINS
 !> \param tb ...
 !> \param matrix_s ...
 !> \param para_env ...
-!> Build g-xTB exchange directly at the irreducible k-points of the current CP2K density.
+!> Build g-xTB exchange from every point of the current complete regular k mesh.
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env)
 
@@ -1851,38 +1851,43 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: fock
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap
       COMPLEX(KIND=dp), ALLOCATABLE, &
          DIMENSION(:, :, :, :)                           :: density
-      INTEGER                                            :: ik, ishell, ispin, isym, nao, nkp, &
-                                                            nspin, source_atom, source_shell, &
-                                                            target_atom, target_shell
+      INTEGER                                            :: ik, ispin, nao, nkp, nspin
+      INTEGER, DIMENSION(3)                              :: nmesh
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: full_grid, use_real_wfn
-      REAL(KIND=dp)                                      :: exchange_energy, hermitian_error, &
-                                                            star_weight
+      REAL(KIND=dp)                                      :: exchange_energy, hermitian_error
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_imag, overlap_real
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(error_type), ALLOCATABLE                      :: error
-      TYPE(kpoint_sym_type), POINTER                     :: kpsym
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_nl
 
-      NULLIFY (cell_to_index, cmatrix, kpoints, kpsym, rmatrix, sab_nl)
+      NULLIFY (cell_to_index, cmatrix, kpoints, rmatrix, sab_nl)
       CALL get_qs_env(qs_env, kpoints=kpoints)
       CPASSERT(ASSOCIATED(kpoints))
-      CALL get_kpoint_info(kpoints, nkp=nkp, full_grid=full_grid, use_real_wfn=use_real_wfn, &
-                           cell_to_index=cell_to_index, sab_nl=sab_nl)
+      CALL get_kpoint_info(kpoints, nkp=nkp, nkp_grid=nmesh, full_grid=full_grid, &
+                           use_real_wfn=use_real_wfn, cell_to_index=cell_to_index, sab_nl=sab_nl)
+      ! CP2K's implicit Gamma environment already contains the physical point k=(0,0,0) with
+      ! weight one, but does not carry a mesh descriptor.  Supply only the missing local BvK
+      ! topology; kpoints%xkp itself is passed through unchanged below.  Multi-k calculations still
+      ! require the complete explicit product grid.
+      IF (nkp == 1) THEN
+         nmesh = 1
+      ELSEIF (.NOT. full_grid .OR. ANY(nmesh < 1) .OR. PRODUCT(nmesh) /= nkp) THEN
+         CPABORT("g-XTB exchange requires FULL_GRID on a complete regular k-point mesh")
+      END IF
       IF (ABS(SUM(kpoints%wkp(1:nkp)) - 1.0_dp) > 1.0E-10_dp) &
          CPABORT("g-xTB k-point weights do not sum to one")
 
       nao = tb%calc%bas%nao
       nspin = tb%wfn%nspin
-      ALLOCATE (density(nao, nao, nspin, nkp), fock(nao, nao, nspin), &
-                overlap(nao, nao), overlap_real(nao, nao), overlap_imag(nao, nao), &
+      ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao, nkp), &
+                overlap_real(nao, nao), overlap_imag(nao, nao), &
                 exchange_vsh(tb%calc%bas%nsh))
       ! Before the first diagonalization of a freshly initialized k-point SCF (including an
       ! RS-only restart), CP2K has no P(k) yet.  The zero pmat is a deliberate initial Hamiltonian;
@@ -1900,8 +1905,6 @@ CONTAINS
                 source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
       IF (.NOT. ALL(ieee_is_finite(tb%wfn%qsh))) &
          CPABORT("CP2K supplied non-finite shell charges to save_tblite exchange")
-      CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
-      IF (ALLOCATED(error)) CPABORT("save_tblite k-point exchange preparation failed")
 
       ALLOCATE (rmatrix, cmatrix)
       CALL dbcsr_create(rmatrix, template=matrix_s(1, 1)%matrix, &
@@ -1911,7 +1914,6 @@ CONTAINS
       CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
       CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
 
-      tb%e_exchange = 0.0_dp
       DO ik = 1, nkp
          CALL dbcsr_set(rmatrix, 0.0_dp)
          CALL dbcsr_set(cmatrix, 0.0_dp)
@@ -1919,12 +1921,13 @@ CONTAINS
                              cell_to_index, sab_nl)
          CALL tb_dbcsr_component_to_dense(tb, rmatrix, overlap_real, para_env, .FALSE.)
          CALL tb_dbcsr_component_to_dense(tb, cmatrix, overlap_imag, para_env, .TRUE.)
-         overlap = CMPLX(overlap_real, overlap_imag, KIND=dp)
+         overlap(:, :, ik) = CMPLX(overlap_real, overlap_imag, KIND=dp)
          IF (.NOT. ALL(ieee_is_finite(overlap_real)) .OR. &
              .NOT. ALL(ieee_is_finite(overlap_imag))) &
             CPABORT("CP2K supplied a non-finite k-point overlap matrix to save_tblite")
 
-         hermitian_error = MAXVAL(ABS(overlap - CONJG(TRANSPOSE(overlap))))
+         hermitian_error = MAXVAL(ABS(overlap(:, :, ik) - &
+                                      CONJG(TRANSPOSE(overlap(:, :, ik)))))
          IF (hermitian_error > 1.0E-10_dp) &
             CPABORT("CP2K supplied a non-Hermitian k-point overlap matrix to save_tblite")
          DO ispin = 1, nspin
@@ -1934,67 +1937,40 @@ CONTAINS
                CPABORT("CP2K supplied a non-Hermitian k-point density matrix to save_tblite")
          END DO
 
-         CALL cp2k_exchange_kpoint(tb%calc, tb%mol, tb%ecache, density(:, :, :, ik), &
-                                   overlap, fock, exchange_vsh, exchange_energy, error)
-         IF (ALLOCATED(error)) CPABORT("save_tblite k-point exchange evaluation failed")
-         IF (.NOT. ALL(ieee_is_finite(REAL(fock, KIND=dp))) .OR. &
-             .NOT. ALL(ieee_is_finite(AIMAG(fock)))) &
-            CPABORT("save_tblite returned a non-finite k-point exchange matrix")
-         IF (.NOT. ALL(ieee_is_finite(exchange_vsh)) .OR. &
-             .NOT. ieee_is_finite(exchange_energy)) &
-            CPABORT("save_tblite returned a non-finite k-point exchange response")
+      END DO
+
+      CALL cp2k_exchange_kmesh(tb%calc, tb%mol, tb%ecache, tb%wfn, nmesh, &
+                               kpoints%xkp(1:3, 1:nkp), kpoints%wkp(1:nkp), &
+                               density, overlap, tb%exchange_fock_kp, exchange_vsh, &
+                               exchange_energy, error)
+      IF (ALLOCATED(error)) CPABORT("save_tblite whole-mesh exchange evaluation failed")
+      IF (.NOT. ALL(ieee_is_finite(REAL(tb%exchange_fock_kp, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(tb%exchange_fock_kp)))) &
+         CPABORT("save_tblite returned a non-finite whole-mesh exchange matrix")
+      IF (.NOT. ALL(ieee_is_finite(exchange_vsh)) .OR. &
+          .NOT. ieee_is_finite(exchange_energy)) &
+         CPABORT("save_tblite returned a non-finite whole-mesh exchange response")
+      DO ik = 1, nkp
          DO ispin = 1, nspin
-            hermitian_error = MAXVAL(ABS(fock(:, :, ispin) - &
-                                         CONJG(TRANSPOSE(fock(:, :, ispin)))))
+            hermitian_error = MAXVAL(ABS(tb%exchange_fock_kp(:, :, ispin, ik) - &
+                                         CONJG(TRANSPOSE(tb%exchange_fock_kp(:, :, ispin, ik)))))
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("save_tblite returned a non-Hermitian k-point exchange matrix")
          END DO
-         IF (use_real_wfn .AND. MAXVAL(ABS(AIMAG(fock))) > 1.0E-10_dp) &
+         IF (use_real_wfn .AND. &
+             MAXVAL(ABS(AIMAG(tb%exchange_fock_kp(:, :, :, ik)))) > 1.0E-10_dp) &
             CPABORT("Complex g-xTB exchange cannot be represented by real k-point wavefunctions")
-         tb%exchange_fock_kp(:, :, :, ik) = fock
-
-         ! F(k) is stored without a weight and is added directly during the KS Bloch transform.
-         ! Energy and charge-dependent shell response are Brillouin-zone contractions and do carry
-         ! the CP2K k-point weight.
-         tb%e_exchange(1) = tb%e_exchange(1) + kpoints%wkp(ik)*exchange_energy
-
-         IF (full_grid) THEN
-            tb%pot%vsh(:, 1) = tb%pot%vsh(:, 1) + kpoints%wkp(ik)*exchange_vsh
-         ELSE
-            kpsym => kpoints%kp_sym(ik)%kpoint_sym
-            CPASSERT(ASSOCIATED(kpsym))
-            IF (kpsym%apply_symmetry) THEN
-               CPASSERT(kpsym%nwght > 0)
-               CPASSERT(ASSOCIATED(kpsym%f0))
-               CPASSERT(SIZE(kpsym%f0, 1) == tb%mol%nat)
-               CPASSERT(SIZE(kpsym%f0, 2) >= kpsym%nwght)
-               star_weight = kpoints%wkp(ik)/REAL(kpsym%nwght, KIND=dp)
-               DO isym = 1, kpsym%nwght
-                  DO source_atom = 1, tb%mol%nat
-                     target_atom = kpsym%f0(source_atom, isym)
-                     CPASSERT(target_atom >= 1 .AND. target_atom <= tb%mol%nat)
-                     IF (tb%mol%id(source_atom) /= tb%mol%id(target_atom)) &
-                        CPABORT("g-xTB symmetry maps atoms of different elements")
-                     IF (tb%calc%bas%nsh_at(source_atom) /= &
-                         tb%calc%bas%nsh_at(target_atom)) &
-                        CPABORT("g-xTB symmetry maps atoms with incompatible shell layouts")
-                     DO ishell = 1, tb%calc%bas%nsh_at(source_atom)
-                        source_shell = tb%calc%bas%ish_at(source_atom) + ishell
-                        target_shell = tb%calc%bas%ish_at(target_atom) + ishell
-                        tb%pot%vsh(target_shell, 1) = tb%pot%vsh(target_shell, 1) + &
-                                                      star_weight*exchange_vsh(source_shell)
-                     END DO
-                  END DO
-               END DO
-            ELSE
-               tb%pot%vsh(:, 1) = tb%pot%vsh(:, 1) + kpoints%wkp(ik)*exchange_vsh
-            END IF
-         END IF
       END DO
+
+      ! F(k) is unweighted.  The energy and shell response returned by the
+      ! whole-mesh API already contain the complete BZ contraction.
+      tb%e_exchange = 0.0_dp
+      tb%e_exchange(1) = exchange_energy
+      tb%pot%vsh(:, 1) = tb%pot%vsh(:, 1) + exchange_vsh
 
       CALL dbcsr_deallocate_matrix(rmatrix)
       CALL dbcsr_deallocate_matrix(cmatrix)
-      DEALLOCATE (density, fock, overlap, overlap_real, overlap_imag, exchange_vsh)
+      DEALLOCATE (density, overlap, overlap_real, overlap_imag, exchange_vsh)
       tb%exchange_fock_kp_valid = .TRUE.
 
    END SUBROUTINE tb_build_gxtb_kpoint_exchange
@@ -2007,15 +1983,17 @@ CONTAINS
 !> \param sigma ...
 !> Differentiate the explicit g-xTB exchange contribution on a CP2K k-point mesh.
 !>
-!> The save_tblite kernel returns the response of one irreducible k-point without its mesh weight.
-!> Atomic gradients and stress are expanded over the complete k star here.  Its overlap response
-!> transforms like a density matrix and is folded back to CP2K's real-space image convention by
-!> kpoint_density_transform, including weights, symmetry, Bloch phases, and image orientation.
+!> A complete multi-k mesh is differentiated by one coupled save_tblite reverse sweep.  Its direct
+!> atomic gradient and strain derivative are already complete Brillouin-zone contractions per
+!> primitive cell.  The returned unweighted overlap response transforms like a density matrix and
+!> is folded back to CP2K's real-space image convention by kpoint_density_transform, which applies
+!> the k-point weights, Bloch phases, and image orientation exactly once.
 !>
 !> This isolated bridge puts the spin-summed exchange overlap response into matrix_w(1,:).  The
 !> ordinary alpha/beta channels must still be separate at entry; a later up/down-to-charge/magnet
 !> conversion adds matrix_w(2,:) to channel one.  H0/ACP response and final force/virial dispatch
-!> deliberately remain outside.
+!> deliberately remain outside.  The established independent-k derivative remains the one-point
+!> fallback so the Gamma path retains its existing response and symmetry handling.
 ! **************************************************************************************************
    SUBROUTINE tb_gxtb_kpoint_exchange_gradient(qs_env, tb, gradient, sigma)
 
@@ -2023,13 +2001,14 @@ CONTAINS
       TYPE(tblite_type), POINTER                         :: tb
       REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: gradient, sigma
 
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap, overlap_grad
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap, overlap_grad
       COMPLEX(KIND=dp), ALLOCATABLE, &
          DIMENSION(:, :, :, :)                           :: density
       INTEGER                                            :: ic, ik, ikk, img, ispin, isym, kplocal, &
                                                             nao, nat, nc, nimg, nkp, nspin, &
                                                             source_atom, target_atom
       INTEGER, DIMENSION(2)                              :: kp_range
+      INTEGER, DIMENSION(3)                              :: nmesh
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: full_grid, use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error, star_weight
@@ -2070,8 +2049,14 @@ CONTAINS
       IF (.NOT. ASSOCIATED(ao_ao_fm_pools(1)%pool)) &
          CPABORT("Uninitialized AO full-matrix pool for g-xTB exchange gradient")
 
-      CALL get_kpoint_info(kpoints, nkp=nkp, kp_range=kp_range, full_grid=full_grid, &
-                           use_real_wfn=use_real_wfn, cell_to_index=cell_to_index, sab_nl=sab_nl)
+      CALL get_kpoint_info(kpoints, nkp=nkp, nkp_grid=nmesh, kp_range=kp_range, &
+                           full_grid=full_grid, use_real_wfn=use_real_wfn, &
+                           cell_to_index=cell_to_index, sab_nl=sab_nl)
+      IF (nkp == 1) THEN
+         nmesh = 1
+      ELSEIF (.NOT. full_grid .OR. ANY(nmesh < 1) .OR. PRODUCT(nmesh) /= nkp) THEN
+         CPABORT("g-XTB exchange gradients require FULL_GRID on a complete regular k-point mesh")
+      END IF
       IF (.NOT. ASSOCIATED(cell_to_index) .OR. .NOT. ASSOCIATED(sab_nl)) &
          CPABORT("Incomplete k-point image map for g-xTB exchange gradient")
       IF (ABS(SUM(kpoints%wkp(1:nkp)) - 1.0_dp) > 1.0E-10_dp) &
@@ -2089,9 +2074,10 @@ CONTAINS
       CPASSERT(SIZE(matrix_w, 1) >= nspin .AND. SIZE(matrix_w, 2) == nimg)
       CPASSERT(kplocal > 0)
 
-      ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao), &
-                overlap_grad(nao, nao), overlap_real(nao, nao), overlap_imag(nao, nao), &
+      ALLOCATE (density(nao, nao, nspin, nkp), overlap(nao, nao, nkp), &
+                overlap_grad(nao, nao, nkp), overlap_real(nao, nao), overlap_imag(nao, nao), &
                 k_gradient(3, nat), k_sigma(3, 3))
+      overlap_grad = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
       CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
       IF (.NOT. ALL(ieee_is_finite(REAL(density, KIND=dp))) .OR. &
           .NOT. ALL(ieee_is_finite(AIMAG(density)))) &
@@ -2129,11 +2115,12 @@ CONTAINS
                              cell_to_index, sab_nl)
          CALL tb_dbcsr_component_to_dense(tb, rmatrix, overlap_real, para_env, .FALSE.)
          CALL tb_dbcsr_component_to_dense(tb, cmatrix, overlap_imag, para_env, .TRUE.)
-         overlap = CMPLX(overlap_real, overlap_imag, KIND=dp)
+         overlap(:, :, ik) = CMPLX(overlap_real, overlap_imag, KIND=dp)
          IF (.NOT. ALL(ieee_is_finite(overlap_real)) .OR. &
              .NOT. ALL(ieee_is_finite(overlap_imag))) &
             CPABORT("CP2K supplied a non-finite overlap to the exchange gradient")
-         hermitian_error = MAXVAL(ABS(overlap - CONJG(TRANSPOSE(overlap))))
+         hermitian_error = MAXVAL(ABS(overlap(:, :, ik) - &
+                                      CONJG(TRANSPOSE(overlap(:, :, ik)))))
          IF (hermitian_error > 1.0E-10_dp) &
             CPABORT("CP2K supplied a non-Hermitian overlap to the exchange gradient")
          DO ispin = 1, nspin
@@ -2142,31 +2129,17 @@ CONTAINS
             IF (hermitian_error > 1.0E-10_dp) &
                CPABORT("CP2K supplied a non-Hermitian density to the exchange gradient")
          END DO
+      END DO
 
-         ! save_tblite owns the conversion of its internal kernel adjoints to CP2K's explicit
-         ! nuclear-gradient/stress convention; this bridge only applies mesh weights and symmetry.
+      IF (nkp == 1) THEN
+         ! Preserve the established Gamma/one-point response, including its existing symmetry
+         ! expansion.  Both the response and the direct derivatives are unweighted here.
          CALL cp2k_exchange_kpoint_gradient(tb%calc, tb%mol, tb%ecache, &
-                                            density(:, :, :, ik), overlap, overlap_grad, &
+                                            density(:, :, :, 1), overlap(:, :, 1), &
+                                            overlap_grad(:, :, 1), &
                                             k_gradient, k_sigma, error)
          IF (ALLOCATED(error)) CPABORT("save_tblite k-point exchange gradient failed")
-         IF (.NOT. ALL(ieee_is_finite(REAL(overlap_grad, KIND=dp))) .OR. &
-             .NOT. ALL(ieee_is_finite(AIMAG(overlap_grad))) .OR. &
-             .NOT. ALL(ieee_is_finite(k_gradient)) .OR. &
-             .NOT. ALL(ieee_is_finite(k_sigma))) &
-            CPABORT("save_tblite returned a non-finite k-point exchange gradient")
-         hermitian_error = MAXVAL(ABS(overlap_grad - CONJG(TRANSPOSE(overlap_grad))))
-         IF (hermitian_error > 1.0E-10_dp) &
-            CPABORT("save_tblite returned a non-Hermitian overlap gradient")
-         IF (use_real_wfn .AND. MAXVAL(ABS(AIMAG(overlap_grad))) > 1.0E-10_dp) &
-            CPABORT("Complex exchange overlap gradient cannot use real k-point wavefunctions")
-
-         IF (ik >= kp_range(1) .AND. ik <= kp_range(2)) THEN
-            ikk = ik - kp_range(1) + 1
-            CALL tb_dense_to_fm(REAL(overlap_grad, KIND=dp), pmat_ext(ikk, 1, 1))
-            IF (.NOT. use_real_wfn) &
-               CALL tb_dense_to_fm(AIMAG(overlap_grad), pmat_ext(ikk, 2, 1))
-         END IF
-
+         ik = 1
          IF (full_grid) THEN
             gradient = gradient + kpoints%wkp(ik)*k_gradient
             sigma = sigma + kpoints%wkp(ik)*k_sigma
@@ -2205,6 +2178,40 @@ CONTAINS
                sigma = sigma + kpoints%wkp(ik)*k_sigma
             END IF
          END IF
+      ELSE
+         ! Expected save_tblite ABI:
+         ! cp2k_exchange_kmesh_gradient(calc, mol, ecache, nmesh, kfrac, weights, density,
+         !                              overlap, overlap_grad, gradient, sigma, error)
+         ! overlap_grad is spin-summed and unweighted; k_gradient/k_sigma are already total
+         ! primitive-cell responses and therefore must not receive another k-point weight here.
+         CALL cp2k_exchange_kmesh_gradient(tb%calc, tb%mol, tb%ecache, nmesh, &
+                                           kpoints%xkp(1:3, 1:nkp), kpoints%wkp(1:nkp), &
+                                           density, overlap, overlap_grad, &
+                                           k_gradient, k_sigma, error)
+         IF (ALLOCATED(error)) CPABORT("save_tblite whole-mesh exchange gradient failed")
+         gradient = k_gradient
+         sigma = k_sigma
+      END IF
+
+      IF (.NOT. ALL(ieee_is_finite(REAL(overlap_grad, KIND=dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(overlap_grad))) .OR. &
+          .NOT. ALL(ieee_is_finite(k_gradient)) .OR. &
+          .NOT. ALL(ieee_is_finite(k_sigma))) &
+         CPABORT("save_tblite returned a non-finite exchange gradient")
+      DO ik = 1, nkp
+         hermitian_error = MAXVAL(ABS(overlap_grad(:, :, ik) - &
+                                      CONJG(TRANSPOSE(overlap_grad(:, :, ik)))))
+         IF (hermitian_error > 1.0E-10_dp) &
+            CPABORT("save_tblite returned a non-Hermitian overlap gradient")
+         IF (use_real_wfn .AND. MAXVAL(ABS(AIMAG(overlap_grad(:, :, ik)))) > 1.0E-10_dp) &
+            CPABORT("Complex exchange overlap gradient cannot use real k-point wavefunctions")
+
+         IF (ik >= kp_range(1) .AND. ik <= kp_range(2)) THEN
+            ikk = ik - kp_range(1) + 1
+            CALL tb_dense_to_fm(REAL(overlap_grad(:, :, ik), KIND=dp), pmat_ext(ikk, 1, 1))
+            IF (.NOT. use_real_wfn) &
+               CALL tb_dense_to_fm(AIMAG(overlap_grad(:, :, ik)), pmat_ext(ikk, 2, 1))
+         END IF
       END DO
 
       CALL dbcsr_deallocate_matrix(rmatrix)
@@ -2237,10 +2244,10 @@ CONTAINS
       END DO
       DEALLOCATE (fmwork)
       DO img = 1, nimg
-         ! At Gamma save_tblite gives G_k=dE_exchange/dS=-ao_grad_gamma, while the established
-         ! Gamma path adds ao_grad_gamma to W.  Hence the image convention is W_exchange=-G_k,
-         ! with no additional factor 1/2 (the independent-pair overlap kernel already accounts for
-         ! its factor two).  Avoiding a dense round trip preserves image-block orientation exactly.
+         ! Both APIs give the unweighted G_k=dE_exchange/dS.  At Gamma this is
+         ! -ao_grad_gamma, while the established path adds ao_grad_gamma to W; hence the common
+         ! image convention is W_exchange=-G_k.  kpoint_density_transform has already supplied the
+         ! one and only mesh weight.  Avoiding a dense round trip preserves image orientation.
          CALL dbcsr_add(matrix_w(1, img)%matrix, exchange_w_rs(1, img)%matrix, &
                         alpha_scalar=1.0_dp, beta_scalar=-1.0_dp)
       END DO
