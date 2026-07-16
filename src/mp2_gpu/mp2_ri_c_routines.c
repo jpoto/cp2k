@@ -559,7 +559,6 @@ void c_mp2_ri_create_group(int* comm_exchange_out, int* comm_rep_out, int* sizes
      * ====================================================
      */
 
-    int* new_sizes_array = (int*)malloc(comm_exchange_size * sizeof(int));
     /**
      * cp_mpi_allgather_int(
      *      const int *sendbuf,
@@ -635,7 +634,7 @@ void c_replicate_iaK_2intgroup(
     // Replication scheme using mpi_allgather
     // get the max L size
     int max_L_size = 0;
-    for (int i = 0; i < sizes_array; i++) {
+    for (int i = 0; i < sizes_array_size; i++) {
         if (sizes_array[i] > max_L_size) {
             max_L_size = sizes_array[i];
         }
@@ -748,5 +747,54 @@ void c_replicate_iaK_2intgroup(
     *BIb_C_occupied = homo;
 
     // stop the timer
+    offload_timestop();
+}
+
+/**
+ * 
+ * ===========PARAMETERS=========
+ * // Output arrays
+ * double** local_ab,        // local_ab(virtual(ispin), my_B_size(jspin))
+ * double** t_ab,            // t_ab(virtual(ispin), my_B_size(jspin))
+ * double** local_ba,        // local_ba(virtual(jspin), my_B_size(ispin))
+ * 
+ * // Input arrays
+ * const int* homo,          // homo(2) - occupied orbitals
+ * const int* virtual,       // virtual(2) - virtual orbitals
+ * const int* my_B_size,     // my_B_size(2) - virtual per process
+ * int my_group_L_size,      // L-size for Gamma_P_ia
+ * 
+ * // Control
+ * bool calc_forces,         // Whether forces are being computed
+ * int ispin,                // Spin index for i
+ * int jspin,                // Spin index for j
+ * 
+ * // mp2_env%ri_grad arrays (allocated here if not already)
+ * double** P_ij,            // mp2_env%ri_grad%P_ij(jspin)%array
+ * double** P_ab,            // mp2_env%ri_grad%P_ab(jspin)%array
+ * double** Gamma_P_ia,      // mp2_env%ri_grad%Gamma_P_ia(jspin)%array
+ * 
+ * // Allocation status flags (tracks if arrays already exist)
+ * bool* P_ij_allocated,
+ * bool* P_ab_allocated,
+ * bool* Gamma_P_ia_allocated
+ */
+void c_mp2_ri_allocate_no_blk(
+    double** local_ab, double** t_ab, double** local_ba,
+    const int* homo, const int* virtual, const int* my_B_size,
+    int my_group_L_size, bool cal_forces, int ispin, int jspin,
+    double** P_ij, double** P_ab, double** Gamma_P_ia,
+    bool* P_ij_allocated, bool* P_ab_allocated,bool* Gamma_P_ij_allocated 
+) {
+    //Start timer
+    offload_timeset("mp2_ri_allocate_no_blk\0");
+
+    // From fortran index (1) to C (0)
+    int i_c = ispin - 1;
+    int j_c = jspin - 1;
+
+    // ALLOCATE(local_ab(virtual(ispin), my_B_size(jspin)))
+    // local_ab = 0.0_dp
+    *local_ab = (double*)calloc((size_t)virtual[i_c] * my_B_size[j_c], sizeof(double));
     offload_timestop();
 }
