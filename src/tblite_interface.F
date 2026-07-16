@@ -210,6 +210,7 @@ MODULE tblite_interface
    PUBLIC :: tb_get_basis, build_tblite_matrices
    PUBLIC :: tb_get_energy, tb_update_charges, tb_ham_add_coulomb
    PUBLIC :: tb_native_scc_mixer_active
+   PUBLIC :: tb_reset_restart_history
    PUBLIC :: tb_scf_mixer_error
    PUBLIC :: tb_get_multipole
    PUBLIC :: tb_derive_dH_off
@@ -221,6 +222,32 @@ MODULE tblite_interface
    PUBLIC :: tb_reference_cli_compare
 
 CONTAINS
+
+! **************************************************************************************************
+!> \brief Drop all density-, Fock-, and mixer-history objects after accepting an external restart.
+!> \param tb tblite state associated with the current Quickstep environment
+! **************************************************************************************************
+   SUBROUTINE tb_reset_restart_history(tb)
+      TYPE(tblite_type), POINTER                         :: tb
+
+      IF (.NOT. ASSOCIATED(tb)) RETURN
+      IF (ASSOCIATED(tb%rho_ao_kp_ref)) CALL dbcsr_deallocate_matrix_set(tb%rho_ao_kp_ref)
+#if defined(__TBLITE_GXTB)
+      IF (ALLOCATED(tb%previous_density_kp)) DEALLOCATE (tb%previous_density_kp)
+      IF (ALLOCATED(tb%mixed_fock_kp)) DEALLOCATE (tb%mixed_fock_kp)
+      IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
+      IF (ALLOCATED(tb%acp_fock_kp)) DEALLOCATE (tb%acp_fock_kp)
+      tb%previous_density_kp_valid = .FALSE.
+      tb%mixed_fock_kp_valid = .FALSE.
+      tb%exchange_fock_kp_valid = .FALSE.
+      tb%acp_fock_kp_valid = .FALSE.
+      IF (ALLOCATED(tb%potential_mixer)) DEALLOCATE (tb%potential_mixer)
+      tb%potential_mixer_dimension = 0
+#endif
+#if defined(__TBLITE)
+      IF (ALLOCATED(tb%mixer)) CALL tb_reset_mixer(tb)
+#endif
+   END SUBROUTINE tb_reset_restart_history
 
 #if defined(__TBLITE)
 ! **************************************************************************************************

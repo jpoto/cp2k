@@ -45,143 +45,144 @@
 !> \author Matthias Krack (30.04.2001)
 ! **************************************************************************************************
 MODULE qs_scf
-   USE atomic_kind_types,               ONLY: atomic_kind_type
-   USE cp_control_types,                ONLY: dft_control_type
-   USE cp_dbcsr_api,                    ONLY: dbcsr_copy,&
-                                              dbcsr_deallocate_matrix,&
-                                              dbcsr_get_info,&
-                                              dbcsr_init_p,&
-                                              dbcsr_p_type,&
-                                              dbcsr_set,&
-                                              dbcsr_type
-   USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
-                                              dbcsr_deallocate_matrix_set
-   USE cp_files,                        ONLY: close_file
-   USE cp_fm_types,                     ONLY: cp_fm_create,&
-                                              cp_fm_release,&
-                                              cp_fm_to_fm,&
-                                              cp_fm_type
-   USE cp_log_handling,                 ONLY: cp_add_default_logger,&
-                                              cp_get_default_logger,&
-                                              cp_logger_release,&
-                                              cp_logger_type,&
-                                              cp_rm_default_logger,&
-                                              cp_to_string
-   USE cp_output_handling,              ONLY: cp_add_iter_level,&
-                                              cp_iterate,&
-                                              cp_p_file,&
-                                              cp_print_key_should_output,&
-                                              cp_print_key_unit_nr,&
-                                              cp_rm_iter_level
-   USE cp_result_methods,               ONLY: get_results,&
-                                              test_for_result
-   USE cp_result_types,                 ONLY: cp_result_type
-   USE ec_env_types,                    ONLY: energy_correction_type
-   USE input_constants,                 ONLY: &
-        broyden_type_1, broyden_type_1_explicit, broyden_type_1_explicit_ls, broyden_type_1_ls, &
-        broyden_type_2, broyden_type_2_explicit, broyden_type_2_explicit_ls, broyden_type_2_ls, &
-        cdft2ot, history_guess, ot2cdft, ot_precond_full_all, ot_precond_full_single, &
-        ot_precond_full_single_inverse, ot_precond_none, ot_precond_s_inverse, &
-        outer_scf_becke_constraint, outer_scf_hirshfeld_constraint, outer_scf_optimizer_broyden, &
-        gxtb, outer_scf_optimizer_newton_ls, tblite_scc_mixer_tblite
-   USE input_section_types,             ONLY: section_vals_get_subs_vals,&
-                                              section_vals_type
-   USE kinds,                           ONLY: default_path_length,&
-                                              default_string_length,&
-                                              dp
-   USE kpoint_io,                       ONLY: write_kpoints_restart
-   USE kpoint_types,                    ONLY: kpoint_type
-   USE machine,                         ONLY: m_flush,&
-                                              m_walltime
-   USE mathlib,                         ONLY: invert_matrix
-   USE message_passing,                 ONLY: mp_comm_type,&
-                                              mp_para_env_type
-   USE particle_types,                  ONLY: particle_type
-   USE physcon,                         ONLY: evolt
-   USE preconditioner,                  ONLY: prepare_preconditioner,&
-                                              restart_preconditioner
-   USE pw_env_types,                    ONLY: pw_env_get,&
-                                              pw_env_type
-   USE pw_pool_types,                   ONLY: pw_pool_type
-   USE qs_block_davidson_types,         ONLY: block_davidson_deallocate
-   USE qs_cdft_scf_utils,               ONLY: build_diagonal_jacobian,&
-                                              create_tmp_logger,&
-                                              initialize_inverse_jacobian,&
-                                              prepare_jacobian_stencil,&
-                                              print_inverse_jacobian,&
-                                              restart_inverse_jacobian
-   USE qs_cdft_types,                   ONLY: cdft_control_type
-   USE qs_charge_mixing,                ONLY: charge_mixing_scc_error
-   USE qs_charges_types,                ONLY: qs_charges_type
-   USE qs_density_matrices,             ONLY: calculate_density_matrix
-   USE qs_density_mixing_types,         ONLY: gspace_mixing_nr
-   USE qs_diis,                         ONLY: qs_diis_b_clear,&
-                                              qs_diis_b_clear_kp,&
-                                              qs_diis_b_create,&
-                                              qs_diis_b_create_kp
-   USE qs_energy_types,                 ONLY: qs_energy_type
-   USE qs_environment_types,            ONLY: get_qs_env,&
-                                              qs_environment_type,&
-                                              set_qs_env
-   USE qs_integrate_potential,          ONLY: integrate_v_rspace
-   USE qs_kind_types,                   ONLY: qs_kind_type
-   USE qs_ks_methods,                   ONLY: evaluate_core_matrix_traces,&
-                                              qs_ks_update_qs_env
-   USE qs_ks_types,                     ONLY: get_ks_env,&
-                                              qs_ks_did_change,&
-                                              qs_ks_env_type
-   USE qs_mo_io,                        ONLY: write_mo_set_to_restart
-   USE qs_mo_methods,                   ONLY: make_basis_simple,&
-                                              make_basis_sm
-   USE qs_mo_occupation,                ONLY: set_mo_occupation
-   USE qs_mo_types,                     ONLY: deallocate_mo_set,&
-                                              duplicate_mo_set,&
-                                              get_mo_set,&
-                                              mo_set_type,&
-                                              reassign_allocated_mos
-   USE qs_ot,                           ONLY: qs_ot_new_preconditioner
-   USE qs_ot_scf,                       ONLY: ot_scf_init,&
-                                              ot_scf_read_input
-   USE qs_outer_scf,                    ONLY: outer_loop_gradient,&
-                                              outer_loop_optimize,&
-                                              outer_loop_purge_history,&
-                                              outer_loop_switch,&
-                                              outer_loop_update_qs_env
-   USE qs_rho_methods,                  ONLY: qs_rho_update_rho
-   USE qs_rho_types,                    ONLY: qs_rho_get,&
-                                              qs_rho_type
-   USE qs_scf_initialization,           ONLY: qs_scf_env_initialize
-   USE qs_scf_loop_utils,               ONLY: qs_scf_check_inner_exit,&
-                                              qs_scf_check_outer_exit,&
-                                              qs_scf_density_mixing,&
-                                              qs_scf_inner_finalize,&
-                                              qs_scf_new_mos,&
-                                              qs_scf_new_mos_kp,&
-                                              qs_scf_rho_update,&
-                                              qs_scf_set_loop_flags
-   USE qs_scf_output,                   ONLY: qs_scf_cdft_info,&
-                                              qs_scf_cdft_initial_info,&
-                                              qs_scf_gce_info,&
-                                              qs_scf_loop_info,&
-                                              qs_scf_loop_print,&
-                                              qs_scf_outer_loop_info,&
-                                              qs_scf_write_mos
-   USE qs_scf_post_scf,                 ONLY: qs_scf_compute_properties
-   USE qs_scf_types,                    ONLY: &
-        block_davidson_diag_method_nr, block_krylov_diag_method_nr, filter_matrix_diag_method_nr, &
-        general_diag_method_nr, ot_diag_method_nr, ot_method_nr, qs_scf_env_type, &
-        smeagol_method_nr, special_diag_method_nr
-   USE qs_wf_history_methods,           ONLY: wfi_purge_history,&
-                                              wfi_update
-   USE scf_control_types,               ONLY: scf_control_type
-   USE smeagol_interface,               ONLY: run_smeagol_bulktrans,&
-                                              run_smeagol_emtrans
-   USE tblite_interface,                ONLY: tb_get_energy,&
-                                              tb_native_scc_mixer_active,&
-                                              tb_scf_mixer_error,&
-                                              tb_update_charges
+   USE atomic_kind_types, ONLY: atomic_kind_type
+   USE cell_types, ONLY: cell_type
+   USE cp_control_types, ONLY: dft_control_type
+   USE cp_dbcsr_api, ONLY: dbcsr_copy, &
+                           dbcsr_deallocate_matrix, &
+                           dbcsr_get_info, &
+                           dbcsr_init_p, &
+                           dbcsr_p_type, &
+                           dbcsr_set, &
+                           dbcsr_type
+   USE cp_dbcsr_operations, ONLY: copy_dbcsr_to_fm, &
+                                  dbcsr_deallocate_matrix_set
+   USE cp_files, ONLY: close_file
+   USE cp_fm_types, ONLY: cp_fm_create, &
+                          cp_fm_release, &
+                          cp_fm_to_fm, &
+                          cp_fm_type
+   USE cp_log_handling, ONLY: cp_add_default_logger, &
+                              cp_get_default_logger, &
+                              cp_logger_release, &
+                              cp_logger_type, &
+                              cp_rm_default_logger, &
+                              cp_to_string
+   USE cp_output_handling, ONLY: cp_add_iter_level, &
+                                 cp_iterate, &
+                                 cp_p_file, &
+                                 cp_print_key_should_output, &
+                                 cp_print_key_unit_nr, &
+                                 cp_rm_iter_level
+   USE cp_result_methods, ONLY: get_results, &
+                                test_for_result
+   USE cp_result_types, ONLY: cp_result_type
+   USE ec_env_types, ONLY: energy_correction_type
+   USE input_constants, ONLY: &
+      broyden_type_1, broyden_type_1_explicit, broyden_type_1_explicit_ls, broyden_type_1_ls, &
+      broyden_type_2, broyden_type_2_explicit, broyden_type_2_explicit_ls, broyden_type_2_ls, &
+      cdft2ot, history_guess, ot2cdft, ot_precond_full_all, ot_precond_full_single, &
+      ot_precond_full_single_inverse, ot_precond_none, ot_precond_s_inverse, &
+      outer_scf_becke_constraint, outer_scf_hirshfeld_constraint, outer_scf_optimizer_broyden, &
+      gxtb, outer_scf_optimizer_newton_ls, tblite_scc_mixer_tblite
+   USE input_section_types, ONLY: section_vals_get_subs_vals, &
+                                  section_vals_type
+   USE kinds, ONLY: default_path_length, &
+                    default_string_length, &
+                    dp
+   USE kpoint_io, ONLY: write_kpoints_restart
+   USE kpoint_types, ONLY: kpoint_type
+   USE machine, ONLY: m_flush, &
+                      m_walltime
+   USE mathlib, ONLY: invert_matrix
+   USE message_passing, ONLY: mp_comm_type, &
+                              mp_para_env_type
+   USE particle_types, ONLY: particle_type
+   USE physcon, ONLY: evolt
+   USE preconditioner, ONLY: prepare_preconditioner, &
+                             restart_preconditioner
+   USE pw_env_types, ONLY: pw_env_get, &
+                           pw_env_type
+   USE pw_pool_types, ONLY: pw_pool_type
+   USE qs_block_davidson_types, ONLY: block_davidson_deallocate
+   USE qs_cdft_scf_utils, ONLY: build_diagonal_jacobian, &
+                                create_tmp_logger, &
+                                initialize_inverse_jacobian, &
+                                prepare_jacobian_stencil, &
+                                print_inverse_jacobian, &
+                                restart_inverse_jacobian
+   USE qs_cdft_types, ONLY: cdft_control_type
+   USE qs_charge_mixing, ONLY: charge_mixing_scc_error
+   USE qs_charges_types, ONLY: qs_charges_type
+   USE qs_density_matrices, ONLY: calculate_density_matrix
+   USE qs_density_mixing_types, ONLY: gspace_mixing_nr
+   USE qs_diis, ONLY: qs_diis_b_clear, &
+                      qs_diis_b_clear_kp, &
+                      qs_diis_b_create, &
+                      qs_diis_b_create_kp
+   USE qs_energy_types, ONLY: qs_energy_type
+   USE qs_environment_types, ONLY: get_qs_env, &
+                                   qs_environment_type, &
+                                   set_qs_env
+   USE qs_integrate_potential, ONLY: integrate_v_rspace
+   USE qs_kind_types, ONLY: qs_kind_type
+   USE qs_ks_methods, ONLY: evaluate_core_matrix_traces, &
+                            qs_ks_update_qs_env
+   USE qs_ks_types, ONLY: get_ks_env, &
+                          qs_ks_did_change, &
+                          qs_ks_env_type
+   USE qs_mo_io, ONLY: write_mo_set_to_restart
+   USE qs_mo_methods, ONLY: make_basis_simple, &
+                            make_basis_sm
+   USE qs_mo_occupation, ONLY: set_mo_occupation
+   USE qs_mo_types, ONLY: deallocate_mo_set, &
+                          duplicate_mo_set, &
+                          get_mo_set, &
+                          mo_set_type, &
+                          reassign_allocated_mos
+   USE qs_ot, ONLY: qs_ot_new_preconditioner
+   USE qs_ot_scf, ONLY: ot_scf_init, &
+                        ot_scf_read_input
+   USE qs_outer_scf, ONLY: outer_loop_gradient, &
+                           outer_loop_optimize, &
+                           outer_loop_purge_history, &
+                           outer_loop_switch, &
+                           outer_loop_update_qs_env
+   USE qs_rho_methods, ONLY: qs_rho_update_rho
+   USE qs_rho_types, ONLY: qs_rho_get, &
+                           qs_rho_type
+   USE qs_scf_initialization, ONLY: qs_scf_env_initialize
+   USE qs_scf_loop_utils, ONLY: qs_scf_check_inner_exit, &
+                                qs_scf_check_outer_exit, &
+                                qs_scf_density_mixing, &
+                                qs_scf_inner_finalize, &
+                                qs_scf_new_mos, &
+                                qs_scf_new_mos_kp, &
+                                qs_scf_rho_update, &
+                                qs_scf_set_loop_flags
+   USE qs_scf_output, ONLY: qs_scf_cdft_info, &
+                            qs_scf_cdft_initial_info, &
+                            qs_scf_gce_info, &
+                            qs_scf_loop_info, &
+                            qs_scf_loop_print, &
+                            qs_scf_outer_loop_info, &
+                            qs_scf_write_mos
+   USE qs_scf_post_scf, ONLY: qs_scf_compute_properties
+   USE qs_scf_types, ONLY: &
+      block_davidson_diag_method_nr, block_krylov_diag_method_nr, filter_matrix_diag_method_nr, &
+      general_diag_method_nr, ot_diag_method_nr, ot_method_nr, qs_scf_env_type, &
+      smeagol_method_nr, special_diag_method_nr
+   USE qs_wf_history_methods, ONLY: wfi_purge_history, &
+                                    wfi_update
+   USE scf_control_types, ONLY: scf_control_type
+   USE smeagol_interface, ONLY: run_smeagol_bulktrans, &
+                                run_smeagol_emtrans
+   USE tblite_interface, ONLY: tb_get_energy, &
+                               tb_native_scc_mixer_active, &
+                               tb_scf_mixer_error, &
+                               tb_update_charges
 #if defined(__TBLITE_GXTB)
-   USE tblite_interface,                ONLY: tb_sync_gxtb_kpoint_density
+   USE tblite_interface, ONLY: tb_sync_gxtb_kpoint_density
 #endif
 #include "./base/base_uses.f90"
 
@@ -365,13 +366,14 @@ CONTAINS
       INTEGER                                            :: ext_master_id, handle, handle2, i_tmp, &
                                                             ic, ispin, iter_count, output_unit, &
                                                             scf_energy_message_tag, total_steps
+      INTEGER, DIMENSION(2)                              :: nelectron_spin
       LOGICAL :: density_full_step, diis_step, do_kpoints, energy_only, exit_inner_loop, &
-         exit_outer_loop, inner_loop_converged, &
-         internal_tblite_density_full_step, internal_tblite_mixer, just_energy, &
-         outer_loop_converged, tblite_native_mixer
+         exit_outer_loop, inner_loop_converged, internal_tblite_density_full_step, &
+         internal_tblite_mixer, just_energy, outer_loop_converged, tblite_native_mixer
       REAL(KIND=dp)                                      :: t1, t2
       REAL(KIND=dp), DIMENSION(3)                        :: res_val_3
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(cp_result_type), POINTER                      :: results
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks
@@ -393,7 +395,7 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (dft_control, rho, energy, &
+      NULLIFY (dft_control, rho, energy, cell, &
                logger, qs_charges, ks_env, mos, atomic_kind_set, qs_kind_set, &
                particle_set, dft_section, input, &
                scf_section, para_env, results, kpoints, pw_env, rho_ao_kp, mos_last_converged)
@@ -415,6 +417,8 @@ CONTAINS
                       mos=mos, &
                       input=input, &
                       dft_control=dft_control, &
+                      cell=cell, &
+                      nelectron_spin=nelectron_spin, &
                       do_kpoints=do_kpoints, &
                       kpoints=kpoints, &
                       results=results, &
@@ -641,7 +645,8 @@ CONTAINS
             END IF
 
             IF (do_kpoints) THEN
-               CALL write_kpoints_restart(rho_ao_kp, kpoints, scf_env, dft_section, particle_set, qs_kind_set)
+               CALL write_kpoints_restart(rho_ao_kp, kpoints, scf_env, dft_section, particle_set, &
+                                          qs_kind_set, cell, dft_control, scf_control, nelectron_spin)
             ELSE
                ! Write wavefunction restart file
                IF (scf_env%method == ot_method_nr) THEN

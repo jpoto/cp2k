@@ -41,6 +41,9 @@ registry["M009"] = GenericMatcher(r"PINT| Total energy =", col=5)
 registry["M010"] = GenericMatcher(r"BAND TOTAL ENERGY [au]", col=6)
 registry["M011"] = GenericMatcher(r"ENERGY| Total FORCE_EVAL", col=9)
 registry["N_special_kpoints"] = GenericMatcher(r"Number of Special K-points:", col=5)
+registry["KPOINT_RESTART_VALIDATED_TRANSFER"] = TextPresenceMatcher(
+    "KPOINT_RESTART| Validated BvK mesh transfer accepted"
+)
 registry["GXTB_native_raw"] = TextPresenceMatcher("GXTB-Raw")
 registry["GXTB_native_simple"] = TextPresenceMatcher("GXTB-Simple")
 registry["GXTB_native_fdiis"] = TextPresenceMatcher("GXTB-FDIIS")

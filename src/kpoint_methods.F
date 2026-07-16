@@ -2137,9 +2137,11 @@ CONTAINS
 !> \param sab_nl ...
 !> \param cell_to_index ...
 !> \param include_inactive also calibrate stored stabilizers that native CP2K does not apply
+!> \param success optional recoverable status; without it the historical abort-on-failure applies
+!> \param error_message optional diagnostic for a recoverable failure
 ! **************************************************************************************************
    SUBROUTINE calibrate_symmetry_phases(kpoint, overlap_rs, tempmat, sab_nl, cell_to_index, &
-                                        include_inactive)
+                                        include_inactive, success, error_message)
 
       TYPE(kpoint_type), POINTER                         :: kpoint
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: overlap_rs
@@ -2148,6 +2150,8 @@ CONTAINS
          POINTER                                         :: sab_nl
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL, INTENT(IN), OPTIONAL                      :: include_inactive
+      LOGICAL, INTENT(OUT), OPTIONAL                     :: success
+      CHARACTER(LEN=*), INTENT(OUT), OPTIONAL            :: error_message
 
       CHARACTER(LEN=256)                                 :: phase_error
       INTEGER                                            :: best_gauge, best_mode, gauge, ik, ir, &
@@ -2166,6 +2170,8 @@ CONTAINS
 
       calibrate_inactive = .FALSE.
       IF (PRESENT(include_inactive)) calibrate_inactive = include_inactive
+      IF (PRESENT(success)) success = .TRUE.
+      IF (PRESENT(error_message)) error_message = ""
       needs_calibration = .FALSE.
       DO ik = 1, kpoint%nkp
          kpsym => kpoint%kp_sym(ik)%kpoint_sym
@@ -2273,7 +2279,13 @@ CONTAINS
                WRITE (phase_error, '(A,ES12.4,A,I0,A,I0)') &
                   "No Bloch-phase/gauge convention preserves overlap covariance; residual=", &
                   best_residual, ", irreducible k-point=", ik, ", operation=", is
-               CALL cp_abort(__LOCATION__, TRIM(phase_error))
+               IF (PRESENT(success)) THEN
+                  success = .FALSE.
+                  IF (PRESENT(error_message)) error_message = TRIM(phase_error)
+                  GOTO 900
+               ELSE
+                  CALL cp_abort(__LOCATION__, TRIM(phase_error))
+               END IF
             END IF
             CPASSERT(best_gauge > 0)
             kpsym%phase_mode(is) = best_mode
@@ -2281,6 +2293,7 @@ CONTAINS
          END DO
       END DO
 
+900   CONTINUE
       CALL dbcsr_deallocate_matrix(source_r)
       CALL dbcsr_deallocate_matrix(source_c)
       CALL dbcsr_deallocate_matrix(direct_r)

@@ -217,6 +217,13 @@ MODULE input_constants
                                                molecular_guess = 10, &
                                                eht_guess = 11
 
+   ! Policy for reading a k-point density-matrix restart.  The compatible policy preserves
+   ! historical version-1 files; exact requires self-describing same-mesh metadata; the validated
+   ! BvK policy permits a metadata-checked Fourier refinement.
+   INTEGER, PARAMETER, PUBLIC               :: kpoint_restart_legacy_compatible = 0, &
+                                               kpoint_restart_exact = 1, &
+                                               kpoint_restart_validated_bvk_transfer = 2
+
    ! Projection formulas for the maximum overlap method
    INTEGER, PARAMETER, PUBLIC               :: momproj_norm = 0, &
                                                momproj_sum = 1
