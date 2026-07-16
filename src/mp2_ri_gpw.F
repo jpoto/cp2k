@@ -155,14 +155,16 @@ CONTAINS
 
       !=====***** MODIFICATION ***** =====
       ! modify from (128*128*128*2) to (1)
-      CALL mp2_env%local_gemm_ctx%set_op_threshold_gpu(128*128*128*2)
+      CALL mp2_env%local_gemm_ctx%set_op_threshold_gpu(1)
 
+      ! ========== FOCUS ON THIS PART 1
       CALL mp2_ri_get_integ_group_size( &
          mp2_env, para_env, para_env_sub, gd_array, gd_B_virtual, &
          homo, dimen_RI, unit_nr, &
          integ_group_size, ngroup, &
          num_integ_group, virtual, calc_forces)
-
+      
+      ! ========== FOCUS ON THIS PART also 2
       ! now create a group that contains all the proc that have the same virtual starting point
       ! in the integ group
       CALL mp2_ri_create_group( &
@@ -178,6 +180,7 @@ CONTAINS
 
       DO jspin = 1, nspins
 
+         ! ========== FOCUS ON THIS PART 3
          CALL replicate_iaK_2intgroup(BIb_C(jspin)%array, comm_exchange, comm_rep, &
                                       homo(jspin), gd_array%sizes, my_B_size(jspin), &
                                       my_group_L_size, ranges_info_array)
@@ -214,9 +217,11 @@ CONTAINS
             amp_fac = mp2_env%scale_S + mp2_env%scale_T
             IF (my_alpha_beta_case .OR. my_open_shell_SS) amp_fac = mp2_env%scale_T
 
+            ! ========== FOCUS ON THIS PART 4
             CALL mp2_ri_allocate_no_blk(local_ab, t_ab, mp2_env, homo, virtual, my_B_size, &
                                         my_group_L_size, calc_forces, ispin, jspin, local_ba)
 
+            ! ========== FOCUS ON THIS PART 5
             CALL mp2_ri_get_block_size( &
                mp2_env, para_env, para_env_sub, gd_array, gd_B_virtual(ispin:jspin), &
                homo(ispin:jspin), virtual(ispin:jspin), dimen_RI, unit_nr, block_size, &
@@ -228,6 +233,7 @@ CONTAINS
             ! introduce block size, the number of occupied orbitals has to be a
             ! multiple of the block size
 
+            ! ========== FOCUS ON THIS PART 6
             ! Calculate the maximum number of ij pairs that have to be computed
             ! among groups
             CALL mp2_ri_communication(my_alpha_beta_case, total_ij_pairs, homo(ispin), homo(jspin), &
@@ -238,6 +244,7 @@ CONTAINS
 
             max_ij_pairs = MAXVAL(num_ij_pairs)
 
+            ! ========== FOCUS ON THIS PART 7
             ! start real stuff
             CALL mp2_ri_allocate_blk(dimen_RI, my_B_size, block_size, local_i_aL, &
                                      local_j_aL, calc_forces, Y_i_aP, Y_j_aP, ispin, jspin)
@@ -875,6 +882,7 @@ CONTAINS
       ALLOCATE (local_ab(virtual(ispin), my_B_size(jspin)))
       local_ab = 0.0_dp
 
+      ! I CAN IGNORE THIS PART
       IF (calc_forces) THEN
          IF (.NOT. ALLOCATED(mp2_env%ri_grad%P_ij(jspin)%array)) THEN
             ALLOCATE (mp2_env%ri_grad%P_ij(jspin)%array(homo(ispin), homo(ispin)))
@@ -1277,6 +1285,7 @@ CONTAINS
       ALLOCATE (integ_group_pos2color_sub(0:comm_exchange%num_pe - 1))
       CALL comm_exchange%allgather(color_sub, integ_group_pos2color_sub)
 
+      ! I can ignore this
       IF (calc_forces) THEN
          iiB = SIZE(sizes_array)
          ALLOCATE (sizes_array_orig(0:iiB - 1))

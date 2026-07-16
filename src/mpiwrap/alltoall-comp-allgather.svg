@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 850 750" width="100%" height="100%">
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="#f8f9fa"/>
+
+  <!-- Main Title -->
+  <text x="425" y="40" font-family="Arial" font-size="26" font-weight="bold" text-anchor="middle" fill="#222">MPI_Allgather vs. MPI_Alltoall</text>
+
+  <!-- ========================================== -->
+  <!-- TOP SECTION: MPI_Allgather                 -->
+  <!-- ========================================== -->
+  <text x="425" y="100" font-family="Arial" font-size="22" font-weight="bold" text-anchor="middle" fill="#333">MPI_Allgather</text>
+  <text x="425" y="125" font-family="Arial" font-size="14" font-style="italic" text-anchor="middle" fill="#666">"Take my one piece of data, and give a copy to everyone." (Result: Everyone has the exact same data)</text>
+
+  <text x="180" y="160" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="#555">Before</text>
+  <text x="660" y="160" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="#555">After</text>
+
+  <!-- Labels -->
+  <text x="50" y="215" font-family="Arial" font-size="14" font-weight="bold" fill="#333">Rank 0</text>
+  <text x="50" y="275" font-family="Arial" font-size="14" font-weight="bold" fill="#333">Rank 1</text>
+  <text x="50" y="335" font-family="Arial" font-size="14" font-weight="bold" fill="#333">Rank 2</text>
+
+  <!-- Big Transition Arrow -->
+  <path d="M 320 260 L 500 260 L 480 245 M 500 260 L 480 275" fill="none" stroke="#ccc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Before Allgather -->
+  <rect x="160" y="190" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+  <text x="180" y="216" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A</text>
+
+  <rect x="160" y="250" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+  <text x="180" y="276" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B</text>
+
+  <rect x="160" y="310" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+  <text x="180" y="336" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C</text>
+
+  <!-- After Allgather (Everyone has A, B, C) -->
+  <g transform="translate(600, 190)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C</text>
+  </g>
+  <g transform="translate(600, 250)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C</text>
+  </g>
+  <g transform="translate(600, 310)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C</text>
+  </g>
+
+  <!-- Divider Line -->
+  <line x1="50" y1="390" x2="800" y2="390" stroke="#ddd" stroke-width="3" stroke-dasharray="10,5" />
+
+  <!-- ========================================== -->
+  <!-- BOTTOM SECTION: MPI_Alltoall               -->
+  <!-- ========================================== -->
+  <text x="425" y="440" font-family="Arial" font-size="22" font-weight="bold" text-anchor="middle" fill="#333">MPI_Alltoall</text>
+  <text x="425" y="465" font-family="Arial" font-size="14" font-style="italic" text-anchor="middle" fill="#666">"I have a specific piece of data for each of you." (Result: Matrix Transpose - everyone gets unique target data)</text>
+
+  <text x="180" y="500" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="#555">Before</text>
+  <text x="660" y="500" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="#555">After</text>
+
+  <!-- Labels -->
+  <text x="50" y="555" font-family="Arial" font-size="14" font-weight="bold" fill="#333">Rank 0</text>
+  <text x="50" y="615" font-family="Arial" font-size="14" font-weight="bold" fill="#333">Rank 1</text>
+  <text x="50" y="675" font-family="Arial" font-size="14" font-weight="bold" fill="#333">Rank 2</text>
+
+  <!-- Big Transition Arrow -->
+  <path d="M 320 600 L 500 600 L 480 585 M 500 600 L 480 615" fill="none" stroke="#ccc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Before Alltoall (Colors match destination rank: Red->0, Green->1, Blue->2) -->
+  <g transform="translate(120, 530)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A0</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A1</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A2</text>
+  </g>
+  
+  <g transform="translate(120, 590)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B0</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B1</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B2</text>
+  </g>
+  
+  <g transform="translate(120, 650)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C0</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C1</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C2</text>
+  </g>
+
+  <!-- After Alltoall (Rank 0 gets '0's, Rank 1 gets '1's, Rank 2 gets '2's) -->
+  <g transform="translate(600, 530)">
+    <rect x="0" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A0</text>
+    <rect x="40" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B0</text>
+    <rect x="80" y="0" width="40" height="40" fill="#ff9999" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C0</text>
+  </g>
+
+  <g transform="translate(600, 590)">
+    <rect x="0" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A1</text>
+    <rect x="40" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B1</text>
+    <rect x="80" y="0" width="40" height="40" fill="#99ff99" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C1</text>
+  </g>
+
+  <g transform="translate(600, 650)">
+    <rect x="0" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="20" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">A2</text>
+    <rect x="40" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="60" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">B2</text>
+    <rect x="80" y="0" width="40" height="40" fill="#9999ff" stroke="#333" stroke-width="2" rx="4"/>
+    <text x="100" y="26" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle">C2</text>
+  </g>
+
+</svg>
