@@ -548,4 +548,64 @@ void cp_mpi_free_mem(void *mem) {
 #endif
 }
 
+/*******************************************************************************
+ * \brief Wrapper around MPI_allgather for datatype MPI_INT.
+ * \author Acxel Orozco
+ ******************************************************************************/
+void cp_mpi_allgather_int(const int *sendbuf, const int sendcount, int *recvbuf,
+                          const int recvcount, const cp_mpi_comm_t comm) {
+#if defined(__parallel)
+  if (MPI_COMM_NULL != comm) { // !MPI_Comm_compare
+    CHECK(MPI_Allgather(sendbuf, sendcount, MPI_INT, recvbuf, recvcount, MPI_INT, comm));
+  }
+#else
+  (void)comm;  // mark used to avoid compiler warning like -Wunused-parameter
+  // According to I undestand, if the sendcount non equal recvcount program will crash (review this)
+  assert(sendcount == recvcount);
+  // Copy a specific number of bytes from one memory location to another
+  memcpy(recvbuf, sendbuf, sendcount * sizeof(int));
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_allgather for datatype MPI_DOUBLE.
+ * \author Acxel Orozco
+ ******************************************************************************/
+void cp_mpi_allgather_double(const double *sendbuf, const int sendcount,
+                            double *recvbuf, const int recvcount,
+                            const cp_mpi_comm_t comm){
+#if defined(__parallel)
+  if (MPI_COMM_NULL != comm) { // !MPI_Comm_compare
+    CHECK(MPI_Allgather(sendbuf, sendcount, MPI_DOUBLE, recvbuf, recvcount, MPI_DOUBLE, comm));
+  }
+#else
+  (void)comm;  // mark used to avoid compiler warning like Wnused-parameter
+  // According to I undestand, if the sendcount non equal recvcount program will crash
+  assert(sendcount == recvcount);
+  // Copy a specific number of bytes from one memory location to another
+  memcpy(recvbuf, sendbuf, sendcount * sizeof(double));
+#endif
+}
+
+/*******************************************************************************
+ * \brief Wrapper around MPI_allgather for datatype MPI_BYTE.
+ * \author Acxel Orozco
+ ******************************************************************************/
+void cp_mpi_allgather_byte(const void *sendbuf, const int sendcount,
+                          void *recvbuf, const int recvcount,
+                          const cp_mpi_comm_t comm){
+#if defined(__parallel)
+  if (MPI_COMM_NULL != comm) { // !MPI_Comm_compare
+    CHECK(MPI_Allgather(sendbuf, sendcount, MPI_BYTE, recvbuf, recvcount, MPI_BYTE, comm));
+  }
+#else
+  (void)comm; // mark used to avoid compiler warning like Wnused-parameter
+
+  // According to I undestand, if the sendcount non equal recvcount program will crash
+  assert(sendcount == recvcount);
+  // Copy a specific number of bytes from one memory location to another
+  memcpy(recvbuf, sendbuf, sendcount);
+#endif
+}
+
 // EOF
