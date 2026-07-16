@@ -252,6 +252,9 @@ MODULE tblite_interface
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_dense = 0
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_streamed = 1
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_qualify = 2
+   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_dense = 0
+   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_streamed = 1
+   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_qualify = 2
 #endif
    REAL(KIND=dp), PARAMETER                           :: same_atom = 0.00001_dp
    REAL(KIND=dp), PARAMETER                           :: tblite_scc_pconv = 2.0E-5_dp
@@ -3185,6 +3188,127 @@ CONTAINS
    END SUBROUTINE tb_project_gxtb_reduced_response
 
 ! **************************************************************************************************
+!> \brief Select the storage policy for the native-mixer symmetry-star covariance gate.
+!>
+!> DENSE is the permanent full-mesh oracle and remains the default. STREAMED expands one star
+!> member at a time and immediately applies the weighted real adjoint. QUALIFY executes both paths.
+!> This selector affects only the post-mixer symmetry gate; exchange and reverse exchange have
+!> their own independently selectable streamed implementations.
+!> \return selected symmetry-star storage policy
+! **************************************************************************************************
+   INTEGER FUNCTION tb_gxtb_symmetry_star_mode() RESULT(star_mode)
+
+      CHARACTER(LEN=32)                                  :: value
+      INTEGER                                            :: status, value_length
+
+      star_mode = tb_gxtb_symmetry_star_dense
+      value = ""
+      value_length = 0
+      status = 1
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_SYMMETRY_STAR_CONTRACTION", value, &
+                                    LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) &
+         CPABORT("Invalid or overlong CP2K_GXTB_SYMMETRY_STAR_CONTRACTION value")
+      SELECT CASE (TRIM(ADJUSTL(value)))
+      CASE ("", "DENSE", "dense", "0")
+         star_mode = tb_gxtb_symmetry_star_dense
+      CASE ("STREAMED", "streamed", "1")
+         star_mode = tb_gxtb_symmetry_star_streamed
+      CASE ("QUALIFY", "qualify", "STREAMED_QUALIFY", "streamed_qualify", "2")
+         star_mode = tb_gxtb_symmetry_star_qualify
+      CASE DEFAULT
+         CPABORT("Unknown CP2K_GXTB_SYMMETRY_STAR_CONTRACTION value")
+      END SELECT
+
+   END FUNCTION tb_gxtb_symmetry_star_mode
+
+! **************************************************************************************************
+!> \brief Validate one reduced response by streaming its complete symmetry stars.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param reduced projected irreducible response
+!> \param label diagnostic label
+!> \param max_covariance_residual largest member/coset-average covariance residual
+!> \param max_roundtrip_residual largest weighted expand/fold round-trip residual
+!>
+!> At most three dense complex AO blocks are live: the expanded member, one transform workspace,
+!> and the fold accumulator for the current irreducible star. The workspace is reused for the
+!> covariance comparison and weighted fold. The complete mesh is never materialized.
+!> tb_accumulate_gxtb_kpoint_response applies fold_factor
+!> and the real adjoint of every calibrated U_g, including antiunitary time-reversal operations.
+! **************************************************************************************************
+   SUBROUTINE tb_validate_gxtb_streamed_star_roundtrip( &
+      kpoints, kmap, ao_first, ao_size, reduced, label, &
+      max_covariance_residual, max_roundtrip_residual)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: reduced
+      CHARACTER(LEN=*), INTENT(IN)                       :: label
+      REAL(KIND=dp), INTENT(OUT)                         :: max_covariance_residual, &
+                                                            max_roundtrip_residual
+
+      CHARACTER(LEN=256)                                 :: error_message
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: expanded, folded, work
+      INTEGER                                            :: ifull, iop, source
+      REAL(KIND=dp)                                      :: residual, scale, symmetry_tolerance
+
+      CPASSERT(SIZE(reduced, 3) == kmap%nred)
+      CPASSERT(kmap%nred == kpoints%nkp)
+      ALLOCATE (expanded(SIZE(reduced, 1), SIZE(reduced, 2)), &
+                folded(SIZE(reduced, 1), SIZE(reduced, 2)), &
+                work(SIZE(reduced, 1), SIZE(reduced, 2)))
+      symmetry_tolerance = MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)
+      max_covariance_residual = 0.0_dp
+      max_roundtrip_residual = 0.0_dp
+
+      DO source = 1, kmap%nred
+         folded = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+         DO ifull = 1, kmap%nfull
+            IF (kmap%source(ifull) /= source) CYCLE
+            CALL tb_expand_gxtb_kpoint_block(kpoints, kmap, ao_first, ao_size, ifull, &
+                                             reduced(:, :, source), expanded, work)
+            DO iop = 1, kmap%op_count(ifull)
+               CALL tb_transform_gxtb_kpoint_matrix( &
+                  kpoints, source, kmap%symops(iop, ifull), &
+                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
+                  reduced(:, :, source), work, .FALSE.)
+               scale = MAX(1.0_dp, MAXVAL(ABS(expanded)))
+               residual = MAXVAL(ABS(work - expanded))/scale
+               max_covariance_residual = MAX(max_covariance_residual, residual)
+               IF (residual > symmetry_tolerance) THEN
+                  WRITE (error_message, '(A,A,A,I0,A,I0,A,I0,A,ES12.4)') &
+                     "Streamed g-xTB ", TRIM(label), &
+                     " violates CP2K symmetry at full k-point ", ifull, &
+                     ", irreducible source ", source, ", symmetry operation ", &
+                     kmap%symops(iop, ifull), "; residual=", residual
+                  CALL cp_abort(__LOCATION__, TRIM(error_message))
+               END IF
+            END DO
+            CALL tb_accumulate_gxtb_kpoint_response( &
+               kpoints, kmap, ao_first, ao_size, ifull, expanded, folded, work)
+         END DO
+         folded(:, :) = 0.5_dp*(folded + CONJG(TRANSPOSE(folded)))
+         scale = MAX(1.0_dp, MAXVAL(ABS(reduced(:, :, source))))
+         residual = MAXVAL(ABS(folded - reduced(:, :, source)))/scale
+         max_roundtrip_residual = MAX(max_roundtrip_residual, residual)
+         IF (residual > 1.0E-10_dp) THEN
+            WRITE (error_message, '(A,A,A,I0,A,ES12.4)') &
+               "Streamed g-xTB ", TRIM(label), &
+               " weighted symmetry-star round trip failed for irreducible k-point ", &
+               source, "; residual=", residual
+            CALL cp_abort(__LOCATION__, TRIM(error_message))
+         END IF
+      END DO
+      DEALLOCATE (expanded, folded, work)
+
+   END SUBROUTINE tb_validate_gxtb_streamed_star_roundtrip
+
+! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
 !> \param matrix_ks ...
@@ -3262,11 +3386,15 @@ CONTAINS
       COMPLEX(KIND=dp), ALLOCATABLE, &
          DIMENSION(:, :, :, :)                           :: mixed_fock_full, raw_fock
       INTEGER                                            :: block_size, ik, ispin, nao, nc, ndim, &
-                                                            nkp, nspin, offset
+                                                            nkp, nspin, offset, symmetry_star_mode
+      INTEGER(KIND=int_8)                                :: dense_full_complex, streamed_peak_complex
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: use_real_wfn
-      REAL(KIND=dp)                                      :: hermitian_error, scale
+      LOGICAL                                            :: run_dense_star, run_streamed_star, &
+                                                            use_real_wfn
+      REAL(KIND=dp) :: dense_covariance_residual, hermitian_error, scale, &
+         spin_covariance_residual, spin_roundtrip_residual, streamed_covariance_residual, &
+         streamed_roundtrip_residual
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: mixed_vector, raw_vector
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: fock_imag, fock_real
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
@@ -3412,21 +3540,73 @@ CONTAINS
             CALL tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, &
                                                   tb%mixed_fock_kp(:, :, ispin, :))
          END DO
-         ALLOCATE (mixed_fock_full(nao, nao, nspin, kmap%nfull), &
-                   source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
-         DO ik = 1, nkp
-            mixed_fock_full(:, :, :, kmap%representative(ik)) = &
-               tb%mixed_fock_kp(:, :, :, ik)
-         END DO
-         CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
-                                            mixed_fock_full, .FALSE.)
-         DO ispin = 1, nspin
-            CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
-                                                  mixed_fock_full(:, :, ispin, :), &
-                                                  tb%mixed_fock_kp(:, :, ispin, :), &
-                                                  "mixed total Fock")
-         END DO
-         DEALLOCATE (mixed_fock_full, ao_first, ao_size)
+         symmetry_star_mode = tb_gxtb_symmetry_star_mode()
+         run_dense_star = symmetry_star_mode == tb_gxtb_symmetry_star_dense .OR. &
+                          symmetry_star_mode == tb_gxtb_symmetry_star_qualify
+         run_streamed_star = symmetry_star_mode == tb_gxtb_symmetry_star_streamed .OR. &
+                             symmetry_star_mode == tb_gxtb_symmetry_star_qualify
+         dense_covariance_residual = 0.0_dp
+         streamed_covariance_residual = 0.0_dp
+         streamed_roundtrip_residual = 0.0_dp
+
+         IF (run_dense_star) THEN
+            ! Permanent oracle: retain the original complete-mesh allocation and validation.
+            ALLOCATE (mixed_fock_full(nao, nao, nspin, kmap%nfull), &
+                      source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+            DO ik = 1, nkp
+               mixed_fock_full(:, :, :, kmap%representative(ik)) = &
+                  tb%mixed_fock_kp(:, :, :, ik)
+            END DO
+            CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
+                                               mixed_fock_full, .FALSE.)
+            DO ispin = 1, nspin
+               CALL tb_validate_gxtb_folded_response( &
+                  kpoints, kmap, ao_first, ao_size, &
+                  mixed_fock_full(:, :, ispin, :), &
+                  tb%mixed_fock_kp(:, :, ispin, :), "mixed total Fock", &
+                  spin_covariance_residual)
+               dense_covariance_residual = &
+                  MAX(dense_covariance_residual, spin_covariance_residual)
+            END DO
+            DEALLOCATE (mixed_fock_full)
+         END IF
+
+         IF (run_streamed_star) THEN
+            DO ispin = 1, nspin
+               CALL tb_validate_gxtb_streamed_star_roundtrip( &
+                  kpoints, kmap, ao_first, ao_size, &
+                  tb%mixed_fock_kp(:, :, ispin, :), "mixed total Fock", &
+                  spin_covariance_residual, spin_roundtrip_residual)
+               streamed_covariance_residual = &
+                  MAX(streamed_covariance_residual, spin_covariance_residual)
+               streamed_roundtrip_residual = &
+                  MAX(streamed_roundtrip_residual, spin_roundtrip_residual)
+            END DO
+         END IF
+
+         dense_full_complex = INT(nao, int_8)*INT(nao, int_8)* &
+                              INT(nspin, int_8)*INT(kmap%nfull, int_8)
+         streamed_peak_complex = 3_int_8*INT(nao, int_8)*INT(nao, int_8)
+         IF (symmetry_star_mode == tb_gxtb_symmetry_star_qualify .AND. &
+             para_env%is_source()) THEN
+            WRITE (*, '(A,I0,4(A,ES14.6),2(A,I0))') &
+               " GXTB-QUALIFICATION_ONLY MIXER-STAR iter=", scf_env%iter_count, &
+               " denseCov=", dense_covariance_residual, &
+               " streamCov=", streamed_covariance_residual, &
+               " streamRoundtrip=", streamed_roundtrip_residual, &
+               " covDelta=", ABS(dense_covariance_residual - &
+                                 streamed_covariance_residual), &
+               " denseFullComplex=", dense_full_complex, &
+               " streamedPeakComplex=", streamed_peak_complex
+         ELSE IF (symmetry_star_mode == tb_gxtb_symmetry_star_streamed .AND. &
+                  scf_env%iter_count == 1 .AND. para_env%is_source()) THEN
+            WRITE (*, '(A,I0,A,I0,A,ES14.6,A,ES14.6)') &
+               " GXTB-MIXER-STAR-STREAMED denseFullComplexAvoided=", &
+               dense_full_complex, ", peakComplex=", streamed_peak_complex, &
+               ", covariance=", streamed_covariance_residual, &
+               ", roundtrip=", streamed_roundtrip_residual
+         END IF
+         DEALLOCATE (ao_first, ao_size)
       END IF
       tb%mixed_fock_kp_valid = .TRUE.
       DEALLOCATE (raw_fock, fock_real, fock_imag, raw_vector, mixed_vector)
