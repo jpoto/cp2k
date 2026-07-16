@@ -30,21 +30,22 @@ MODULE input_cp2k_scf
         cholesky_reduce, cholesky_restore, core_guess, diag_block_davidson, diag_block_krylov, &
         diag_filter_matrix, diag_ot, diag_standard, eht_guess, gaussian, general_roks, &
         high_spin_roks, history_guess, jacobian_fd1, jacobian_fd1_backward, jacobian_fd1_central, &
-        jacobian_fd2, jacobian_fd2_backward, ls_2pnt, ls_3pnt, ls_adapt, ls_gold, ls_none, &
-        mopac_guess, no_guess, numerical, ot_algo_irac, ot_algo_taylor_or_diag, ot_chol_irac, &
-        ot_lwdn_irac, ot_mini_broyden, ot_mini_cg, ot_mini_diis, ot_mini_sd, ot_poly_irac, &
-        ot_precond_full_all, ot_precond_full_kinetic, ot_precond_full_single, &
-        ot_precond_full_single_inverse, ot_precond_none, ot_precond_s_inverse, &
-        ot_precond_solver_default, ot_precond_solver_direct, ot_precond_solver_inv_chol, &
-        ot_precond_solver_update, outer_scf_basis_center_opt, outer_scf_becke_constraint, &
-        outer_scf_cdft_constraint, outer_scf_ddapc_constraint, outer_scf_hirshfeld_constraint, &
-        outer_scf_none, outer_scf_optimizer_bisect, outer_scf_optimizer_broyden, &
-        outer_scf_optimizer_diis, outer_scf_optimizer_newton, outer_scf_optimizer_newton_ls, &
-        outer_scf_optimizer_none, outer_scf_optimizer_sd, outer_scf_optimizer_secant, &
-        outer_scf_s2_constraint, radius_covalent, radius_default, radius_single, radius_user, &
-        radius_vdw, random_guess, restart_guess, shape_function_density, shape_function_gaussian, &
-        smear_energy_window, smear_fermi_dirac, smear_gaussian, smear_list, smear_mp, smear_mv, &
-        sparse_guess
+        jacobian_fd2, jacobian_fd2_backward, kpoint_restart_exact, &
+        kpoint_restart_legacy_compatible, kpoint_restart_validated_bvk_transfer, ls_2pnt, ls_3pnt, &
+        ls_adapt, ls_gold, ls_none, mopac_guess, no_guess, numerical, ot_algo_irac, &
+        ot_algo_taylor_or_diag, ot_chol_irac, ot_lwdn_irac, ot_mini_broyden, ot_mini_cg, &
+        ot_mini_diis, ot_mini_sd, ot_poly_irac, ot_precond_full_all, ot_precond_full_kinetic, &
+        ot_precond_full_single, ot_precond_full_single_inverse, ot_precond_none, &
+        ot_precond_s_inverse, ot_precond_solver_default, ot_precond_solver_direct, &
+        ot_precond_solver_inv_chol, ot_precond_solver_update, outer_scf_basis_center_opt, &
+        outer_scf_becke_constraint, outer_scf_cdft_constraint, outer_scf_ddapc_constraint, &
+        outer_scf_hirshfeld_constraint, outer_scf_none, outer_scf_optimizer_bisect, &
+        outer_scf_optimizer_broyden, outer_scf_optimizer_diis, outer_scf_optimizer_newton, &
+        outer_scf_optimizer_newton_ls, outer_scf_optimizer_none, outer_scf_optimizer_sd, &
+        outer_scf_optimizer_secant, outer_scf_s2_constraint, radius_covalent, radius_default, &
+        radius_single, radius_user, radius_vdw, random_guess, restart_guess, &
+        shape_function_density, shape_function_gaussian, smear_energy_window, smear_fermi_dirac, &
+        smear_gaussian, smear_list, smear_mp, smear_mv, sparse_guess
    USE input_keyword_types,             ONLY: keyword_create,&
                                               keyword_release,&
                                               keyword_type
@@ -88,7 +89,7 @@ CONTAINS
       CPASSERT(.NOT. ASSOCIATED(section))
       CALL section_create(section, __LOCATION__, name="scf", &
                           description="Parameters needed to perform an SCF run.", &
-                          n_keywords=18, n_subsections=7, repeats=.FALSE.)
+                          n_keywords=19, n_subsections=7, repeats=.FALSE.)
 
       NULLIFY (subsection)
 
@@ -220,6 +221,28 @@ CONTAINS
                        "Skip initial guess (only for non-self consistent methods)."), &
          enum_i_vals=[atomic_guess, restart_guess, random_guess, core_guess, &
                       history_guess, mopac_guess, eht_guess, sparse_guess, no_guess])
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create( &
+         keyword, __LOCATION__, name="KPOINT_RESTART_MODE", &
+         description="Selects how a k-point density-matrix restart is interpreted. "// &
+         "COMPATIBLE preserves the historical legacy-file reader and requires a same-mesh "// &
+         "transfer for self-describing files. EXACT accepts only a self-describing restart "// &
+         "from the same mesh. "// &
+         "VALIDATED_BVK_TRANSFER may reuse a version-2 restart on a finer regular mesh "// &
+         "after validating its basis, geometry, spin/electron counts, smearing metadata, "// &
+         "Fourier representation, Hermiticity, and electron trace. This does not constitute "// &
+         "an N-representability guarantee for an accepted transfer. Any failed validation "// &
+         "falls back to the method's safe initial guess.", &
+         usage="KPOINT_RESTART_MODE VALIDATED_BVK_TRANSFER", &
+         default_i_val=kpoint_restart_legacy_compatible, &
+         enum_c_vals=s2a("COMPATIBLE", "EXACT", "VALIDATED_BVK_TRANSFER"), &
+         enum_desc=s2a("Preserve legacy same-mesh restart compatibility.", &
+                       "Require a self-describing restart and an identical k-point mesh.", &
+                       "Permit a validated regular-mesh BvK Fourier refinement."), &
+         enum_i_vals=[kpoint_restart_legacy_compatible, kpoint_restart_exact, &
+                      kpoint_restart_validated_bvk_transfer])
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

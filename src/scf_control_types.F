@@ -22,13 +22,14 @@ MODULE scf_control_types
                                               cp_print_key_unit_nr
    USE cp_units,                        ONLY: cp_unit_from_cp2k
    USE input_constants,                 ONLY: &
-        atomic_guess, diag_ot, direct_p_mix, general_roks, high_spin_roks, no_guess, no_mix, &
-        ot_algo_taylor_or_diag, outer_scf_basis_center_opt, outer_scf_cdft_constraint, &
-        outer_scf_ddapc_constraint, outer_scf_none, outer_scf_optimizer_bisect, &
-        outer_scf_optimizer_broyden, outer_scf_optimizer_diis, outer_scf_optimizer_newton, &
-        outer_scf_optimizer_newton_ls, outer_scf_optimizer_none, outer_scf_optimizer_sd, &
-        outer_scf_optimizer_secant, outer_scf_s2_constraint, smear_energy_window, &
-        smear_fermi_dirac, smear_gaussian, smear_list, smear_mp, smear_mv
+        atomic_guess, diag_ot, direct_p_mix, general_roks, high_spin_roks, &
+        kpoint_restart_legacy_compatible, no_guess, no_mix, ot_algo_taylor_or_diag, &
+        outer_scf_basis_center_opt, outer_scf_cdft_constraint, outer_scf_ddapc_constraint, &
+        outer_scf_none, outer_scf_optimizer_bisect, outer_scf_optimizer_broyden, &
+        outer_scf_optimizer_diis, outer_scf_optimizer_newton, outer_scf_optimizer_newton_ls, &
+        outer_scf_optimizer_none, outer_scf_optimizer_sd, outer_scf_optimizer_secant, &
+        outer_scf_s2_constraint, smear_energy_window, smear_fermi_dirac, smear_gaussian, &
+        smear_list, smear_mp, smear_mv
    USE input_cp2k_scf,                  ONLY: create_scf_section
    USE input_enumeration_types,         ONLY: enum_i2c,&
                                               enumeration_type
@@ -129,6 +130,7 @@ MODULE scf_control_types
       TYPE(diagonalization_type)            :: diagonalization = diagonalization_type()
       TYPE(gce_type), POINTER               :: gce => NULL()
       INTEGER                               :: density_guess = -1, mixing_method = -1
+      INTEGER                               :: kpoint_restart_mode = kpoint_restart_legacy_compatible
       REAL(KIND=dp)                         :: eps_eigval = -1.0_dp, eps_scf = -1.0_dp, eps_scf_hist = -1.0_dp, &
                                                level_shift = -1.0_dp, &
                                                eps_lumos = -1.0_dp, eps_diis = -1.0_dp
@@ -204,6 +206,7 @@ CONTAINS
       scf_control%eps_diis = 0.1_dp
       scf_control%added_mos(:) = 0
       scf_control%max_scf_hist = 0
+      scf_control%kpoint_restart_mode = kpoint_restart_legacy_compatible
 
       !Mixing
       IF (scf_control%non_selfconsistent) THEN
@@ -360,6 +363,8 @@ CONTAINS
       CALL section_vals_val_get(scf_section, "OT%ALGORITHM", i_val=ialgo)
       scf_control%do_outer_scf_reortho = ialgo == ot_algo_taylor_or_diag
       CALL section_vals_val_get(scf_section, "SCF_GUESS", i_val=scf_control%density_guess)
+      CALL section_vals_val_get(scf_section, "KPOINT_RESTART_MODE", &
+                                i_val=scf_control%kpoint_restart_mode)
       CALL section_vals_val_get(scf_section, "eps_eigval", r_val=scf_control%eps_eigval)
       CALL section_vals_val_get(scf_section, "cholesky", i_val=cholesky_flag)
       IF (scf_control%use_ot) THEN

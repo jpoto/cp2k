@@ -174,6 +174,7 @@ MODULE tblite_interface
    PUBLIC :: tb_get_basis, build_tblite_matrices
    PUBLIC :: tb_get_energy, tb_update_charges, tb_ham_add_coulomb
    PUBLIC :: tb_native_scc_mixer_active
+   PUBLIC :: tb_reset_restart_history
    PUBLIC :: tb_scf_mixer_error
    PUBLIC :: tb_get_multipole
    PUBLIC :: tb_derive_dH_off
@@ -185,6 +186,32 @@ MODULE tblite_interface
    PUBLIC :: tb_reference_cli_compare
 
 CONTAINS
+
+! **************************************************************************************************
+!> \brief Drop all density-, Fock-, and mixer-history objects after accepting an external restart.
+!> \param tb tblite state associated with the current Quickstep environment
+! **************************************************************************************************
+   SUBROUTINE tb_reset_restart_history(tb)
+      TYPE(tblite_type), POINTER                         :: tb
+
+      IF (.NOT. ASSOCIATED(tb)) RETURN
+      IF (ASSOCIATED(tb%rho_ao_kp_ref)) CALL dbcsr_deallocate_matrix_set(tb%rho_ao_kp_ref)
+#if defined(__TBLITE_GXTB)
+      IF (ALLOCATED(tb%previous_density_kp)) DEALLOCATE (tb%previous_density_kp)
+      IF (ALLOCATED(tb%mixed_fock_kp)) DEALLOCATE (tb%mixed_fock_kp)
+      IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
+      IF (ALLOCATED(tb%acp_fock_kp)) DEALLOCATE (tb%acp_fock_kp)
+      tb%previous_density_kp_valid = .FALSE.
+      tb%mixed_fock_kp_valid = .FALSE.
+      tb%exchange_fock_kp_valid = .FALSE.
+      tb%acp_fock_kp_valid = .FALSE.
+      IF (ALLOCATED(tb%potential_mixer)) DEALLOCATE (tb%potential_mixer)
+      tb%potential_mixer_dimension = 0
+#endif
+#if defined(__TBLITE)
+      IF (ALLOCATED(tb%mixer)) CALL tb_reset_mixer(tb)
+#endif
+   END SUBROUTINE tb_reset_restart_history
 
 #if defined(__TBLITE)
 ! **************************************************************************************************
@@ -2399,15 +2426,15 @@ CONTAINS
 !> \param relative_residual ...
 ! **************************************************************************************************
    SUBROUTINE tb_qualification_gxtb_duality(kpoints, kmap, density_full, density_reduced, &
-                                             response_full, response_reduced, full_contraction, &
-                                             reduced_contraction, relative_residual)
+                                            response_full, response_reduced, full_contraction, &
+                                            reduced_contraction, relative_residual)
 
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
       COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(IN)   :: density_full, density_reduced, &
-                                                             response_full, response_reduced
+                                                            response_full, response_reduced
       REAL(KIND=dp), INTENT(OUT)                         :: full_contraction, reduced_contraction, &
-                                                             relative_residual
+                                                            relative_residual
 
       INTEGER                                            :: ifull, ikred
       REAL(KIND=dp)                                      :: scale
@@ -2509,6 +2536,7 @@ CONTAINS
 !> \param ao_size ...
 !> \param full ...
 !> \param label ...
+!> \param max_residual ...
 ! **************************************************************************************************
    SUBROUTINE tb_validate_gxtb_full_response(kpoints, kmap, ao_first, ao_size, full, label, max_residual)
 
@@ -2562,9 +2590,10 @@ CONTAINS
 !> \param full ...
 !> \param reduced ...
 !> \param label ...
+!> \param max_residual ...
 ! **************************************************************************************************
    SUBROUTINE tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, full, reduced, label, &
-                                                max_residual)
+                                               max_residual)
 
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
@@ -2613,13 +2642,19 @@ CONTAINS
 !> representative k point fixed.  Such a component is outside the physical reduced variational
 !> space and must not enter the model-native Fock-DIIS history.  Averaging the already calibrated
 !> CP2K AO transforms is the real-orthogonal projector for unitary and antiunitary operations.
+!> \param kpoints ...
+!> \param kmap ...
+!> \param ao_first ...
+!> \param ao_size ...
+!> \param reduced ...
 ! **************************************************************************************************
    SUBROUTINE tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, reduced)
 
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(tb_gxtb_kmesh_map_type), INTENT(IN)           :: kmap
       INTEGER, DIMENSION(:), INTENT(IN)                  :: ao_first, ao_size
-      COMPLEX(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT):: reduced
+      COMPLEX(KIND=dp), DIMENSION(:, :, :), &
+         INTENT(INOUT)                                   :: reduced
 
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: projected, source, transformed
       INTEGER                                            :: ifull, ikred, iop
@@ -2724,8 +2759,8 @@ CONTAINS
          DIMENSION(:, :, :, :)                           :: mixed_fock_full, raw_fock
       INTEGER                                            :: block_size, ik, ispin, nao, nc, ndim, &
                                                             nkp, nspin, offset
-      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error, scale
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: mixed_vector, raw_vector
@@ -2822,7 +2857,7 @@ CONTAINS
          CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
          DO ispin = 1, nspin
             CALL tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, &
-                                                   raw_fock(:, :, ispin, :))
+                                                  raw_fock(:, :, ispin, :))
          END DO
       END IF
 
@@ -2871,7 +2906,7 @@ CONTAINS
       IF (.NOT. kmap%identity) THEN
          DO ispin = 1, nspin
             CALL tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, &
-                                                   tb%mixed_fock_kp(:, :, ispin, :))
+                                                  tb%mixed_fock_kp(:, :, ispin, :))
          END DO
          ALLOCATE (mixed_fock_full(nao, nao, nspin, kmap%nfull), &
                    source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
@@ -2880,7 +2915,7 @@ CONTAINS
                tb%mixed_fock_kp(:, :, :, ik)
          END DO
          CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
-                                             mixed_fock_full, .FALSE.)
+                                            mixed_fock_full, .FALSE.)
          DO ispin = 1, nspin
             CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
                                                   mixed_fock_full(:, :, ispin, :), &
@@ -2992,7 +3027,7 @@ CONTAINS
 !> Fock matrix.  No Born-von-Karman modulo folding or real-space image truncation is involved.
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_acp(qs_env, tb, matrix_s, sab_nl, &
-                                        cell_to_index, projectors)
+                                       cell_to_index, projectors)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(tblite_type), POINTER                         :: tb
@@ -3106,7 +3141,7 @@ CONTAINS
       DO ik = 1, nkp
          DO ispin = 1, nspin
             tb%e_acp_kp = tb%e_acp_kp + kpoints%wkp(ik)* &
-               REAL(SUM(CONJG(density(:, :, ispin, ik))*tb%acp_fock_kp(:, :, ik)), KIND=dp)
+                          REAL(SUM(CONJG(density(:, :, ispin, ik))*tb%acp_fock_kp(:, :, ik)), KIND=dp)
          END DO
       END DO
       IF (.NOT. ieee_is_finite(tb%e_acp_kp)) &
@@ -3122,6 +3157,7 @@ CONTAINS
 !> \param matrix_s ...
 !> \param para_env ...
 !> Build g-xTB exchange from the complete regular mesh represented by CP2K's k-points.
+!> \param iter_count ...
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_exchange(qs_env, tb, matrix_s, para_env, iter_count)
 
@@ -3133,32 +3169,28 @@ CONTAINS
 
       CHARACTER(LEN=32)                                  :: qualification_value
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap, overlap_oracle
-      COMPLEX(KIND=dp), ALLOCATABLE, &
-         DIMENSION(:, :, :, :)                           :: density, density_oracle, density_reduced, &
-                                                            exchange_fock_full, &
-                                                            exchange_fock_oracle, exchange_fock_unpermuted, &
-                                                            folded_fock_oracle
-      INTEGER                                            :: ik, ispin, nao, nred, nspin, qualification_iteration, &
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :) :: density, density_oracle, &
+         density_reduced, exchange_fock_full, exchange_fock_oracle, exchange_fock_unpermuted, &
+         folded_fock_oracle
+      INTEGER                                            :: ik, ispin, nao, nred, nspin, &
+                                                            qualification_iteration, &
                                                             qualification_status, source_index
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: run_qualification_duality, run_qualification_oracle, &
+      LOGICAL                                            :: run_qualification_duality, &
+                                                            run_qualification_oracle, &
                                                             use_real_wfn, validate_density
-      REAL(KIND=dp)                                      :: acp_duality_full, acp_duality_reduced, &
-                                                            acp_duality_relative, acp_duality_total_full, &
-                                                            acp_duality_total_reduced, duality_tolerance, &
-                                                            exchange_duality_full, exchange_duality_reduced, &
-                                                            exchange_duality_relative, exchange_duality_total_full, &
-                                                            exchange_duality_total_reduced, exchange_energy, &
-                                                            exchange_energy_oracle, hermitian_error, &
-                                                            oracle_energy_delta, oracle_fold_abs, oracle_fold_rel, &
-                                                            oracle_full_abs, oracle_full_rel, oracle_scale, &
-                                                            oracle_sym_fold, oracle_sym_full, oracle_tolerance, &
-                                                            oracle_vsh_delta, primary_sym_fold, primary_sym_full, &
-                                                            symmetry_residual
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh, exchange_vsh_oracle, weight_oracle
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_part
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: xkp_oracle
+      REAL(KIND=dp) :: acp_duality_full, acp_duality_reduced, acp_duality_relative, &
+         acp_duality_total_full, acp_duality_total_reduced, duality_tolerance, &
+         exchange_duality_full, exchange_duality_reduced, exchange_duality_relative, &
+         exchange_duality_total_full, exchange_duality_total_reduced, exchange_energy, &
+         exchange_energy_oracle, hermitian_error, oracle_energy_delta, oracle_fold_abs, &
+         oracle_fold_rel, oracle_full_abs, oracle_full_rel, oracle_scale, oracle_sym_fold, &
+         oracle_sym_full, oracle_tolerance, oracle_vsh_delta, primary_sym_fold, primary_sym_full, &
+         symmetry_residual
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh, exchange_vsh_oracle, &
+                                                            weight_oracle
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_part, xkp_oracle
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(error_type), ALLOCATABLE                      :: error
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -3335,16 +3367,16 @@ CONTAINS
          acp_duality_total_reduced = 0.0_dp
          DO ispin = 1, nspin
             CALL tb_qualification_gxtb_duality(kpoints, kmap, density(:, :, ispin, :), &
-                                                density_reduced(:, :, ispin, :), &
-                                                exchange_fock_full(:, :, ispin, :), &
-                                                tb%exchange_fock_kp(:, :, ispin, :), &
-                                                exchange_duality_full, exchange_duality_reduced, &
-                                                exchange_duality_relative)
+                                               density_reduced(:, :, ispin, :), &
+                                               exchange_fock_full(:, :, ispin, :), &
+                                               tb%exchange_fock_kp(:, :, ispin, :), &
+                                               exchange_duality_full, exchange_duality_reduced, &
+                                               exchange_duality_relative)
             CALL tb_qualification_gxtb_duality(kpoints, kmap, density(:, :, ispin, :), &
-                                                density_reduced(:, :, ispin, :), &
-                                                tb%qualification_acp_fock_full, tb%acp_fock_kp, &
-                                                acp_duality_full, acp_duality_reduced, &
-                                                acp_duality_relative)
+                                               density_reduced(:, :, ispin, :), &
+                                               tb%qualification_acp_fock_full, tb%acp_fock_kp, &
+                                               acp_duality_full, acp_duality_reduced, &
+                                               acp_duality_relative)
             exchange_duality_total_full = exchange_duality_total_full + exchange_duality_full
             exchange_duality_total_reduced = exchange_duality_total_reduced + &
                                              exchange_duality_reduced
@@ -3362,9 +3394,9 @@ CONTAINS
                CPABORT("QUALIFICATION_ONLY spin-resolved full/reduced duality exceeded 1.0E-10")
          END DO
          exchange_duality_relative = ABS(exchange_duality_total_full - &
-                                          exchange_duality_total_reduced)/ &
-                                      MAX(1.0E-30_dp, ABS(exchange_duality_total_full), &
-                                          ABS(exchange_duality_total_reduced))
+                                         exchange_duality_total_reduced)/ &
+                                     MAX(1.0E-30_dp, ABS(exchange_duality_total_full), &
+                                         ABS(exchange_duality_total_reduced))
          acp_duality_relative = ABS(acp_duality_total_full - acp_duality_total_reduced)/ &
                                 MAX(1.0E-30_dp, ABS(acp_duality_total_full), &
                                     ABS(acp_duality_total_reduced))
@@ -3864,10 +3896,10 @@ CONTAINS
             ELSE
                IF (tb%acp_fock_kp_valid) &
                   local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                     REAL(tb%acp_fock_kp(row_indices(iloc), col_indices(jloc), ik), KIND=dp)
+                                           REAL(tb%acp_fock_kp(row_indices(iloc), col_indices(jloc), ik), KIND=dp)
                IF (tb%exchange_fock_kp_valid) &
                   local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                     REAL(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
+                                           REAL(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik), KIND=dp)
             END IF
          END DO
       END DO
@@ -3891,10 +3923,10 @@ CONTAINS
                ELSE
                   IF (tb%acp_fock_kp_valid) &
                      local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                        AIMAG(tb%acp_fock_kp(row_indices(iloc), col_indices(jloc), ik))
+                                              AIMAG(tb%acp_fock_kp(row_indices(iloc), col_indices(jloc), ik))
                   IF (tb%exchange_fock_kp_valid) &
                      local_data(iloc, jloc) = local_data(iloc, jloc) + &
-                        AIMAG(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
+                                              AIMAG(tb%exchange_fock_kp(row_indices(iloc), col_indices(jloc), ispin, ik))
                END IF
             END DO
          END DO
@@ -4001,8 +4033,8 @@ CONTAINS
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       INTEGER, INTENT(IN)                                :: nimg
 
-      INTEGER                                            :: i, i_first, i_nao, iatom, ic, icol, &
-                                                            id, iq, irow, j_first, j_nao, jatom
+      INTEGER                                            :: i, i_first, i_nao, iatom, ic, icol, id, &
+                                                            iq, irow, j_first, j_nao, jatom
       INTEGER, DIMENSION(3)                              :: cell
       LOGICAL                                            :: found
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: block, hblock, sblock
@@ -6500,7 +6532,7 @@ CONTAINS
             validate_density = .NOT. tb%gxtb_density_map_validated .AND. &
                                MAXVAL(ABS(acp_density_k)) > 1.0E-14_dp
             CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
-                                                acp_density_k, validate_density)
+                                               acp_density_k, validate_density)
             IF (validate_density) tb%gxtb_density_map_validated = .TRUE.
          END IF
          IF (.NOT. ALL(ieee_is_finite(REAL(acp_density_k, KIND=dp))) .OR. &

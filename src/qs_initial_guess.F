@@ -17,6 +17,7 @@ MODULE qs_initial_guess
                                               get_atomic_kind_set
    USE basis_set_types,                 ONLY: get_gto_basis_set,&
                                               gto_basis_set_type
+   USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_copy, dbcsr_filter, dbcsr_get_info, dbcsr_get_num_blocks, dbcsr_get_occupation, &
@@ -96,6 +97,7 @@ MODULE qs_initial_guess
                                               qs_scf_env_type
    USE qs_wf_history_methods,           ONLY: wfi_update
    USE scf_control_types,               ONLY: scf_control_type
+   USE tblite_interface,                ONLY: tb_reset_restart_history
    USE util,                            ONLY: sort
    USE xtb_types,                       ONLY: get_xtb_atom_param,&
                                               xtb_atom_type
@@ -157,6 +159,7 @@ CONTAINS
       TYPE(atom_matrix_type), DIMENSION(:), POINTER      :: pmat
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(atomic_kind_type), POINTER                    :: atomic_kind
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_struct_type), POINTER                   :: ao_ao_struct, ao_mo_struct
       TYPE(cp_fm_type)                                   :: sv
       TYPE(cp_fm_type), DIMENSION(:), POINTER            :: work1
@@ -182,7 +185,7 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: dft_section, input, subsys_section
 
       logger => cp_get_default_logger()
-      NULLIFY (atomic_kind, qs_kind, mo_coeff, orb_basis_set, atomic_kind_set, &
+      NULLIFY (atomic_kind, qs_kind, mo_coeff, orb_basis_set, atomic_kind_set, cell, &
                qs_kind_set, particle_set, ortho, work2, work1, mo_array, s_sparse, &
                scf_control, dft_control, p_rmpv, para_env, h_core_sparse, matrix_ks, rho, &
                mos_last_converged)
@@ -206,6 +209,7 @@ CONTAINS
                       input=input, &
                       scf_control=scf_control, &
                       dft_control=dft_control, &
+                      cell=cell, &
                       has_unit_metric=has_unit_metric, &
                       do_kpoints=do_kpoints, &
                       kpoints=kpoints, &
@@ -391,10 +395,12 @@ CONTAINS
                "WFN_RESTART| Reading restart file"
          END IF
          IF (do_kpoints) THEN
-            natoms = SIZE(particle_set)
-            CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
-                                      natoms, para_env, id_nr, dft_section, natom_mismatch)
+            CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, para_env, id_nr, dft_section, &
+                                      particle_set, qs_kind_set, cell, dft_control, scf_control, &
+                                      nelectron_spin, matrix_s_kp, scf_env, &
+                                      scf_control%kpoint_restart_mode, natom_mismatch)
             IF (natom_mismatch) density_guess = safe_density_guess
+            IF (.NOT. natom_mismatch) CALL tb_reset_restart_history(qs_env%tb_tblite)
          ELSE
             CALL read_mo_set_from_restart(mo_array, qs_kind_set, particle_set, para_env, &
                                           id_nr=id_nr, multiplicity=dft_control%multiplicity, &

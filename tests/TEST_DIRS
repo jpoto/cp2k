@@ -186,6 +186,7 @@ Fist/regtest-3
 MC/regtest
 QS/regtest-gw                                               libint !ifx
 QS/regtest-kp-1                                             libint !ifx
+QS/regtest-kp-restart
 QS/regtest-kp-1-spg                                         libint spglib !ifx
 QS/regtest-kp-1-spglib                                      libint spglib !ifx
 QS/regtest-nmr-1

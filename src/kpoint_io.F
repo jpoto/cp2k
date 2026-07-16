@@ -15,15 +15,15 @@ MODULE kpoint_io
    USE atomic_kind_types,               ONLY: get_atomic_kind
    USE basis_set_types,                 ONLY: get_gto_basis_set,&
                                               gto_basis_set_type
+   USE cell_types,                      ONLY: cell_type
+   USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: dbcsr_get_info,&
                                               dbcsr_p_type
-   USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
-                                              copy_fm_to_dbcsr
+   USE cp_dbcsr_operations,             ONLY: copy_fm_to_dbcsr
    USE cp_files,                        ONLY: close_file,&
                                               open_file
    USE cp_fm_types,                     ONLY: cp_fm_read_unformatted,&
-                                              cp_fm_type,&
-                                              cp_fm_write_unformatted
+                                              cp_fm_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type,&
                                               cp_to_string
@@ -31,9 +31,14 @@ MODULE kpoint_io
                                               cp_print_key_finished_output,&
                                               cp_print_key_should_output,&
                                               cp_print_key_unit_nr
+   USE input_constants,                 ONLY: kpoint_restart_exact,&
+                                              kpoint_restart_legacy_compatible
    USE input_section_types,             ONLY: section_vals_type
    USE kinds,                           ONLY: default_path_length,&
                                               default_string_length
+   USE kpoint_restart_transfer,         ONLY: kpoint_restart_v2_version,&
+                                              read_kpoint_restart_v2,&
+                                              write_kpoint_restart_v2
    USE kpoint_types,                    ONLY: get_kpoint_info,&
                                               kpoint_type
    USE message_passing,                 ONLY: mp_para_env_type
@@ -45,6 +50,7 @@ MODULE kpoint_io
                                               qs_kind_type
    USE qs_mo_io,                        ONLY: wfn_restart_file_name
    USE qs_scf_types,                    ONLY: qs_scf_env_type
+   USE scf_control_types,               ONLY: scf_control_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -71,9 +77,13 @@ CONTAINS
 !> \param dft_section ...
 !> \param particle_set ...
 !> \param qs_kind_set ...
+!> \param cell ...
+!> \param dft_control ...
+!> \param scf_control ...
+!> \param nelectron_spin ...
 ! **************************************************************************************************
-   SUBROUTINE write_kpoints_restart(denmat, kpoints, scf_env, dft_section, &
-                                    particle_set, qs_kind_set)
+   SUBROUTINE write_kpoints_restart(denmat, kpoints, scf_env, dft_section, particle_set, qs_kind_set, &
+                                    cell, dft_control, scf_control, nelectron_spin)
 
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: denmat
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -81,25 +91,36 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: dft_section
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(scf_control_type), POINTER                    :: scf_control
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: nelectron_spin
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'write_kpoints_restart'
       CHARACTER(LEN=30), DIMENSION(2), PARAMETER :: &
          keys = ["SCF%PRINT%RESTART_HISTORY", "SCF%PRINT%RESTART        "]
 
-      INTEGER                                            :: handle, ic, ikey, ires, ispin, nimages, &
-                                                            nspin
-      INTEGER, DIMENSION(3)                              :: cell
-      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      TYPE(cp_fm_type), POINTER                          :: fmat
+      CHARACTER(LEN=default_string_length)               :: kp_scheme
+      INTEGER                                            :: handle, ikey, ires
       TYPE(cp_logger_type), POINTER                      :: logger
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
+      MARK_USED(scf_env)
 
       IF (BTEST(cp_print_key_should_output(logger%iter_info, &
                                            dft_section, keys(1)), cp_p_file) .OR. &
           BTEST(cp_print_key_should_output(logger%iter_info, &
                                            dft_section, keys(2)), cp_p_file)) THEN
+
+         CALL get_kpoint_info(kpoints, kp_scheme=kp_scheme)
+         IF (TRIM(kp_scheme) /= "MONKHORST-PACK" .AND. TRIM(kp_scheme) /= "MACDONALD") THEN
+            CALL cp_warn(__LOCATION__, &
+                         "Self-describing k-point density restarts currently require a regular "// &
+                         "MONKHORST-PACK or MACDONALD mesh; restart output is skipped.")
+            CALL timestop(handle)
+            RETURN
+         END IF
 
          DO ikey = 1, SIZE(keys)
 
@@ -110,30 +131,12 @@ CONTAINS
                                            extension=".kp", file_status="REPLACE", file_action="WRITE", &
                                            do_backup=.TRUE., file_form="UNFORMATTED")
 
-               CALL write_kpoints_file_header(qs_kind_set, particle_set, ires)
-
-               nspin = SIZE(denmat, 1)
-               nimages = SIZE(denmat, 2)
-               NULLIFY (cell_to_index)
-               IF (nimages > 1) THEN
-                  CALL get_kpoint_info(kpoint=kpoints, cell_to_index=cell_to_index)
-               END IF
-               CPASSERT(ASSOCIATED(scf_env%scf_work1))
-               fmat => scf_env%scf_work1(1)
-
-               DO ispin = 1, nspin
-                  IF (ires > 0) WRITE (ires) ispin, nspin, nimages
-                  DO ic = 1, nimages
-                     IF (nimages > 1) THEN
-                        cell = get_cell(ic, cell_to_index)
-                     ELSE
-                        cell = 0
-                     END IF
-                     IF (ires > 0) WRITE (ires) ic, cell
-                     CALL copy_dbcsr_to_fm(denmat(ispin, ic)%matrix, fmat)
-                     CALL cp_fm_write_unformatted(fmat, ires)
-                  END DO
-               END DO
+               ! The legacy version-1 format contains no k-mesh, symmetry, cell, spin, or
+               ! Hamiltonian-basis fingerprint.  It therefore cannot implement the documented
+               ! semantics of EXACT safely.  All modes write the self-describing version-2
+               ! payload; their compatibility policies differ only when the file is read.
+               CALL write_kpoint_restart_v2(ires, denmat, kpoints, particle_set, qs_kind_set, &
+                                            cell, dft_control, scf_control, nelectron_spin)
 
                CALL cp_print_key_finished_output(ires, logger, dft_section, TRIM(keys(ikey)))
 
@@ -298,35 +301,56 @@ CONTAINS
 !> \param denmat ...
 !> \param kpoints ...
 !> \param fmwork ...
-!> \param natom ...
 !> \param para_env ...
 !> \param id_nr ...
 !> \param dft_section ...
-!> \param natom_mismatch ...
+!> \param particle_set ...
+!> \param qs_kind_set ...
+!> \param cell ...
+!> \param dft_control ...
+!> \param scf_control ...
+!> \param nelectron_spin ...
+!> \param overlap_rs ...
+!> \param scf_env ...
+!> \param restart_mode ...
+!> \param restart_mismatch ...
 ! **************************************************************************************************
-   SUBROUTINE read_kpoints_restart(denmat, kpoints, fmwork, natom, &
-                                   para_env, id_nr, dft_section, natom_mismatch)
+   SUBROUTINE read_kpoints_restart(denmat, kpoints, fmwork, para_env, id_nr, dft_section, &
+                                   particle_set, qs_kind_set, cell, dft_control, scf_control, &
+                                   nelectron_spin, overlap_rs, scf_env, restart_mode, restart_mismatch)
 
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: denmat
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(cp_fm_type), DIMENSION(:), INTENT(INOUT)      :: fmwork
-      INTEGER, INTENT(IN)                                :: natom
       TYPE(mp_para_env_type), POINTER                    :: para_env
       INTEGER, INTENT(IN)                                :: id_nr
       TYPE(section_vals_type), POINTER                   :: dft_section
-      LOGICAL, INTENT(OUT)                               :: natom_mismatch
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(scf_control_type), POINTER                    :: scf_control
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: nelectron_spin
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: overlap_rs
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
+      INTEGER, INTENT(IN)                                :: restart_mode
+      LOGICAL, INTENT(OUT)                               :: restart_mismatch
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_kpoints_restart'
 
+      CHARACTER(LEN=256)                                 :: reason
       CHARACTER(LEN=default_path_length)                 :: file_name
-      INTEGER                                            :: handle, restart_unit
-      LOGICAL                                            :: exist
+      INTEGER                                            :: handle, ios, restart_unit, version_read
+      LOGICAL                                            :: accepted, exist, header_ok
       TYPE(cp_logger_type), POINTER                      :: logger
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
 
       restart_unit = -1
+      restart_mismatch = .TRUE.
+      accepted = .FALSE.
+      reason = ""
 
       IF (para_env%is_source()) THEN
 
@@ -344,11 +368,55 @@ CONTAINS
 
       END IF
 
-      CALL read_kpoints_restart_low(denmat, kpoints, fmwork(1), para_env, &
-                                    natom, restart_unit, natom_mismatch)
+      header_ok = .TRUE.
+      version_read = -1
+      IF (para_env%is_source()) THEN
+         READ (restart_unit, IOSTAT=ios) version_read
+         header_ok = ios == 0
+         REWIND (restart_unit)
+      END IF
+      CALL para_env%bcast(header_ok)
+      CALL para_env%bcast(version_read)
 
-      ! only the io_node returns natom_mismatch, must broadcast it
-      CALL para_env%bcast(natom_mismatch)
+      IF (.NOT. header_ok) THEN
+         reason = "restart header is unreadable"
+      ELSEIF (version_read == kpoint_restart_v2_version) THEN
+         CALL read_kpoint_restart_v2(restart_unit, denmat, kpoints, fmwork, para_env, &
+                                     particle_set, qs_kind_set, cell, dft_control, scf_control, &
+                                     nelectron_spin, overlap_rs, scf_env, restart_mode, accepted, reason)
+      ELSEIF (version_read == version .AND. restart_mode == kpoint_restart_legacy_compatible) THEN
+         CALL read_kpoints_restart_low(denmat, kpoints, fmwork(1), para_env, &
+                                       SIZE(particle_set), restart_unit, restart_mismatch)
+         accepted = .NOT. restart_mismatch
+         IF (.NOT. accepted) reason = "legacy restart is incompatible with the current calculation"
+      ELSEIF (version_read == version) THEN
+         reason = "legacy restart is accepted only in COMPATIBLE mode"
+      ELSE
+         reason = "unsupported k-point restart version"
+      END IF
+      restart_mismatch = .NOT. accepted
+      CALL para_env%bcast(restart_mismatch)
+
+      IF (accepted .AND. para_env%is_source()) THEN
+         IF (logger%default_global_unit_nr > 0) THEN
+            IF (version_read == version) THEN
+               WRITE (logger%default_global_unit_nr, '(A)') &
+                  " KPOINT_RESTART| Legacy-compatible restart accepted"
+            ELSEIF (restart_mode == kpoint_restart_exact .OR. &
+                    restart_mode == kpoint_restart_legacy_compatible) THEN
+               WRITE (logger%default_global_unit_nr, '(A)') &
+                  " KPOINT_RESTART| Strict same-mesh restart accepted"
+            ELSE
+               WRITE (logger%default_global_unit_nr, '(A)') &
+                  " KPOINT_RESTART| Validated BvK mesh transfer accepted"
+            END IF
+         END IF
+      END IF
+
+      IF (restart_mismatch .AND. para_env%is_source()) THEN
+         CALL cp_warn(__LOCATION__, "K-point restart rejected: "//TRIM(reason)// &
+                      ". Continuing with the method-specific safe initial guess.")
+      END IF
 
       ! Close restart file
       IF (para_env%is_source()) CALL close_file(unit_number=restart_unit)
