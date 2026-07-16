@@ -57,6 +57,7 @@ MODULE tblite_interface
                                  cp2k_exchange_partial_reverse_size, &
                                  cp2k_exchange_partial_reverse_type, &
                                  cp2k_exchange_partial_reverse_unpack, &
+                                 cp2k_exchange_partial_set_pull_ownership, &
                                  cp2k_exchange_kpoint_gradient, &
                                  cp2k_exchange_stream_batch_advance, &
                                  cp2k_exchange_stream_batch_apply, &
@@ -229,10 +230,17 @@ MODULE tblite_interface
    ! the nonlinear apply and every R-to-k response pull.  Thus only k-to-R is
    ! distributed; the coupled kernel and reverse transform remain root-serial.
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_root = 6
+   ! Replicate the merged bounded pre-kernel state on every CP2K rank, execute
+   ! the nonlinear image kernel locally, and assign disjoint full-k R-to-k
+   ! pulls to the importer ranks.  Exactly the global service rank retrieves
+   ! scalar/direct-derivative results; importers beyond nfull own an empty set.
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_replicated = 7
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_none = 0
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_nonleader_failure = 1
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_antihermitian_reverse = 2
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_nonfinite_forward_result = 3
+   INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_descriptor_mismatch = 4
+   INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_owner_mismatch = 5
    INTEGER(KIND=int_8), SAVE                          :: tb_gxtb_partial_transaction_serial = 0_int_8
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_dense = 0
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_streamed = 1
@@ -3676,6 +3684,10 @@ CONTAINS
       CASE ("KGROUP_PARTIAL_ROOT", "kgroup_partial_root", &
             "K_GROUP_PARTIAL_ROOT", "k_group_partial_root", "6")
          stream_mode = tb_gxtb_exchange_stream_kgroup_partial_root
+      CASE ("KGROUP_PARTIAL_REPLICATED", "kgroup_partial_replicated", &
+            "K_GROUP_PARTIAL_REPLICATED", "k_group_partial_replicated", &
+            "REPLICATED_IMPORTERS", "replicated_importers", "7")
+         stream_mode = tb_gxtb_exchange_stream_kgroup_partial_replicated
       CASE DEFAULT
          CPABORT("Unknown CP2K_GXTB_EXCHANGE_STREAM_MODE value")
       END SELECT
@@ -3808,6 +3820,10 @@ CONTAINS
          injection_mode = tb_gxtb_partial_inject_antihermitian_reverse
       CASE ("NONFINITE_FORWARD_RESULT", "nonfinite_forward_result")
          injection_mode = tb_gxtb_partial_inject_nonfinite_forward_result
+      CASE ("DESCRIPTOR_MISMATCH", "descriptor_mismatch")
+         injection_mode = tb_gxtb_partial_inject_descriptor_mismatch
+      CASE ("OWNER_MISMATCH", "owner_mismatch")
+         injection_mode = tb_gxtb_partial_inject_owner_mismatch
       CASE DEFAULT
          CPABORT("Unknown CP2K_GXTB_PARTIAL_QUALIFY_INJECT value")
       END SELECT
@@ -3958,6 +3974,133 @@ CONTAINS
       END DO
 
    END SUBROUTINE tb_gxtb_partial_reduce_complex_root
+
+! **************************************************************************************************
+!> \brief Compare the complete provider descriptor on every replicated importer.
+!>
+!> Variant B permits every global CP2K rank to import the same merged source.
+!> Descriptor agreement is therefore established on the global communicator,
+!> not only on the leader communicator used by the designated-root variant.
+!> \param descriptor ...
+!> \param para_env ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_partial_descriptor_consensus_global(descriptor, para_env)
+
+      TYPE(cp2k_exchange_partial_descriptor_type), &
+         INTENT(IN)                                      :: descriptor
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      INTEGER                                            :: failure_count
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: local_words, root_words
+      LOGICAL                                            :: local_failed
+      TYPE(cp2k_exchange_partial_descriptor_type)        :: root_descriptor
+      TYPE(error_type), ALLOCATABLE                      :: error
+
+      CALL cp2k_exchange_partial_descriptor_pack(descriptor, local_words, error)
+      local_failed = ALLOCATED(error)
+      IF (.NOT. local_failed) local_failed = &
+         SIZE(local_words, KIND=int_8) /= cp2k_exchange_partial_descriptor_size()
+      failure_count = MERGE(1, 0, local_failed)
+      CALL para_env%sum(failure_count)
+      IF (failure_count /= 0) &
+         CPABORT("save_tblite replicated descriptor packing failed")
+
+      ALLOCATE (root_words(SIZE(local_words)), source=0_int_8)
+      IF (para_env%is_source()) root_words(:) = local_words(:)
+      CALL para_env%bcast(root_words)
+      CALL cp2k_exchange_partial_descriptor_unpack(root_descriptor, root_words, error)
+      local_failed = ALLOCATED(error)
+      IF (.NOT. local_failed) local_failed = &
+         .NOT. cp2k_exchange_partial_descriptors_match(descriptor, root_descriptor)
+      failure_count = MERGE(1, 0, local_failed)
+      CALL para_env%sum(failure_count)
+      IF (failure_count /= 0) &
+         CPABORT("save_tblite replicated descriptor consensus failed")
+      DEALLOCATE (local_words, root_words)
+
+   END SUBROUTINE tb_gxtb_partial_descriptor_consensus_global
+
+! **************************************************************************************************
+!> \brief All-reduce an arbitrarily long packed complex payload.
+!>
+!> All replicated importers require the exact same additive source.  Chunks
+!> retain default-integer MPI counts while the provider exposes INT64 sizes.
+!> \param values ...
+!> \param para_env ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_partial_allreduce_complex(values, para_env)
+
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:), &
+         INTENT(INOUT)                                   :: values
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      INTEGER(KIND=int_8), PARAMETER                     :: chunk_size = 1048576_int_8
+
+      INTEGER(KIND=int_8)                                :: first, last, nelements
+
+      nelements = SIZE(values, KIND=int_8)
+      first = 1_int_8
+      DO WHILE (first <= nelements)
+         last = MIN(nelements, first + chunk_size - 1_int_8)
+         CALL para_env%sum(values(first:last))
+         first = last + 1_int_8
+      END DO
+
+   END SUBROUTINE tb_gxtb_partial_allreduce_complex
+
+! **************************************************************************************************
+!> \brief Broadcast and validate the disjoint full-k pull assignment.
+!>
+!> The global service rank constructs a cyclic map.  Empty importer masks are
+!> deliberately legal when the MPI size exceeds the full mesh.  The explicit
+!> cover reduction proves that every full-k block nevertheless has one owner.
+!> \param nfull ...
+!> \param para_env ...
+!> \param owner_rank ...
+!> \param result_owner_rank ...
+!> \param inject_mismatch ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_partial_replicated_owner_map(nfull, para_env, owner_rank, &
+                                                   result_owner_rank, inject_mismatch)
+
+      INTEGER, INTENT(IN)                                :: nfull
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(OUT)    :: owner_rank
+      INTEGER, INTENT(OUT)                               :: result_owner_rank
+      LOGICAL, INTENT(IN)                                :: inject_mismatch
+
+      INTEGER                                            :: ik, importer_rank
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: cover
+
+      IF (nfull < 1 .OR. para_env%num_pe < 1) &
+         CPABORT("Invalid replicated-importer pull-map extent")
+      ALLOCATE (owner_rank(nfull), source=0)
+      IF (para_env%is_source()) THEN
+         DO ik = 1, nfull
+            owner_rank(ik) = MOD(ik - 1, para_env%num_pe) + 1
+         END DO
+      END IF
+      CALL para_env%bcast(owner_rank)
+      IF (inject_mismatch) THEN
+         IF (para_env%num_pe < 2) &
+            CPABORT("OWNER_MISMATCH qualification requires at least two importers")
+         IF (para_env%mepos == 1) owner_rank(1) = 2
+      END IF
+      IF (ANY(owner_rank < 1) .OR. ANY(owner_rank > para_env%num_pe)) &
+         CPABORT("Invalid replicated-importer pull owner")
+
+      importer_rank = para_env%mepos + 1
+      ALLOCATE (cover(nfull), source=0)
+      WHERE (owner_rank == importer_rank)
+         cover = 1
+      END WHERE
+      CALL para_env%sum(cover)
+      IF (ANY(cover /= 1)) &
+         CPABORT("Replicated-importer pull map is not an exact cover")
+      DEALLOCATE (cover)
+      result_owner_rank = para_env%source + 1
+
+   END SUBROUTINE tb_gxtb_partial_replicated_owner_map
 ! **************************************************************************************************
 !> \brief Exact owner-generated g-xTB exchange bridge using CP2K k-point groups.
 !> \param qs_env ...
@@ -4340,15 +4483,17 @@ CONTAINS
 !> \param matrix_s ...
 !> \param run_qualification_oracle ...
 !> \param iter_count ...
+!> \param replicated_importers ...
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
-      qs_env, tb, matrix_s, run_qualification_oracle, iter_count)
+      qs_env, tb, matrix_s, run_qualification_oracle, iter_count, replicated_importers)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(tblite_type), POINTER                         :: tb
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
       LOGICAL, INTENT(IN)                                :: run_qualification_oracle
       INTEGER, INTENT(IN)                                :: iter_count
+      LOGICAL, INTENT(IN)                                :: replicated_importers
 
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: packed_payload
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap_block, transform_work
@@ -4356,12 +4501,12 @@ CONTAINS
       COMPLEX(KIND=dp), ALLOCATABLE, &
          DIMENSION(:, :, :, :)                           :: density_local
       INTEGER                                            :: actual_batch_size, batch_size, &
-                                                            done_count, group_index, ifull, &
-                                                            injection_mode, iop, ispin, local_source, nao, &
-                                                            nkp_groups, nlocal, nred, nspin, &
-                                                            source
+                                                            done_count, empty_importers, group_index, ifull, &
+                                                            importer_count, importer_rank, injection_mode, &
+                                                            iop, ispin, local_source, nao, nkp_groups, &
+                                                            nlocal, nred, nspin, result_owner_rank, source
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
-                                                            owner_count, owner_sum
+                                                            owner_count, owner_sum, pull_owner
       INTEGER, DIMENSION(2)                              :: kp_range
       INTEGER, DIMENSION(:, :), POINTER                  :: kp_dist
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
@@ -4419,6 +4564,9 @@ CONTAINS
       service_rank = para_env_global%is_source()
       IF (service_rank .NEQV. (leader .AND. para_env_inter_kp%is_source())) &
          CPABORT("CP2K service rank is not the leader-communicator source")
+      importer_count = para_env_global%num_pe
+      importer_rank = para_env_global%mepos + 1
+      result_owner_rank = para_env_global%source + 1
       injection_mode = &
          tb_gxtb_partial_qualification_injection(run_qualification_oracle)
       IF (injection_mode == tb_gxtb_partial_inject_nonleader_failure) THEN
@@ -4431,6 +4579,14 @@ CONTAINS
       CPASSERT(ALLOCATED(tb%gxtb_kmesh_map))
       kmap => tb%gxtb_kmesh_map
       CPASSERT(kmap%nred == nred)
+      IF (replicated_importers) THEN
+         CALL tb_gxtb_partial_replicated_owner_map( &
+            kmap%nfull, para_env_global, pull_owner, result_owner_rank, &
+            injection_mode == tb_gxtb_partial_inject_owner_mismatch)
+         empty_importers = MAX(0, importer_count - kmap%nfull)
+      ELSE
+         empty_importers = 0
+      END IF
       nao = tb%calc%bas%nao
       nspin = tb%wfn%nspin
       CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
@@ -4467,8 +4623,20 @@ CONTAINS
       actual_batch_size = MIN(batch_size, kmap%nfull)
       CALL tb_gxtb_partial_next_transaction(leader, service_rank, para_env_inter_kp, &
                                             para_env_kp, transaction_id)
+      IF (replicated_importers) CALL para_env_kp%bcast(transaction_id)
+      IF (injection_mode == tb_gxtb_partial_inject_descriptor_mismatch) THEN
+         IF (.NOT. replicated_importers) &
+            CPABORT("DESCRIPTOR_MISMATCH qualification requires replicated importers")
+         IF (importer_count < 2) &
+            CPABORT("DESCRIPTOR_MISMATCH qualification requires at least two importers")
+         IF (para_env_global%mepos == 1) &
+            transaction_id(2) = transaction_id(2) + 1_int_8
+      ELSE IF (injection_mode == tb_gxtb_partial_inject_owner_mismatch .AND. &
+               .NOT. replicated_importers) THEN
+         CPABORT("OWNER_MISMATCH qualification requires replicated importers")
+      END IF
       local_failed = .FALSE.
-      IF (leader) THEN
+      IF (leader .OR. replicated_importers) THEN
          CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                           kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
                                           transaction_id, error)
@@ -4522,7 +4690,7 @@ CONTAINS
                                            "save_tblite KGROUP_PARTIAL_ROOT push failed")
          IF (validate_density .AND. first_batch) tb%gxtb_density_map_validated = .TRUE.
 
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             CALL cp2k_exchange_partial_export_forward(stream, descriptor, owner_count, &
                                                       local_buffer, error)
             local_failed = ALLOCATED(error)
@@ -4532,13 +4700,21 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT export failed")
-         CALL tb_gxtb_partial_descriptor_consensus(leader, service_rank, descriptor, &
-                                                   para_env_inter_kp, para_env_kp)
+         IF (replicated_importers) THEN
+            CALL tb_gxtb_partial_descriptor_consensus_global(descriptor, para_env_global)
+         ELSE
+            CALL tb_gxtb_partial_descriptor_consensus(leader, service_rank, descriptor, &
+                                                      para_env_inter_kp, para_env_kp)
+         END IF
 
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             local_payload_size = cp2k_exchange_partial_forward_size(local_buffer)
             root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
-            CALL para_env_inter_kp%bcast(root_payload_size)
+            IF (replicated_importers) THEN
+               CALL para_env_global%bcast(root_payload_size)
+            ELSE
+               CALL para_env_inter_kp%bcast(root_payload_size)
+            END IF
             local_failed = local_payload_size /= root_payload_size .OR. &
                            local_payload_size < 0_int_8
          ELSE
@@ -4548,7 +4724,7 @@ CONTAINS
                                            local_failed, &
                                            "Inconsistent KGROUP_PARTIAL_ROOT payload size")
 
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             CALL cp2k_exchange_partial_forward_pack(local_buffer, packed_payload, error)
             local_failed = ALLOCATED(error)
             IF (.NOT. local_failed) local_failed = &
@@ -4560,7 +4736,14 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT packing failed")
 
-         IF (leader) THEN
+         IF (replicated_importers) THEN
+            ALLOCATE (owner_sum, source=owner_count)
+            CALL para_env_global%sum(owner_sum)
+            CALL tb_gxtb_partial_allreduce_complex(packed_payload, para_env_global)
+            local_failed = ANY(owner_sum /= 1) .OR. &
+                           .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                           .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+         ELSE IF (leader) THEN
             ALLOCATE (owner_sum, source=owner_count)
             CALL para_env_inter_kp%sum(owner_sum, para_env_inter_kp%source)
             CALL tb_gxtb_partial_reduce_complex_root(packed_payload, para_env_inter_kp)
@@ -4576,7 +4759,7 @@ CONTAINS
                                            "Invalid KGROUP_PARTIAL_ROOT ownership or payload")
 
          local_failed = .FALSE.
-         IF (service_rank) THEN
+         IF (service_rank .OR. replicated_importers) THEN
             CALL cp2k_exchange_partial_forward_unpack(summed_buffer, descriptor, &
                                                       packed_payload, error)
             local_failed = ALLOCATED(error)
@@ -4586,13 +4769,19 @@ CONTAINS
                                                          tb%ecache, error)
                local_failed = ALLOCATED(error)
             END IF
+            IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
+               CALL cp2k_exchange_partial_set_pull_ownership( &
+                  stream, pull_owner, importer_rank, importer_count, &
+                  result_owner_rank, error)
+               local_failed = ALLOCATED(error)
+            END IF
          END IF
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT import failed")
 
          local_failed = .FALSE.
-         IF (service_rank) THEN
+         IF (service_rank .OR. replicated_importers) THEN
             CALL cp2k_exchange_stream_batch_apply(stream, tb%calc, tb%mol, tb%ecache, error)
             local_failed = ALLOCATED(error)
          END IF
@@ -4606,7 +4795,8 @@ CONTAINS
             CALL prepare_overlap_block(ifull)
             fock_batch = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
             local_failed = .FALSE.
-            IF (service_rank) THEN
+            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+                (.NOT. replicated_importers .AND. service_rank)) THEN
                CALL cp2k_exchange_stream_batch_pull(stream, ifull, overlap_block, &
                                                     fock_batch, error)
                local_failed = ALLOCATED(error)
@@ -4617,8 +4807,10 @@ CONTAINS
             CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                               local_failed, &
                                               "save_tblite KGROUP_PARTIAL_ROOT pull failed")
-            IF (leader) CALL para_env_inter_kp%bcast(fock_batch)
-            IF (leader .AND. owns_source) THEN
+            IF (.NOT. replicated_importers .AND. leader) &
+               CALL para_env_inter_kp%bcast(fock_batch)
+            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+                (.NOT. replicated_importers .AND. leader .AND. owns_source)) THEN
                DO ispin = 1, nspin
                   CALL tb_accumulate_gxtb_kpoint_response( &
                      kpoints, kmap, ao_first, ao_size, ifull, fock_batch(:, :, ispin), &
@@ -4629,7 +4821,10 @@ CONTAINS
 
          contributor_done = .FALSE.
          local_failed = .FALSE.
-         IF (service_rank) THEN
+         IF (replicated_importers) THEN
+            CALL cp2k_exchange_stream_batch_advance(stream, contributor_done, error)
+            local_failed = ALLOCATED(error)
+         ELSE IF (service_rank) THEN
             CALL cp2k_exchange_stream_batch_advance(stream, contributor_done, error)
             local_failed = ALLOCATED(error)
          ELSE IF (leader) THEN
@@ -4640,7 +4835,11 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT advance failed")
          done_count = 0
-         IF (leader) THEN
+         IF (replicated_importers) THEN
+            done_count = MERGE(1, 0, contributor_done)
+            CALL para_env_global%sum(done_count)
+            local_failed = done_count /= 0 .AND. done_count /= importer_count
+         ELSE IF (leader) THEN
             done_count = MERGE(1, 0, contributor_done)
             CALL para_env_inter_kp%sum(done_count)
             local_failed = done_count /= 0 .AND. done_count /= nkp_groups
@@ -4650,10 +4849,14 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "KGROUP_PARTIAL_ROOT generations diverged")
-         CALL para_env_kp%bcast(done_count)
-         batch_done = done_count == nkp_groups
+         IF (.NOT. replicated_importers) CALL para_env_kp%bcast(done_count)
+         IF (replicated_importers) THEN
+            batch_done = done_count == importer_count
+         ELSE
+            batch_done = done_count == nkp_groups
+         END IF
          first_batch = .FALSE.
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             DEALLOCATE (owner_count, owner_sum, packed_payload)
          END IF
       END DO
@@ -4672,24 +4875,32 @@ CONTAINS
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT result failed")
-      IF (service_rank) THEN
+      IF (replicated_importers) THEN
+         CALL cp2k_exchange_stream_end(stream, error)
+      ELSE IF (service_rank) THEN
          CALL cp2k_exchange_stream_end(stream, error)
       ELSE IF (leader) THEN
          CALL cp2k_exchange_partial_discard(stream, error)
       END IF
-      local_failed = leader .AND. ALLOCATED(error)
+      local_failed = (leader .OR. replicated_importers) .AND. ALLOCATED(error)
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT finalization failed")
 
-      IF (leader) THEN
+      IF (replicated_importers) THEN
+         CALL para_env_global%bcast(exchange_energy)
+         CALL para_env_global%bcast(exchange_vsh)
+         CALL para_env_global%sum(tb%exchange_fock_kp)
+      ELSE IF (leader) THEN
          CALL para_env_inter_kp%bcast(exchange_energy)
          CALL para_env_inter_kp%bcast(exchange_vsh)
          CALL para_env_inter_kp%sum(tb%exchange_fock_kp)
       END IF
-      CALL para_env_kp%sum(exchange_energy)
-      CALL para_env_kp%sum(exchange_vsh)
-      CALL para_env_kp%sum(tb%exchange_fock_kp)
+      IF (.NOT. replicated_importers) THEN
+         CALL para_env_kp%sum(exchange_energy)
+         CALL para_env_kp%sum(exchange_vsh)
+         CALL para_env_kp%sum(tb%exchange_fock_kp)
+      END IF
       local_failed = .NOT. ALL(ieee_is_finite(REAL(tb%exchange_fock_kp, KIND=dp))) .OR. &
                      .NOT. ALL(ieee_is_finite(AIMAG(tb%exchange_fock_kp)))
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
@@ -4717,16 +4928,25 @@ CONTAINS
       tb%exchange_fock_kp_valid = .TRUE.
       IF (run_qualification_oracle) CALL qualify_partial_root_oracle()
       IF (service_rank .AND. iter_count == 1) THEN
-         WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A)') &
-            " GXTB-KGROUP-PARTIAL-ROOT groups=", nkp_groups, ", nred=", nred, &
-            ", nfull=", kmap%nfull, ", batch=", actual_batch_size, &
-            "; only pre-kernel k-to-R is distributed"
+         IF (replicated_importers) THEN
+            WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A,I0,A)') &
+               " GXTB-KGROUP-PARTIAL-REPLICATED importers=", importer_count, &
+               ", empty=", empty_importers, ", nred=", nred, ", nfull=", kmap%nfull, &
+               ", batch=", actual_batch_size, &
+               "; replicated kernel, disjoint R-to-k pulls"
+         ELSE
+            WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A)') &
+               " GXTB-KGROUP-PARTIAL-ROOT groups=", nkp_groups, ", nred=", nred, &
+               ", nfull=", kmap%nfull, ", batch=", actual_batch_size, &
+               "; only pre-kernel k-to-R is distributed"
+         END IF
       END IF
 
       CALL dbcsr_deallocate_matrix(rmatrix)
       CALL dbcsr_deallocate_matrix(cmatrix)
       DEALLOCATE (ao_first, ao_size, density_block, density_local, exchange_vsh, &
                   fock_batch, overlap_block, overlap_part, transform_work)
+      IF (ALLOCATED(pull_owner)) DEALLOCATE (pull_owner)
 
    CONTAINS
 
@@ -5577,6 +5797,7 @@ CONTAINS
           stream_mode /= tb_gxtb_exchange_stream_distributed .AND. &
           stream_mode /= tb_gxtb_exchange_stream_kgroup_owner .AND. &
           stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_root .AND. &
+          stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_replicated .AND. &
           .NOT. (stream_mode == 0 .AND. &
                  transform_backend == cp2k_exchange_transform_separable_dft)) &
          CPABORT("QUALIFICATION_ONLY identity oracle requires batched, distributed, or separable mode")
@@ -5591,7 +5812,11 @@ CONTAINS
          RETURN
       ELSE IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root) THEN
          CALL tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
-            qs_env, tb, matrix_s, run_qualification_oracle, iter_count)
+            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .FALSE.)
+         RETURN
+      ELSE IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated) THEN
+         CALL tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
+            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .TRUE.)
          RETURN
       ELSE IF (stream_mode /= 0) THEN
          CALL tb_build_gxtb_kpoint_exchange_streamed(qs_env, tb, matrix_s, para_env, stream_mode, &
@@ -5899,16 +6124,20 @@ CONTAINS
       CASE (tb_gxtb_exchange_gradient_dense)
          CALL tb_gxtb_kpoint_exchange_gradient_dense(qs_env, tb, gradient, sigma)
       CASE (tb_gxtb_exchange_gradient_streamed)
-         IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root) THEN
+         IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root .OR. &
+             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated) THEN
             CALL tb_gxtb_kpoint_exchange_gradient_kgroup_partial_root( &
-               qs_env, tb, gradient, sigma, .FALSE.)
+               qs_env, tb, gradient, sigma, .FALSE., &
+               stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated)
          ELSE
             CALL tb_gxtb_kpoint_exchange_gradient_streamed(qs_env, tb, gradient, sigma, .FALSE.)
          END IF
       CASE (tb_gxtb_exchange_gradient_qualify)
-         IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root) THEN
+         IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root .OR. &
+             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated) THEN
             CALL tb_gxtb_kpoint_exchange_gradient_kgroup_partial_root( &
-               qs_env, tb, gradient, sigma, .TRUE.)
+               qs_env, tb, gradient, sigma, .TRUE., &
+               stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated)
          ELSE
             CALL tb_gxtb_kpoint_exchange_gradient_streamed(qs_env, tb, gradient, sigma, .TRUE.)
          END IF
@@ -6625,14 +6854,16 @@ CONTAINS
 !> \param gradient ...
 !> \param sigma ...
 !> \param qualify ...
+!> \param replicated_importers ...
 ! **************************************************************************************************
    SUBROUTINE tb_gxtb_kpoint_exchange_gradient_kgroup_partial_root( &
-      qs_env, tb, gradient, sigma, qualify)
+      qs_env, tb, gradient, sigma, qualify, replicated_importers)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(tblite_type), POINTER                         :: tb
       REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: gradient, sigma
       LOGICAL, INTENT(IN)                                :: qualify
+      LOGICAL, INTENT(IN)                                :: replicated_importers
 
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: packed_payload
       COMPLEX(KIND=dp), ALLOCATABLE, &
@@ -6641,19 +6872,20 @@ CONTAINS
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap_adjoint, overlap_block, &
                                                             transform_work
       INTEGER                                            :: actual_batch_size, batch_size, &
-                                                            done_count, group_index, ic, ifull, &
-                                                            ik, ikk, img, injection_mode, ispin, kplocal, &
-                                                            nao, nat, nc, nimg, &
-                                                            nkp_groups, nred, nspin, source
+                                                            done_count, empty_importers, group_index, ic, &
+                                                            ifull, ik, ikk, img, importer_count, &
+                                                            importer_rank, injection_mode, ispin, kplocal, &
+                                                            nao, nat, nc, nimg, nkp_groups, nred, nspin, &
+                                                            result_owner_rank, source
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
-                                                            owner_count, owner_sum
+                                                            owner_count, owner_sum, pull_owner
       INTEGER, DIMENSION(2)                              :: kp_range
       INTEGER, DIMENSION(:, :), POINTER                  :: kp_dist
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       INTEGER(KIND=int_8)                                :: local_payload_size, peak_complex, &
                                                             root_payload_size, transaction_id(2)
       LOGICAL                                            :: batch_done, contributor_done, &
-                                                            leader, local_failed, owns_source, &
+                                                            first_batch, leader, local_failed, owns_source, &
                                                             service_rank, use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: k_gradient, k_sigma, overlap_part
@@ -6712,6 +6944,9 @@ CONTAINS
       service_rank = para_env_global%is_source()
       IF (service_rank .NEQV. (leader .AND. para_env_inter_kp%is_source())) &
          CPABORT("Reverse service rank is not the leader-communicator source")
+      importer_count = para_env_global%num_pe
+      importer_rank = para_env_global%mepos + 1
+      result_owner_rank = para_env_global%source + 1
       injection_mode = tb_gxtb_partial_qualification_injection(qualify)
       IF (injection_mode == tb_gxtb_partial_inject_nonleader_failure) THEN
          done_count = MERGE(0, 1, leader)
@@ -6723,11 +6958,19 @@ CONTAINS
       CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_nl, cell_to_index)
       kmap => tb%gxtb_kmesh_map
       ! Preserve CP2K's established one-point symmetry and weight handling.
-      IF (kmap%nfull == 1) THEN
+      IF (kmap%nfull == 1 .AND. .NOT. replicated_importers) THEN
          IF (injection_mode /= tb_gxtb_partial_inject_none) &
             CPABORT("Partial-root reverse fault injection requires a multi-k mesh")
          CALL tb_gxtb_kpoint_exchange_gradient_dense(qs_env, tb, gradient, sigma)
          RETURN
+      END IF
+      IF (replicated_importers) THEN
+         CALL tb_gxtb_partial_replicated_owner_map( &
+            kmap%nfull, para_env_global, pull_owner, result_owner_rank, &
+            injection_mode == tb_gxtb_partial_inject_owner_mismatch)
+         empty_importers = MAX(0, importer_count - kmap%nfull)
+      ELSE
+         empty_importers = 0
       END IF
       nao = tb%calc%bas%nao
       nat = tb%mol%nat
@@ -6763,8 +7006,20 @@ CONTAINS
       actual_batch_size = MIN(batch_size, kmap%nfull)
       CALL tb_gxtb_partial_next_transaction(leader, service_rank, para_env_inter_kp, &
                                             para_env_kp, transaction_id)
+      IF (replicated_importers) CALL para_env_kp%bcast(transaction_id)
+      IF (injection_mode == tb_gxtb_partial_inject_descriptor_mismatch) THEN
+         IF (.NOT. replicated_importers) &
+            CPABORT("DESCRIPTOR_MISMATCH qualification requires replicated importers")
+         IF (importer_count < 2) &
+            CPABORT("DESCRIPTOR_MISMATCH qualification requires at least two importers")
+         IF (para_env_global%mepos == 1) &
+            transaction_id(2) = transaction_id(2) + 1_int_8
+      ELSE IF (injection_mode == tb_gxtb_partial_inject_owner_mismatch .AND. &
+               .NOT. replicated_importers) THEN
+         CPABORT("OWNER_MISMATCH qualification requires replicated importers")
+      END IF
       local_failed = .FALSE.
-      IF (leader) THEN
+      IF (leader .OR. replicated_importers) THEN
          CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                           kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
                                           transaction_id, error, reverse_only=.TRUE.)
@@ -6783,6 +7038,7 @@ CONTAINS
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse initialization failed")
 
       batch_done = .FALSE.
+      first_batch = .TRUE.
       DO WHILE (.NOT. batch_done)
          local_failed = .FALSE.
          DO ifull = 1, kmap%nfull
@@ -6799,7 +7055,7 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse push failed")
 
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             CALL cp2k_exchange_partial_export_reverse(stream, descriptor, owner_count, &
                                                       local_buffer, error)
             local_failed = ALLOCATED(error)
@@ -6809,13 +7065,21 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse export failed")
-         CALL tb_gxtb_partial_descriptor_consensus(leader, service_rank, descriptor, &
-                                                   para_env_inter_kp, para_env_kp)
+         IF (replicated_importers) THEN
+            CALL tb_gxtb_partial_descriptor_consensus_global(descriptor, para_env_global)
+         ELSE
+            CALL tb_gxtb_partial_descriptor_consensus(leader, service_rank, descriptor, &
+                                                      para_env_inter_kp, para_env_kp)
+         END IF
 
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             local_payload_size = cp2k_exchange_partial_reverse_size(local_buffer)
             root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
-            CALL para_env_inter_kp%bcast(root_payload_size)
+            IF (replicated_importers) THEN
+               CALL para_env_global%bcast(root_payload_size)
+            ELSE
+               CALL para_env_inter_kp%bcast(root_payload_size)
+            END IF
             local_failed = local_payload_size /= root_payload_size .OR. &
                            local_payload_size < 0_int_8
          ELSE
@@ -6824,7 +7088,7 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "Inconsistent KGROUP_PARTIAL_ROOT reverse payload size")
-         IF (leader) THEN
+         IF (leader .OR. replicated_importers) THEN
             CALL cp2k_exchange_partial_reverse_pack(local_buffer, packed_payload, error)
             local_failed = ALLOCATED(error)
             IF (.NOT. local_failed) local_failed = &
@@ -6836,7 +7100,14 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse packing failed")
 
-         IF (leader) THEN
+         IF (replicated_importers) THEN
+            ALLOCATE (owner_sum, source=owner_count)
+            CALL para_env_global%sum(owner_sum)
+            CALL tb_gxtb_partial_allreduce_complex(packed_payload, para_env_global)
+            local_failed = ANY(owner_sum /= 1) .OR. &
+                           .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                           .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+         ELSE IF (leader) THEN
             ALLOCATE (owner_sum, source=owner_count)
             CALL para_env_inter_kp%sum(owner_sum, para_env_inter_kp%source)
             CALL tb_gxtb_partial_reduce_complex_root(packed_payload, para_env_inter_kp)
@@ -6852,7 +7123,7 @@ CONTAINS
                                            "Invalid KGROUP_PARTIAL_ROOT reverse ownership or payload")
 
          local_failed = .FALSE.
-         IF (service_rank) THEN
+         IF (service_rank .OR. replicated_importers) THEN
             CALL cp2k_exchange_partial_reverse_unpack(summed_buffer, descriptor, &
                                                       packed_payload, error)
             local_failed = ALLOCATED(error)
@@ -6862,12 +7133,18 @@ CONTAINS
                                                          tb%ecache, error)
                local_failed = ALLOCATED(error)
             END IF
+            IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
+               CALL cp2k_exchange_partial_set_pull_ownership( &
+                  stream, pull_owner, importer_rank, importer_count, &
+                  result_owner_rank, error)
+               local_failed = ALLOCATED(error)
+            END IF
          END IF
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse import failed")
          local_failed = .FALSE.
-         IF (service_rank) THEN
+         IF (service_rank .OR. replicated_importers) THEN
             CALL cp2k_exchange_stream_reverse_batch_apply(stream, tb%calc, tb%mol, &
                                                           tb%ecache, error)
             local_failed = ALLOCATED(error)
@@ -6882,7 +7159,8 @@ CONTAINS
             CALL prepare_reverse_block(ifull, .TRUE.)
             overlap_adjoint = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
             local_failed = .FALSE.
-            IF (service_rank) THEN
+            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+                (.NOT. replicated_importers .AND. service_rank)) THEN
                CALL cp2k_exchange_stream_reverse_batch_pull( &
                   stream, ifull, density_block, overlap_block, overlap_adjoint, error)
                local_failed = ALLOCATED(error)
@@ -6893,8 +7171,10 @@ CONTAINS
             CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                               local_failed, &
                                               "save_tblite KGROUP_PARTIAL_ROOT reverse pull failed")
-            IF (leader) CALL para_env_inter_kp%bcast(overlap_adjoint)
-            IF (leader .AND. owns_source) THEN
+            IF (.NOT. replicated_importers .AND. leader) &
+               CALL para_env_inter_kp%bcast(overlap_adjoint)
+            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+                (.NOT. replicated_importers .AND. leader .AND. owns_source)) THEN
                CALL tb_accumulate_gxtb_kpoint_response( &
                   kpoints, kmap, ao_first, ao_size, ifull, overlap_adjoint, &
                   overlap_grad(:, :, source), transform_work)
@@ -6903,7 +7183,10 @@ CONTAINS
 
          contributor_done = .FALSE.
          local_failed = .FALSE.
-         IF (service_rank) THEN
+         IF (replicated_importers) THEN
+            CALL cp2k_exchange_stream_reverse_batch_advance(stream, contributor_done, error)
+            local_failed = ALLOCATED(error)
+         ELSE IF (service_rank) THEN
             CALL cp2k_exchange_stream_reverse_batch_advance(stream, contributor_done, error)
             local_failed = ALLOCATED(error)
          ELSE IF (leader) THEN
@@ -6914,7 +7197,11 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse advance failed")
          done_count = 0
-         IF (leader) THEN
+         IF (replicated_importers) THEN
+            done_count = MERGE(1, 0, contributor_done)
+            CALL para_env_global%sum(done_count)
+            local_failed = done_count /= 0 .AND. done_count /= importer_count
+         ELSE IF (leader) THEN
             done_count = MERGE(1, 0, contributor_done)
             CALL para_env_inter_kp%sum(done_count)
             local_failed = done_count /= 0 .AND. done_count /= nkp_groups
@@ -6924,9 +7211,15 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "KGROUP_PARTIAL_ROOT reverse generations diverged")
-         CALL para_env_kp%bcast(done_count)
-         batch_done = done_count == nkp_groups
-         IF (leader) DEALLOCATE (owner_count, owner_sum, packed_payload)
+         IF (.NOT. replicated_importers) CALL para_env_kp%bcast(done_count)
+         IF (replicated_importers) THEN
+            batch_done = done_count == importer_count
+         ELSE
+            batch_done = done_count == nkp_groups
+         END IF
+         IF (leader .OR. replicated_importers) &
+            DEALLOCATE (owner_count, owner_sum, packed_payload)
+         first_batch = .FALSE.
       END DO
 
       local_failed = .FALSE.
@@ -6941,24 +7234,32 @@ CONTAINS
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse result failed")
-      IF (service_rank) THEN
+      IF (replicated_importers) THEN
+         CALL cp2k_exchange_stream_end(stream, error)
+      ELSE IF (service_rank) THEN
          CALL cp2k_exchange_stream_end(stream, error)
       ELSE IF (leader) THEN
          CALL cp2k_exchange_partial_discard(stream, error)
       END IF
-      local_failed = leader .AND. ALLOCATED(error)
+      local_failed = (leader .OR. replicated_importers) .AND. ALLOCATED(error)
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse finalization failed")
 
-      IF (leader) THEN
+      IF (replicated_importers) THEN
+         CALL para_env_global%bcast(k_gradient)
+         CALL para_env_global%bcast(k_sigma)
+         CALL para_env_global%sum(overlap_grad)
+      ELSE IF (leader) THEN
          CALL para_env_inter_kp%bcast(k_gradient)
          CALL para_env_inter_kp%bcast(k_sigma)
          CALL para_env_inter_kp%sum(overlap_grad)
       END IF
-      CALL para_env_kp%sum(k_gradient)
-      CALL para_env_kp%sum(k_sigma)
-      CALL para_env_kp%sum(overlap_grad)
+      IF (.NOT. replicated_importers) THEN
+         CALL para_env_kp%sum(k_gradient)
+         CALL para_env_kp%sum(k_sigma)
+         CALL para_env_kp%sum(overlap_grad)
+      END IF
       gradient = k_gradient
       sigma = k_sigma
       IF (injection_mode == tb_gxtb_partial_inject_antihermitian_reverse) THEN
@@ -6985,10 +7286,18 @@ CONTAINS
 
       IF (qualify) CALL qualify_partial_root_reverse()
       IF (service_rank) THEN
-         WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A)') &
-            " GXTB KGROUP-PARTIAL-ROOT-REVERSE nfull=", kmap%nfull, &
-            ", groups=", nkp_groups, ", batch=", actual_batch_size, &
-            ", provider_peak_complex=", peak_complex, "; R-to-k remains root-serial"
+         IF (replicated_importers) THEN
+            WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A,I0,A)') &
+               " GXTB KGROUP-PARTIAL-REPLICATED-REVERSE nfull=", kmap%nfull, &
+               ", importers=", importer_count, ", empty=", empty_importers, &
+               ", batch=", actual_batch_size, ", provider_peak_complex=", peak_complex, &
+               "; disjoint R-to-k pulls"
+         ELSE
+            WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A)') &
+               " GXTB KGROUP-PARTIAL-ROOT-REVERSE nfull=", kmap%nfull, &
+               ", groups=", nkp_groups, ", batch=", actual_batch_size, &
+               ", provider_peak_complex=", peak_complex, "; R-to-k remains root-serial"
+         END IF
       END IF
 
       ALLOCATE (pmat_ext(kplocal, nc, nspin))
@@ -7014,10 +7323,17 @@ CONTAINS
       DO ispin = 1, nspin
          DO img = 1, nimg
             ALLOCATE (exchange_w_rs(ispin, img)%matrix)
-            CALL dbcsr_create(exchange_w_rs(ispin, img)%matrix, &
-                              template=matrix_s(1, 1)%matrix, &
-                              name="KGROUP PARTIAL ROOT g-XTB EXCHANGE RESPONSE", &
-                              matrix_type=dbcsr_type_symmetric)
+            IF (replicated_importers) THEN
+               CALL dbcsr_create(exchange_w_rs(ispin, img)%matrix, &
+                                 template=matrix_s(1, 1)%matrix, &
+                                 name="KGROUP PARTIAL REPLICATED g-XTB EXCHANGE RESPONSE", &
+                                 matrix_type=dbcsr_type_symmetric)
+            ELSE
+               CALL dbcsr_create(exchange_w_rs(ispin, img)%matrix, &
+                                 template=matrix_s(1, 1)%matrix, &
+                                 name="KGROUP PARTIAL ROOT g-XTB EXCHANGE RESPONSE", &
+                                 matrix_type=dbcsr_type_symmetric)
+            END IF
             CALL cp_dbcsr_alloc_block_from_nbl(exchange_w_rs(ispin, img)%matrix, sab_nl)
             CALL dbcsr_set(exchange_w_rs(ispin, img)%matrix, 0.0_dp)
          END DO
@@ -7051,6 +7367,7 @@ CONTAINS
       DEALLOCATE (ao_first, ao_size, density_block, density_local, k_gradient, k_sigma, &
                   overlap_adjoint, overlap_block, overlap_grad, overlap_part, pmat_ext, &
                   transform_work)
+      IF (ALLOCATED(pull_owner)) DEALLOCATE (pull_owner)
 
    CONTAINS
 
@@ -7100,11 +7417,15 @@ CONTAINS
             MAXVAL(ABS(overlap_block - CONJG(TRANSPOSE(overlap_block))))
          IF (local_hermitian_error > 1.0E-10_dp) &
             CPABORT("KGROUP_PARTIAL_ROOT reverse overlap is not Hermitian")
-         IF (reduce_to_root .AND. leader) THEN
-            DO ispin_local = 1, nspin
-               CALL para_env_inter_kp%sum(density_block(:, :, ispin_local), &
-                                          para_env_inter_kp%source)
-            END DO
+         IF (reduce_to_root) THEN
+            IF (replicated_importers) THEN
+               CALL para_env_global%sum(density_block)
+            ELSE IF (leader) THEN
+               DO ispin_local = 1, nspin
+                  CALL para_env_inter_kp%sum(density_block(:, :, ispin_local), &
+                                             para_env_inter_kp%source)
+               END DO
+            END IF
          END IF
 
       END SUBROUTINE prepare_reverse_block
