@@ -60,7 +60,7 @@ MODULE tblite_types
       INTEGER, DIMENSION(3)                            :: nmesh = 1
       REAL(KIND=dp), DIMENSION(3)                      :: kp_shift = 0.0_dp
       INTEGER, ALLOCATABLE, DIMENSION(:)               :: op_count, representative, source, symop
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: symops
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: rotation_slot, symops
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)      :: reduced_xkp, xkp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)         :: reduced_weight, weight, fold_factor
    END TYPE tb_gxtb_kmesh_map_type
