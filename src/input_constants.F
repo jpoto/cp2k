@@ -1415,7 +1415,8 @@ MODULE input_constants
                                                tblite_gxtb_exchange_kgroup_owner = 5, &
                                                tblite_gxtb_exchange_kgroup_partial_root = 6, &
                                                tblite_gxtb_exchange_kgroup_partial_replicated = 7, &
-                                               tblite_gxtb_exchange_kgroup_partial_images = 8
+                                               tblite_gxtb_exchange_kgroup_partial_images = 8, &
+                                               tblite_gxtb_exchange_symmetry_fused = 9
    INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_gradient_dense = 0, &
                                                tblite_gxtb_gradient_streamed = 1, &
                                                tblite_gxtb_gradient_qualify = 2

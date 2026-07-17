@@ -66,7 +66,8 @@ MODULE tblite_types
       INTEGER                                          :: symmetry_backend = 0, symmetry_method = 0
       INTEGER, DIMENSION(3)                            :: nmesh = 1
       REAL(KIND=dp), DIMENSION(3)                      :: kp_shift = 0.0_dp
-      INTEGER, ALLOCATABLE, DIMENSION(:)               :: op_count, representative, source, symop
+      INTEGER, ALLOCATABLE, DIMENSION(:)               :: op_count, representative, source, &
+                                                          star_member, star_offset, symop
       INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: rotation_slot, symops
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)      :: reduced_xkp, xkp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)         :: reduced_weight, weight, fold_factor

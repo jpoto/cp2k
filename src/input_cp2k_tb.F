@@ -35,8 +35,9 @@ MODULE input_cp2k_tb
         tblite_gxtb_exchange_kgroup_owner, tblite_gxtb_exchange_kgroup_partial_images, &
         tblite_gxtb_exchange_kgroup_partial_replicated, tblite_gxtb_exchange_kgroup_partial_root, &
         tblite_gxtb_exchange_oracle, tblite_gxtb_exchange_reduced, &
-        tblite_gxtb_forward_qualification_off, tblite_gxtb_forward_qualification_qualify, &
-        tblite_gxtb_gradient_dense, tblite_gxtb_gradient_qualify, tblite_gxtb_gradient_streamed, &
+        tblite_gxtb_exchange_symmetry_fused, tblite_gxtb_forward_qualification_off, &
+        tblite_gxtb_forward_qualification_qualify, tblite_gxtb_gradient_dense, &
+        tblite_gxtb_gradient_qualify, tblite_gxtb_gradient_streamed, &
         tblite_gxtb_image_batch_default, tblite_gxtb_star_dense, tblite_gxtb_star_qualify, &
         tblite_gxtb_star_streamed, tblite_gxtb_transform_dense, tblite_gxtb_transform_mixed_radix, &
         tblite_gxtb_transform_separable, tblite_mixer_damping_default, &
@@ -785,19 +786,24 @@ CONTAINS
                           "replicates the merged state and distributes response pulls. "// &
                           "K_GROUP_PARTIAL_DISTRIBUTED_IMAGES additionally partitions the nonlinear BvK image "// &
                           "kernel. All modes retain complete Brillouin-zone coupling; none treats k points as "// &
-                          "independent exchange calculations. The developer-only "// &
+                          "independent exchange calculations. In its production contraction, SYMMETRY_FUSED "// &
+                          "stores overlap matrices only at irreducible representatives, expands density and "// &
+                          "overlap together from cached CP2K AO rotations and phases, and immediately folds "// &
+                          "each returned star response. Qualification may invoke the direct full-mesh oracle. "// &
+                          "It requires an actually reduced mesh. The developer-only "// &
                           "CP2K_GXTB_EXCHANGE_STREAM_MODE environment variable overrides this keyword.", &
                           usage="EXCHANGE_STREAM_BACKEND backend", &
                           enum_c_vals=s2a("COMPLETE_ARRAY", "REDUCED", "ORACLE", "BATCHED", "DISTRIBUTED", &
                                           "K_GROUP_OWNER", "K_GROUP_PARTIAL_ROOT", &
                                           "K_GROUP_PARTIAL_REPLICATED", &
-                                          "K_GROUP_PARTIAL_DISTRIBUTED_IMAGES"), &
+                                          "K_GROUP_PARTIAL_DISTRIBUTED_IMAGES", "SYMMETRY_FUSED"), &
                           enum_i_vals=[tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_reduced, &
                                        tblite_gxtb_exchange_oracle, tblite_gxtb_exchange_batched, &
                                        tblite_gxtb_exchange_distributed, tblite_gxtb_exchange_kgroup_owner, &
                                        tblite_gxtb_exchange_kgroup_partial_root, &
                                        tblite_gxtb_exchange_kgroup_partial_replicated, &
-                                       tblite_gxtb_exchange_kgroup_partial_images], &
+                                       tblite_gxtb_exchange_kgroup_partial_images, &
+                                       tblite_gxtb_exchange_symmetry_fused], &
                           enum_desc=s2a("Use the dense complete-array reference implementation.", &
                                         "Use the reduced provider stream.", &
                                         "Use the provider's streamed full-mesh oracle.", &
@@ -806,7 +812,8 @@ CONTAINS
                                         "Distribute irreducible-k ownership around one provider service.", &
                                         "Merge partial k-to-R state and evaluate on one service root.", &
                                         "Replicate merged state and distribute response pulls.", &
-                                        "Distribute the nonlinear BvK image kernel and response."), &
+                                        "Distribute the nonlinear BvK image kernel and response.", &
+                                        "Fuse symmetry expansion, bounded exchange, and star foldback."), &
                           default_i_val=tblite_gxtb_exchange_complete_array)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -888,9 +895,11 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="IMAGE_BATCH_SIZE", &
                           description="Maximum number of BvK image representatives held by bounded forward or "// &
-                          "reverse exchange transactions. The value is used by BATCHED, partial-k-group backends, "// &
-                          "and STREAMED or QUALIFY gradient contractions. It must be positive. CP2K aborts "// &
-                          "when an explicitly supplied value would be ignored by all selected paths. The "// &
+                          "reverse exchange transactions. The value is used by BATCHED, SYMMETRY_FUSED, "// &
+                          "partial-k-group backends, and STREAMED or QUALIFY gradient contractions. "// &
+                          "SYMMETRY_FUSED caps the effective forward batch below the complete-mesh size and "// &
+                          "fails unless the provider confirms bounded storage. The value must be positive. "// &
+                          "CP2K aborts when an explicitly supplied value would be ignored by all selected paths. The "// &
                           "developer-only CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE environment variable overrides this "// &
                           "keyword and is subject to the same unused-value check.", &
                           usage="IMAGE_BATCH_SIZE 8", default_i_val=tblite_gxtb_image_batch_default)

@@ -82,6 +82,25 @@ registry["GXTB_streamed_star_production"] = TextPresenceMatcher(
 registry["GXTB_distributed_images_reverse_production"] = TextPresenceMatcher(
     "GXTB KGROUP-PARTIAL-DISTRIBUTED-IMAGES-REVERSE nfull="
 )
+registry["GXTB_symmetry_fused_forward"] = TextPresenceMatcher(
+    "GXTB-SYMMETRY-FUSED nred="
+)
+registry["GXTB_symmetry_fused_reverse"] = TextPresenceMatcher(
+    "GXTB-SYMMETRY-FUSED-REVERSE nred="
+)
+registry["GXTB_streamed_reverse_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY STREAMED-REVERSE"
+)
+registry["GXTB_forward_stream_oracle_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY STREAM-ORACLE iter="
+)
+registry["GXTB_symmetry_fused_overlap_covariance"] = TextPresenceMatcher(
+    "GXTB-SYMMETRY-FUSED-OVERLAP-COVARIANCE"
+)
+registry["GXTB_symmetry_fused_large_batch_clamp"] = TextPresenceMatcher(
+    "requestedBatch=999, effectiveBatch=26, cachedRepresentativeOverlaps=4, "
+    "persistentFullExchangeStarMatrices=0"
+)
 registry["TBLITE_alpha_population"] = GenericMatcher(
     r"# Total charge and spin\s+([-+0-9.EeDd]+)", col=1, regex=True
 )
