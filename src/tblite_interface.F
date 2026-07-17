@@ -57,6 +57,7 @@ MODULE tblite_interface
                                  cp2k_exchange_partial_reverse_size, &
                                  cp2k_exchange_partial_reverse_type, &
                                  cp2k_exchange_partial_reverse_unpack, &
+                                 cp2k_exchange_partial_set_image_range, &
                                  cp2k_exchange_partial_set_pull_ownership, &
                                  cp2k_exchange_kpoint_gradient, &
                                  cp2k_exchange_stream_batch_advance, &
@@ -235,12 +236,18 @@ MODULE tblite_interface
    ! pulls to the importer ranks.  Exactly the global service rank retrieves
    ! scalar/direct-derivative results; importers beyond nfull own an empty set.
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_replicated = 7
+   ! Replicate the globally reduced pre-kernel state, but partition the
+   ! nonlinear BvK image kernel and its inverse transform over disjoint
+   ! contiguous image ranges.  Every importer pulls every k response because
+   ! each image range contributes additively to the complete Bloch response.
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_images = 8
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_none = 0
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_nonleader_failure = 1
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_antihermitian_reverse = 2
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_nonfinite_forward_result = 3
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_descriptor_mismatch = 4
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_owner_mismatch = 5
+   INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_image_range_mismatch = 6
    INTEGER(KIND=int_8), SAVE                          :: tb_gxtb_partial_transaction_serial = 0_int_8
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_dense = 0
    INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_streamed = 1
@@ -3659,7 +3666,7 @@ CONTAINS
 ! **************************************************************************************************
    INTEGER FUNCTION tb_gxtb_exchange_stream_mode() RESULT(stream_mode)
 
-      CHARACTER(LEN=32)                                  :: value
+      CHARACTER(LEN=48)                                  :: value
       INTEGER                                            :: status
 
       stream_mode = 0
@@ -3688,6 +3695,10 @@ CONTAINS
             "K_GROUP_PARTIAL_REPLICATED", "k_group_partial_replicated", &
             "REPLICATED_IMPORTERS", "replicated_importers", "7")
          stream_mode = tb_gxtb_exchange_stream_kgroup_partial_replicated
+      CASE ("KGROUP_PARTIAL_DISTRIBUTED_IMAGES", "kgroup_partial_distributed_images", &
+            "K_GROUP_PARTIAL_DISTRIBUTED_IMAGES", "k_group_partial_distributed_images", &
+            "DISTRIBUTED_IMAGES", "distributed_images", "8")
+         stream_mode = tb_gxtb_exchange_stream_kgroup_partial_images
       CASE DEFAULT
          CPABORT("Unknown CP2K_GXTB_EXCHANGE_STREAM_MODE value")
       END SELECT
@@ -3824,6 +3835,8 @@ CONTAINS
          injection_mode = tb_gxtb_partial_inject_descriptor_mismatch
       CASE ("OWNER_MISMATCH", "owner_mismatch")
          injection_mode = tb_gxtb_partial_inject_owner_mismatch
+      CASE ("IMAGE_RANGE_MISMATCH", "image_range_mismatch")
+         injection_mode = tb_gxtb_partial_inject_image_range_mismatch
       CASE DEFAULT
          CPABORT("Unknown CP2K_GXTB_PARTIAL_QUALIFY_INJECT value")
       END SELECT
@@ -4101,6 +4114,75 @@ CONTAINS
       result_owner_rank = para_env%source + 1
 
    END SUBROUTINE tb_gxtb_partial_replicated_owner_map
+
+! **************************************************************************************************
+!> \brief Construct and prove an exact contiguous BvK-image partition.
+!>
+!> Every global CP2K rank is an importer in Variant C.  The deterministic
+!> quotient/remainder partition assigns every BvK image exactly once and
+!> deliberately returns `(0,0)` for empty importers when P exceeds the number
+!> of images.  The collective cover proof is performed before the provider
+!> setter is called, so an inconsistent assignment fails closed.
+!> \param nimages ...
+!> \param para_env ...
+!> \param first_image ...
+!> \param image_count ...
+!> \param inject_mismatch ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_partial_image_range(nimages, para_env, first_image, image_count, &
+                                          inject_mismatch)
+
+      INTEGER, INTENT(IN)                                :: nimages
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      INTEGER, INTENT(OUT)                               :: first_image, image_count
+      LOGICAL, INTENT(IN)                                :: inject_mismatch
+
+      INTEGER                                            :: base_count, extra_count, image, &
+                                                            importer_rank
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: cover
+
+      IF (nimages < 1 .OR. para_env%num_pe < 1) &
+         CPABORT("Invalid distributed-image partition extent")
+      importer_rank = para_env%mepos
+      base_count = nimages/para_env%num_pe
+      extra_count = MOD(nimages, para_env%num_pe)
+      image_count = base_count + MERGE(1, 0, importer_rank < extra_count)
+      IF (image_count > 0) THEN
+         first_image = 1 + importer_rank*base_count + MIN(importer_rank, extra_count)
+      ELSE
+         first_image = 0
+      END IF
+
+      IF (inject_mismatch) THEN
+         IF (para_env%num_pe < 2) &
+            CPABORT("IMAGE_RANGE_MISMATCH qualification requires at least two importers")
+         IF (importer_rank == 1) THEN
+            IF (image_count == 0) THEN
+               first_image = 1
+               image_count = 1
+            ELSE
+               first_image = MAX(1, first_image - 1)
+            END IF
+         END IF
+      END IF
+      IF (image_count < 0 .OR. &
+          (image_count == 0 .AND. first_image /= 0) .OR. &
+          (image_count > 0 .AND. &
+           (first_image < 1 .OR. first_image + image_count - 1 > nimages))) &
+         CPABORT("Invalid distributed-image importer range")
+
+      ALLOCATE (cover(nimages), source=0)
+      IF (image_count > 0) THEN
+         DO image = first_image, first_image + image_count - 1
+            cover(image) = 1
+         END DO
+      END IF
+      CALL para_env%sum(cover)
+      IF (ANY(cover /= 1)) &
+         CPABORT("Distributed-image importer ranges are not an exact cover")
+      DEALLOCATE (cover)
+
+   END SUBROUTINE tb_gxtb_partial_image_range
 ! **************************************************************************************************
 !> \brief Exact owner-generated g-xTB exchange bridge using CP2K k-point groups.
 !> \param qs_env ...
@@ -4484,9 +4566,11 @@ CONTAINS
 !> \param run_qualification_oracle ...
 !> \param iter_count ...
 !> \param replicated_importers ...
+!> \param distributed_images ...
 ! **************************************************************************************************
    SUBROUTINE tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
-      qs_env, tb, matrix_s, run_qualification_oracle, iter_count, replicated_importers)
+      qs_env, tb, matrix_s, run_qualification_oracle, iter_count, replicated_importers, &
+      distributed_images)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(tblite_type), POINTER                         :: tb
@@ -4494,6 +4578,7 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: run_qualification_oracle
       INTEGER, INTENT(IN)                                :: iter_count
       LOGICAL, INTENT(IN)                                :: replicated_importers
+      LOGICAL, INTENT(IN)                                :: distributed_images
 
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: packed_payload
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap_block, transform_work
@@ -4503,7 +4588,8 @@ CONTAINS
       INTEGER                                            :: actual_batch_size, batch_size, &
                                                             done_count, empty_importers, group_index, ifull, &
                                                             importer_count, importer_rank, injection_mode, &
-                                                            iop, ispin, local_source, nao, nkp_groups, &
+                                                            image_count, image_first, iop, ispin, &
+                                                            local_source, nao, nkp_groups, &
                                                             nlocal, nred, nspin, result_owner_rank, source
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
                                                             owner_count, owner_sum, pull_owner
@@ -4567,6 +4653,8 @@ CONTAINS
       importer_count = para_env_global%num_pe
       importer_rank = para_env_global%mepos + 1
       result_owner_rank = para_env_global%source + 1
+      IF (distributed_images .AND. .NOT. replicated_importers) &
+         CPABORT("Distributed images require replicated partial importers")
       injection_mode = &
          tb_gxtb_partial_qualification_injection(run_qualification_oracle)
       IF (injection_mode == tb_gxtb_partial_inject_nonleader_failure) THEN
@@ -4580,9 +4668,19 @@ CONTAINS
       kmap => tb%gxtb_kmesh_map
       CPASSERT(kmap%nred == nred)
       IF (replicated_importers) THEN
-         CALL tb_gxtb_partial_replicated_owner_map( &
-            kmap%nfull, para_env_global, pull_owner, result_owner_rank, &
-            injection_mode == tb_gxtb_partial_inject_owner_mismatch)
+         IF (distributed_images) THEN
+            CALL tb_gxtb_partial_image_range( &
+               kmap%nfull, para_env_global, image_first, image_count, &
+               injection_mode == tb_gxtb_partial_inject_image_range_mismatch)
+            ! Keep conditional pull predicates memory-safe on compilers that do
+            ! not short-circuit logical expressions.  This array is never
+            ! passed to the provider in distributed-image mode.
+            ALLOCATE (pull_owner(kmap%nfull), source=0)
+         ELSE
+            CALL tb_gxtb_partial_replicated_owner_map( &
+               kmap%nfull, para_env_global, pull_owner, result_owner_rank, &
+               injection_mode == tb_gxtb_partial_inject_owner_mismatch)
+         END IF
          empty_importers = MAX(0, importer_count - kmap%nfull)
       ELSE
          empty_importers = 0
@@ -4632,8 +4730,11 @@ CONTAINS
          IF (para_env_global%mepos == 1) &
             transaction_id(2) = transaction_id(2) + 1_int_8
       ELSE IF (injection_mode == tb_gxtb_partial_inject_owner_mismatch .AND. &
-               .NOT. replicated_importers) THEN
-         CPABORT("OWNER_MISMATCH qualification requires replicated importers")
+               (.NOT. replicated_importers .OR. distributed_images)) THEN
+         CPABORT("OWNER_MISMATCH qualification requires replicated pull importers")
+      ELSE IF (injection_mode == tb_gxtb_partial_inject_image_range_mismatch .AND. &
+               .NOT. distributed_images) THEN
+         CPABORT("IMAGE_RANGE_MISMATCH qualification requires distributed images")
       END IF
       local_failed = .FALSE.
       IF (leader .OR. replicated_importers) THEN
@@ -4770,9 +4871,14 @@ CONTAINS
                local_failed = ALLOCATED(error)
             END IF
             IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
-               CALL cp2k_exchange_partial_set_pull_ownership( &
-                  stream, pull_owner, importer_rank, importer_count, &
-                  result_owner_rank, error)
+               IF (distributed_images) THEN
+                  CALL cp2k_exchange_partial_set_image_range( &
+                     stream, image_first, image_count, error)
+               ELSE
+                  CALL cp2k_exchange_partial_set_pull_ownership( &
+                     stream, pull_owner, importer_rank, importer_count, &
+                     result_owner_rank, error)
+               END IF
                local_failed = ALLOCATED(error)
             END IF
          END IF
@@ -4795,7 +4901,8 @@ CONTAINS
             CALL prepare_overlap_block(ifull)
             fock_batch = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
             local_failed = .FALSE.
-            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+            IF ((distributed_images) .OR. &
+                (replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
                 (.NOT. replicated_importers .AND. service_rank)) THEN
                CALL cp2k_exchange_stream_batch_pull(stream, ifull, overlap_block, &
                                                     fock_batch, error)
@@ -4809,7 +4916,8 @@ CONTAINS
                                               "save_tblite KGROUP_PARTIAL_ROOT pull failed")
             IF (.NOT. replicated_importers .AND. leader) &
                CALL para_env_inter_kp%bcast(fock_batch)
-            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+            IF ((distributed_images) .OR. &
+                (replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
                 (.NOT. replicated_importers .AND. leader .AND. owns_source)) THEN
                DO ispin = 1, nspin
                   CALL tb_accumulate_gxtb_kpoint_response( &
@@ -4862,7 +4970,7 @@ CONTAINS
       END DO
 
       local_failed = .FALSE.
-      IF (service_rank) THEN
+      IF (service_rank .OR. distributed_images) THEN
          CALL cp2k_exchange_stream_batch_result(stream, tb%calc, tb%mol, tb%ecache, &
                                                 exchange_vsh, exchange_energy, error)
          local_failed = ALLOCATED(error)
@@ -4888,8 +4996,13 @@ CONTAINS
                                         "save_tblite KGROUP_PARTIAL_ROOT finalization failed")
 
       IF (replicated_importers) THEN
-         CALL para_env_global%bcast(exchange_energy)
-         CALL para_env_global%bcast(exchange_vsh)
+         IF (distributed_images) THEN
+            CALL para_env_global%sum(exchange_energy)
+            CALL para_env_global%sum(exchange_vsh)
+         ELSE
+            CALL para_env_global%bcast(exchange_energy)
+            CALL para_env_global%bcast(exchange_vsh)
+         END IF
          CALL para_env_global%sum(tb%exchange_fock_kp)
       ELSE IF (leader) THEN
          CALL para_env_inter_kp%bcast(exchange_energy)
@@ -4928,7 +5041,13 @@ CONTAINS
       tb%exchange_fock_kp_valid = .TRUE.
       IF (run_qualification_oracle) CALL qualify_partial_root_oracle()
       IF (service_rank .AND. iter_count == 1) THEN
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A,I0,A)') &
+               " GXTB-KGROUP-PARTIAL-DISTRIBUTED-IMAGES importers=", importer_count, &
+               ", empty=", empty_importers, ", nred=", nred, ", nfull=", kmap%nfull, &
+               ", batch=", actual_batch_size, &
+               "; distributed nonlinear image kernel and all-k partial pulls"
+         ELSE IF (replicated_importers) THEN
             WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A,I0,A)') &
                " GXTB-KGROUP-PARTIAL-REPLICATED importers=", importer_count, &
                ", empty=", empty_importers, ", nred=", nred, ", nfull=", kmap%nfull, &
@@ -5798,6 +5917,7 @@ CONTAINS
           stream_mode /= tb_gxtb_exchange_stream_kgroup_owner .AND. &
           stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_root .AND. &
           stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_replicated .AND. &
+          stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_images .AND. &
           .NOT. (stream_mode == 0 .AND. &
                  transform_backend == cp2k_exchange_transform_separable_dft)) &
          CPABORT("QUALIFICATION_ONLY identity oracle requires batched, distributed, or separable mode")
@@ -5812,11 +5932,15 @@ CONTAINS
          RETURN
       ELSE IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root) THEN
          CALL tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
-            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .FALSE.)
+            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .FALSE., .FALSE.)
          RETURN
       ELSE IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated) THEN
          CALL tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
-            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .TRUE.)
+            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .TRUE., .FALSE.)
+         RETURN
+      ELSE IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_images) THEN
+         CALL tb_build_gxtb_kpoint_exchange_kgroup_partial_root( &
+            qs_env, tb, matrix_s, run_qualification_oracle, iter_count, .TRUE., .TRUE.)
          RETURN
       ELSE IF (stream_mode /= 0) THEN
          CALL tb_build_gxtb_kpoint_exchange_streamed(qs_env, tb, matrix_s, para_env, stream_mode, &
@@ -6125,19 +6249,23 @@ CONTAINS
          CALL tb_gxtb_kpoint_exchange_gradient_dense(qs_env, tb, gradient, sigma)
       CASE (tb_gxtb_exchange_gradient_streamed)
          IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root .OR. &
-             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated) THEN
+             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated .OR. &
+             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_images) THEN
             CALL tb_gxtb_kpoint_exchange_gradient_kgroup_partial_root( &
                qs_env, tb, gradient, sigma, .FALSE., &
-               stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated)
+               stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_root, &
+               stream_mode == tb_gxtb_exchange_stream_kgroup_partial_images)
          ELSE
             CALL tb_gxtb_kpoint_exchange_gradient_streamed(qs_env, tb, gradient, sigma, .FALSE.)
          END IF
       CASE (tb_gxtb_exchange_gradient_qualify)
          IF (stream_mode == tb_gxtb_exchange_stream_kgroup_partial_root .OR. &
-             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated) THEN
+             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated .OR. &
+             stream_mode == tb_gxtb_exchange_stream_kgroup_partial_images) THEN
             CALL tb_gxtb_kpoint_exchange_gradient_kgroup_partial_root( &
                qs_env, tb, gradient, sigma, .TRUE., &
-               stream_mode == tb_gxtb_exchange_stream_kgroup_partial_replicated)
+               stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_root, &
+               stream_mode == tb_gxtb_exchange_stream_kgroup_partial_images)
          ELSE
             CALL tb_gxtb_kpoint_exchange_gradient_streamed(qs_env, tb, gradient, sigma, .TRUE.)
          END IF
@@ -6855,15 +6983,17 @@ CONTAINS
 !> \param sigma ...
 !> \param qualify ...
 !> \param replicated_importers ...
+!> \param distributed_images ...
 ! **************************************************************************************************
    SUBROUTINE tb_gxtb_kpoint_exchange_gradient_kgroup_partial_root( &
-      qs_env, tb, gradient, sigma, qualify, replicated_importers)
+      qs_env, tb, gradient, sigma, qualify, replicated_importers, distributed_images)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(tblite_type), POINTER                         :: tb
       REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: gradient, sigma
       LOGICAL, INTENT(IN)                                :: qualify
       LOGICAL, INTENT(IN)                                :: replicated_importers
+      LOGICAL, INTENT(IN)                                :: distributed_images
 
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: packed_payload
       COMPLEX(KIND=dp), ALLOCATABLE, &
@@ -6873,7 +7003,8 @@ CONTAINS
                                                             transform_work
       INTEGER                                            :: actual_batch_size, batch_size, &
                                                             done_count, empty_importers, group_index, ic, &
-                                                            ifull, ik, ikk, img, importer_count, &
+                                                            ifull, ik, ikk, image_count, image_first, img, &
+                                                            importer_count, &
                                                             importer_rank, injection_mode, ispin, kplocal, &
                                                             nao, nat, nc, nimg, nkp_groups, nred, nspin, &
                                                             result_owner_rank, source
@@ -6947,6 +7078,8 @@ CONTAINS
       importer_count = para_env_global%num_pe
       importer_rank = para_env_global%mepos + 1
       result_owner_rank = para_env_global%source + 1
+      IF (distributed_images .AND. .NOT. replicated_importers) &
+         CPABORT("Distributed images require replicated reverse importers")
       injection_mode = tb_gxtb_partial_qualification_injection(qualify)
       IF (injection_mode == tb_gxtb_partial_inject_nonleader_failure) THEN
          done_count = MERGE(0, 1, leader)
@@ -6965,9 +7098,17 @@ CONTAINS
          RETURN
       END IF
       IF (replicated_importers) THEN
-         CALL tb_gxtb_partial_replicated_owner_map( &
-            kmap%nfull, para_env_global, pull_owner, result_owner_rank, &
-            injection_mode == tb_gxtb_partial_inject_owner_mismatch)
+         IF (distributed_images) THEN
+            CALL tb_gxtb_partial_image_range( &
+               kmap%nfull, para_env_global, image_first, image_count, &
+               injection_mode == tb_gxtb_partial_inject_image_range_mismatch)
+            ! Never passed to the provider; see the forward-path comment.
+            ALLOCATE (pull_owner(kmap%nfull), source=0)
+         ELSE
+            CALL tb_gxtb_partial_replicated_owner_map( &
+               kmap%nfull, para_env_global, pull_owner, result_owner_rank, &
+               injection_mode == tb_gxtb_partial_inject_owner_mismatch)
+         END IF
          empty_importers = MAX(0, importer_count - kmap%nfull)
       ELSE
          empty_importers = 0
@@ -7015,8 +7156,11 @@ CONTAINS
          IF (para_env_global%mepos == 1) &
             transaction_id(2) = transaction_id(2) + 1_int_8
       ELSE IF (injection_mode == tb_gxtb_partial_inject_owner_mismatch .AND. &
-               .NOT. replicated_importers) THEN
-         CPABORT("OWNER_MISMATCH qualification requires replicated importers")
+               (.NOT. replicated_importers .OR. distributed_images)) THEN
+         CPABORT("OWNER_MISMATCH qualification requires replicated pull importers")
+      ELSE IF (injection_mode == tb_gxtb_partial_inject_image_range_mismatch .AND. &
+               .NOT. distributed_images) THEN
+         CPABORT("IMAGE_RANGE_MISMATCH qualification requires distributed images")
       END IF
       local_failed = .FALSE.
       IF (leader .OR. replicated_importers) THEN
@@ -7134,9 +7278,14 @@ CONTAINS
                local_failed = ALLOCATED(error)
             END IF
             IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
-               CALL cp2k_exchange_partial_set_pull_ownership( &
-                  stream, pull_owner, importer_rank, importer_count, &
-                  result_owner_rank, error)
+               IF (distributed_images) THEN
+                  CALL cp2k_exchange_partial_set_image_range( &
+                     stream, image_first, image_count, error)
+               ELSE
+                  CALL cp2k_exchange_partial_set_pull_ownership( &
+                     stream, pull_owner, importer_rank, importer_count, &
+                     result_owner_rank, error)
+               END IF
                local_failed = ALLOCATED(error)
             END IF
          END IF
@@ -7159,7 +7308,8 @@ CONTAINS
             CALL prepare_reverse_block(ifull, .TRUE.)
             overlap_adjoint = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
             local_failed = .FALSE.
-            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+            IF ((distributed_images) .OR. &
+                (replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
                 (.NOT. replicated_importers .AND. service_rank)) THEN
                CALL cp2k_exchange_stream_reverse_batch_pull( &
                   stream, ifull, density_block, overlap_block, overlap_adjoint, error)
@@ -7173,7 +7323,8 @@ CONTAINS
                                               "save_tblite KGROUP_PARTIAL_ROOT reverse pull failed")
             IF (.NOT. replicated_importers .AND. leader) &
                CALL para_env_inter_kp%bcast(overlap_adjoint)
-            IF ((replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
+            IF ((distributed_images) .OR. &
+                (replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
                 (.NOT. replicated_importers .AND. leader .AND. owns_source)) THEN
                CALL tb_accumulate_gxtb_kpoint_response( &
                   kpoints, kmap, ao_first, ao_size, ifull, overlap_adjoint, &
@@ -7223,7 +7374,7 @@ CONTAINS
       END DO
 
       local_failed = .FALSE.
-      IF (service_rank) THEN
+      IF (service_rank .OR. distributed_images) THEN
          CALL cp2k_exchange_stream_reverse_result(stream, tb%calc, tb%mol, tb%ecache, &
                                                   k_gradient, k_sigma, error)
          local_failed = ALLOCATED(error)
@@ -7247,8 +7398,13 @@ CONTAINS
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse finalization failed")
 
       IF (replicated_importers) THEN
-         CALL para_env_global%bcast(k_gradient)
-         CALL para_env_global%bcast(k_sigma)
+         IF (distributed_images) THEN
+            CALL para_env_global%sum(k_gradient)
+            CALL para_env_global%sum(k_sigma)
+         ELSE
+            CALL para_env_global%bcast(k_gradient)
+            CALL para_env_global%bcast(k_sigma)
+         END IF
          CALL para_env_global%sum(overlap_grad)
       ELSE IF (leader) THEN
          CALL para_env_inter_kp%bcast(k_gradient)
@@ -7286,7 +7442,13 @@ CONTAINS
 
       IF (qualify) CALL qualify_partial_root_reverse()
       IF (service_rank) THEN
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A,I0,A)') &
+               " GXTB KGROUP-PARTIAL-DISTRIBUTED-IMAGES-REVERSE nfull=", kmap%nfull, &
+               ", importers=", importer_count, ", empty=", empty_importers, &
+               ", batch=", actual_batch_size, ", provider_peak_complex=", peak_complex, &
+               "; distributed nonlinear image kernel and all-k partial pulls"
+         ELSE IF (replicated_importers) THEN
             WRITE (*, '(A,I0,A,I0,A,I0,A,I0,A,I0,A)') &
                " GXTB KGROUP-PARTIAL-REPLICATED-REVERSE nfull=", kmap%nfull, &
                ", importers=", importer_count, ", empty=", empty_importers, &
