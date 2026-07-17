@@ -3,6 +3,7 @@
 # Directories have been reordered according the execution time needed for a gfortran pdbg run using 2 MPI tasks
 # in case a new directory is added just add it at the top of the list..
 # the order will be regularly checked and modified...
+Fist/regtest-mace                                           libtorch
 xTB/regtest-tblite-gxtb                                    tblite_gxtb
 xTB/regtest-tblite-gxtb-spglib                             tblite_gxtb spglib
 QS/regtest-floquet
@@ -72,6 +73,7 @@ QS/regtest-ot
 QS/regtest-openpmd                                          openpmd
 QS/regtest-ec-force                                         libint !ifx
 QS/regtest-embed                                            libint !ifx
+xTB/regtest-spinpol    
 xTB/regtest-5
 xTB/regtest-gfn1-d                                          spglib
 QS/regtest-gpw-2-3
@@ -221,7 +223,7 @@ Fist/regtest-1-3
 QS/regtest-md-extrap
 Fist/regtest-15
 xTB/regtest-3
-xTB/regtest-3-spglib                                        spglib
+xTB/regtest-3-spglib                                        spglib tblite
 QS/regtest-debug-3                                          libint libxc !ifx
 QS/regtest-lrigpw-2
 QS/regtest-hybrid-4                                         libint libxc !ifx

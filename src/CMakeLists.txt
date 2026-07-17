@@ -330,6 +330,7 @@ list(
   kpoint_methods.F
   kpoint_restart_transfer.F
   kpoint_mo_dump.F
+  kpoint_mo_symmetry_methods.F
   kpoint_transitional.F
   kpoint_types.F
   kpsym.F
@@ -355,7 +356,7 @@ list(
   manybody_deepmd.F
   manybody_gal21.F
   manybody_gal.F
-  manybody_nequip.F
+  manybody_e3nn.F
   manybody_potential.F
   manybody_siepmann.F
   manybody_tersoff.F
@@ -884,6 +885,7 @@ list(
   xray_diffraction.F
   xtb_qresp.F
   xtb_coulomb.F
+  xtb_spinpol.F
   xtb_eeq.F
   xtb_ehess.F
   xtb_ehess_force.F

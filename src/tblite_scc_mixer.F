@@ -443,8 +443,10 @@ CONTAINS
       REAL(wp), DIMENSION(memory, memory), INTENT(INOUT) :: a
       INTEGER, INTENT(OUT)                               :: info
 
-      INTEGER                                            :: current_memory, i, it1, j, sloti, slotj, start_index
-      REAL(wp)                                           :: inv, norm_dq, norm_dqlast, norm_dr, norm_dr_tol
+      INTEGER                                            :: current_memory, i, it1, j, sloti, slotj, &
+                                                            start_index
+      REAL(wp)                                           :: inv, norm_dq, norm_dqlast, norm_dr, &
+                                                            norm_dr_tol
       REAL(wp), ALLOCATABLE, DIMENSION(:, :)             :: beta, c
 
       info = 0

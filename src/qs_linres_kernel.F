@@ -142,9 +142,9 @@ CONTAINS
       CALL get_qs_env(qs_env=qs_env, dft_control=dft_control)
       IF (dft_control%qs_control%semi_empirical) THEN
          CPABORT("Linear response not available with SE methods")
-      ELSEIF (dft_control%qs_control%dftb) THEN
+      ELSE IF (dft_control%qs_control%dftb) THEN
          CPABORT("Linear response not available with DFTB")
-      ELSEIF (dft_control%qs_control%xtb) THEN
+      ELSE IF (dft_control%qs_control%xtb) THEN
          CALL apply_op_2_xtb(qs_env, p_env)
       ELSE
          CALL apply_op_2_dft(qs_env, p_env)
@@ -278,8 +278,9 @@ CONTAINS
       CALL auxbas_pw_pool%create_pw(v_hartree_gspace)
       CALL auxbas_pw_pool%create_pw(v_hartree_rspace)
 
-      IF (gapw .OR. gapw_xc) &
+      IF (gapw .OR. gapw_xc) THEN
          CALL prepare_gapw_den(qs_env, p_env%local_rho_set, do_rho0=(.NOT. gapw_xc))
+      END IF
 
       ! *** calculate the hartree potential on the total density ***
       CALL auxbas_pw_pool%create_pw(rho1_tot_gspace)
@@ -444,8 +445,9 @@ CONTAINS
             END IF
 
             IF (lrigpw) THEN
-               IF (ASSOCIATED(v_xc_tau)) &
+               IF (ASSOCIATED(v_xc_tau)) THEN
                   CPABORT("metaGGA-functionals not supported with LRI!")
+               END IF
 
                lri_v_int => lri_density%lri_coefs(ispin)%lri_kinds
                CALL get_qs_env(qs_env, nkind=nkind)
@@ -506,7 +508,7 @@ CONTAINS
          psmat(1:ns, 1:1) => rho_ao(1:ns)
          CALL update_ks_atom(qs_env, ksmat, psmat, forces=.FALSE., tddft=.TRUE., &
                              rho_atom_external=p_env%local_rho_set%rho_atom_set)
-      ELSEIF (gapw_xc) THEN
+      ELSE IF (gapw_xc) THEN
          ns = SIZE(p_env%kpp1)
          ksmat(1:ns, 1:1) => p_env%kpp1(1:ns)
          ns = SIZE(rho_ao)
@@ -570,7 +572,7 @@ CONTAINS
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: mcharge, mcharge1
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: aocg, aocg1, charges, charges1
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: pmat, rho_ao
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_p, matrix_p1, matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
@@ -628,6 +630,7 @@ CONTAINS
          aocg1 = 0.0_dp
          CALL ao_charges(matrix_p, matrix_s, aocg, para_env)
          CALL ao_charges(matrix_p1, matrix_s, aocg1, para_env)
+         IF (nspins == 2) aocg1 = 0.5_dp*aocg1
          DO ikind = 1, nkind
             CALL get_atomic_kind(atomic_kind_set(ikind), natom=na)
             CALL get_qs_kind(qs_kind_set(ikind), xtb_parameter=xtb_kind)
@@ -648,7 +651,8 @@ CONTAINS
             mcharge1(iatom) = SUM(charges1(iatom, :))
          END DO
          ! Coulomb Kernel
-         CALL xtb_coulomb_hessian(qs_env, p_env%kpp1, charges1, mcharge1, mcharge)
+         pmat => matrix_p1(:, 1)
+         CALL xtb_coulomb_hessian(qs_env, p_env%kpp1, charges1, mcharge1, mcharge, pmat)
          !
          DEALLOCATE (charges, mcharge, charges1, mcharge1)
       END IF

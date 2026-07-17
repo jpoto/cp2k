@@ -66,7 +66,7 @@ MODULE bibliography
                             Kantorovich2008a, Wellendorff2012, Niklasson2014, Borstnik2014, &
                             Rayson2009, Grimme2011, Fattebert2002, Andreussi2012, &
                             Khaliullin2007, Khaliullin2008, Merlot2014, Lin2009, Lin2013, Lin2016ACE, &
-                            Batzner2022, DelBen2015, Souza2002, Umari2002, Stengel2009, &
+                            Batzner2022, Batatia2022, DelBen2015, Souza2002, Umari2002, Stengel2009, &
                             Luber2014, Berghold2011, DelBen2015b, Campana2009, &
                             Schiffmann2015, Bruck2014, Rappe1992, Ceriotti2012, &
                             Ceriotti2010, Walewski2014, Monkhorst1976, MacDonald1978, Worlton1972, &
@@ -97,7 +97,7 @@ MODULE bibliography
                             FuHo1983, MethfesselPaxton1989, Marzari1999, dosSantos2023, Mermin1965, &
                             KuhneHeskeProdan2020, Schreder2021, Schreder2024_1, Schreder2024_2, &
                             Shiga2022, Lindh1995, Chai2024a, Rullan2026, Sundararaman2017, Andreussi2019, &
-                            Chai2025a
+                            Chai2025a, Neugebauer2023
 
 CONTAINS
 
@@ -163,6 +163,13 @@ CONTAINS
                          title="E(3)-equivariant graph neural networks for data-efficient and accurate interatomic potentials", &
                          source="Nat. Commun.", volume="13", pages="2453", &
                          year=2022, doi="10.1038/s41467-022-29939-5")
+
+      CALL add_reference(key=Batatia2022, &
+                         authors=s2a("I. Batatia", "D. P. Kovacs", "G. N. C. Simm", "C. Ortner", "G. Csanyi"), &
+                         title="MACE: Higher order equivariant message passing neural networks "// &
+                         "for fast and accurate force fields", &
+                         source="Adv. Neural Inf. Process. Syst.", volume="35", pages="11423-11436", &
+                         year=2022, doi="10.48550/arXiv.2206.07697")
 
       CALL add_reference(key=VandenCic2006, &
                          authors=s2a("E. Vanden-Eijnden", "G. Ciccotti"), &
@@ -788,6 +795,13 @@ CONTAINS
                          "and Density-Dependent Dispersion Contributions", &
                          source="J. Chem. Theory Comput.", volume="15", pages="1652-1671", &
                          year=2019, doi="10.1021/acs.jctc.8b01176")
+
+      CALL add_reference(key=Neugebauer2023, &
+                         authors=s2a("H. Neugebauer", "B. Baedorf", "S. Ehlert", "A. Hansen", "S. Grimme"), &
+                         title="High-throughput screening of spin states for transition metal complexes "// &
+                         "with spin-polarized extended tight-binding methods", &
+                         source="J. Comput. Chem.", volume="44", pages="2120-2129", &
+                         year=2023, doi="10.1002/jcc.27185")
 
       CALL add_reference(key=Katbashev2025, &
                          authors=s2a("A. Katbashev", "M. Stahn", "T. Rose", "V. Alizadeh", &

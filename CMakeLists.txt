@@ -10,6 +10,15 @@ cmake_minimum_required(VERSION 3.24)
 # include our cmake snippets
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
+# Require out-of-source builds
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/CMakeLists.txt" LOC_PATH)
+if(EXISTS "${LOC_PATH}")
+  message(
+    FATAL_ERROR
+      "You cannot build in a source directory (or any directory with a CMakeLists.txt file). "
+      "Please make a build subdirectory.")
+endif()
+
 # =================================================================================================
 # PROJECT AND VERSION
 include(CMakeDependentOption)
@@ -30,15 +39,6 @@ project(
   LANGUAGES Fortran C CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/modules")
-
-# Require out-of-source builds
-file(TO_CMAKE_PATH "${PROJECT_BINARY_DIR}/CMakeLists.txt" LOC_PATH)
-if(EXISTS "${LOC_PATH}")
-  message(
-    FATAL_ERROR
-      "You cannot build in a source directory (or any directory with a CMakeLists.txt file). Please make a build subdirectory."
-  )
-endif()
 
 # set language and standard.
 #
@@ -105,10 +105,6 @@ foreach(__var ROCM_ROOT CRAY_ROCM_ROOT ORNL_ROCM_ROOT CRAY_ROCM_PREFIX
         CACHE PATH "Path to ROCm installation")
   endif()
 endforeach()
-
-set(CMAKE_INSTALL_LIBDIR
-    "lib"
-    CACHE PATH "Default installation directory for libraries")
 
 # =================================================================================================
 # OPTIONS
@@ -250,18 +246,18 @@ cmake_dependent_option(
   CP2K_USE_CUSOLVER_MP "Enable cuSOLVERMp. Only active when CUDA is ON" OFF
   "CP2K_USE_ACCEL MATCHES \"CUDA\"" OFF)
 
-cmake_dependent_option(CP2K_USE_NVHPC OFF "Enable Nvidia NVHPC kit"
-                       "(NOT CP2K_USE_ACCEL MATCHES \"CUDA\")" OFF)
+cmake_dependent_option(CP2K_USE_NVHPC "Enable Nvidia NVHPC kit" OFF
+                       "CP2K_USE_ACCEL MATCHES \"CUDA\"" OFF)
 
 cmake_dependent_option(
-  CP2K_USE_SPLA_GEMM_OFFLOADING ON
-  "Enable SpLA dgemm offloading (only valid with GPU support on)"
-  "(NOT CP2K_USE_ACCEL MATCHES \"NONE\") AND (CP2K_USE_SPLA)" OFF)
+  CP2K_USE_SPLA_GEMM_OFFLOADING
+  "Enable SpLA dgemm offloading (only valid with GPU support on)" ON
+  "CP2K_USE_ACCEL MATCHES \"HIP|CUDA\" AND CP2K_USE_SPLA" OFF)
 
 cmake_dependent_option(
-  CP2K_USE_CRAY_PM_ACCEL_ENERGY ON
-  "Enable CRAY power management framework with gpu support"
-  "(NOT CP2K_USE_ACCEL MATCHES \"NONE\") AND (CP2K_USE_CRAY_PM_ENERGY)" OFF)
+  CP2K_USE_CRAY_PM_ACCEL_ENERGY
+  "Enable CRAY power management framework with gpu support" ON
+  "CP2K_USE_ACCEL MATCHES \"OPENCL|HIP|CUDA\" AND CP2K_USE_CRAY_PM_ENERGY" OFF)
 
 cmake_dependent_option(
   CP2K_USE_LIBGINT "Enable LibGint support" ${CP2K_USE_EVERYTHING}
