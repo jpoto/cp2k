@@ -31,6 +31,7 @@ MODULE kpoint_restart_transfer
    USE cp_fm_struct,                    ONLY: cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_get_info,&
+                                              cp_fm_get_submatrix,&
                                               cp_fm_release,&
                                               cp_fm_set_submatrix,&
                                               cp_fm_to_fm,&
@@ -76,6 +77,19 @@ MODULE kpoint_restart_transfer
    REAL(KIND=dp), PARAMETER             :: electron_renormalization_tol = 1.0e-6_dp
    REAL(KIND=dp), PARAMETER             :: payload_zero_tol = 1.0e-14_dp
    REAL(KIND=dp), PARAMETER             :: alias_consistency_tol = 1.0e-10_dp
+   REAL(KIND=dp), PARAMETER             :: overlap_condition_tol = 1.0e-10_dp
+   REAL(KIND=dp), PARAMETER             :: occupation_bound_tol = 1.0e-10_dp
+
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_success = 0
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_density_nonfinite = 1
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_density_nonhermitian = 2
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_overlap_nonfinite = 3
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_overlap_nonhermitian = 4
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_overlap_eigensolver = 5
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_overlap_ill_conditioned = 6
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_density_eigensolver = 7
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_occupation_bounds = 8
+   INTEGER, PARAMETER, PUBLIC :: metric_projection_electron_count = 9
 
    TYPE phase_snapshot_type
       INTEGER, ALLOCATABLE, DIMENSION(:) :: mode, gauge
@@ -84,6 +98,9 @@ MODULE kpoint_restart_transfer
    PUBLIC :: read_kpoint_restart_v2, &
              write_kpoint_restart_v2
    PUBLIC :: canonical_bvk_cell
+   PUBLIC :: analyze_metric_density_dense, &
+             project_metric_density_dense, &
+             project_restart_occupations
 
 CONTAINS
 
@@ -122,6 +139,364 @@ CONTAINS
          phase = phase*twist**quotient
       END DO
    END SUBROUTINE canonical_bvk_cell
+
+! **************************************************************************************************
+!> \brief Diagonalize a replicated Hermitian matrix without aborting on LAPACK failure.
+!> \param matrix ...
+!> \param eigenvalues ...
+!> \param eigenvectors ...
+!> \param success ...
+! **************************************************************************************************
+   SUBROUTINE hermitian_eigh_safe(matrix, eigenvalues, eigenvectors, success)
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(IN)      :: matrix
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: eigenvalues
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(OUT)     :: eigenvectors
+      LOGICAL, INTENT(OUT)                               :: success
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: work
+      INTEGER                                            :: info, liwork, lrwork, lwork, n
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: iwork
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: rwork
+
+      success = .FALSE.
+      eigenvalues = 0.0_dp
+      eigenvectors = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      n = SIZE(matrix, 1)
+      IF (n < 1 .OR. SIZE(matrix, 2) /= n .OR. SIZE(eigenvalues) /= n .OR. &
+          SIZE(eigenvectors, 1) /= n .OR. SIZE(eigenvectors, 2) /= n) RETURN
+      IF (.NOT. ALL(ieee_is_finite(REAL(matrix, dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(matrix)))) RETURN
+
+      ALLOCATE (work(1), rwork(1), iwork(1))
+      eigenvectors = matrix
+      lwork = -1
+      lrwork = -1
+      liwork = -1
+      CALL zheevd('V', 'U', n, eigenvectors, n, eigenvalues, work, lwork, rwork, lrwork, &
+                  iwork, liwork, info)
+      IF (info /= 0 .OR. .NOT. ieee_is_finite(REAL(work(1), dp)) .OR. &
+          .NOT. ieee_is_finite(rwork(1)) .OR. iwork(1) < 1) THEN
+         DEALLOCATE (work, rwork, iwork)
+         RETURN
+      END IF
+      lwork = CEILING(REAL(work(1), dp))
+      lrwork = CEILING(rwork(1))
+      liwork = iwork(1)
+      DEALLOCATE (work, rwork, iwork)
+      IF (lwork < 1 .OR. lrwork < 1 .OR. liwork < 1) RETURN
+
+      ALLOCATE (work(lwork), rwork(lrwork), iwork(liwork))
+      eigenvectors = matrix
+      CALL zheevd('V', 'U', n, eigenvectors, n, eigenvalues, work, lwork, rwork, lrwork, &
+                  iwork, liwork, info)
+      DEALLOCATE (work, rwork, iwork)
+      success = info == 0 .AND. ALL(ieee_is_finite(eigenvalues)) .AND. &
+                ALL(ieee_is_finite(REAL(eigenvectors, dp))) .AND. &
+                ALL(ieee_is_finite(AIMAG(eigenvectors)))
+   END SUBROUTINE hermitian_eigh_safe
+
+! **************************************************************************************************
+!> \brief Build the overlap-metric eigensystem of a replicated density matrix.
+!> \param density ...
+!> \param overlap ...
+!> \param s_half ...
+!> \param s_inv_half ...
+!> \param occupation_vectors ...
+!> \param occupations ...
+!> \param accepted ...
+!> \param failure_code ...
+! **************************************************************************************************
+   SUBROUTINE metric_density_eigensystem(density, overlap, s_half, s_inv_half, &
+                                         occupation_vectors, occupations, accepted, failure_code)
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(IN)      :: density, overlap
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(OUT)     :: s_half, s_inv_half, occupation_vectors
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: occupations
+      LOGICAL, INTENT(OUT)                               :: accepted
+      INTEGER, INTENT(OUT)                               :: failure_code
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: density_h, metric_density, overlap_h, &
+                                                            overlap_vectors, work
+      INTEGER                                            :: i, n
+      LOGICAL                                            :: success
+      REAL(KIND=dp)                                      :: matrix_norm, overlap_max, overlap_min, &
+                                                            residual
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: overlap_eigenvalues
+
+      accepted = .FALSE.
+      failure_code = metric_projection_success
+      s_half = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      s_inv_half = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      occupation_vectors = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      occupations = 0.0_dp
+      n = SIZE(density, 1)
+      IF (n < 1 .OR. SIZE(density, 2) /= n .OR. SIZE(overlap, 1) /= n .OR. &
+          SIZE(overlap, 2) /= n .OR. SIZE(s_half, 1) /= n .OR. SIZE(s_half, 2) /= n .OR. &
+          SIZE(s_inv_half, 1) /= n .OR. SIZE(s_inv_half, 2) /= n .OR. &
+          SIZE(occupation_vectors, 1) /= n .OR. SIZE(occupation_vectors, 2) /= n .OR. &
+          SIZE(occupations) /= n) THEN
+         failure_code = metric_projection_density_nonfinite
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(REAL(density, dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(density)))) THEN
+         failure_code = metric_projection_density_nonfinite
+         RETURN
+      END IF
+      IF (.NOT. ALL(ieee_is_finite(REAL(overlap, dp))) .OR. &
+          .NOT. ALL(ieee_is_finite(AIMAG(overlap)))) THEN
+         failure_code = metric_projection_overlap_nonfinite
+         RETURN
+      END IF
+
+      ALLOCATE (density_h(n, n), metric_density(n, n), overlap_h(n, n), &
+                overlap_vectors(n, n), work(n, n), overlap_eigenvalues(n))
+      matrix_norm = MAX(1.0_dp, MAXVAL(ABS(density)))
+      residual = MAXVAL(ABS(density - CONJG(TRANSPOSE(density))))/matrix_norm
+      IF (.NOT. ieee_is_finite(residual) .OR. residual > hermiticity_tol) THEN
+         failure_code = metric_projection_density_nonhermitian
+         RETURN
+      END IF
+      matrix_norm = MAX(1.0_dp, MAXVAL(ABS(overlap)))
+      residual = MAXVAL(ABS(overlap - CONJG(TRANSPOSE(overlap))))/matrix_norm
+      IF (.NOT. ieee_is_finite(residual) .OR. residual > hermiticity_tol) THEN
+         failure_code = metric_projection_overlap_nonhermitian
+         RETURN
+      END IF
+      density_h(:, :) = 0.5_dp*(density + CONJG(TRANSPOSE(density)))
+      overlap_h(:, :) = 0.5_dp*(overlap + CONJG(TRANSPOSE(overlap)))
+
+      CALL hermitian_eigh_safe(overlap_h, overlap_eigenvalues, overlap_vectors, success)
+      IF (.NOT. success) THEN
+         failure_code = metric_projection_overlap_eigensolver
+         RETURN
+      END IF
+      overlap_min = MINVAL(overlap_eigenvalues)
+      overlap_max = MAXVAL(overlap_eigenvalues)
+      IF (.NOT. ieee_is_finite(overlap_min) .OR. .NOT. ieee_is_finite(overlap_max) .OR. &
+          overlap_max <= 0.0_dp .OR. &
+          overlap_min <= overlap_condition_tol*MAX(1.0_dp, overlap_max)) THEN
+         failure_code = metric_projection_overlap_ill_conditioned
+         RETURN
+      END IF
+
+      DO i = 1, n
+         work(:, i) = overlap_vectors(:, i)*SQRT(overlap_eigenvalues(i))
+      END DO
+      s_half = MATMUL(work, CONJG(TRANSPOSE(overlap_vectors)))
+      DO i = 1, n
+         work(:, i) = overlap_vectors(:, i)/SQRT(overlap_eigenvalues(i))
+      END DO
+      s_inv_half = MATMUL(work, CONJG(TRANSPOSE(overlap_vectors)))
+      metric_density(:, :) = MATMUL(s_half, MATMUL(density_h, s_half))
+      metric_density(:, :) = 0.5_dp*(metric_density + CONJG(TRANSPOSE(metric_density)))
+      CALL hermitian_eigh_safe(metric_density, occupations, occupation_vectors, success)
+      IF (.NOT. success) THEN
+         failure_code = metric_projection_density_eigensolver
+         RETURN
+      END IF
+      accepted = .TRUE.
+   END SUBROUTINE metric_density_eigensystem
+
+! **************************************************************************************************
+!> \brief Return the natural occupations of P in the overlap metric.
+!> \param density ...
+!> \param overlap ...
+!> \param occupations ...
+!> \param accepted ...
+!> \param failure_code ...
+! **************************************************************************************************
+   SUBROUTINE analyze_metric_density_dense(density, overlap, occupations, accepted, failure_code)
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(IN)      :: density, overlap
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: occupations
+      LOGICAL, INTENT(OUT)                               :: accepted
+      INTEGER, INTENT(OUT)                               :: failure_code
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: occupation_vectors, s_half, s_inv_half
+      INTEGER                                            :: n
+
+      n = SIZE(density, 1)
+      ALLOCATE (occupation_vectors(n, n), s_half(n, n), s_inv_half(n, n))
+      CALL metric_density_eigensystem(density, overlap, s_half, s_inv_half, &
+                                      occupation_vectors, occupations, accepted, failure_code)
+   END SUBROUTINE analyze_metric_density_dense
+
+! **************************************************************************************************
+!> \brief Project weighted natural occupations onto a box while conserving electrons exactly.
+!> \param raw_occupations ...
+!> \param weights ...
+!> \param target_electrons ...
+!> \param max_occupation ...
+!> \param projected ...
+!> \param accepted ...
+!> \param residual_out ...
+! **************************************************************************************************
+   SUBROUTINE project_restart_occupations(raw_occupations, weights, target_electrons, &
+                                          max_occupation, projected, accepted, residual_out)
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: raw_occupations
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: weights
+      REAL(KIND=dp), INTENT(IN)                          :: target_electrons, max_occupation
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT)        :: projected
+      LOGICAL, INTENT(OUT)                               :: accepted
+      REAL(KIND=dp), INTENT(OUT)                         :: residual_out
+
+      INTEGER                                            :: i, ik, iteration
+      REAL(KIND=dp)                                      :: capacity, correction, current_electrons, &
+                                                            feasibility_tol, lower_shift, &
+                                                            midpoint, residual, upper_shift
+
+      projected = 0.0_dp
+      accepted = .FALSE.
+      residual_out = HUGE(1.0_dp)
+      IF (SIZE(projected, 1) /= SIZE(raw_occupations, 1) .OR. &
+          SIZE(projected, 2) /= SIZE(raw_occupations, 2) .OR. &
+          SIZE(weights) /= SIZE(raw_occupations, 2) .OR. &
+          SIZE(raw_occupations, 1) < 1 .OR. SIZE(raw_occupations, 2) < 1) RETURN
+      IF (.NOT. ALL(ieee_is_finite(raw_occupations)) .OR. &
+          .NOT. ALL(ieee_is_finite(weights)) .OR. ANY(weights <= 0.0_dp) .OR. &
+          .NOT. ieee_is_finite(target_electrons) .OR. &
+          .NOT. ieee_is_finite(max_occupation) .OR. max_occupation <= 0.0_dp) RETURN
+
+      capacity = max_occupation*REAL(SIZE(raw_occupations, 1), dp)*SUM(weights)
+      feasibility_tol = 128.0_dp*EPSILON(1.0_dp)*MAX(1.0_dp, ABS(target_electrons), capacity)
+      IF (target_electrons < -feasibility_tol .OR. target_electrons > capacity + feasibility_tol) RETURN
+      IF (target_electrons <= feasibility_tol) THEN
+         residual_out = target_electrons
+         accepted = ABS(residual_out) <= electron_tol
+         RETURN
+      END IF
+      IF (capacity - target_electrons <= feasibility_tol) THEN
+         projected = max_occupation
+         residual_out = target_electrons - capacity
+         accepted = ABS(residual_out) <= electron_tol
+         RETURN
+      END IF
+
+      lower_shift = -MAXVAL(raw_occupations) - max_occupation
+      upper_shift = max_occupation - MINVAL(raw_occupations) + max_occupation
+      IF (.NOT. ieee_is_finite(lower_shift) .OR. .NOT. ieee_is_finite(upper_shift)) RETURN
+      DO iteration = 1, 256
+         midpoint = 0.5_dp*lower_shift + 0.5_dp*upper_shift
+         current_electrons = 0.0_dp
+         DO ik = 1, SIZE(raw_occupations, 2)
+            DO i = 1, SIZE(raw_occupations, 1)
+               current_electrons = current_electrons + weights(ik)* &
+                                   MAX(0.0_dp, MIN(max_occupation, raw_occupations(i, ik) + midpoint))
+            END DO
+         END DO
+         IF (current_electrons < target_electrons) THEN
+            lower_shift = midpoint
+         ELSE
+            upper_shift = midpoint
+         END IF
+      END DO
+      midpoint = 0.5_dp*lower_shift + 0.5_dp*upper_shift
+      projected = MAX(0.0_dp, MIN(max_occupation, raw_occupations + midpoint))
+      current_electrons = 0.0_dp
+      DO ik = 1, SIZE(projected, 2)
+         current_electrons = current_electrons + weights(ik)*SUM(projected(:, ik))
+      END DO
+      residual = target_electrons - current_electrons
+
+      ! Remove the final floating-point residual deterministically without changing the active-set
+      ! solution beyond roundoff.  The k-point-major, orbital-minor order is part of the format.
+      DO ik = 1, SIZE(projected, 2)
+         DO i = 1, SIZE(projected, 1)
+            IF (ABS(residual) <= feasibility_tol) EXIT
+            IF (residual > 0.0_dp .AND. projected(i, ik) < max_occupation) THEN
+               correction = MIN(max_occupation - projected(i, ik), residual/weights(ik))
+            ELSEIF (residual < 0.0_dp .AND. projected(i, ik) > 0.0_dp) THEN
+               correction = MAX(-projected(i, ik), residual/weights(ik))
+            ELSE
+               CYCLE
+            END IF
+            projected(i, ik) = projected(i, ik) + correction
+            residual = residual - weights(ik)*correction
+         END DO
+         IF (ABS(residual) <= feasibility_tol) EXIT
+      END DO
+      current_electrons = 0.0_dp
+      DO ik = 1, SIZE(projected, 2)
+         current_electrons = current_electrons + weights(ik)*SUM(projected(:, ik))
+      END DO
+      residual_out = target_electrons - current_electrons
+      accepted = ALL(ieee_is_finite(projected)) .AND. &
+                 MINVAL(projected) >= -occupation_bound_tol .AND. &
+                 MAXVAL(projected) <= max_occupation + occupation_bound_tol .AND. &
+                 ABS(residual_out) <= electron_tol
+   END SUBROUTINE project_restart_occupations
+
+! **************************************************************************************************
+!> \brief Reconstruct P from prescribed metric occupations and validate the result.
+!> \param density ...
+!> \param overlap ...
+!> \param target_occupations ...
+!> \param max_occupation ...
+!> \param projected ...
+!> \param metric_occupations ...
+!> \param accepted ...
+!> \param failure_code ...
+! **************************************************************************************************
+   SUBROUTINE project_metric_density_dense(density, overlap, target_occupations, max_occupation, &
+                                           projected, metric_occupations, accepted, failure_code)
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(IN)      :: density, overlap
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: target_occupations
+      REAL(KIND=dp), INTENT(IN)                          :: max_occupation
+      COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(OUT)     :: projected
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: metric_occupations
+      LOGICAL, INTENT(OUT)                               :: accepted
+      INTEGER, INTENT(OUT)                               :: failure_code
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: check_vectors, metric_projected, &
+                                                            occupation_vectors, s_half, &
+                                                            s_inv_half, work
+      INTEGER                                            :: i, n
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: raw_occupations
+
+      accepted = .FALSE.
+      failure_code = metric_projection_success
+      projected = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+      metric_occupations = 0.0_dp
+      n = SIZE(density, 1)
+      IF (SIZE(density, 2) /= n .OR. SIZE(overlap, 1) /= n .OR. SIZE(overlap, 2) /= n .OR. &
+          SIZE(target_occupations) /= n .OR. SIZE(projected, 1) /= n .OR. &
+          SIZE(projected, 2) /= n .OR. SIZE(metric_occupations) /= n .OR. &
+          .NOT. ieee_is_finite(max_occupation) .OR. max_occupation <= 0.0_dp .OR. &
+          .NOT. ALL(ieee_is_finite(target_occupations)) .OR. &
+          MINVAL(target_occupations) < -occupation_bound_tol .OR. &
+          MAXVAL(target_occupations) > max_occupation + occupation_bound_tol) THEN
+         failure_code = metric_projection_occupation_bounds
+         RETURN
+      END IF
+
+      ALLOCATE (check_vectors(n, n), metric_projected(n, n), occupation_vectors(n, n), &
+                s_half(n, n), s_inv_half(n, n), work(n, n), raw_occupations(n))
+      CALL metric_density_eigensystem(density, overlap, s_half, s_inv_half, &
+                                      occupation_vectors, raw_occupations, accepted, failure_code)
+      IF (.NOT. accepted) RETURN
+      DO i = 1, n
+         work(:, i) = occupation_vectors(:, i)*target_occupations(i)
+      END DO
+      metric_projected(:, :) = MATMUL(work, CONJG(TRANSPOSE(occupation_vectors)))
+      projected = MATMUL(s_inv_half, MATMUL(metric_projected, s_inv_half))
+      projected = 0.5_dp*(projected + CONJG(TRANSPOSE(projected)))
+      CALL metric_density_eigensystem(projected, overlap, s_half, s_inv_half, &
+                                      check_vectors, metric_occupations, accepted, failure_code)
+      IF (.NOT. accepted) RETURN
+      IF (MINVAL(metric_occupations) < -occupation_bound_tol .OR. &
+          MAXVAL(metric_occupations) > max_occupation + occupation_bound_tol) THEN
+         accepted = .FALSE.
+         failure_code = metric_projection_occupation_bounds
+         RETURN
+      END IF
+      IF (ABS(SUM(metric_occupations) - SUM(target_occupations)) > electron_tol .OR. &
+          MAXVAL(ABS(metric_occupations - target_occupations)) > occupation_bound_tol) THEN
+         accepted = .FALSE.
+         failure_code = metric_projection_electron_count
+         RETURN
+      END IF
+      accepted = .TRUE.
+      failure_code = metric_projection_success
+   END SUBROUTINE project_metric_density_dense
 
 ! **************************************************************************************************
 !> \brief Write a version-2 canonical BvK density restart to an already opened unit.
@@ -1600,6 +1975,226 @@ CONTAINS
    END FUNCTION compatible_smearing
 
 ! **************************************************************************************************
+!> \brief Convert a metric-projection failure code into one deterministic fallback diagnostic.
+!> \param failure_code ...
+!> \param reason ...
+! **************************************************************************************************
+   SUBROUTINE metric_projection_reason(failure_code, reason)
+      INTEGER, INTENT(IN)                                :: failure_code
+      CHARACTER(LEN=*), INTENT(OUT)                      :: reason
+
+      SELECT CASE (failure_code)
+      CASE (metric_projection_density_nonfinite)
+         reason = "transferred density is non-finite"
+      CASE (metric_projection_density_nonhermitian)
+         reason = "transferred density is not Hermitian"
+      CASE (metric_projection_overlap_nonfinite)
+         reason = "target overlap is non-finite"
+      CASE (metric_projection_overlap_nonhermitian)
+         reason = "target overlap is not Hermitian"
+      CASE (metric_projection_overlap_eigensolver)
+         reason = "target-overlap diagonalization failed"
+      CASE (metric_projection_overlap_ill_conditioned)
+         reason = "target overlap is singular or ill-conditioned"
+      CASE (metric_projection_density_eigensolver)
+         reason = "metric-density diagonalization failed"
+      CASE (metric_projection_occupation_bounds)
+         reason = "projected natural occupations violate their admissible interval"
+      CASE (metric_projection_electron_count)
+         reason = "metric spectral projection does not conserve electrons"
+      CASE DEFAULT
+         reason = "unknown metric spectral-projection failure"
+      END SELECT
+   END SUBROUTINE metric_projection_reason
+
+! **************************************************************************************************
+!> \brief Project a cross-mesh P(k) transaction onto an N-representable overlap-metric density.
+!> \param pmat_tmp ...
+!> \param kpoints ...
+!> \param para_env ...
+!> \param overlap_rs ...
+!> \param nelectron_spin ...
+!> \param accepted ...
+!> \param reason ...
+! **************************************************************************************************
+   SUBROUTINE project_crossmesh_pmat(pmat_tmp, kpoints, para_env, overlap_rs, nelectron_spin, &
+                                     accepted, reason)
+      TYPE(cp_fm_type), DIMENSION(:, :, :), &
+         INTENT(INOUT)                                   :: pmat_tmp
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: overlap_rs
+      INTEGER, DIMENSION(2), INTENT(IN)                  :: nelectron_spin
+      LOGICAL, INTENT(OUT)                               :: accepted
+      CHARACTER(LEN=*), INTENT(OUT)                      :: reason
+
+      COMPLEX(KIND=dp)                                   :: phase
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: density, overlap, projected
+      INTEGER                                            :: failure_code, ic, ikp, ispin, kplocal, &
+                                                            nao, nc, nimages, nkp, nspin, &
+                                                            projection_code
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: present
+      INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      LOGICAL                                            :: local_accepted, waterfill_accepted
+      REAL(KIND=dp)                                      :: electron_error, max_occupation, &
+                                                            residual, target_electrons
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: electron_counts, metric_occupations, &
+                                                            natural_occupations
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_i, dense_r
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: projected_occupations, raw_occupations
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :)  :: overlap_raw
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: wkp
+      TYPE(kpoint_env_type), POINTER                     :: kp
+
+      accepted = .FALSE.
+      reason = ""
+      NULLIFY (cell_to_index, index_to_cell, kp, wkp)
+      nspin = SIZE(pmat_tmp, 3)
+      kplocal = SIZE(pmat_tmp, 1)
+      nc = SIZE(pmat_tmp, 2)
+      CALL cp_fm_get_info(pmat_tmp(1, 1, 1), nrow_global=nao)
+      CALL get_kpoint_info(kpoints, nkp=nkp, wkp=wkp, index_to_cell=index_to_cell, &
+                           cell_to_index=cell_to_index)
+      nimages = SIZE(overlap_rs, 2)
+      IF (nspin < 1 .OR. nspin > 2 .OR. nc < 1 .OR. nc > 2 .OR. nao < 1 .OR. &
+          .NOT. ASSOCIATED(wkp) .OR. .NOT. ASSOCIATED(index_to_cell) .OR. &
+          .NOT. ASSOCIATED(cell_to_index) .OR. SIZE(index_to_cell, 2) /= nimages .OR. &
+          .NOT. ASSOCIATED(kpoints%para_env_kp)) THEN
+         reason = "target k-point storage is incomplete for metric spectral projection"
+         RETURN
+      END IF
+
+      ALLOCATE (density(nao, nao), overlap(nao, nao), projected(nao, nao), &
+                dense_r(nao, nao), dense_i(nao, nao), natural_occupations(nao), &
+                metric_occupations(nao), raw_occupations(nao, nkp, nspin), &
+                projected_occupations(nao, nkp, nspin), electron_counts(nspin), &
+                PRESENT(nkp), overlap_raw(1, nao, nao, nimages))
+      raw_occupations = 0.0_dp
+      projected_occupations = 0.0_dp
+      electron_counts = 0.0_dp
+      present = 0
+      overlap_raw = 0.0_dp
+      CALL replicate_rs_matrices(overlap_rs, kpoints, overlap_raw, cell_to_index)
+      failure_code = metric_projection_success
+      IF (.NOT. ALL(ieee_is_finite(overlap_raw))) &
+         failure_code = metric_projection_overlap_nonfinite
+
+      ! First pass: diagonalize S^(1/2) P S^(1/2) and collect each irreducible k point once.
+      DO ikp = 1, kplocal
+         kp => kpoints%kp_env(ikp)%kpoint_env
+         overlap = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+         DO ic = 1, nimages
+            phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), &
+                          SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), KIND=dp)
+            overlap(:, :) = overlap + phase*CMPLX(overlap_raw(1, :, :, ic), 0.0_dp, KIND=dp)
+         END DO
+         DO ispin = 1, nspin
+            CALL cp_fm_get_submatrix(pmat_tmp(ikp, 1, ispin), dense_r)
+            dense_i = 0.0_dp
+            IF (nc == 2) CALL cp_fm_get_submatrix(pmat_tmp(ikp, 2, ispin), dense_i)
+            density(:, :) = CMPLX(dense_r, dense_i, KIND=dp)
+            CALL analyze_metric_density_dense(density, overlap, natural_occupations, &
+                                              local_accepted, projection_code)
+            IF (.NOT. local_accepted) failure_code = MAX(failure_code, projection_code)
+            IF (local_accepted .AND. kpoints%para_env_kp%is_source()) &
+               raw_occupations(:, kp%nkpoint, ispin) = natural_occupations
+         END DO
+         IF (kpoints%para_env_kp%is_source()) PRESENT(kp%nkpoint) = 1
+      END DO
+      CALL para_env%max(failure_code)
+      IF (failure_code /= metric_projection_success) THEN
+         CALL metric_projection_reason(failure_code, reason)
+         RETURN
+      END IF
+      CALL para_env%sum(present)
+      IF (ANY(present /= 1)) THEN
+         reason = "metric spectral projection did not collect every k point exactly once"
+         RETURN
+      END IF
+      CALL para_env%sum(raw_occupations)
+
+      IF (nspin == 1) THEN
+         max_occupation = 2.0_dp
+      ELSE
+         max_occupation = 1.0_dp
+      END IF
+      DO ispin = 1, nspin
+         IF (nspin == 1) THEN
+            target_electrons = REAL(SUM(nelectron_spin), dp)
+         ELSE
+            target_electrons = REAL(nelectron_spin(ispin), dp)
+         END IF
+         CALL project_restart_occupations(raw_occupations(:, :, ispin), wkp, target_electrons, &
+                                          max_occupation, projected_occupations(:, :, ispin), &
+                                          waterfill_accepted, residual)
+         IF (.NOT. waterfill_accepted) THEN
+            WRITE (reason, '(A,I0,A,ES12.4)') &
+               "occupation water-filling failed for spin ", ispin, "; residual=", residual
+            RETURN
+         END IF
+      END DO
+
+      ! Second pass: reconstruct P=S^(-1/2) U n U^H S^(-1/2), validate it, and update only the
+      ! already-temporary P(k) transaction.
+      failure_code = metric_projection_success
+      DO ikp = 1, kplocal
+         kp => kpoints%kp_env(ikp)%kpoint_env
+         overlap = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
+         DO ic = 1, nimages
+            phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), &
+                          SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), KIND=dp)
+            overlap(:, :) = overlap + phase*CMPLX(overlap_raw(1, :, :, ic), 0.0_dp, KIND=dp)
+         END DO
+         DO ispin = 1, nspin
+            CALL cp_fm_get_submatrix(pmat_tmp(ikp, 1, ispin), dense_r)
+            dense_i = 0.0_dp
+            IF (nc == 2) CALL cp_fm_get_submatrix(pmat_tmp(ikp, 2, ispin), dense_i)
+            density(:, :) = CMPLX(dense_r, dense_i, KIND=dp)
+            CALL project_metric_density_dense(density, overlap, &
+                                              projected_occupations(:, kp%nkpoint, ispin), &
+                                              max_occupation, projected, metric_occupations, &
+                                              local_accepted, projection_code)
+            IF (.NOT. local_accepted) failure_code = MAX(failure_code, projection_code)
+            IF (local_accepted .AND. nc == 1 .AND. &
+                MAXVAL(ABS(AIMAG(projected))) > hermiticity_tol*MAX(1.0_dp, MAXVAL(ABS(projected)))) &
+               failure_code = MAX(failure_code, metric_projection_density_nonhermitian)
+            IF (local_accepted) THEN
+               dense_r(:, :) = REAL(projected, dp)
+               CALL cp_fm_set_submatrix(pmat_tmp(ikp, 1, ispin), dense_r)
+               IF (nc == 2) THEN
+                  dense_i(:, :) = AIMAG(projected)
+                  CALL cp_fm_set_submatrix(pmat_tmp(ikp, 2, ispin), dense_i)
+               END IF
+               IF (kpoints%para_env_kp%is_source()) &
+                  electron_counts(ispin) = electron_counts(ispin) + kp%wkp*SUM(metric_occupations)
+            END IF
+         END DO
+      END DO
+      CALL para_env%max(failure_code)
+      IF (failure_code /= metric_projection_success) THEN
+         CALL metric_projection_reason(failure_code, reason)
+         RETURN
+      END IF
+      CALL para_env%sum(electron_counts)
+      DO ispin = 1, nspin
+         IF (nspin == 1) THEN
+            target_electrons = REAL(SUM(nelectron_spin), dp)
+         ELSE
+            target_electrons = REAL(nelectron_spin(ispin), dp)
+         END IF
+         electron_error = ABS(electron_counts(ispin) - target_electrons)
+         IF (.NOT. ieee_is_finite(electron_counts(ispin)) .OR. electron_error > electron_tol) THEN
+            WRITE (reason, '(A,I0,A,ES12.4,A,ES12.4)') &
+               "projected metric electron-count gate failed for spin ", ispin, ": count=", &
+               electron_counts(ispin), ", error=", electron_error
+            RETURN
+         END IF
+      END DO
+      accepted = .TRUE.
+   END SUBROUTINE project_crossmesh_pmat
+
+! **************************************************************************************************
 !> \brief Construct temporary target P(k), rebuild P(R), validate, and commit atomically.
 !> \param denmat ...
 !> \param kpoints ...
@@ -1640,8 +2235,10 @@ CONTAINS
                                                             nimages, nrecords, nspin
       INTEGER, DIMENSION(3)                              :: nkp_grid_target
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: need_renormalization, nyquist_present, &
-                                                            phase_ok, phase_snapshot_taken
+      LOGICAL                                            :: cross_mesh, need_renormalization, &
+                                                            nyquist_present, phase_ok, &
+                                                            phase_snapshot_taken, &
+                                                            projection_accepted
       REAL(KIND=dp) :: electron_error, expected_electrons, herm_error, herm_error_global, &
          imag_error, imag_error_global, matrix_norm, normalization_factor, nyquist_norm, &
          spin_trace, trace_term
@@ -1668,6 +2265,10 @@ CONTAINS
       nrecords = SIZE(cells, 2)
       CALL get_kpoint_info(kpoints, nkp_grid=nkp_grid_target, sab_nl=sab_nl, &
                            cell_to_index=cell_to_index)
+      ! A shift change is rejected by the metadata gate before this routine.  Therefore equal grid
+      ! dimensions (including an identically shifted MacDonald mesh) are the historical strict
+      ! same-mesh case; only differing grid dimensions opt into spectral projection.
+      cross_mesh = ANY(nkp_grid_source /= nkp_grid_target)
 
       ! Snapshot all mutable phase selectors, calibrate through the recoverable API, and retain
       ! the result only if the complete density transaction commits.  Thus a failed calibration
@@ -1791,6 +2392,14 @@ CONTAINS
          GOTO 800
       END IF
 
+      ! Preserve the strict same-mesh transaction exactly.  Only a genuine opt-in cross-mesh
+      ! transfer is projected onto the overlap-metric N-representable set.
+      IF (cross_mesh) THEN
+         CALL project_crossmesh_pmat(pmat_tmp, kpoints, para_env, overlap_rs, nelectron_spin, &
+                                     projection_accepted, reason)
+         IF (.NOT. projection_accepted) GOTO 800
+      END IF
+
       ALLOCATE (denmat_tmp(nspin, nimages))
       DO ispin = 1, nspin
          DO ic = 1, nimages
@@ -1818,28 +2427,37 @@ CONTAINS
             expected_electrons = REAL(nelectron_spin(ispin), dp)
          END IF
          electron_error = ABS(spin_trace - expected_electrons)
-         IF (.NOT. ieee_is_finite(spin_trace) .OR. electron_error > electron_renormalization_tol) THEN
-            WRITE (reason, '(A,I0,A,ES12.4,A,ES12.4)') &
-               "spin-resolved electron-count gate failed for spin ", ispin, ": Tr[PS]=", &
-               spin_trace, ", error=", electron_error
-            GOTO 800
-         END IF
-         IF (electron_error > electron_tol) THEN
-            IF (ABS(spin_trace) <= TINY(1.0_dp)) THEN
-               reason = "cannot normalize a zero-trace restart density"
+         IF (cross_mesh) THEN
+            IF (.NOT. ieee_is_finite(spin_trace) .OR. electron_error > electron_tol) THEN
+               WRITE (reason, '(A,I0,A,ES12.4,A,ES12.4)') &
+                  "projected spin electron-count gate failed for spin ", ispin, ": Tr[PS]=", &
+                  spin_trace, ", error=", electron_error
                GOTO 800
             END IF
-            normalization_factor = expected_electrons/spin_trace
-            DO ikp = 1, kplocal
-               DO ic = 1, nc
-                  CALL cp_fm_scale(normalization_factor, pmat_tmp(ikp, ic, ispin))
+         ELSE
+            IF (.NOT. ieee_is_finite(spin_trace) .OR. electron_error > electron_renormalization_tol) THEN
+               WRITE (reason, '(A,I0,A,ES12.4,A,ES12.4)') &
+                  "spin-resolved electron-count gate failed for spin ", ispin, ": Tr[PS]=", &
+                  spin_trace, ", error=", electron_error
+               GOTO 800
+            END IF
+            IF (electron_error > electron_tol) THEN
+               IF (ABS(spin_trace) <= TINY(1.0_dp)) THEN
+                  reason = "cannot normalize a zero-trace restart density"
+                  GOTO 800
+               END IF
+               normalization_factor = expected_electrons/spin_trace
+               DO ikp = 1, kplocal
+                  DO ic = 1, nc
+                     CALL cp_fm_scale(normalization_factor, pmat_tmp(ikp, ic, ispin))
+                  END DO
                END DO
-            END DO
-            need_renormalization = .TRUE.
+               need_renormalization = .TRUE.
+            END IF
          END IF
       END DO
 
-      IF (need_renormalization) THEN
+      IF (.NOT. cross_mesh .AND. need_renormalization) THEN
          CALL kpoint_density_transform(kpoints, denmat_tmp, .FALSE., &
                                        tempmat=overlap_rs(1, 1)%matrix, sab_nl=sab_nl, &
                                        fmwork=fmwork, pmat_ext=pmat_tmp)

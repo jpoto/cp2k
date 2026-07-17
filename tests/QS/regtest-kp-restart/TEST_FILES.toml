@@ -2,3 +2,11 @@
 "he_kpoint_restart_5.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145344085994}]
 "he_kpoint_restart_6.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145344002764},
                              {matcher="KPOINT_RESTART_VALIDATED_TRANSFER"}]
+"he_kpoint_restart_shifted_rks_3.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145343662149}]
+"he_kpoint_restart_shifted_rks_3_same.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145343701546},
+                                              {matcher="KPOINT_RESTART_STRICT_TRANSFER"}]
+"he_kpoint_restart_shifted_rks_5.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145344193688},
+                                         {matcher="KPOINT_RESTART_VALIDATED_TRANSFER"}]
+"he_kpoint_restart_shifted_uks_3.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145343184350}]
+"he_kpoint_restart_shifted_uks_5.inp" = [{matcher="E_total", tol=1e-8, ref=-2.95145344193685},
+                                         {matcher="KPOINT_RESTART_VALIDATED_TRANSFER"}]
