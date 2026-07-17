@@ -78,6 +78,7 @@ MODULE tblite_interface
                                  cp2k_exchange_stream_reverse_push, &
                                  cp2k_exchange_stream_reverse_result, &
                                  cp2k_exchange_transform_dense, &
+                                 cp2k_exchange_transform_mixed_radix_fft, &
                                  cp2k_exchange_transform_separable_dft, &
                                  cp2k_gamma_gradient, cp2k_image_h0_gradient, &
                                  cp2k_get_acp_cutoff, cp2k_get_cgto, cp2k_multipole_cgto, &
@@ -3946,8 +3947,9 @@ CONTAINS
 !> \brief Select the regular-mesh Fourier backend used by complete-mesh g-xTB exchange.
 !>
 !> Dense phase-table multiplication remains the default and permanent numerical oracle.  The
-!> separable backend is a factorized direct DFT, not an FFT: it applies one-dimensional transforms
-!> along each regular mesh direction and therefore scales as Nk*sum(nmesh) character products.
+!> separable backend is a factorized direct DFT: it applies one-dimensional transforms along each
+!> regular mesh direction and scales as Nk*sum(nmesh) character products.  MIXED_RADIX_FFT selects
+!> the provider's recursive Cooley--Tukey transform, with direct DFT leaves only for prime factors.
 !> The provider rejects meshes or weights that are not machine-regular instead of silently falling
 !> back, so qualification runs always exercise the backend that was requested.
 !> \return provider transform-backend identifier
@@ -3968,6 +3970,8 @@ CONTAINS
          transform_backend = cp2k_exchange_transform_dense
       CASE ("SEPARABLE", "separable", "SEPARABLE_DFT", "separable_dft", "2")
          transform_backend = cp2k_exchange_transform_separable_dft
+      CASE ("FFT", "fft", "MIXED_RADIX_FFT", "mixed_radix_fft", "3")
+         transform_backend = cp2k_exchange_transform_mixed_radix_fft
       CASE DEFAULT
          CPABORT("Unknown CP2K_GXTB_EXCHANGE_TRANSFORM_MODE value")
       END SELECT
@@ -6099,8 +6103,9 @@ CONTAINS
           stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_replicated .AND. &
           stream_mode /= tb_gxtb_exchange_stream_kgroup_partial_images .AND. &
           .NOT. (stream_mode == 0 .AND. &
-                 transform_backend == cp2k_exchange_transform_separable_dft)) &
-         CPABORT("QUALIFICATION_ONLY identity oracle requires batched, distributed, or separable mode")
+                 (transform_backend == cp2k_exchange_transform_separable_dft .OR. &
+                  transform_backend == cp2k_exchange_transform_mixed_radix_fft))) &
+         CPABORT("Identity oracle requires batched, distributed, or compact transform")
       tb%exchange_fock_kp_valid = .FALSE.
       tb%mixed_fock_kp_valid = .FALSE.
       IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
