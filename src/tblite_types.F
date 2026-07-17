@@ -63,6 +63,7 @@ MODULE tblite_types
       INTEGER, ALLOCATABLE, DIMENSION(:, :)            :: rotation_slot, symops
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)      :: reduced_xkp, xkp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)         :: reduced_weight, weight, fold_factor
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :) :: atom_phase
    END TYPE tb_gxtb_kmesh_map_type
 #endif
 

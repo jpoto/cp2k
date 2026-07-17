@@ -2295,6 +2295,110 @@ CONTAINS
    END FUNCTION tb_gxtb_kmesh_map_matches
 
 ! **************************************************************************************************
+!> \brief Build one cached atom-phase vector for a CP2K k-point symmetry operation.
+!> \param kpoints ...
+!> \param ikred ...
+!> \param isym ...
+!> \param atom_phase ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_operation_atom_phase(kpoints, ikred, isym, atom_phase)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, INTENT(IN)                                :: ikred, isym
+      COMPLEX(KIND=dp), DIMENSION(:), INTENT(OUT)        :: atom_phase
+
+      INTEGER                                            :: iatom
+      INTEGER, DIMENSION(:, :), POINTER                  :: phase_fcell
+      LOGICAL                                            :: reverse_phase
+      REAL(KIND=dp)                                      :: arg
+      TYPE(kpoint_sym_type), POINTER                     :: kpsym
+
+      atom_phase = CMPLX(1.0_dp, 0.0_dp, KIND=dp)
+      IF (isym <= 0) RETURN
+      CPASSERT(ikred >= 1 .AND. ikred <= kpoints%nkp)
+      CPASSERT(ASSOCIATED(kpoints%kp_sym))
+      kpsym => kpoints%kp_sym(ikred)%kpoint_sym
+      CPASSERT(ASSOCIATED(kpsym))
+      CPASSERT(isym <= kpsym%nwred)
+      CPASSERT(ASSOCIATED(kpsym%phase_mode) .AND. ASSOCIATED(kpsym%phase_gauge))
+      CPASSERT(kpsym%phase_mode(isym) > 0 .AND. kpsym%phase_gauge(isym) > 0)
+      CPASSERT(SIZE(atom_phase) == SIZE(kpoints%atype))
+
+      reverse_phase = kpsym%phase_mode(isym) == 2
+      SELECT CASE (kpsym%phase_gauge(isym))
+      CASE (kpoint_phase_gauge_pbc)
+         phase_fcell => kpsym%fcell_gauge(:, :, isym)
+      CASE (kpoint_phase_gauge_input)
+         phase_fcell => kpsym%fcell(:, :, isym)
+      CASE DEFAULT
+         CPABORT("Unknown calibrated CP2K k-point phase gauge")
+      END SELECT
+      CPASSERT(SIZE(phase_fcell, 1) >= 3 .AND. SIZE(phase_fcell, 2) == SIZE(atom_phase))
+      DO iatom = 1, SIZE(atom_phase)
+         arg = twopi*DOT_PRODUCT(REAL(phase_fcell(1:3, iatom), KIND=dp), &
+                                 kpsym%xkp(1:3, isym))
+         IF (reverse_phase) arg = -arg
+         atom_phase(iatom) = CMPLX(COS(arg), SIN(arg), KIND=dp)
+      END DO
+
+   END SUBROUTINE tb_gxtb_operation_atom_phase
+
+! **************************************************************************************************
+!> \brief Cache atom phases shared by every AO-block transform in a symmetry star.
+!> \param kpoints ...
+!> \param kmap ...
+!>
+!> The direct transformation evaluates one trigonometric phase for every atom pair and every
+!> matrix application.  The pair character factorizes as z_i*conjg(z_j), so this cache reduces
+!> phase construction to one value per atom and operation.  A cheap live-metadata comparison
+!> rebuilds the cache if calibrated phase selectors or fractional cell shifts ever change.
+! **************************************************************************************************
+   SUBROUTINE tb_prepare_gxtb_symmetry_phase_cache(kpoints, kmap)
+
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(tb_gxtb_kmesh_map_type), INTENT(INOUT)        :: kmap
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: expected
+      INTEGER                                            :: ifull, iop, max_ops, nat, source
+      LOGICAL                                            :: rebuild
+
+      CPASSERT(ALLOCATED(kmap%op_count) .AND. ALLOCATED(kmap%symops))
+      nat = SIZE(kpoints%atype)
+      max_ops = SIZE(kmap%symops, 1)
+      rebuild = .NOT. ALLOCATED(kmap%atom_phase)
+      IF (.NOT. rebuild) &
+         rebuild = ANY(SHAPE(kmap%atom_phase) /= [nat, max_ops, kmap%nfull])
+      ALLOCATE (expected(nat))
+      IF (.NOT. rebuild) THEN
+         DO ifull = 1, kmap%nfull
+            source = kmap%source(ifull)
+            DO iop = 1, kmap%op_count(ifull)
+               CALL tb_gxtb_operation_atom_phase(kpoints, source, kmap%symops(iop, ifull), expected)
+               IF (MAXVAL(ABS(expected - kmap%atom_phase(:, iop, ifull))) > &
+                   64.0_dp*EPSILON(1.0_dp)) THEN
+                  rebuild = .TRUE.
+                  EXIT
+               END IF
+            END DO
+            IF (rebuild) EXIT
+         END DO
+      END IF
+      IF (.NOT. rebuild) RETURN
+
+      IF (ALLOCATED(kmap%atom_phase)) DEALLOCATE (kmap%atom_phase)
+      ALLOCATE (kmap%atom_phase(nat, max_ops, kmap%nfull), &
+                source=CMPLX(1.0_dp, 0.0_dp, KIND=dp))
+      DO ifull = 1, kmap%nfull
+         source = kmap%source(ifull)
+         DO iop = 1, kmap%op_count(ifull)
+            CALL tb_gxtb_operation_atom_phase(kpoints, source, kmap%symops(iop, ifull), &
+                                              kmap%atom_phase(:, iop, ifull))
+         END DO
+      END DO
+
+   END SUBROUTINE tb_prepare_gxtb_symmetry_phase_cache
+
+! **************************************************************************************************
 !> \brief Build or return the geometry-static g-xTB complete-mesh descriptor.
 !> \param tb ...
 !> \param kpoints ...
@@ -2327,9 +2431,10 @@ CONTAINS
          tb%gxtb_transform_validated = .FALSE.
       END IF
 
-      IF (ANY(tb%gxtb_kmesh_map%symop > 0)) &
+      IF (ANY(tb%gxtb_kmesh_map%symops > 0)) &
          CALL calibrate_symmetry_phases(kpoints, matrix_s, matrix_s(1, 1)%matrix, &
                                         sab_nl, cell_to_index, include_inactive=.TRUE.)
+      CALL tb_prepare_gxtb_symmetry_phase_cache(kpoints, tb%gxtb_kmesh_map)
 
    END SUBROUTINE tb_prepare_gxtb_kmesh_map
 
@@ -2374,9 +2479,10 @@ CONTAINS
 !> phase_mode and phase_gauge are selected by CP2K's overlap-covariance calibration; no tblite
 !> phase convention is introduced here.  The kgphase used by CP2K's Wannier-MO transform belongs
 !> to a different gauge and is deliberately not part of this AO-matrix transform.
+!> \param atom_phase ...
 ! **************************************************************************************************
    SUBROUTINE tb_transform_gxtb_kpoint_matrix(kpoints, ikred, isym, rotation_slot, ao_first, ao_size, &
-                                              source, TARGET, adjoint)
+                                              source, TARGET, adjoint, atom_phase)
 
       TYPE(kpoint_type), POINTER                         :: kpoints
       INTEGER, INTENT(IN)                                :: ikred, isym, rotation_slot
@@ -2384,6 +2490,8 @@ CONTAINS
       COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(IN)      :: source
       COMPLEX(KIND=dp), DIMENSION(:, :), INTENT(OUT)     :: target
       LOGICAL, INTENT(IN)                                :: adjoint
+      COMPLEX(KIND=dp), DIMENSION(:), INTENT(IN), &
+         OPTIONAL                                        :: atom_phase
 
       COMPLEX(KIND=dp)                                   :: phase
       INTEGER                                            :: i_first, i_last, iatom, ikind, ip, &
@@ -2421,6 +2529,9 @@ CONTAINS
       CPASSERT(ASSOCIATED(kpoints%kind_rotmat))
       CPASSERT(SIZE(ao_first) == SIZE(kpoints%atype))
       CPASSERT(SIZE(ao_size) == SIZE(kpoints%atype))
+      IF (PRESENT(atom_phase)) THEN
+         CPASSERT(SIZE(atom_phase) == SIZE(ao_first))
+      END IF
 
       reverse_phase = kpsym%phase_mode(isym) == 2
       SELECT CASE (kpsym%phase_gauge(isym))
@@ -2461,14 +2572,18 @@ CONTAINS
             jp_last = jp_first + ao_size(jp) - 1
             CPASSERT(SIZE(krotj, 1) == ao_size(jp) .AND. SIZE(krotj, 2) == ao_size(jatom))
 
-            IF (reverse_phase) THEN
-               shift = phase_fcell(1:3, iatom) - phase_fcell(1:3, jatom)
-               arg = DOT_PRODUCT(REAL(shift, KIND=dp), kpsym%xkp(1:3, isym))
+            IF (PRESENT(atom_phase)) THEN
+               phase = atom_phase(iatom)*CONJG(atom_phase(jatom))
             ELSE
-               shift = phase_fcell(1:3, jatom) - phase_fcell(1:3, iatom)
-               arg = DOT_PRODUCT(REAL(shift, KIND=dp), kpsym%xkp(1:3, isym))
+               IF (reverse_phase) THEN
+                  shift = phase_fcell(1:3, iatom) - phase_fcell(1:3, jatom)
+                  arg = DOT_PRODUCT(REAL(shift, KIND=dp), kpsym%xkp(1:3, isym))
+               ELSE
+                  shift = phase_fcell(1:3, jatom) - phase_fcell(1:3, iatom)
+                  arg = DOT_PRODUCT(REAL(shift, KIND=dp), kpsym%xkp(1:3, isym))
+               END IF
+               phase = CMPLX(COS(twopi*arg), -SIN(twopi*arg), KIND=dp)
             END IF
-            phase = CMPLX(COS(twopi*arg), -SIN(twopi*arg), KIND=dp)
 
             IF (.NOT. adjoint) THEN
                IF (time_reversal) THEN
@@ -2551,7 +2666,8 @@ CONTAINS
       DO iop = 1, kmap%op_count(ifull)
          CALL tb_transform_gxtb_kpoint_matrix(kpoints, ikred, kmap%symops(iop, ifull), &
                                               kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                                              representative, work, .FALSE.)
+                                              representative, work, .FALSE., &
+                                              kmap%atom_phase(:, iop, ifull))
          full_block(:, :) = full_block + work/REAL(kmap%op_count(ifull), KIND=dp)
       END DO
       full_block(:, :) = 0.5_dp*(full_block + CONJG(TRANSPOSE(full_block)))
@@ -2599,7 +2715,8 @@ CONTAINS
                                                        kmap%symops(iop, ifull), &
                                                        kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                                                        representative_density(:, :, ispin), &
-                                                       transformed, .FALSE.)
+                                                       transformed, .FALSE., &
+                                                       kmap%atom_phase(:, iop, ifull))
                   density_full(:, :, ispin, ifull) = density_full(:, :, ispin, ifull) + &
                                                      transformed/REAL(kmap%op_count(ifull), KIND=dp)
                END DO
@@ -2623,7 +2740,8 @@ CONTAINS
                                                        kmap%symops(iop, ifull), &
                                                        kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                                                        density_full(:, :, ispin, irepresentative), &
-                                                       transformed, .FALSE.)
+                                                       transformed, .FALSE., &
+                                                       kmap%atom_phase(:, iop, ifull))
                   scale = MAX(1.0_dp, MAXVAL(ABS(density_full(:, :, ispin, ifull))))
                   residual = MAXVAL(ABS(transformed - density_full(:, :, ispin, ifull)))/scale
                   IF (residual > symmetry_tolerance) &
@@ -2695,7 +2813,8 @@ CONTAINS
       DO iop = 1, kmap%op_count(ifull)
          CALL tb_transform_gxtb_kpoint_matrix(kpoints, ikred, kmap%symops(iop, ifull), &
                                               kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                                              full_block, work, .TRUE.)
+                                              full_block, work, .TRUE., &
+                                              kmap%atom_phase(:, iop, ifull))
          reduced_block(:, :) = reduced_block + &
                                kmap%fold_factor(ifull)*work/ &
                                REAL(kmap%op_count(ifull), KIND=dp)
@@ -2732,7 +2851,8 @@ CONTAINS
          DO iop = 1, kmap%op_count(ifull)
             CALL tb_transform_gxtb_kpoint_matrix(kpoints, ikred, kmap%symops(iop, ifull), &
                                                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                                                 full(:, :, ifull), work, .TRUE.)
+                                                 full(:, :, ifull), work, .TRUE., &
+                                                 kmap%atom_phase(:, iop, ifull))
             reduced(:, :, ikred) = reduced(:, :, ikred) + &
                                    kmap%fold_factor(ifull)*work/ &
                                    REAL(kmap%op_count(ifull), KIND=dp)
@@ -2960,13 +3080,13 @@ CONTAINS
 
       CHARACTER(LEN=256)                                 :: error_message
       CHARACTER(LEN=32)                                  :: qualification_value
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: adjoint, transformed
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: adjoint, direct_phase, transformed
       INTEGER                                            :: ifull, iop, irepresentative, &
                                                             qualification_status, source
       LOGICAL                                            :: require_negative_rotp, &
                                                             run_block_qualification
       REAL(KIND=dp)                                      :: adjoint_residual, covariance_residual, &
-                                                            lhs, rhs, scale
+                                                            lhs, phase_cache_residual, rhs, scale
 
       CPASSERT(SIZE(overlap, 3) == kmap%nfull)
       qualification_status = 1
@@ -2989,6 +3109,7 @@ CONTAINS
          END SELECT
       END IF
       ALLOCATE (adjoint(SIZE(overlap, 1), SIZE(overlap, 2)), &
+                direct_phase(SIZE(overlap, 1), SIZE(overlap, 2)), &
                 transformed(SIZE(overlap, 1), SIZE(overlap, 2)))
       DO ifull = 1, kmap%nfull
          source = kmap%source(ifull)
@@ -2999,7 +3120,15 @@ CONTAINS
             CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
                                                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                                                  overlap(:, :, irepresentative), &
-                                                 transformed, .FALSE.)
+                                                 transformed, .FALSE., &
+                                                 kmap%atom_phase(:, iop, ifull))
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
+                                                 kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
+                                                 overlap(:, :, irepresentative), direct_phase, .FALSE.)
+            scale = MAX(1.0_dp, MAXVAL(ABS(transformed)), MAXVAL(ABS(direct_phase)))
+            phase_cache_residual = MAXVAL(ABS(transformed - direct_phase))/scale
+            IF (phase_cache_residual > 1.0E-13_dp) &
+               CPABORT("Cached g-xTB atom phases disagree with direct symmetry characters")
             scale = MAX(1.0_dp, MAXVAL(ABS(overlap(:, :, ifull))))
             covariance_residual = MAXVAL(ABS(transformed - overlap(:, :, ifull)))/scale
             IF (covariance_residual > MAX(1.0E-6_dp, 100.0_dp*kpoints%eps_geo)) THEN
@@ -3013,7 +3142,15 @@ CONTAINS
             CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
                                                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                                                  overlap(:, :, ifull), &
-                                                 adjoint, .TRUE.)
+                                                 adjoint, .TRUE., &
+                                                 kmap%atom_phase(:, iop, ifull))
+            CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
+                                                 kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
+                                                 overlap(:, :, ifull), direct_phase, .TRUE.)
+            scale = MAX(1.0_dp, MAXVAL(ABS(adjoint)), MAXVAL(ABS(direct_phase)))
+            phase_cache_residual = MAXVAL(ABS(adjoint - direct_phase))/scale
+            IF (phase_cache_residual > 1.0E-13_dp) &
+               CPABORT("Cached g-xTB atom phases disagree with their direct real adjoint")
             lhs = REAL(SUM(CONJG(overlap(:, :, ifull))*transformed), KIND=dp)
             rhs = REAL(SUM(CONJG(adjoint)*overlap(:, :, irepresentative)), KIND=dp)
             adjoint_residual = ABS(lhs - rhs)/MAX(1.0_dp, ABS(lhs), ABS(rhs))
@@ -3029,7 +3166,7 @@ CONTAINS
       IF (run_block_qualification) &
          CALL tb_validate_gxtb_kpoint_block_helpers(kpoints, kmap, ao_first, ao_size, overlap, &
                                                     require_negative_rotp)
-      DEALLOCATE (adjoint, transformed)
+      DEALLOCATE (adjoint, direct_phase, transformed)
 
    END SUBROUTINE tb_validate_gxtb_kmesh_transform
 
@@ -3070,7 +3207,8 @@ CONTAINS
             CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
                                                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                                                  full(:, :, irepresentative), &
-                                                 transformed, .FALSE.)
+                                                 transformed, .FALSE., &
+                                                 kmap%atom_phase(:, iop, ifull))
             scale = MAX(1.0_dp, MAXVAL(ABS(full(:, :, ifull))))
             residual = MAXVAL(ABS(transformed - full(:, :, ifull)))/scale
             IF (PRESENT(max_residual)) max_residual = MAX(max_residual, residual)
@@ -3124,7 +3262,8 @@ CONTAINS
             CALL tb_transform_gxtb_kpoint_matrix(kpoints, source, kmap%symops(iop, ifull), &
                                                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                                                  reduced(:, :, source), &
-                                                 transformed, .FALSE.)
+                                                 transformed, .FALSE., &
+                                                 kmap%atom_phase(:, iop, ifull))
             scale = MAX(1.0_dp, MAXVAL(ABS(full(:, :, ifull))))
             residual = MAXVAL(ABS(transformed - full(:, :, ifull)))/scale
             IF (PRESENT(max_residual)) max_residual = MAX(max_residual, residual)
@@ -3179,7 +3318,8 @@ CONTAINS
             CALL tb_transform_gxtb_kpoint_matrix(kpoints, ikred, &
                                                  kmap%symops(iop, ifull), &
                                                  kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                                                 source, transformed, .FALSE.)
+                                                 source, transformed, .FALSE., &
+                                                 kmap%atom_phase(:, iop, ifull))
             projected(:, :) = projected + transformed/REAL(kmap%op_count(ifull), KIND=dp)
          END DO
          reduced(:, :, ikred) = 0.5_dp*(projected + CONJG(TRANSPOSE(projected)))
@@ -3277,7 +3417,8 @@ CONTAINS
                CALL tb_transform_gxtb_kpoint_matrix( &
                   kpoints, source, kmap%symops(iop, ifull), &
                   kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                  reduced(:, :, source), work, .FALSE.)
+                  reduced(:, :, source), work, .FALSE., &
+                  kmap%atom_phase(:, iop, ifull))
                scale = MAX(1.0_dp, MAXVAL(ABS(expanded)))
                residual = MAXVAL(ABS(work - expanded))/scale
                max_covariance_residual = MAX(max_covariance_residual, residual)
@@ -4522,7 +4663,8 @@ CONTAINS
                      CALL tb_transform_gxtb_kpoint_matrix( &
                         kpoints, source, kmap%symops(iop, ifull), &
                         kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                        density_local(:, :, ispin, local_source), transform_work, .FALSE.)
+                        density_local(:, :, ispin, local_source), transform_work, .FALSE., &
+                        kmap%atom_phase(:, iop, ifull))
                      scale = MAX(1.0_dp, MAXVAL(ABS(density_block(:, :, ispin))))
                      residual = MAXVAL(ABS(transform_work - density_block(:, :, ispin)))/scale
                      IF (residual > MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)) &
@@ -4957,7 +5099,7 @@ CONTAINS
                            kpoints, source, kmap%symops(iop, ifull), &
                            kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
                            density_local(:, :, ispin, local_source), &
-                           transform_work, .FALSE.)
+                           transform_work, .FALSE., kmap%atom_phase(:, iop, ifull))
                         scale = MAX(1.0_dp, MAXVAL(ABS(density_block(:, :, ispin))))
                         residual = MAXVAL(ABS(transform_work - density_block(:, :, ispin)))/scale
                         IF (residual > MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)) &
@@ -5750,7 +5892,8 @@ CONTAINS
                   CALL tb_transform_gxtb_kpoint_matrix( &
                      kpoints, source_local, kmap%symops(iop_local, ifull_local), &
                      kmap%rotation_slot(iop_local, ifull_local), ao_first, ao_size, &
-                     density_reduced(:, :, ispin_local, source_local), transformed, .FALSE.)
+                     density_reduced(:, :, ispin_local, source_local), transformed, .FALSE., &
+                     kmap%atom_phase(:, iop_local, ifull_local))
                   scale = MAX(1.0_dp, MAXVAL(ABS(expanded)))
                   residual = MAXVAL(ABS(transformed - expanded))/scale
                   IF (residual > symmetry_tolerance) &
@@ -5790,7 +5933,8 @@ CONTAINS
                CALL tb_transform_gxtb_kpoint_matrix( &
                   kpoints, source_local, kmap%symops(iop_local, ifull_local), &
                   kmap%rotation_slot(iop_local, ifull_local), ao_first, ao_size, &
-                  overlap_reduced(:, :, source_local), transformed, .FALSE.)
+                  overlap_reduced(:, :, source_local), transformed, .FALSE., &
+                  kmap%atom_phase(:, iop_local, ifull_local))
                scale = MAX(1.0_dp, MAXVAL(ABS(overlap_block)))
                covariance_residual = MAXVAL(ABS(transformed - overlap_block))/scale
                IF (covariance_residual > MAX(1.0E-6_dp, 100.0_dp*kpoints%eps_geo)) THEN
@@ -5804,7 +5948,8 @@ CONTAINS
                CALL tb_transform_gxtb_kpoint_matrix( &
                   kpoints, source_local, kmap%symops(iop_local, ifull_local), &
                   kmap%rotation_slot(iop_local, ifull_local), ao_first, ao_size, &
-                  overlap_block, adjoint, .TRUE.)
+                  overlap_block, adjoint, .TRUE., &
+                  kmap%atom_phase(:, iop_local, ifull_local))
                lhs = REAL(SUM(CONJG(overlap_block)*transformed), KIND=dp)
                rhs = REAL(SUM(CONJG(adjoint)*overlap_reduced(:, :, source_local)), KIND=dp)
                adjoint_residual = ABS(lhs - rhs)/MAX(1.0_dp, ABS(lhs), ABS(rhs))
