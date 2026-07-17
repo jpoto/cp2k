@@ -29,7 +29,17 @@ MODULE input_cp2k_tb
         tblite_cli_solution_state_reference, tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
         tblite_cli_solvation_gb, tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, &
         tblite_guess_auto, tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
-        tblite_mixer_damping_default, &
+        tblite_gxtb_acp_cache_direct, tblite_gxtb_acp_cache_enabled, &
+        tblite_gxtb_acp_cache_qualify, tblite_gxtb_exchange_batched, &
+        tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_distributed, &
+        tblite_gxtb_exchange_kgroup_owner, tblite_gxtb_exchange_kgroup_partial_images, &
+        tblite_gxtb_exchange_kgroup_partial_replicated, tblite_gxtb_exchange_kgroup_partial_root, &
+        tblite_gxtb_exchange_oracle, tblite_gxtb_exchange_reduced, &
+        tblite_gxtb_forward_qualification_off, tblite_gxtb_forward_qualification_qualify, &
+        tblite_gxtb_gradient_dense, tblite_gxtb_gradient_qualify, tblite_gxtb_gradient_streamed, &
+        tblite_gxtb_image_batch_default, tblite_gxtb_star_dense, tblite_gxtb_star_qualify, &
+        tblite_gxtb_star_streamed, tblite_gxtb_transform_dense, tblite_gxtb_transform_mixed_radix, &
+        tblite_gxtb_transform_separable, tblite_mixer_damping_default, &
         tblite_mixer_iterations_default, tblite_mixer_max_weight_default, &
         tblite_mixer_memory_inherit, tblite_mixer_min_weight_default, tblite_mixer_omega0_default, &
         tblite_mixer_weight_factor_default, tblite_scc_mixer_auto, tblite_scc_mixer_cp2k, &
@@ -701,11 +711,191 @@ CONTAINS
       CALL keyword_release(keyword)
 
       NULLIFY (subsection)
+      CALL create_gxtb_acceleration_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
+      NULLIFY (subsection)
       CALL create_xtb_reference_cli_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
    END SUBROUTINE create_xtb_tblite_section
+
+! **************************************************************************************************
+!> \brief Creates the periodic g-xTB acceleration section.
+!> \param section section to create
+! **************************************************************************************************
+   SUBROUTINE create_gxtb_acceleration_section(section)
+      TYPE(section_type), POINTER                        :: section
+
+      TYPE(keyword_type), POINTER                        :: keyword
+
+      CPASSERT(.NOT. ASSOCIATED(section))
+      CALL section_create(section, __LOCATION__, name="GXTB_ACCELERATION", &
+                          description="Selects independently qualified implementations for periodic g-xTB's "// &
+                          "Brillouin-zone-coupled nonlocal exchange, its derivative contraction, regular-mesh "// &
+                          "Fourier transforms, symmetry-star validation, and ACP projector construction. "// &
+                          "The section is valid only with XTB/TBLITE/METHOD GXTB. Dense complete-array paths "// &
+                          "remain the defaults and permanent numerical oracles. QUALIFY choices execute an "// &
+                          "accelerated path and its oracle and abort if their strict numerical gate is exceeded. "// &
+                          "Non-default choices require an explicit periodic KPOINTS path; an explicit 1x1x1 "// &
+                          "mesh is accepted, whereas implicit Gamma-only calculations retain all defaults. "// &
+                          "The developer-only CP2K_GXTB_* environment variables take precedence over the "// &
+                          "corresponding keywords when present and should not be used for archived production "// &
+                          "calculations. These controls do not cache ACP derivative integrals.", &
+                          n_keywords=1, n_subsections=0, repeats=.FALSE.)
+
+      NULLIFY (keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="_SECTION_PARAMETERS_", &
+                          description="Marks the periodic g-xTB acceleration section as present.", &
+                          lone_keyword_l_val=.TRUE., default_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="EXCHANGE_STREAM_BACKEND", &
+                          description="Selects the forward consumer for Brillouin-zone-coupled nonlocal exchange. "// &
+                          "COMPLETE_ARRAY is the original complete-mesh oracle. REDUCED and ORACLE use the "// &
+                          "provider's reduced or full-mesh stream. BATCHED bounds live image storage. DISTRIBUTED "// &
+                          "partitions the complete BvK image range over CP2K ranks. K_GROUP_OWNER distributes "// &
+                          "irreducible-density ownership while retaining one provider service. "// &
+                          "K_GROUP_PARTIAL_ROOT merges partial "// &
+                          "k-to-R contributions before a root-owned nonlinear kernel. K_GROUP_PARTIAL_REPLICATED "// &
+                          "replicates the merged state and distributes response pulls. "// &
+                          "K_GROUP_PARTIAL_DISTRIBUTED_IMAGES additionally partitions the nonlinear BvK image "// &
+                          "kernel. All modes retain complete Brillouin-zone coupling; none treats k points as "// &
+                          "independent exchange calculations. The developer-only "// &
+                          "CP2K_GXTB_EXCHANGE_STREAM_MODE environment variable overrides this keyword.", &
+                          usage="EXCHANGE_STREAM_BACKEND backend", &
+                          enum_c_vals=s2a("COMPLETE_ARRAY", "REDUCED", "ORACLE", "BATCHED", "DISTRIBUTED", &
+                                          "K_GROUP_OWNER", "K_GROUP_PARTIAL_ROOT", &
+                                          "K_GROUP_PARTIAL_REPLICATED", &
+                                          "K_GROUP_PARTIAL_DISTRIBUTED_IMAGES"), &
+                          enum_i_vals=[tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_reduced, &
+                                       tblite_gxtb_exchange_oracle, tblite_gxtb_exchange_batched, &
+                                       tblite_gxtb_exchange_distributed, tblite_gxtb_exchange_kgroup_owner, &
+                                       tblite_gxtb_exchange_kgroup_partial_root, &
+                                       tblite_gxtb_exchange_kgroup_partial_replicated, &
+                                       tblite_gxtb_exchange_kgroup_partial_images], &
+                          enum_desc=s2a("Use the dense complete-array reference implementation.", &
+                                        "Use the reduced provider stream.", &
+                                        "Use the provider's streamed full-mesh oracle.", &
+                                        "Use bounded image batches.", &
+                                        "Distribute the complete BvK image range over CP2K ranks.", &
+                                        "Distribute irreducible-k ownership around one provider service.", &
+                                        "Merge partial k-to-R state and evaluate on one service root.", &
+                                        "Replicate merged state and distribute response pulls.", &
+                                        "Distribute the nonlinear BvK image kernel and response."), &
+                          default_i_val=tblite_gxtb_exchange_complete_array)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="FORWARD_FOCK_QUALIFICATION", &
+                          description="Controls an independent dense forward-exchange oracle. OFF applies only "// &
+                          "the selected forward backend. QUALIFY evaluates that backend and the permanent dense "// &
+                          "complete-mesh oracle on every exchange invocation, compares energy, shell potential, "// &
+                          "and the applicable full and folded Fock responses at the strict internal tolerance, "// &
+                          "and applies the "// &
+                          "selected result exactly once. QUALIFY requires a genuinely accelerated forward "// &
+                          "backend and an explicit periodic KPOINTS path. The developer-only "// &
+                          "CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION environment variable may restrict "// &
+                          "qualification to one positive SCF iteration and overrides this keyword when present.", &
+                          usage="FORWARD_FOCK_QUALIFICATION (OFF|QUALIFY)", &
+                          enum_c_vals=s2a("OFF", "QUALIFY"), &
+                          enum_i_vals=[tblite_gxtb_forward_qualification_off, &
+                                       tblite_gxtb_forward_qualification_qualify], &
+                          enum_desc=s2a("Do not run the independent dense forward oracle.", &
+                                        "Run and gate the dense forward oracle on every exchange invocation."), &
+                          default_i_val=tblite_gxtb_forward_qualification_off)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="GRADIENT_CONTRACTION", &
+                          description="Selects the exchange overlap-response contraction used for analytic forces "// &
+                          "and stress. DENSE materializes the complete response and is the reference. STREAMED "// &
+                          "folds bounded responses immediately. QUALIFY applies the streamed result only after a "// &
+                          "strict comparison of overlap response, force, and stress with the dense oracle. The "// &
+                          "developer-only CP2K_GXTB_EXCHANGE_GRADIENT_MODE environment variable overrides this "// &
+                          "keyword.", &
+                          usage="GRADIENT_CONTRACTION (DENSE|STREAMED|QUALIFY)", &
+                          enum_c_vals=s2a("DENSE", "STREAMED", "QUALIFY"), &
+                          enum_i_vals=[tblite_gxtb_gradient_dense, tblite_gxtb_gradient_streamed, &
+                                       tblite_gxtb_gradient_qualify], &
+                          enum_desc=s2a("Use the complete-mesh derivative reference.", &
+                                        "Use the bounded streamed derivative contraction.", &
+                                        "Compare streamed and dense derivatives before applying the result."), &
+                          default_i_val=tblite_gxtb_gradient_dense)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="FOURIER_TRANSFORM_BACKEND", &
+                          description="Selects the regular-mesh k-to-R and R-to-k transform used by the "// &
+                          "complete-array exchange and dense derivative paths. DENSE uses the permanent phase-table "// &
+                          "oracle. SEPARABLE_DFT factorizes the direct transform by mesh direction. "// &
+                          "MIXED_RADIX_FFT uses recursive Cooley--Tukey transforms with direct prime leaves. "// &
+                          "Non-dense transforms require COMPLETE_ARRAY exchange and DENSE gradient contraction, so "// &
+                          "the requested backend cannot be silently ignored by a streamed path. The developer-only "// &
+                          "CP2K_GXTB_EXCHANGE_TRANSFORM_MODE environment variable overrides this keyword.", &
+                          usage="FOURIER_TRANSFORM_BACKEND (DENSE|SEPARABLE_DFT|MIXED_RADIX_FFT)", &
+                          enum_c_vals=s2a("DENSE", "SEPARABLE_DFT", "MIXED_RADIX_FFT"), &
+                          enum_i_vals=[tblite_gxtb_transform_dense, tblite_gxtb_transform_separable, &
+                                       tblite_gxtb_transform_mixed_radix], &
+                          enum_desc=s2a("Use dense phase-table multiplication.", &
+                                        "Use factorized direct one-dimensional transforms.", &
+                                        "Use recursive mixed-radix FFT transforms."), &
+                          default_i_val=tblite_gxtb_transform_dense)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="SYMMETRY_STAR_CONTRACTION", &
+                          description="Selects storage for the post-mixer covariance and expand/fold gate on "// &
+                          "symmetry-reduced k meshes. DENSE materializes the complete star. STREAMED processes one "// &
+                          "member at a time. QUALIFY executes both gates and aborts if their residuals disagree. "// &
+                          "This choice does not change the physical symmetry projection or star weights. The "// &
+                          "developer-only CP2K_GXTB_SYMMETRY_STAR_CONTRACTION environment variable overrides this "// &
+                          "keyword.", &
+                          usage="SYMMETRY_STAR_CONTRACTION (DENSE|STREAMED|QUALIFY)", &
+                          enum_c_vals=s2a("DENSE", "STREAMED", "QUALIFY"), &
+                          enum_i_vals=[tblite_gxtb_star_dense, tblite_gxtb_star_streamed, &
+                                       tblite_gxtb_star_qualify], &
+                          enum_desc=s2a("Use the complete-star validation oracle.", &
+                                        "Validate one symmetry-star member at a time.", &
+                                        "Compare dense and streamed symmetry-star validation."), &
+                          default_i_val=tblite_gxtb_star_dense)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="IMAGE_BATCH_SIZE", &
+                          description="Maximum number of BvK image representatives held by bounded forward or "// &
+                          "reverse exchange transactions. The value is used by BATCHED, partial-k-group backends, "// &
+                          "and STREAMED or QUALIFY gradient contractions. It must be positive. CP2K aborts "// &
+                          "when an explicitly supplied value would be ignored by all selected paths. The "// &
+                          "developer-only CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE environment variable overrides this "// &
+                          "keyword and is subject to the same unused-value check.", &
+                          usage="IMAGE_BATCH_SIZE 8", default_i_val=tblite_gxtb_image_batch_default)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="ACP_PROJECTOR_CACHE", &
+                          description="Controls only the geometry-static compact ACP projector translations, "// &
+                          "overlaps, and levels. ENABLED reuses an exactly keyed provider cache. DIRECT bypasses and "// &
+                          "invalidates that cache. QUALIFY builds both representations and aborts unless shapes and "// &
+                          "values agree at the strict internal tolerance. DIRECT and QUALIFY require the selected "// &
+                          "g-xTB parametrization to provide an ACP model. ACP derivative integrals remain uncached "// &
+                          "for every choice. The developer-only CP2K_GXTB_ACP_PROJECTOR_CACHE environment variable "// &
+                          "overrides this keyword.", &
+                          usage="ACP_PROJECTOR_CACHE (ENABLED|DIRECT|QUALIFY)", &
+                          enum_c_vals=s2a("ENABLED", "DIRECT", "QUALIFY"), &
+                          enum_i_vals=[tblite_gxtb_acp_cache_enabled, tblite_gxtb_acp_cache_direct, &
+                                       tblite_gxtb_acp_cache_qualify], &
+                          enum_desc=s2a("Reuse the exactly keyed compact projector cache.", &
+                                        "Rebuild compact projector data directly.", &
+                                        "Compare cached and direct compact projector data."), &
+                          default_i_val=tblite_gxtb_acp_cache_enabled)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+   END SUBROUTINE create_gxtb_acceleration_section
 
 ! **************************************************************************************************
 !> \brief Creates the common &TBLITE_MIXER section for native TB mixing.

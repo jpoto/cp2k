@@ -30,7 +30,14 @@ MODULE tblite_types
 
    USE cp_dbcsr_api, ONLY: dbcsr_p_type
    USE cp_dbcsr_operations, ONLY: dbcsr_deallocate_matrix_set
-   USE input_constants, ONLY: tblite_mixer_damping_default, &
+   USE input_constants, ONLY: tblite_gxtb_acp_cache_enabled, &
+                              tblite_gxtb_exchange_complete_array, &
+                              tblite_gxtb_forward_qualification_off, &
+                              tblite_gxtb_gradient_dense, &
+                              tblite_gxtb_image_batch_default, &
+                              tblite_gxtb_star_dense, &
+                              tblite_gxtb_transform_dense, &
+                              tblite_mixer_damping_default, &
                               tblite_mixer_iterations_default, &
                               tblite_mixer_max_weight_default, &
                               tblite_mixer_min_weight_default, &
@@ -119,9 +126,19 @@ MODULE tblite_types
       LOGICAL                                            :: gxtb_transform_validated = .FALSE.
       LOGICAL                                            :: acp_fock_kp_valid = .FALSE.
       LOGICAL                                            :: exchange_fock_kp_valid = .FALSE.
+      LOGICAL                                            :: gxtb_image_batch_explicit = .FALSE.
       LOGICAL                                            :: mixed_fock_kp_valid = .FALSE.
       LOGICAL                                            :: previous_density_kp_valid = .FALSE.
       REAL(KIND=dp)                                      :: e_acp_kp = 0.0_dp
+      INTEGER                                            :: gxtb_exchange_stream_backend = &
+                                                            tblite_gxtb_exchange_complete_array
+      INTEGER                                            :: gxtb_forward_fock_qualification = &
+                                                            tblite_gxtb_forward_qualification_off
+      INTEGER                                            :: gxtb_gradient_contraction = tblite_gxtb_gradient_dense
+      INTEGER                                            :: gxtb_fourier_transform_backend = tblite_gxtb_transform_dense
+      INTEGER                                            :: gxtb_symmetry_star_contraction = tblite_gxtb_star_dense
+      INTEGER                                            :: gxtb_image_batch_size = tblite_gxtb_image_batch_default
+      INTEGER                                            :: gxtb_acp_projector_cache = tblite_gxtb_acp_cache_enabled
       INTEGER                                            :: potential_mixer_dimension = 0
       TYPE(cp2k_potential_mixer_type), ALLOCATABLE       :: potential_mixer
       TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()

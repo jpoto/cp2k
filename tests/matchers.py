@@ -52,6 +52,36 @@ registry["GXTB_native_simple"] = TextPresenceMatcher("GXTB-Simple")
 registry["GXTB_native_fdiis"] = TextPresenceMatcher("GXTB-FDIIS")
 registry["GXTB_cp2k_pmix"] = TextPresenceMatcher("P_Mix/Diag.")
 registry["GXTB_cp2k_fdiis"] = TextPresenceMatcher("DIIS/Diag.")
+registry["GXTB_exchange_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY KGROUP-PARTIAL-ROOT-REVERSE"
+)
+registry["GXTB_forward_fock_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY KGROUP-PARTIAL-ROOT iter="
+)
+registry["GXTB_forward_fullmesh_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY FULLMESH-ORACLE iter="
+)
+registry["GXTB_mixer_star_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY MIXER-STAR iter="
+)
+registry["GXTB_acp_cache_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY ACP-PROJECTOR-CACHE repeatedHit=1 directBypass=1"
+)
+registry["GXTB_mixed_radix_transform"] = TextPresenceMatcher(
+    "GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=MIXED_RADIX_FFT fallback=0"
+)
+registry["GXTB_mixed_radix_transform_forward"] = TextPresenceMatcher(
+    "GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=MIXED_RADIX_FFT fallback=0"
+)
+registry["GXTB_distributed_images_production"] = TextPresenceMatcher(
+    "GXTB-KGROUP-PARTIAL-DISTRIBUTED-IMAGES importers="
+)
+registry["GXTB_streamed_star_production"] = TextPresenceMatcher(
+    "GXTB-MIXER-STAR-STREAMED denseFullComplexAvoided="
+)
+registry["GXTB_distributed_images_reverse_production"] = TextPresenceMatcher(
+    "GXTB KGROUP-PARTIAL-DISTRIBUTED-IMAGES-REVERSE nfull="
+)
 registry["TBLITE_alpha_population"] = GenericMatcher(
     r"# Total charge and spin\s+([-+0-9.EeDd]+)", col=1, regex=True
 )

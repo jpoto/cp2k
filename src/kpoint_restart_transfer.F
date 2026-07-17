@@ -2031,11 +2031,13 @@ CONTAINS
       COMPLEX(KIND=dp)                                   :: phase
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: density, overlap, projected
       INTEGER                                            :: failure_code, ic, ikp, ispin, kplocal, &
-                                                            nao, nc, nimages, nkp, nspin, &
-                                                            projection_code
+                                                            nao, nc, nimages, nimages_full, nkp, &
+                                                            nspin, projection_code
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: present
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: full_index_to_cell
+      INTEGER, DIMENSION(3)                              :: lower_cell, upper_cell
       INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
-      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER, DIMENSION(:, :, :), POINTER               :: full_cell_to_index
       LOGICAL                                            :: local_accepted, waterfill_accepted
       REAL(KIND=dp)                                      :: electron_error, max_occupation, &
                                                             residual, target_electrons
@@ -2049,33 +2051,65 @@ CONTAINS
 
       accepted = .FALSE.
       reason = ""
-      NULLIFY (cell_to_index, index_to_cell, kp, wkp)
+      NULLIFY (full_cell_to_index, index_to_cell, kp, wkp)
       nspin = SIZE(pmat_tmp, 3)
       kplocal = SIZE(pmat_tmp, 1)
       nc = SIZE(pmat_tmp, 2)
       CALL cp_fm_get_info(pmat_tmp(1, 1, 1), nrow_global=nao)
-      CALL get_kpoint_info(kpoints, nkp=nkp, wkp=wkp, index_to_cell=index_to_cell, &
-                           cell_to_index=cell_to_index)
+      CALL get_kpoint_info(kpoints, nkp=nkp, wkp=wkp, index_to_cell=index_to_cell)
       nimages = SIZE(overlap_rs, 2)
       IF (nspin < 1 .OR. nspin > 2 .OR. nc < 1 .OR. nc > 2 .OR. nao < 1 .OR. &
           .NOT. ASSOCIATED(wkp) .OR. .NOT. ASSOCIATED(index_to_cell) .OR. &
-          .NOT. ASSOCIATED(cell_to_index) .OR. SIZE(index_to_cell, 2) /= nimages .OR. &
           .NOT. ASSOCIATED(kpoints%para_env_kp)) THEN
          reason = "target k-point storage is incomplete for metric spectral projection"
          RETURN
       END IF
+      IF (SIZE(index_to_cell, 2) /= nimages) THEN
+         reason = "target image storage is incomplete for metric spectral projection"
+         RETURN
+      END IF
+
+      ! Symmetric DBCSR storage may keep a block at R only and reconstruct its transpose at -R.
+      ! A symmetry-reduced target cell map need not contain both slots, so replicate through a
+      ! temporary inversion-complete map.  This is the same closed representation used when the
+      ! canonical BvK restart is written and keeps a rejected transfer recoverable.
+      lower_cell = MIN(MINVAL(index_to_cell, DIM=2), -MAXVAL(index_to_cell, DIM=2))
+      upper_cell = MAX(MAXVAL(index_to_cell, DIM=2), -MINVAL(index_to_cell, DIM=2))
+      ALLOCATE (full_cell_to_index(lower_cell(1):upper_cell(1), &
+                                   lower_cell(2):upper_cell(2), &
+                                   lower_cell(3):upper_cell(3)))
+      full_cell_to_index = 0
+      ALLOCATE (full_index_to_cell(3, 2*nimages))
+      nimages_full = 0
+      DO ic = 1, nimages
+         IF (full_cell_to_index(index_to_cell(1, ic), index_to_cell(2, ic), &
+                                index_to_cell(3, ic)) == 0) THEN
+            nimages_full = nimages_full + 1
+            full_cell_to_index(index_to_cell(1, ic), index_to_cell(2, ic), &
+                               index_to_cell(3, ic)) = nimages_full
+            full_index_to_cell(:, nimages_full) = index_to_cell(:, ic)
+         END IF
+         IF (full_cell_to_index(-index_to_cell(1, ic), -index_to_cell(2, ic), &
+                                -index_to_cell(3, ic)) == 0) THEN
+            nimages_full = nimages_full + 1
+            full_cell_to_index(-index_to_cell(1, ic), -index_to_cell(2, ic), &
+                               -index_to_cell(3, ic)) = nimages_full
+            full_index_to_cell(:, nimages_full) = -index_to_cell(:, ic)
+         END IF
+      END DO
 
       ALLOCATE (density(nao, nao), overlap(nao, nao), projected(nao, nao), &
                 dense_r(nao, nao), dense_i(nao, nao), natural_occupations(nao), &
                 metric_occupations(nao), raw_occupations(nao, nkp, nspin), &
                 projected_occupations(nao, nkp, nspin), electron_counts(nspin), &
-                PRESENT(nkp), overlap_raw(1, nao, nao, nimages))
+                PRESENT(nkp), overlap_raw(1, nao, nao, nimages_full))
       raw_occupations = 0.0_dp
       projected_occupations = 0.0_dp
       electron_counts = 0.0_dp
       present = 0
       overlap_raw = 0.0_dp
-      CALL replicate_rs_matrices(overlap_rs, kpoints, overlap_raw, cell_to_index)
+      CALL replicate_rs_matrices(overlap_rs, kpoints, overlap_raw, full_cell_to_index)
+      DEALLOCATE (full_cell_to_index)
       failure_code = metric_projection_success
       IF (.NOT. ALL(ieee_is_finite(overlap_raw))) &
          failure_code = metric_projection_overlap_nonfinite
@@ -2084,9 +2118,9 @@ CONTAINS
       DO ikp = 1, kplocal
          kp => kpoints%kp_env(ikp)%kpoint_env
          overlap = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
-         DO ic = 1, nimages
-            phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), &
-                          SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), KIND=dp)
+         DO ic = 1, nimages_full
+            phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(full_index_to_cell(:, ic), dp))), &
+                          SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(full_index_to_cell(:, ic), dp))), KIND=dp)
             overlap(:, :) = overlap + phase*CMPLX(overlap_raw(1, :, :, ic), 0.0_dp, KIND=dp)
          END DO
          DO ispin = 1, nspin
@@ -2141,9 +2175,9 @@ CONTAINS
       DO ikp = 1, kplocal
          kp => kpoints%kp_env(ikp)%kpoint_env
          overlap = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
-         DO ic = 1, nimages
-            phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), &
-                          SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(index_to_cell(:, ic), dp))), KIND=dp)
+         DO ic = 1, nimages_full
+            phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(full_index_to_cell(:, ic), dp))), &
+                          SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(full_index_to_cell(:, ic), dp))), KIND=dp)
             overlap(:, :) = overlap + phase*CMPLX(overlap_raw(1, :, :, ic), 0.0_dp, KIND=dp)
          END DO
          DO ispin = 1, nspin

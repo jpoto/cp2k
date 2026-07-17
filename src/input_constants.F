@@ -1404,6 +1404,34 @@ MODULE input_constants
                                                tblite_mixer_omega0_default = 0.01_dp, &
                                                tblite_mixer_weight_factor_default = 0.01_dp
 
+   ! Periodic g-xTB acceleration backends.  These values are part of CP2K's
+   ! input/control contract; provider-specific identifiers are mapped in the
+   ! tblite interface rather than exposed directly to the input parser.
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_exchange_complete_array = 0, &
+                                               tblite_gxtb_exchange_reduced = 1, &
+                                               tblite_gxtb_exchange_oracle = 2, &
+                                               tblite_gxtb_exchange_batched = 3, &
+                                               tblite_gxtb_exchange_distributed = 4, &
+                                               tblite_gxtb_exchange_kgroup_owner = 5, &
+                                               tblite_gxtb_exchange_kgroup_partial_root = 6, &
+                                               tblite_gxtb_exchange_kgroup_partial_replicated = 7, &
+                                               tblite_gxtb_exchange_kgroup_partial_images = 8
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_gradient_dense = 0, &
+                                               tblite_gxtb_gradient_streamed = 1, &
+                                               tblite_gxtb_gradient_qualify = 2
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_transform_dense = 1, &
+                                               tblite_gxtb_transform_separable = 2, &
+                                               tblite_gxtb_transform_mixed_radix = 3
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_star_dense = 0, &
+                                               tblite_gxtb_star_streamed = 1, &
+                                               tblite_gxtb_star_qualify = 2
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_acp_cache_enabled = 0, &
+                                               tblite_gxtb_acp_cache_direct = 1, &
+                                               tblite_gxtb_acp_cache_qualify = 2
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_forward_qualification_off = 0, &
+                                               tblite_gxtb_forward_qualification_qualify = 1
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_image_batch_default = 8
+
    ! tblite reference CLI initial guess selection
    INTEGER, PARAMETER, PUBLIC               :: tblite_guess_auto = -1, &
                                                tblite_guess_sad = 0, &

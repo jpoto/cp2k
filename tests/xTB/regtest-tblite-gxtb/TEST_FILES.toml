@@ -61,4 +61,30 @@
 ]
 "Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050838553817130}]
 "Si_prim_gxtb_kp_shifted_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050838553817130}]
+"CH4_gxtb_kp_acceleration_qualify.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.473758159181230},
+  {matcher="GXTB_exchange_qualification"},
+  {matcher="GXTB_forward_fock_qualification"},
+  {matcher="GXTB_mixer_star_qualification"},
+  {matcher="GXTB_acp_cache_qualification"},
+]
+"CH4_gxtb_kp_acceleration_production.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.473758159181230},
+  {matcher="GXTB_distributed_images_production"},
+  {matcher="GXTB_streamed_star_production"},
+  {matcher="GXTB_distributed_images_reverse_production"},
+]
+"CH4_gxtb_kp_restart_3.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.468870021692382},
+]
+"CH4_gxtb_kp_restart_4.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.468555915668887},
+  {matcher="KPOINT_RESTART_VALIDATED_TRANSFER"},
+]
+"Si_prim_gxtb_kp_mixed_radix.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-579.050838553817130},
+  {matcher="GXTB_forward_fullmesh_qualification"},
+  {matcher="GXTB_mixed_radix_transform"},
+  {matcher="GXTB_mixed_radix_transform_forward"},
+]
 #EOF

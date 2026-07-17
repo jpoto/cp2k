@@ -152,6 +152,22 @@ MODULE tblite_interface
                               tblite_cli_solvation_gb, tblite_cli_solvation_gbe, &
                               tblite_cli_solvation_gbsa, &
                               tblite_guess_auto, tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
+                              tblite_gxtb_acp_cache_direct, tblite_gxtb_acp_cache_enabled, &
+                              tblite_gxtb_acp_cache_qualify, tblite_gxtb_exchange_batched, &
+                              tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_distributed, &
+                              tblite_gxtb_exchange_kgroup_owner, &
+                              tblite_gxtb_exchange_kgroup_partial_images, &
+                              tblite_gxtb_exchange_kgroup_partial_replicated, &
+                              tblite_gxtb_exchange_kgroup_partial_root, tblite_gxtb_exchange_oracle, &
+                              tblite_gxtb_exchange_reduced, &
+                              tblite_gxtb_forward_qualification_off, &
+                              tblite_gxtb_forward_qualification_qualify, &
+                              tblite_gxtb_gradient_dense, tblite_gxtb_gradient_qualify, &
+                              tblite_gxtb_gradient_streamed, tblite_gxtb_image_batch_default, &
+                              tblite_gxtb_star_dense, &
+                              tblite_gxtb_star_qualify, tblite_gxtb_star_streamed, &
+                              tblite_gxtb_transform_dense, tblite_gxtb_transform_mixed_radix, &
+                              tblite_gxtb_transform_separable, &
                               tblite_mixer_damping_default, &
                               tblite_mixer_max_weight_default, tblite_mixer_min_weight_default, &
                               tblite_mixer_omega0_default, tblite_mixer_weight_factor_default, &
@@ -219,29 +235,34 @@ MODULE tblite_interface
    ! CP2K-only qualification mode.  The provider sees an ordinary bounded
    ! transaction, while CP2K assigns one disjoint additive BvK image range to
    ! every participating MPI rank and reduces the folded response afterwards.
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_distributed = 4
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_distributed = &
+                                                         tblite_gxtb_exchange_distributed
    ! Exact CP2K k-group ownership precursor.  Only the owner of an irreducible
    ! k point expands its star blocks; official inter-k-point communicators feed
    ! one nonreplicated provider stream, and owner groups perform the weighted
    ! foldback.  The coupled provider kernel itself is intentionally not claimed
    ! to scale over k groups until save_tblite exposes a public partial-k-to-R
    ! accumulator merge/finalize interface.
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_owner = 5
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_owner = &
+                                                         tblite_gxtb_exchange_kgroup_owner
    ! Safe first consumer of save_tblite's public partial k-to-R ABI.  K-group
    ! leaders form additive pre-kernel payloads, while one service leader owns
    ! the nonlinear apply and every R-to-k response pull.  Thus only k-to-R is
    ! distributed; the coupled kernel and reverse transform remain root-serial.
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_root = 6
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_root = &
+                                                         tblite_gxtb_exchange_kgroup_partial_root
    ! Replicate the merged bounded pre-kernel state on every CP2K rank, execute
    ! the nonlinear image kernel locally, and assign disjoint full-k R-to-k
    ! pulls to the importer ranks.  Exactly the global service rank retrieves
    ! scalar/direct-derivative results; importers beyond nfull own an empty set.
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_replicated = 7
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_replicated = &
+                                                         tblite_gxtb_exchange_kgroup_partial_replicated
    ! Replicate the globally reduced pre-kernel state, but partition the
    ! nonlinear BvK image kernel and its inverse transform over disjoint
    ! contiguous image ranges.  Every importer pulls every k response because
    ! each image range contributes additively to the complete Bloch response.
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_images = 8
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_stream_kgroup_partial_images = &
+                                                         tblite_gxtb_exchange_kgroup_partial_images
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_none = 0
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_nonleader_failure = 1
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_antihermitian_reverse = 2
@@ -250,12 +271,14 @@ MODULE tblite_interface
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_owner_mismatch = 5
    INTEGER, PARAMETER                                 :: tb_gxtb_partial_inject_image_range_mismatch = 6
    INTEGER(KIND=int_8), SAVE                          :: tb_gxtb_partial_transaction_serial = 0_int_8
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_dense = 0
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_streamed = 1
-   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_qualify = 2
-   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_dense = 0
-   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_streamed = 1
-   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_qualify = 2
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_dense = tblite_gxtb_gradient_dense
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_streamed = &
+                                                         tblite_gxtb_gradient_streamed
+   INTEGER, PARAMETER                                 :: tb_gxtb_exchange_gradient_qualify = &
+                                                         tblite_gxtb_gradient_qualify
+   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_dense = tblite_gxtb_star_dense
+   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_streamed = tblite_gxtb_star_streamed
+   INTEGER, PARAMETER                                 :: tb_gxtb_symmetry_star_qualify = tblite_gxtb_star_qualify
 #endif
    REAL(KIND=dp), PARAMETER                           :: same_atom = 0.00001_dp
    REAL(KIND=dp), PARAMETER                           :: tblite_scc_pconv = 2.0E-5_dp
@@ -289,11 +312,11 @@ CONTAINS
       IF (ALLOCATED(tb%previous_density_kp)) DEALLOCATE (tb%previous_density_kp)
       IF (ALLOCATED(tb%mixed_fock_kp)) DEALLOCATE (tb%mixed_fock_kp)
       IF (ALLOCATED(tb%exchange_fock_kp)) DEALLOCATE (tb%exchange_fock_kp)
-      IF (ALLOCATED(tb%acp_fock_kp)) DEALLOCATE (tb%acp_fock_kp)
       tb%previous_density_kp_valid = .FALSE.
       tb%mixed_fock_kp_valid = .FALSE.
       tb%exchange_fock_kp_valid = .FALSE.
-      tb%acp_fock_kp_valid = .FALSE.
+      ! The direct k-space ACP is geometry- and target-mesh-static.  It is built before the
+      ! external density is read and must survive a successful restart-history reset.
       IF (ALLOCATED(tb%potential_mixer)) DEALLOCATE (tb%potential_mixer)
       tb%potential_mixer_dimension = 0
 #endif
@@ -3335,14 +3358,17 @@ CONTAINS
 !> member at a time and immediately applies the weighted real adjoint. QUALIFY executes both paths.
 !> This selector affects only the post-mixer symmetry gate; exchange and reverse exchange have
 !> their own independently selectable streamed implementations.
+!> \param tb ...
 !> \return selected symmetry-star storage policy
 ! **************************************************************************************************
-   INTEGER FUNCTION tb_gxtb_symmetry_star_mode() RESULT(star_mode)
+   INTEGER FUNCTION tb_gxtb_symmetry_star_mode(tb) RESULT(star_mode)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
 
       CHARACTER(LEN=32)                                  :: value
       INTEGER                                            :: status, value_length
 
-      star_mode = tb_gxtb_symmetry_star_dense
+      star_mode = tb%gxtb_symmetry_star_contraction
       value = ""
       value_length = 0
       status = 1
@@ -3351,8 +3377,11 @@ CONTAINS
       IF (status == 1 .AND. value_length == 0) RETURN
       IF (status /= 0 .OR. value_length > LEN(value)) &
          CPABORT("Invalid or overlong CP2K_GXTB_SYMMETRY_STAR_CONTRACTION value")
+      IF (LEN_TRIM(value) == 0) THEN
+         CPABORT("CP2K_GXTB_SYMMETRY_STAR_CONTRACTION must not be empty")
+      END IF
       SELECT CASE (TRIM(ADJUSTL(value)))
-      CASE ("", "DENSE", "dense", "0")
+      CASE ("DENSE", "dense", "0")
          star_mode = tb_gxtb_symmetry_star_dense
       CASE ("STREAMED", "streamed", "1")
          star_mode = tb_gxtb_symmetry_star_streamed
@@ -3363,6 +3392,61 @@ CONTAINS
       END SELECT
 
    END FUNCTION tb_gxtb_symmetry_star_mode
+
+! **************************************************************************************************
+!> \brief Decide whether the independent dense forward-exchange oracle is active.
+!>
+!> Public QUALIFY executes on every exchange invocation.  The developer-only iteration override,
+!> when present, takes precedence and restricts execution to exactly one positive SCF iteration.
+!> Omitting iter_count asks whether any forward qualification was requested; this is shared by the
+!> ACP snapshot allocation and the final effective-configuration gate.  Empty, signed, malformed,
+!> overflowing, and non-positive overrides are rejected instead of silently disabling the oracle.
+!> \param tb public periodic g-xTB controls
+!> \param iter_count optional current SCF iteration
+!> \return true when qualification data are required for this invocation
+! **************************************************************************************************
+   LOGICAL FUNCTION tb_gxtb_forward_qualification_enabled(tb, iter_count) RESULT(enabled)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
+      INTEGER, INTENT(IN), OPTIONAL                      :: iter_count
+
+      CHARACTER(LEN=32)                                  :: token, value
+      INTEGER                                            :: qualification_iteration, status, &
+                                                            value_length
+
+      SELECT CASE (tb%gxtb_forward_fock_qualification)
+      CASE (tblite_gxtb_forward_qualification_off)
+         enabled = .FALSE.
+      CASE (tblite_gxtb_forward_qualification_qualify)
+         enabled = .TRUE.
+      CASE DEFAULT
+         CPABORT("Invalid XTB/TBLITE/GXTB_ACCELERATION/FORWARD_FOCK_QUALIFICATION")
+      END SELECT
+
+      status = 1
+      value_length = 0
+      value = ""
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION", &
+                                    value, LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) THEN
+         CPABORT("Invalid or overlong CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION value")
+      END IF
+      token = TRIM(ADJUSTL(value))
+      IF (LEN_TRIM(token) == 0) THEN
+         CPABORT("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION must not be empty")
+      END IF
+      IF (VERIFY(token(1:LEN_TRIM(token)), "0123456789") /= 0) THEN
+         CPABORT("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION must be a positive integer")
+      END IF
+      READ (token, *, IOSTAT=status) qualification_iteration
+      IF (status /= 0 .OR. qualification_iteration < 1) THEN
+         CPABORT("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION must be a positive integer")
+      END IF
+      enabled = .TRUE.
+      IF (PRESENT(iter_count)) enabled = qualification_iteration == iter_count
+
+   END FUNCTION tb_gxtb_forward_qualification_enabled
 
 ! **************************************************************************************************
 !> \brief Validate one reduced response by streaming its complete symmetry stars.
@@ -3556,6 +3640,7 @@ CONTAINS
       tb%mixed_fock_kp_valid = .FALSE.
       tb%previous_density_kp_valid = .FALSE.
       IF (dft_control%qs_control%xtb_control%tblite_method /= gxtb) RETURN
+      symmetry_star_mode = tb_gxtb_symmetry_star_mode(tb)
 
       CALL get_kpoint_info(kpoints, nkp=nkp, use_real_wfn=use_real_wfn, &
                            cell_to_index=cell_to_index, sab_nl=sab_nl)
@@ -3565,6 +3650,9 @@ CONTAINS
       IF (ANY(kpoints%wkp(1:nkp) <= 0.0_dp)) &
          CPABORT("g-xTB potential mixing requires positive k-point weights")
       IF (.NOT. tb_native_scc_mixer_active(dft_control)) THEN
+         IF (symmetry_star_mode /= tb_gxtb_symmetry_star_dense) THEN
+            CPABORT("Non-default SYMMETRY_STAR_CONTRACTION requires the native g-XTB potential mixer")
+         END IF
          nao = tb%calc%bas%nao
          nspin = SIZE(matrix_ks, 1)
          IF (ALLOCATED(tb%previous_density_kp)) DEALLOCATE (tb%previous_density_kp)
@@ -3627,6 +3715,10 @@ CONTAINS
       IF (.NOT. ALLOCATED(tb%gxtb_kmesh_map)) &
          CPABORT("Missing complete g-xTB k-mesh map before potential mixing")
       kmap => tb%gxtb_kmesh_map
+      IF (symmetry_star_mode /= tb_gxtb_symmetry_star_dense .AND. &
+          kmap%nred >= kmap%nfull) THEN
+         CPABORT("Non-default SYMMETRY_STAR_CONTRACTION requires an actually symmetry-reduced k mesh")
+      END IF
       IF (.NOT. kmap%identity) THEN
          CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
          DO ispin = 1, nspin
@@ -3682,7 +3774,6 @@ CONTAINS
             CALL tb_project_gxtb_reduced_response(kpoints, kmap, ao_first, ao_size, &
                                                   tb%mixed_fock_kp(:, :, ispin, :))
          END DO
-         symmetry_star_mode = tb_gxtb_symmetry_star_mode()
          run_dense_star = symmetry_star_mode == tb_gxtb_symmetry_star_dense .OR. &
                           symmetry_star_mode == tb_gxtb_symmetry_star_qualify
          run_streamed_star = symmetry_star_mode == tb_gxtb_symmetry_star_streamed .OR. &
@@ -3863,9 +3954,8 @@ CONTAINS
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       TYPE(acp_image_type), INTENT(IN)                   :: projectors
 
-      CHARACTER(LEN=32)                                  :: qualification_value
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: acp_full
-      INTEGER                                            :: ik, nao, nred, qualification_status
+      INTEGER                                            :: ik, nao, nred
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       LOGICAL                                            :: use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error
@@ -3909,13 +3999,9 @@ CONTAINS
       IF (.NOT. kmap%identity) &
          CALL tb_validate_gxtb_folded_response(kpoints, kmap, ao_first, ao_size, &
                                                acp_full, tb%acp_fock_kp, "ACP")
-      qualification_value = ""
-      qualification_status = 1
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION", &
-                                    qualification_value, STATUS=qualification_status)
       IF (ALLOCATED(tb%qualification_acp_fock_full)) &
          DEALLOCATE (tb%qualification_acp_fock_full)
-      IF (qualification_status == 0) THEN
+      IF (tb_gxtb_forward_qualification_enabled(tb)) THEN
          ALLOCATE (tb%qualification_acp_fock_full(nao, nao, kmap%nfull))
          tb%qualification_acp_fock_full(:, :, :) = acp_full(:, :, :)
       END IF
@@ -3977,25 +4063,56 @@ CONTAINS
    END SUBROUTINE tb_update_gxtb_kpoint_acp_energy
 
 ! **************************************************************************************************
-!> \brief Select the qualification-only CP2K bridge for streamed g-xTB exchange.
+!> \brief Select the public CP2K bridge for streamed g-xTB exchange.
 !>
 !> Zero retains the Part-I complete-array implementation.  The nonzero values expose the
 !> provider's matrix-lean, full-mesh, bounded image-batch, and MPI-distributed image-range
-!> transaction modes for end-to-end qualification without prematurely changing the public CP2K
-!> input contract.  Once the complete oracle matrix has passed, a qualified reduced path can
-!> become input-selectable.
+!> transaction modes through GXTB_ACCELERATION.  Independent dense-oracle execution is controlled
+!> by FORWARD_FOCK_QUALIFICATION and never changes which response is applied.
+!> \param tb ...
 !> \return selected provider stream mode, or zero for the complete-array bridge
 ! **************************************************************************************************
-   INTEGER FUNCTION tb_gxtb_exchange_stream_mode() RESULT(stream_mode)
+   INTEGER FUNCTION tb_gxtb_exchange_stream_mode(tb) RESULT(stream_mode)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
 
       CHARACTER(LEN=48)                                  :: value
-      INTEGER                                            :: status
+      INTEGER                                            :: status, value_length
 
-      stream_mode = 0
+      SELECT CASE (tb%gxtb_exchange_stream_backend)
+      CASE (tblite_gxtb_exchange_complete_array)
+         stream_mode = 0
+      CASE (tblite_gxtb_exchange_reduced)
+         stream_mode = cp2k_exchange_stream_reduced
+      CASE (tblite_gxtb_exchange_oracle)
+         stream_mode = cp2k_exchange_stream_oracle
+      CASE (tblite_gxtb_exchange_batched)
+         stream_mode = cp2k_exchange_stream_batched
+      CASE (tblite_gxtb_exchange_distributed)
+         stream_mode = tb_gxtb_exchange_stream_distributed
+      CASE (tblite_gxtb_exchange_kgroup_owner)
+         stream_mode = tb_gxtb_exchange_stream_kgroup_owner
+      CASE (tblite_gxtb_exchange_kgroup_partial_root)
+         stream_mode = tb_gxtb_exchange_stream_kgroup_partial_root
+      CASE (tblite_gxtb_exchange_kgroup_partial_replicated)
+         stream_mode = tb_gxtb_exchange_stream_kgroup_partial_replicated
+      CASE (tblite_gxtb_exchange_kgroup_partial_images)
+         stream_mode = tb_gxtb_exchange_stream_kgroup_partial_images
+      CASE DEFAULT
+         CPABORT("Invalid XTB/TBLITE/GXTB_ACCELERATION/EXCHANGE_STREAM_BACKEND")
+      END SELECT
       status = 1
+      value_length = 0
       value = ""
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_STREAM_MODE", value, STATUS=status)
-      IF (status /= 0 .OR. LEN_TRIM(value) == 0) RETURN
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_STREAM_MODE", value, &
+                                    LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) THEN
+         CPABORT("Invalid or overlong CP2K_GXTB_EXCHANGE_STREAM_MODE value")
+      END IF
+      IF (LEN_TRIM(value) == 0) THEN
+         CPABORT("CP2K_GXTB_EXCHANGE_STREAM_MODE must not be empty")
+      END IF
 
       SELECT CASE (TRIM(ADJUSTL(value)))
       CASE ("LEGACY", "legacy", "0")
@@ -4028,25 +4145,41 @@ CONTAINS
    END FUNCTION tb_gxtb_exchange_stream_mode
 
 ! **************************************************************************************************
-!> \brief Return the qualification-only bounded image batch size.
+!> \brief Return the bounded image batch size.
 !>
-!> The default keeps eight BvK image representatives at a time.  A positive environment override
-!> permits memory/scaling qualification without extending the public input contract prematurely.
+!> The public input value is used unless the developer-only environment override is present.
+!> A positive environment override takes precedence and is reported to the caller so an unused
+!> override can be rejected rather than silently ignored.
+!> \param tb ...
+!> \param env_override true when CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE supplied the result
 !> \return requested positive image batch size
 ! **************************************************************************************************
-   INTEGER FUNCTION tb_gxtb_exchange_stream_batch_size() RESULT(batch_size)
+   INTEGER FUNCTION tb_gxtb_exchange_stream_batch_size(tb, env_override) RESULT(batch_size)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
+      LOGICAL, INTENT(OUT), OPTIONAL                     :: env_override
 
       CHARACTER(LEN=32)                                  :: value
-      INTEGER                                            :: status
+      INTEGER                                            :: status, value_length
 
-      batch_size = 8
+      batch_size = tb%gxtb_image_batch_size
+      IF (PRESENT(env_override)) env_override = .FALSE.
       status = 1
+      value_length = 0
       value = ""
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE", value, STATUS=status)
-      IF (status /= 0 .OR. LEN_TRIM(value) == 0) RETURN
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE", value, &
+                                    LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) THEN
+         CPABORT("Invalid or overlong CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE value")
+      END IF
+      IF (LEN_TRIM(value) == 0) THEN
+         CPABORT("CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE must not be empty")
+      END IF
       READ (value, *, IOSTAT=status) batch_size
       IF (status /= 0 .OR. batch_size < 1) &
          CPABORT("CP2K_GXTB_EXCHANGE_IMAGE_BATCH_SIZE must be a positive integer")
+      IF (PRESENT(env_override)) env_override = .TRUE.
 
    END FUNCTION tb_gxtb_exchange_stream_batch_size
 
@@ -4058,18 +4191,29 @@ CONTAINS
 !> overlap adjoint immediately.  QUALIFY executes STREAMED, then constructs the
 !> unchanged complete-mesh derivative only as a numerical oracle before applying
 !> the streamed response exactly once.
+!> \param tb ...
 !> \return selected derivative bridge
 ! **************************************************************************************************
-   INTEGER FUNCTION tb_gxtb_exchange_gradient_mode() RESULT(gradient_mode)
+   INTEGER FUNCTION tb_gxtb_exchange_gradient_mode(tb) RESULT(gradient_mode)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
 
       CHARACTER(LEN=32)                                  :: value
-      INTEGER                                            :: status
+      INTEGER                                            :: status, value_length
 
-      gradient_mode = tb_gxtb_exchange_gradient_dense
+      gradient_mode = tb%gxtb_gradient_contraction
       status = 1
+      value_length = 0
       value = ""
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_GRADIENT_MODE", value, STATUS=status)
-      IF (status /= 0 .OR. LEN_TRIM(value) == 0) RETURN
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_GRADIENT_MODE", value, &
+                                    LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) THEN
+         CPABORT("Invalid or overlong CP2K_GXTB_EXCHANGE_GRADIENT_MODE value")
+      END IF
+      IF (LEN_TRIM(value) == 0) THEN
+         CPABORT("CP2K_GXTB_EXCHANGE_GRADIENT_MODE must not be empty")
+      END IF
 
       SELECT CASE (TRIM(ADJUSTL(value)))
       CASE ("DENSE", "dense", "LEGACY", "legacy", "0")
@@ -4093,18 +4237,38 @@ CONTAINS
 !> the provider's recursive Cooley--Tukey transform, with direct DFT leaves only for prime factors.
 !> The provider rejects meshes or weights that are not machine-regular instead of silently falling
 !> back, so qualification runs always exercise the backend that was requested.
+!> \param tb ...
 !> \return provider transform-backend identifier
 ! **************************************************************************************************
-   INTEGER FUNCTION tb_gxtb_exchange_transform_backend() RESULT(transform_backend)
+   INTEGER FUNCTION tb_gxtb_exchange_transform_backend(tb) RESULT(transform_backend)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
 
       CHARACTER(LEN=32)                                  :: value
-      INTEGER                                            :: status
+      INTEGER                                            :: status, value_length
 
-      transform_backend = cp2k_exchange_transform_dense
+      SELECT CASE (tb%gxtb_fourier_transform_backend)
+      CASE (tblite_gxtb_transform_dense)
+         transform_backend = cp2k_exchange_transform_dense
+      CASE (tblite_gxtb_transform_separable)
+         transform_backend = cp2k_exchange_transform_separable_dft
+      CASE (tblite_gxtb_transform_mixed_radix)
+         transform_backend = cp2k_exchange_transform_mixed_radix_fft
+      CASE DEFAULT
+         CPABORT("Invalid XTB/TBLITE/GXTB_ACCELERATION/FOURIER_TRANSFORM_BACKEND")
+      END SELECT
       status = 1
+      value_length = 0
       value = ""
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_TRANSFORM_MODE", value, STATUS=status)
-      IF (status /= 0 .OR. LEN_TRIM(value) == 0) RETURN
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_EXCHANGE_TRANSFORM_MODE", value, &
+                                    LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) THEN
+         CPABORT("Invalid or overlong CP2K_GXTB_EXCHANGE_TRANSFORM_MODE value")
+      END IF
+      IF (LEN_TRIM(value) == 0) THEN
+         CPABORT("CP2K_GXTB_EXCHANGE_TRANSFORM_MODE must not be empty")
+      END IF
 
       SELECT CASE (TRIM(ADJUSTL(value)))
       CASE ("DENSE", "dense", "1")
@@ -4118,6 +4282,194 @@ CONTAINS
       END SELECT
 
    END FUNCTION tb_gxtb_exchange_transform_backend
+
+! **************************************************************************************************
+!> \brief Select reuse, direct construction, or qualification of compact ACP projectors.
+!> \param tb tblite state carrying the public CP2K input value
+!> \return selected compact-projector cache policy
+! **************************************************************************************************
+   INTEGER FUNCTION tb_gxtb_acp_projector_cache_mode(tb) RESULT(cache_mode)
+
+      TYPE(tblite_type), INTENT(IN)                      :: tb
+
+      CHARACTER(LEN=32)                                  :: value
+      INTEGER                                            :: status, value_length
+
+      cache_mode = tb%gxtb_acp_projector_cache
+      status = 1
+      value_length = 0
+      value = ""
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_ACP_PROJECTOR_CACHE", value, &
+                                    LENGTH=value_length, STATUS=status)
+      IF (status == 1 .AND. value_length == 0) RETURN
+      IF (status /= 0 .OR. value_length > LEN(value)) THEN
+         CPABORT("Invalid or overlong CP2K_GXTB_ACP_PROJECTOR_CACHE value")
+      END IF
+      IF (LEN_TRIM(value) == 0) THEN
+         CPABORT("CP2K_GXTB_ACP_PROJECTOR_CACHE must not be empty")
+      END IF
+
+      SELECT CASE (TRIM(ADJUSTL(value)))
+      CASE ("ENABLED", "enabled", "CACHE", "cache", "0")
+         cache_mode = tblite_gxtb_acp_cache_enabled
+      CASE ("DIRECT", "direct", "BYPASS", "bypass", "1")
+         cache_mode = tblite_gxtb_acp_cache_direct
+      CASE ("QUALIFY", "qualify", "2")
+         cache_mode = tblite_gxtb_acp_cache_qualify
+      CASE DEFAULT
+         CPABORT("Unknown CP2K_GXTB_ACP_PROJECTOR_CACHE value")
+      END SELECT
+
+   END FUNCTION tb_gxtb_acp_projector_cache_mode
+
+! **************************************************************************************************
+!> \brief Build compact ACP projector images according to the public cache policy.
+!> \param tb tblite state
+!> \param translations compact projector translation list
+!> \param images selected projector representation
+!>
+!> QUALIFY first repeats the cache-enabled build and verifies a real provider cache hit, then
+!> compares both cache-enabled representations with an immediate direct rebuild.  The direct
+!> provider call deliberately invalidates the reusable payload, so a later call must establish a
+!> fresh cache hit or miss rather than reusing data that were not checked in the current geometry.
+!> ACP derivative integrals are outside this wrapper and remain uncached.
+! **************************************************************************************************
+   SUBROUTINE tb_build_gxtb_acp_projectors(tb, translations, images)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: translations
+      TYPE(acp_image_type), INTENT(OUT)                  :: images
+
+      INTEGER                                            :: bypasses_before, cache_mode, &
+                                                            hits_before, misses_before
+      TYPE(acp_image_type)                               :: direct_images, repeated_images
+
+      cache_mode = tb_gxtb_acp_projector_cache_mode(tb)
+      SELECT CASE (cache_mode)
+      CASE (tblite_gxtb_acp_cache_enabled)
+         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                        translations, images, use_projector_cache=.TRUE.)
+      CASE (tblite_gxtb_acp_cache_direct)
+         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                        translations, images, use_projector_cache=.FALSE.)
+      CASE (tblite_gxtb_acp_cache_qualify)
+         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                        translations, images, use_projector_cache=.TRUE.)
+         hits_before = tb%acache%projector_hits
+         misses_before = tb%acache%projector_misses
+         bypasses_before = tb%acache%projector_bypasses
+         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                        translations, repeated_images, use_projector_cache=.TRUE.)
+         IF (tb%acache%projector_hits /= hits_before + 1 .OR. &
+             tb%acache%projector_misses /= misses_before .OR. &
+             tb%acache%projector_bypasses /= bypasses_before .OR. &
+             .NOT. tb%acache%projector_valid) THEN
+            CPABORT("Repeated ACP projector build did not use the provider cache")
+         END IF
+         CALL tb_qualify_gxtb_acp_projectors(images, repeated_images)
+         hits_before = tb%acache%projector_hits
+         misses_before = tb%acache%projector_misses
+         bypasses_before = tb%acache%projector_bypasses
+         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                        translations, direct_images, use_projector_cache=.FALSE.)
+         IF (tb%acache%projector_hits /= hits_before .OR. &
+             tb%acache%projector_misses /= misses_before .OR. &
+             tb%acache%projector_bypasses /= bypasses_before + 1 .OR. &
+             tb%acache%projector_valid) THEN
+            CPABORT("Direct ACP projector oracle did not bypass and invalidate the provider cache")
+         END IF
+         CALL tb_qualify_gxtb_acp_projectors(images, direct_images)
+         WRITE (*, '(A)') &
+            " GXTB-QUALIFICATION_ONLY ACP-PROJECTOR-CACHE repeatedHit=1 directBypass=1"
+      CASE DEFAULT
+         CPABORT("Invalid XTB/TBLITE/GXTB_ACCELERATION/ACP_PROJECTOR_CACHE")
+      END SELECT
+
+   END SUBROUTINE tb_build_gxtb_acp_projectors
+
+! **************************************************************************************************
+!> \brief Compare cached and direct compact ACP projector data at a strict relative tolerance.
+!> \param cached cache-enabled projector data
+!> \param direct direct-build projector data
+! **************************************************************************************************
+   SUBROUTINE tb_qualify_gxtb_acp_projectors(cached, direct)
+
+      TYPE(acp_image_type), INTENT(IN)                   :: cached, direct
+
+      REAL(KIND=dp), PARAMETER                           :: tolerance = 1.0E-12_dp
+
+      REAL(KIND=dp)                                      :: level_residual, overlap_residual, scale, &
+                                                            scaled_overlap_residual, &
+                                                            translation_residual
+
+      IF (ALLOCATED(cached%projector_translation) .NEQV. &
+          ALLOCATED(direct%projector_translation)) THEN
+         CPABORT("Cached and direct ACP projector translation allocation differs")
+      END IF
+      IF (ALLOCATED(cached%projector_overlap) .NEQV. ALLOCATED(direct%projector_overlap)) THEN
+         CPABORT("Cached and direct ACP projector overlap allocation differs")
+      END IF
+      IF (ALLOCATED(cached%scaled_projector_overlap) .NEQV. &
+          ALLOCATED(direct%scaled_projector_overlap)) THEN
+         CPABORT("Cached and direct scaled ACP projector overlap allocation differs")
+      END IF
+      IF (ALLOCATED(cached%level) .NEQV. ALLOCATED(direct%level)) THEN
+         CPABORT("Cached and direct ACP projector level allocation differs")
+      END IF
+      IF (.NOT. ALLOCATED(cached%projector_translation) .OR. &
+          .NOT. ALLOCATED(cached%projector_overlap) .OR. &
+          .NOT. ALLOCATED(cached%scaled_projector_overlap) .OR. .NOT. ALLOCATED(cached%level)) THEN
+         CPABORT("Incomplete compact ACP projector data during cache qualification")
+      END IF
+      IF (ANY(SHAPE(cached%projector_translation) /= SHAPE(direct%projector_translation))) THEN
+         CPABORT("Cached and direct ACP projector translation shapes differ")
+      END IF
+      IF (ANY(SHAPE(cached%projector_overlap) /= SHAPE(direct%projector_overlap))) THEN
+         CPABORT("Cached and direct ACP projector overlap shapes differ")
+      END IF
+      IF (ANY(SHAPE(cached%scaled_projector_overlap) /= &
+              SHAPE(direct%scaled_projector_overlap))) THEN
+         CPABORT("Cached and direct scaled ACP projector overlap shapes differ")
+      END IF
+      IF (ANY(SHAPE(cached%level) /= SHAPE(direct%level))) THEN
+         CPABORT("Cached and direct ACP projector level shapes differ")
+      END IF
+
+      translation_residual = 0.0_dp
+      IF (SIZE(cached%projector_translation) > 0) THEN
+         scale = MAX(1.0_dp, MAXVAL(ABS(cached%projector_translation)), &
+                     MAXVAL(ABS(direct%projector_translation)))
+         translation_residual = &
+            MAXVAL(ABS(cached%projector_translation - direct%projector_translation))/scale
+      END IF
+      overlap_residual = 0.0_dp
+      IF (SIZE(cached%projector_overlap) > 0) THEN
+         scale = MAX(1.0_dp, MAXVAL(ABS(cached%projector_overlap)), &
+                     MAXVAL(ABS(direct%projector_overlap)))
+         overlap_residual = MAXVAL(ABS(cached%projector_overlap - direct%projector_overlap))/scale
+      END IF
+      scaled_overlap_residual = 0.0_dp
+      IF (SIZE(cached%scaled_projector_overlap) > 0) THEN
+         scale = MAX(1.0_dp, MAXVAL(ABS(cached%scaled_projector_overlap)), &
+                     MAXVAL(ABS(direct%scaled_projector_overlap)))
+         scaled_overlap_residual = &
+            MAXVAL(ABS(cached%scaled_projector_overlap - direct%scaled_projector_overlap))/scale
+      END IF
+      level_residual = 0.0_dp
+      IF (SIZE(cached%level) > 0) THEN
+         scale = MAX(1.0_dp, MAXVAL(ABS(cached%level)), MAXVAL(ABS(direct%level)))
+         level_residual = MAXVAL(ABS(cached%level - direct%level))/scale
+      END IF
+      IF (.NOT. ALL(ieee_is_finite([translation_residual, overlap_residual, &
+                                    scaled_overlap_residual, level_residual]))) THEN
+         CPABORT("Non-finite residual during ACP projector cache qualification")
+      END IF
+      IF (translation_residual > tolerance .OR. overlap_residual > tolerance .OR. &
+          scaled_overlap_residual > tolerance .OR. level_residual > tolerance) THEN
+         CPABORT("Cached and direct ACP projectors differ beyond 1.0E-12")
+      END IF
+
+   END SUBROUTINE tb_qualify_gxtb_acp_projectors
 
 ! **************************************************************************************************
 !> \brief Select a strictly qualification-only partial-bridge fault injection.
@@ -5043,7 +5395,7 @@ CONTAINS
       CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
       CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
 
-      batch_size = tb_gxtb_exchange_stream_batch_size()
+      batch_size = tb_gxtb_exchange_stream_batch_size(tb)
       actual_batch_size = MIN(batch_size, kmap%nfull)
       CALL tb_gxtb_partial_next_transaction(leader, service_rank, para_env_inter_kp, &
                                             para_env_kp, transaction_id)
@@ -5688,7 +6040,7 @@ CONTAINS
             CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
          END IF
       ELSE IF (stream_mode == cp2k_exchange_stream_batched) THEN
-         batch_size = tb_gxtb_exchange_stream_batch_size()
+         batch_size = tb_gxtb_exchange_stream_batch_size(tb)
          CALL cp2k_exchange_stream_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                          kmap%nmesh, kmap%xkp, kmap%weight, error, &
                                          mode=stream_mode, batch_size=batch_size)
@@ -6188,14 +6540,12 @@ CONTAINS
       TYPE(mp_para_env_type), POINTER                    :: para_env
       INTEGER, INTENT(IN)                                :: iter_count
 
-      CHARACTER(LEN=32)                                  :: qualification_value
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)  :: overlap, overlap_oracle
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :, :) :: density, density_oracle, &
                                               density_reduced, exchange_fock_full, exchange_fock_oracle, exchange_fock_unpermuted, &
                                                               folded_fock_oracle
       INTEGER                                            :: ik, ispin, nao, nred, nspin, &
-                                                            qualification_iteration, &
-                                                            qualification_status, source_index, &
+                                                            source_index, &
                                                             stream_mode, transform_backend
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
@@ -6229,17 +6579,9 @@ CONTAINS
          CPABORT("Incomplete CP2K image map for g-xTB exchange")
       CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_nl, cell_to_index)
       kmap => tb%gxtb_kmesh_map
-      qualification_iteration = -1
-      qualification_status = 1
-      qualification_value = ""
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GXTB_QUALIFICATION_FULLMESH_ORACLE_ITERATION", &
-                                    qualification_value, STATUS=qualification_status)
-      IF (qualification_status == 0) &
-         READ (qualification_value, *, IOSTAT=qualification_status) qualification_iteration
-      run_qualification_oracle = qualification_status == 0 .AND. &
-                                 qualification_iteration == iter_count
-      stream_mode = tb_gxtb_exchange_stream_mode()
-      transform_backend = tb_gxtb_exchange_transform_backend()
+      run_qualification_oracle = tb_gxtb_forward_qualification_enabled(tb, iter_count)
+      stream_mode = tb_gxtb_exchange_stream_mode(tb)
+      transform_backend = tb_gxtb_exchange_transform_backend(tb)
       IF (run_qualification_oracle .AND. kmap%identity .AND. &
           stream_mode /= cp2k_exchange_stream_batched .AND. &
           stream_mode /= tb_gxtb_exchange_stream_distributed .AND. &
@@ -6292,6 +6634,7 @@ CONTAINS
       ! without an alias-prone inverse image transform.
       IF (kmap%identity) THEN
          CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density)
+         IF (run_qualification_oracle) density_reduced(:, :, :, :) = density(:, :, :, :)
       ELSE
          CALL tb_collect_kpoint_density(qs_env, tb, kpoints, density, kmap%representative)
          IF (run_qualification_oracle) THEN
@@ -6483,11 +6826,10 @@ CONTAINS
             CPABORT("QUALIFICATION_ONLY total full/reduced duality exceeded 1.0E-10")
       END IF
 
-      ! QUALIFICATION_ONLY: this is deliberately dormant unless an exact SCC iteration is named
-      ! through the environment.  It re-evaluates the already star-expanded density on a reversed
-      ! complete mesh, restores the original ordering, folds independently, and applies strict
-      ! numerical gates.  Production calculations must never set this variable; the hook is
-      ! removed again after qualification artifacts have been frozen.
+      ! The public qualification path re-evaluates every selected forward invocation with the
+      ! permanent dense oracle.  A strictly parsed developer override may restrict it to one SCC
+      ! iteration.  The reversed complete-mesh order makes the second evaluation independent of
+      ! the primary traversal; the selected result remains the only response applied to CP2K.
       IF (run_qualification_oracle) THEN
          ALLOCATE (density_oracle(nao, nao, nspin, kmap%nfull), &
                    overlap_oracle(nao, nao, kmap%nfull), &
@@ -6587,8 +6929,8 @@ CONTAINS
 
       INTEGER                                            :: gradient_mode, stream_mode
 
-      gradient_mode = tb_gxtb_exchange_gradient_mode()
-      stream_mode = tb_gxtb_exchange_stream_mode()
+      gradient_mode = tb_gxtb_exchange_gradient_mode(tb)
+      stream_mode = tb_gxtb_exchange_stream_mode(tb)
       SELECT CASE (gradient_mode)
       CASE (tb_gxtb_exchange_gradient_dense)
          CALL tb_gxtb_kpoint_exchange_gradient_dense(qs_env, tb, gradient, sigma)
@@ -6702,7 +7044,7 @@ CONTAINS
          CPABORT("Incomplete k-point image map for g-xTB exchange gradient")
       CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_nl, cell_to_index)
       kmap => tb%gxtb_kmesh_map
-      transform_backend = tb_gxtb_exchange_transform_backend()
+      transform_backend = tb_gxtb_exchange_transform_backend(tb)
 
       nao = tb%calc%bas%nao
       nat = tb%mol%nat
@@ -7074,7 +7416,7 @@ CONTAINS
       CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
       CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
 
-      batch_size = tb_gxtb_exchange_stream_batch_size()
+      batch_size = tb_gxtb_exchange_stream_batch_size(tb)
       ! A bounded qualification must not silently become one complete AO image mesh.
       batch_size = MIN(batch_size, kmap%nfull - 1)
       actual_batch_size = MIN(batch_size, kmap%nfull)
@@ -7295,7 +7637,7 @@ CONTAINS
          CALL cp2k_exchange_kmesh_gradient(tb%calc, tb%mol, tb%ecache, kmap%nmesh, &
                                            kmap%xkp, kmap%weight, density_full, overlap_full, &
                                            overlap_grad_full, gradient_oracle, sigma_oracle, error, &
-                                           transform_backend=tb_gxtb_exchange_transform_backend())
+                                           transform_backend=tb_gxtb_exchange_transform_backend(tb))
          IF (ALLOCATED(error)) &
             CPABORT("save_tblite dense reverse oracle failed: "//TRIM(error%message))
          IF (.NOT. kmap%identity) &
@@ -7503,7 +7845,7 @@ CONTAINS
       CALL cp_dbcsr_alloc_block_from_nbl(rmatrix, sab_nl)
       CALL cp_dbcsr_alloc_block_from_nbl(cmatrix, sab_nl)
 
-      batch_size = tb_gxtb_exchange_stream_batch_size()
+      batch_size = tb_gxtb_exchange_stream_batch_size(tb)
       actual_batch_size = MIN(batch_size, kmap%nfull)
       CALL tb_gxtb_partial_next_transaction(leader, service_rank, para_env_inter_kp, &
                                             para_env_kp, transaction_id)
@@ -8392,7 +8734,9 @@ CONTAINS
       INTEGER, DIMENSION(:, :), POINTER                   :: index_to_cell
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: owork
 #if defined(__TBLITE_GXTB)
-      INTEGER                                            :: nimg_gxtb
+      INTEGER :: acp_projector_cache_mode, acceleration_batch_size, acceleration_gradient_mode, &
+                 acceleration_star_mode, acceleration_stream_mode, acceleration_transform_backend, nimg_gxtb
+      LOGICAL :: acceleration_batch_env_override, acceleration_forward_qualification
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: gxtb_index_to_cell
       INTEGER, DIMENSION(:, :, :), POINTER               :: gxtb_cell_to_index
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_h, projector_translations, translations
@@ -8463,6 +8807,21 @@ CONTAINS
                       sab_kp=sab_kp, &
                       rho=rho, tb_tblite=tb, cell=cell_obj)
       h0 => tb%calc%h0
+#if defined(__TBLITE_GXTB)
+      tb%gxtb_exchange_stream_backend = &
+         dft_control%qs_control%xtb_control%gxtb_exchange_stream_backend
+      tb%gxtb_forward_fock_qualification = &
+         dft_control%qs_control%xtb_control%gxtb_forward_fock_qualification
+      tb%gxtb_gradient_contraction = dft_control%qs_control%xtb_control%gxtb_gradient_contraction
+      tb%gxtb_fourier_transform_backend = &
+         dft_control%qs_control%xtb_control%gxtb_fourier_transform_backend
+      tb%gxtb_symmetry_star_contraction = &
+         dft_control%qs_control%xtb_control%gxtb_symmetry_star_contraction
+      tb%gxtb_image_batch_explicit = &
+         dft_control%qs_control%xtb_control%gxtb_image_batch_explicit
+      tb%gxtb_image_batch_size = dft_control%qs_control%xtb_control%gxtb_image_batch_size
+      tb%gxtb_acp_projector_cache = dft_control%qs_control%xtb_control%gxtb_acp_projector_cache
+#endif
 
       !update geometry (required for debug / geometry optimization)
       CALL tb_update_geometry(qs_env, tb)
@@ -8495,6 +8854,48 @@ CONTAINS
       IF (dft_control%qs_control%xtb_control%tblite_method == gxtb) THEN
          CALL cp2k_update_basis(tb%calc, tb%mol, tb%bcache, error, calculate_forces, tb%wfn_aux)
          IF (ALLOCATED(error)) CPABORT("save_tblite q-vSZP basis update failed")
+         acceleration_stream_mode = tb_gxtb_exchange_stream_mode(tb)
+         acceleration_gradient_mode = tb_gxtb_exchange_gradient_mode(tb)
+         acceleration_transform_backend = tb_gxtb_exchange_transform_backend(tb)
+         acceleration_star_mode = tb_gxtb_symmetry_star_mode(tb)
+         acceleration_batch_size = &
+            tb_gxtb_exchange_stream_batch_size(tb, acceleration_batch_env_override)
+         acceleration_forward_qualification = tb_gxtb_forward_qualification_enabled(tb)
+         acp_projector_cache_mode = tb_gxtb_acp_projector_cache_mode(tb)
+         IF (acceleration_transform_backend /= cp2k_exchange_transform_dense .AND. &
+             (acceleration_stream_mode /= 0 .OR. &
+              acceleration_gradient_mode /= tb_gxtb_exchange_gradient_dense)) THEN
+            CPABORT("Non-dense g-xTB transform requires dense complete-array paths")
+         END IF
+         IF ((tb%gxtb_image_batch_explicit .OR. acceleration_batch_env_override) .AND. &
+             .NOT. (ANY(acceleration_stream_mode == &
+                        [cp2k_exchange_stream_batched, tb_gxtb_exchange_stream_kgroup_partial_root, &
+                         tb_gxtb_exchange_stream_kgroup_partial_replicated, &
+                         tb_gxtb_exchange_stream_kgroup_partial_images]) .OR. &
+                    ANY(acceleration_gradient_mode == &
+                        [tb_gxtb_exchange_gradient_streamed, tb_gxtb_exchange_gradient_qualify]))) THEN
+            CPABORT("IMAGE_BATCH_SIZE is unused by the effective g-XTB paths")
+         END IF
+         IF (acceleration_forward_qualification .AND. &
+             acceleration_stream_mode == 0 .AND. &
+             acceleration_transform_backend == cp2k_exchange_transform_dense) THEN
+            CPABORT("FORWARD_FOCK_QUALIFICATION requires an accelerated forward exchange path")
+         END IF
+         IF (.NOT. use_gxtb_images .AND. &
+             (acceleration_stream_mode /= 0 .OR. &
+              acceleration_gradient_mode /= tb_gxtb_exchange_gradient_dense .OR. &
+              acceleration_transform_backend /= cp2k_exchange_transform_dense .OR. &
+              acceleration_star_mode /= tb_gxtb_symmetry_star_dense .OR. &
+              acceleration_forward_qualification .OR. &
+              acp_projector_cache_mode /= tblite_gxtb_acp_cache_enabled .OR. &
+              acceleration_batch_size /= tblite_gxtb_image_batch_default)) THEN
+            CPABORT("Non-default GXTB_ACCELERATION settings require an explicit periodic k-point path")
+         END IF
+         IF (acp_projector_cache_mode /= tblite_gxtb_acp_cache_enabled) THEN
+            IF (.NOT. ALLOCATED(tb%calc%acp)) THEN
+               CPABORT("Non-default ACP_PROJECTOR_CACHE requires an ACP-enabled g-xTB parametrization")
+            END IF
+         END IF
       END IF
 #endif
       IF (do_kpoints) THEN
@@ -8603,8 +9004,7 @@ CONTAINS
             CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
                                     cp2k_get_acp_cutoff(tb%calc, tb%accuracy), &
                                     projector_translations)
-            CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
-                                           projector_translations, acp_images)
+            CALL tb_build_gxtb_acp_projectors(tb, projector_translations, acp_images)
             CALL tb_scatter_gxtb_images(tb, h0_images, translations=translations, &
                                         matrix_s=matrix_s, matrix_h=matrix_h, sab_orb=sab_orb, &
                                         cell_to_index=cell_to_index, nimg=nimg)
@@ -9843,7 +10243,9 @@ CONTAINS
                       matrix_s_kp=matrix_s, matrix_ks_kp=ks_matrix, qs_kind_set=qs_kind_set, &
                       do_kpoints=do_kpoints)
       IF (do_kpoints) THEN
-         IF (.NOT. ASSOCIATED(kp_list)) CPABORT("Missing k-point neighbor list for tblite Hamiltonian")
+         IF (.NOT. ASSOCIATED(kp_list)) THEN
+            CPABORT("Missing k-point neighbor list for tblite Hamiltonian")
+         END IF
          n_list => kp_list
       END IF
       nspin = SIZE(ks_matrix, 1)
@@ -10739,8 +11141,7 @@ CONTAINS
          CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
                                  cp2k_get_acp_cutoff(tb%calc, tb%accuracy), &
                                  projector_translations)
-         CALL cp2k_build_acp_projectors(tb%calc, tb%mol, tb%bcache, tb%acache, &
-                                        projector_translations, acp_images)
+         CALL tb_build_gxtb_acp_projectors(tb, projector_translations, acp_images)
          CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_kp, cell_to_index)
          kmap => tb%gxtb_kmesh_map
          CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
