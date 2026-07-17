@@ -6354,6 +6354,21 @@ CONTAINS
       CALL dbcsr_deallocate_matrix(rmatrix)
       CALL dbcsr_deallocate_matrix(cmatrix)
       DEALLOCATE (overlap_part)
+      IF (para_env%is_source()) THEN
+         SELECT CASE (transform_backend)
+         CASE (cp2k_exchange_transform_dense)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=DENSE fallback=0 iter=", iter_count
+         CASE (cp2k_exchange_transform_separable_dft)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=SEPARABLE_DFT fallback=0 iter=", iter_count
+         CASE (cp2k_exchange_transform_mixed_radix_fft)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=MIXED_RADIX_FFT fallback=0 iter=", iter_count
+         CASE DEFAULT
+            CPABORT("Unknown g-xTB exchange transform backend before provider call")
+         END SELECT
+      END IF
       CALL cp2k_exchange_kmesh(tb%calc, tb%mol, tb%ecache, tb%wfn, kmap%nmesh, &
                                kmap%xkp, kmap%weight, density, overlap, exchange_fock_full, exchange_vsh, &
                                exchange_energy, error, transform_backend=transform_backend)
@@ -6814,6 +6829,21 @@ CONTAINS
          !                              overlap, overlap_grad, gradient, sigma, error)
          ! overlap_grad is spin-summed and unweighted; k_gradient/k_sigma are already total
          ! primitive-cell responses and therefore must not receive another k-point weight here.
+         IF (para_env%is_source()) THEN
+            SELECT CASE (transform_backend)
+            CASE (cp2k_exchange_transform_dense)
+               WRITE (*, '(A)') &
+                  " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=DENSE fallback=0"
+            CASE (cp2k_exchange_transform_separable_dft)
+               WRITE (*, '(A)') &
+                  " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=SEPARABLE_DFT fallback=0"
+            CASE (cp2k_exchange_transform_mixed_radix_fft)
+               WRITE (*, '(A)') &
+                  " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=MIXED_RADIX_FFT fallback=0"
+            CASE DEFAULT
+               CPABORT("Unknown g-xTB exchange transform backend before gradient provider call")
+            END SELECT
+         END IF
          CALL cp2k_exchange_kmesh_gradient(tb%calc, tb%mol, tb%ecache, kmap%nmesh, &
                                            kmap%xkp, kmap%weight, density, overlap, overlap_grad_full, &
                                            k_gradient, k_sigma, error, &
