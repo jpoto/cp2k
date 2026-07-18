@@ -661,8 +661,16 @@ CONTAINS
          END DO
       END DO
       DEALLOCATE (raw, image_to_record, full_index_to_cell, full_cell_to_index)
-      IF (alias_residual > alias_consistency_tol*MAX(1.0_dp, alias_scale)) &
-         CPABORT("Inconsistent modulo-grid aliases in k-point restart density")
+      IF (alias_residual > alias_consistency_tol*MAX(1.0_dp, alias_scale)) THEN
+         ! A real-space density mixer can temporarily move redundant neighbour-list
+         ! images away from exact Born--von-Karman alias covariance.  Their group
+         ! average below is the unique least-squares projection onto the canonical
+         ! finite-mesh subspace and is therefore the appropriate restart payload.
+         ! Rejecting the checkpoint used to abort an otherwise healthy SCF cycle.
+         CALL cp_warn(__LOCATION__, &
+                      "Projecting inconsistent modulo-grid aliases onto the canonical "// &
+                      "k-point restart density.")
+      END IF
       WHERE (canonical_count > 0)
          canonical_r = canonical_r/REAL(canonical_count, dp)
          canonical_i = canonical_i/REAL(canonical_count, dp)

@@ -1,0 +1,56 @@
+#CPQA DEPENDS H2O_gxtb_kp_cp2k_density_mixer.inp
+&GLOBAL
+  PRINT_LEVEL LOW
+  PROJECT H2O_gxtb_kp_cp2k_density_mixer_restart
+  RUN_TYPE ENERGY
+&END GLOBAL
+
+&FORCE_EVAL
+  METHOD QUICKSTEP
+  &DFT
+    WFN_RESTART_FILE_NAME H2O_gxtb_kp_cp2k_density_mixer-RESTART.kp
+    &KPOINTS
+      FULL_GRID TRUE
+      PARALLEL_GROUP_SIZE -1
+      SCHEME MACDONALD 3 1 1 0.0 0.0 0.0
+      SYMMETRY OFF
+      WAVEFUNCTIONS COMPLEX
+    &END KPOINTS
+    &QS
+      METHOD xTB
+      &XTB
+        GFN_TYPE TBLITE
+        SCC_MIXER CP2K
+        &TBLITE
+          ACCURACY 1.0
+          METHOD GXTB
+        &END TBLITE
+      &END XTB
+    &END QS
+    &SCF
+      EPS_DIIS 0.0
+      EPS_SCF 1.0E-7
+      MAX_SCF 150
+      SCF_GUESS RESTART
+      &MIXING
+        ALPHA 0.2
+        METHOD DIRECT_P_MIXING
+      &END MIXING
+      &PRINT
+        &RESTART OFF
+        &END RESTART
+      &END PRINT
+    &END SCF
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC 10.0 10.0 10.0
+      PERIODIC XYZ
+    &END CELL
+    &COORD
+      O  5.000000  5.000000  5.000000
+      H  5.758602  5.000000  5.504284
+      H  4.241398  5.000000  5.504284
+    &END COORD
+  &END SUBSYS
+&END FORCE_EVAL

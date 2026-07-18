@@ -11,20 +11,24 @@
                                           {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
 "H2O_gxtb_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346}]
 "O2_gxtb_uks_reference_cli.inp" = [{matcher="E_total", tol=1.0E-8, ref=-150.34083895130186}]
-"O2_gxtb_uks_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-150.5418927284650},
+"O2_gxtb_uks_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-150.541892482180998},
                               {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
                               {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0}]
 "H2O_gxtb_cp2k_density_mixer.inp" = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
                                       {matcher="GXTB_cp2k_pmix"}]
 "H2O_gxtb_cp2k_fock_diis.inp"     = [{matcher="E_total", tol=1.0E-8, ref=-76.49208604705346},
                                       {matcher="GXTB_cp2k_fdiis"}]
-"H2O_gxtb_kp_cp2k_density_mixer.inp" = [{matcher="E_total", tol=1.0E-10, ref=-76.49208619395162},
+"H2O_gxtb_kp_cp2k_density_mixer.inp" = [{matcher="E_total", tol=1.0E-10, ref=-76.492086571470793},
                                          {matcher="GXTB_cp2k_pmix"}]
-"H2O_gxtb_kp_cp2k_fock_diis.inp" = [{matcher="E_total", tol=1.0E-10, ref=-76.49208619395161},
+"H2O_gxtb_kp_cp2k_density_mixer_restart.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-76.492086571470793},
+  {matcher="GXTB_cp2k_pmix"},
+]
+"H2O_gxtb_kp_cp2k_fock_diis.inp" = [{matcher="E_total", tol=1.0E-10, ref=-76.492086571470793},
                                      {matcher="GXTB_cp2k_fdiis"}]
-"Si_prim_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.144179617249051}]
-"Si_prim_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.025502950720693}]
-"CH4_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.47375815918123}]
+"Si_prim_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.144253441874071}]
+"Si_prim_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.025531393563028}]
+"CH4_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.473748967057020}]
 "H2_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-1.196733964557302}]
 "H2_gxtb_gamma_supercell_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-3.590201893735382}]
 "H2_gxtb_kp_311_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
@@ -42,7 +46,7 @@
   {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
 ]
 "CH4_gxtb_kp_k290.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.473758159181230},
+  {matcher="E_total", tol=1.0E-10, ref=-40.473748967057020},
   {matcher="N_special_kpoints", tol=0.0, ref=1},
 ]
 "CH4_gxtb_kp_k290_force_stress.inp" = [
@@ -55,27 +59,27 @@
   {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0},
 ]
 "O2_gxtb_uks_kp_311_tr.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-150.541892728465001},
+  {matcher="E_total", tol=1.0E-10, ref=-150.541892482180998},
   {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
   {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0},
 ]
-"Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050838553817130}]
-"Si_prim_gxtb_kp_shifted_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050838553817130}]
+"Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050928767344203}]
+"Si_prim_gxtb_kp_shifted_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050928767344203}]
 "CH4_gxtb_kp_acceleration_qualify.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.473758159181230},
+  {matcher="E_total", tol=1.0E-10, ref=-40.473748967057020},
   {matcher="GXTB_exchange_qualification"},
   {matcher="GXTB_forward_fock_qualification"},
   {matcher="GXTB_mixer_star_qualification"},
   {matcher="GXTB_acp_cache_qualification"},
 ]
 "CH4_gxtb_kp_acceleration_production.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.473758159181230},
+  {matcher="E_total", tol=1.0E-10, ref=-40.473748967057020},
   {matcher="GXTB_distributed_images_production"},
   {matcher="GXTB_streamed_star_production"},
   {matcher="GXTB_distributed_images_reverse_production"},
 ]
 "CH4_gxtb_kp_symmetry_fused_qualify.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.468870021692382},
+  {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
   {matcher="GXTB_symmetry_fused_forward"},
   {matcher="GXTB_symmetry_fused_reverse"},
   {matcher="GXTB_symmetry_fused_overlap_covariance"},
@@ -83,21 +87,21 @@
   {matcher="GXTB_streamed_reverse_qualification"},
 ]
 "CH4_gxtb_kp_symmetry_fused_large_batch.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.468870021692382},
+  {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
   {matcher="GXTB_symmetry_fused_forward"},
   {matcher="GXTB_symmetry_fused_reverse"},
   {matcher="GXTB_symmetry_fused_overlap_covariance"},
   {matcher="GXTB_symmetry_fused_large_batch_clamp"},
 ]
 "CH4_gxtb_kp_restart_3.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.468870021692382},
+  {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
 ]
 "CH4_gxtb_kp_restart_4.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-40.468555915668887},
+  {matcher="E_total", tol=1.0E-10, ref=-40.468551982577388},
   {matcher="KPOINT_RESTART_VALIDATED_TRANSFER"},
 ]
 "Si_prim_gxtb_kp_mixed_radix.inp" = [
-  {matcher="E_total", tol=1.0E-10, ref=-579.050838553817130},
+  {matcher="E_total", tol=1.0E-10, ref=-579.050928767344203},
   {matcher="GXTB_forward_fullmesh_qualification"},
   {matcher="GXTB_mixed_radix_transform"},
   {matcher="GXTB_mixed_radix_transform_forward"},

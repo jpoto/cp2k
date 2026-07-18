@@ -10109,6 +10109,13 @@ CONTAINS
       IF (dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. do_kpoints) THEN
          IF (.NOT. ASSOCIATED(kpoints)) CPABORT("Missing CP2K k-point data for g-XTB")
          CALL get_kpoint_info(kpoint=kpoints, nkp=nkp, nkp_grid=nkp_grid)
+         IF (TRIM(kpoints%kp_scheme) == "GENERAL") THEN
+            ! GENERAL deliberately leaves nkp_grid unset.  Reuse the strict
+            ! Cartesian-product validator already used by the coupled
+            ! exchange map so an explicitly listed regular mesh drives the
+            ! identical Born--von-Karman Coulomb supercell.
+            CALL tb_infer_gxtb_general_mesh(kpoints, nkp_grid)
+         END IF
          use_bvk_coulomb = PRODUCT(nkp_grid(:)) > 1 .AND. ALL(nkp_grid(:) > 0) .AND. &
                            .NOT. ANY((nkp_grid(:) > 1) .AND. (.NOT. tb%mol%periodic(:)))
          IF ((nkp > 1 .OR. PRODUCT(nkp_grid(:)) > 1) .AND. .NOT. use_bvk_coulomb) THEN
