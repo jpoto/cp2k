@@ -94,7 +94,7 @@ MODULE qs_environment
         do_method_am1, do_method_dftb, do_method_gapw, do_method_gapw_xc, do_method_gpw, &
         do_method_lrigpw, do_method_mndo, do_method_mndod, do_method_ofgpw, do_method_pdg, &
         do_method_pm3, do_method_pm6, do_method_pm6fm, do_method_pnnl, do_method_rigpw, &
-        do_method_rm1, do_method_xtb, do_qmmm_gauss, do_qmmm_swave, general_roks, gfn1xtb, &
+        do_method_rm1, do_method_xtb, do_qmmm_gauss, do_qmmm_swave, general_roks, gfn1xtb, gxtb, &
         hden_atomic, kg_tnadd_embed_ri, linear_response_run, rel_none, rel_trans_atom, &
         smear_fermi_dirac, tblite_scc_mixer_tblite, tddfpt_kernel_none, vdw_pairpot_dftd2, &
         vdw_pairpot_dftd3, vdw_pairpot_dftd3bj, vdw_pairpot_dftd4, wfi_linear_ps_method_nr, &
@@ -1707,8 +1707,10 @@ CONTAINS
 
       ! XXXXXXX this is backwards XXXXXXXX
       IF (dft_control%qs_control%xtb_control%do_tblite .AND. .NOT. scf_control%use_ot) THEN
-         IF (.NOT. scf_control%smear%do_smear) THEN
-            ! set tblite default smearing
+         IF (.NOT. scf_control%smear%do_smear .AND. &
+             dft_control%qs_control%xtb_control%tblite_method /= gxtb) THEN
+            ! Match tblite defaults: GFN methods use 300 K, whereas g-xTB uses
+            ! zero-temperature occupations unless smearing is requested explicitly.
             scf_control%smear%do_smear = .TRUE.
             scf_control%smear%method = smear_fermi_dirac
             scf_control%smear%electronic_temperature = 300._dp/kelvin

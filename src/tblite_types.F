@@ -130,7 +130,10 @@ MODULE tblite_types
       LOGICAL                                            :: gxtb_image_batch_explicit = .FALSE.
       LOGICAL                                            :: mixed_fock_kp_valid = .FALSE.
       LOGICAL                                            :: previous_density_kp_valid = .FALSE.
+      LOGICAL                                            :: bvk_coulomb_ready = .FALSE.
+      INTEGER, DIMENSION(3)                              :: bvk_coulomb_grid = 0
       REAL(KIND=dp)                                      :: e_acp_kp = 0.0_dp
+      REAL(KIND=dp), ALLOCATABLE                         :: bvk_coulomb_energy(:)
       INTEGER                                            :: gxtb_exchange_stream_backend = &
                                                             tblite_gxtb_exchange_complete_array
       INTEGER                                            :: gxtb_forward_fock_qualification = &
@@ -146,6 +149,11 @@ MODULE tblite_types
       TYPE(container_cache)                              :: ecache = container_cache()
       TYPE(container_cache)                              :: rcache = container_cache()
       TYPE(container_cache)                              :: scache = container_cache()
+      TYPE(structure_type)                               :: bvk_coulomb_mol = structure_type()
+      TYPE(xtb_calculator)                               :: bvk_coulomb_calc = xtb_calculator()
+      TYPE(container_cache)                              :: bvk_coulomb_cache = container_cache()
+      TYPE(wavefunction_type)                            :: bvk_coulomb_wfn = wavefunction_type()
+      TYPE(potential_type)                               :: bvk_coulomb_pot = potential_type()
 #endif
 #if defined(__TBLITE)
       TYPE(structure_type)                               :: mol = structure_type()
@@ -208,15 +216,18 @@ CONTAINS
          IF (ALLOCATED(tb_tblite%overlap_dense)) DEALLOCATE (tb_tblite%overlap_dense)
          IF (ALLOCATED(tb_tblite%gxtb_kmesh_map)) DEALLOCATE (tb_tblite%gxtb_kmesh_map)
          IF (ALLOCATED(tb_tblite%acp_fock_kp)) DEALLOCATE (tb_tblite%acp_fock_kp)
-         IF (ALLOCATED(tb_tblite%qualification_acp_fock_full)) &
+         IF (ALLOCATED(tb_tblite%qualification_acp_fock_full)) THEN
             DEALLOCATE (tb_tblite%qualification_acp_fock_full)
+         END IF
          IF (ALLOCATED(tb_tblite%exchange_fock_kp)) DEALLOCATE (tb_tblite%exchange_fock_kp)
          IF (ALLOCATED(tb_tblite%mixed_fock_kp)) DEALLOCATE (tb_tblite%mixed_fock_kp)
          IF (ALLOCATED(tb_tblite%previous_density_kp)) DEALLOCATE (tb_tblite%previous_density_kp)
+         IF (ALLOCATED(tb_tblite%bvk_coulomb_energy)) DEALLOCATE (tb_tblite%bvk_coulomb_energy)
          tb_tblite%acp_fock_kp_valid = .FALSE.
          tb_tblite%exchange_fock_kp_valid = .FALSE.
          tb_tblite%mixed_fock_kp_valid = .FALSE.
          tb_tblite%previous_density_kp_valid = .FALSE.
+         tb_tblite%bvk_coulomb_ready = .FALSE.
          IF (ALLOCATED(tb_tblite%potential_mixer)) DEALLOCATE (tb_tblite%potential_mixer)
          tb_tblite%potential_mixer_dimension = 0
 #endif

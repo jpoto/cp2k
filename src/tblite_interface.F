@@ -28,8 +28,9 @@ MODULE tblite_interface
 #if defined(__TBLITE_GXTB)
    USE tblite_cp2k_compat, ONLY: get_mixer_dimension => cp2k_get_scc_mixer_dimension, &
                                  acp_image_type, hamiltonian_image_type, &
-                                 cp2k_acp_kmesh, cp2k_acp_kmesh_gradient, &
-                                 cp2k_apply_basis_gradient, cp2k_build_acp_projectors, &
+                                 cp2k_acp_image_gradient, cp2k_acp_kmesh, &
+                                 cp2k_acp_kmesh_gradient, cp2k_apply_basis_gradient, &
+                                 cp2k_build_acp_projectors, cp2k_build_image_acp, &
                                  cp2k_build_gamma_h0, &
                                  cp2k_build_image_h0, cp2k_exchange_kmesh, &
                                  cp2k_exchange_kmesh_gradient, &
@@ -1814,6 +1815,9 @@ CONTAINS
       tb%gxtb_transform_validated = .FALSE.
       tb%acp_fock_kp_valid = .FALSE.
       tb%e_acp_kp = 0.0_dp
+      tb%bvk_coulomb_ready = .FALSE.
+      tb%bvk_coulomb_grid(:) = 0
+      IF (ALLOCATED(tb%bvk_coulomb_energy)) DEALLOCATE (tb%bvk_coulomb_energy)
 
    END SUBROUTINE tb_reset_gxtb_kpoint_cache
 
@@ -3714,6 +3718,7 @@ CONTAINS
          streamed_roundtrip_residual
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: mixed_vector, raw_vector
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: fock_imag, fock_real
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_s
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mp_para_env_type), POINTER                    :: para_env
@@ -3722,10 +3727,10 @@ CONTAINS
       TYPE(tb_gxtb_kmesh_map_type), POINTER              :: kmap
       TYPE(tblite_type), POINTER                         :: tb
 
-      NULLIFY (cell_to_index, cmatrix, dft_control, kmap, para_env, rmatrix, sab_nl, tb)
+      NULLIFY (cell_to_index, cmatrix, dft_control, kmap, matrix_s, para_env, rmatrix, sab_nl, tb)
       IF (.NOT. ASSOCIATED(qs_env) .OR. .NOT. ASSOCIATED(kpoints) .OR. &
           .NOT. ASSOCIATED(scf_env)) RETURN
-      CALL get_qs_env(qs_env, dft_control=dft_control)
+      CALL get_qs_env(qs_env, dft_control=dft_control, matrix_s_kp=matrix_s)
       tb => qs_env%tb_tblite
       IF (.NOT. ASSOCIATED(tb) .OR. .NOT. ASSOCIATED(dft_control)) RETURN
       tb%mixed_fock_kp_valid = .FALSE.
@@ -3735,7 +3740,11 @@ CONTAINS
 
       CALL get_kpoint_info(kpoints, nkp=nkp, use_real_wfn=use_real_wfn, &
                            cell_to_index=cell_to_index, sab_nl=sab_nl)
+      IF (.NOT. ASSOCIATED(matrix_s) .OR. .NOT. ASSOCIATED(cell_to_index)) THEN
+         CPABORT("Incomplete k-point overlap map before g-XTB potential mixing")
+      END IF
       CPASSERT(ASSOCIATED(sab_nl))
+      CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_nl, cell_to_index)
       IF (ABS(SUM(kpoints%wkp(1:nkp)) - 1.0_dp) > 1.0E-10_dp) THEN
          CPABORT("g-xTB k-point weights do not sum to one")
       END IF
@@ -7348,9 +7357,10 @@ CONTAINS
 !>
 !> A complete multi-k mesh is differentiated by one coupled save_tblite reverse sweep.  Its direct
 !> atomic gradient and strain derivative are already complete Brillouin-zone contractions per
-!> primitive cell.  The returned unweighted overlap response transforms like a density matrix and
-!> is folded back to CP2K's real-space image convention by kpoint_density_transform, which applies
-!> the k-point weights, Bloch phases, and image orientation exactly once.
+!> primitive cell.  The returned unweighted overlap response is a complex AO adjoint.  Its real
+!> and imaginary components are copied without a component-wise sign change;
+!> kpoint_density_transform then applies the k-point weights, Bloch phases, and image orientation
+!> exactly once.
 !>
 !> This isolated bridge puts the spin-summed exchange overlap response into matrix_w(1,:).  The
 !> ordinary alpha/beta channels must still be separate at entry; a later up/down-to-charge/magnet
@@ -7636,6 +7646,9 @@ CONTAINS
             ikk = ik - kp_range(1) + 1
             CALL tb_dense_to_fm(REAL(overlap_grad(:, :, ik), KIND=dp), pmat_ext(ikk, 1, 1))
             IF (.NOT. use_real_wfn) THEN
+               ! The provider returns the complex overlap adjoint G in
+               ! dE=Re Tr[G^H dS].  CP2K's k-to-R transform expects the same
+               ! real/imaginary component convention at this boundary.
                CALL tb_dense_to_fm(AIMAG(overlap_grad(:, :, ik)), pmat_ext(ikk, 2, 1))
             END IF
          END IF
@@ -10043,7 +10056,7 @@ CONTAINS
 #if defined(__TBLITE)
 
       INTEGER                                            :: iatom, ikind, is, ns, atom_a, ii, im
-      INTEGER                                            :: ispin, nspin
+      INTEGER                                            :: ispin, nkp, nspin
       INTEGER                                            :: nimg, nkind, nsgf, natorb, na, n_mix_cols, mix_offset
       INTEGER                                            :: n_atom, max_orb, max_shell
       INTEGER                                            :: raw_state_status, raw_state_unit
@@ -10052,7 +10065,8 @@ CONTAINS
                                                             skip_charge_mixing, reuse_native_input, skip_scf_dispersion, &
                                                             skip_scf_dispersion_energy, seed_native_from_rho, &
                                                             skip_scf_dispersion_gradient, skip_scf_dispersion_potential, &
-                                                            use_gxtb_potential_mixer, use_native_mixer, use_no_mixer
+                                                            use_bvk_coulomb, use_gxtb_potential_mixer, &
+                                                            use_native_mixer, use_no_mixer
       REAL(KIND=dp)                                      :: native_seed_charge, norm, new_charge, pao
 #if defined(__TBLITE_DEBUG_DIAGNOSTICS)
       INTEGER                                            :: debug_status
@@ -10062,6 +10076,7 @@ CONTAINS
       INTEGER, DIMENSION(5)                              :: occ
       INTEGER, DIMENSION(25)                             :: lao
       INTEGER, DIMENSION(25)                             :: nao
+      INTEGER, DIMENSION(3)                              :: nkp_grid
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: ch_atom, ch_shell, ch_ref, ch_orb, mix_vars
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: aocg, ao_dip, ao_quad
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: aocg_spin, ao_dip_spin, ao_quad_spin, &
@@ -10086,6 +10101,21 @@ CONTAINS
       CALL get_qs_env(qs_env=qs_env, scf_env=scf_env, particle_set=particle_set, qs_kind_set=qs_kind_set, &
                       atomic_kind_set=atomic_kind_set, matrix_s_kp=matrix_s, rho=rho, para_env=para_env, &
                       scf_control=scf_control, do_kpoints=do_kpoints, kpoints=kpoints)
+
+      use_bvk_coulomb = .FALSE.
+      nkp = 1
+      nkp_grid(:) = 1
+#if defined(__TBLITE_GXTB)
+      IF (dft_control%qs_control%xtb_control%tblite_method == gxtb .AND. do_kpoints) THEN
+         IF (.NOT. ASSOCIATED(kpoints)) CPABORT("Missing CP2K k-point data for g-XTB")
+         CALL get_kpoint_info(kpoint=kpoints, nkp=nkp, nkp_grid=nkp_grid)
+         use_bvk_coulomb = PRODUCT(nkp_grid(:)) > 1 .AND. ALL(nkp_grid(:) > 0) .AND. &
+                           .NOT. ANY((nkp_grid(:) > 1) .AND. (.NOT. tb%mol%periodic(:)))
+         IF ((nkp > 1 .OR. PRODUCT(nkp_grid(:)) > 1) .AND. .NOT. use_bvk_coulomb) THEN
+            CPABORT("Native g-XTB SCC requires a regular k-point mesh")
+         END IF
+      END IF
+#endif
 
       ! also compute multipoles needed by GFN2
       do_dipole = .FALSE.
@@ -10666,8 +10696,12 @@ CONTAINS
       tb%e_scd = 0.0_dp
       tb%e_int = 0.0_dp
       IF (ALLOCATED(tb%calc%coulomb)) THEN
-         CALL tb%calc%coulomb%get_potential(tb%mol, tb%cache, tb%wfn, tb%pot)
-         CALL tb%calc%coulomb%get_energy(tb%mol, tb%cache, tb%wfn, tb%e_es)
+         IF (use_bvk_coulomb) THEN
+            CALL tb_gxtb_bvk_coulomb_update(tb, nkp_grid)
+         ELSE
+            CALL tb%calc%coulomb%get_potential(tb%mol, tb%cache, tb%wfn, tb%pot)
+            CALL tb%calc%coulomb%get_energy(tb%mol, tb%cache, tb%wfn, tb%e_es)
+         END IF
       END IF
       IF (ALLOCATED(tb%calc%dispersion)) THEN
          IF (.NOT. skip_scf_dispersion_potential) THEN
@@ -10724,7 +10758,11 @@ CONTAINS
       IF (calculate_forces) THEN
          IF (ALLOCATED(tb%calc%coulomb)) THEN
             tb%grad = 0.0_dp
-            CALL tb%calc%coulomb%get_gradient(tb%mol, tb%cache, tb%wfn, tb%grad, tb%sigma)
+            IF (use_bvk_coulomb) THEN
+               CALL tb_gxtb_bvk_coulomb_gradient(tb, nkp_grid)
+            ELSE
+               CALL tb%calc%coulomb%get_gradient(tb%mol, tb%cache, tb%wfn, tb%grad, tb%sigma)
+            END IF
             CALL tb_dump_sigma_component("after_coulomb", tb%sigma, para_env)
             CALL tb_grad2force(qs_env, tb, para_env, 3)
          END IF
@@ -10767,6 +10805,203 @@ CONTAINS
 #endif
 
    END SUBROUTINE tb_update_charges
+
+! **************************************************************************************************
+!> \brief Evaluate g-XTB SCC/Coulomb terms in the commensurate Born-von-Karman supercell.
+!> \param tb ...
+!> \param nkp_grid ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_bvk_coulomb_update(tb, nkp_grid)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: nkp_grid
+
+#if defined(__TBLITE) && defined(__TBLITE_GXTB)
+      INTEGER                                            :: iatom, idir, irep, irep1, irep2, irep3, &
+                                                            is, ispin, natom, nrep, p_ish0, &
+                                                            s_ish0, super_iatom
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: super_numbers
+      REAL(KIND=dp)                                      :: inv_nrep, super_charge
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: super_positions
+      REAL(KIND=dp), DIMENSION(3)                        :: shift
+      REAL(KIND=dp), DIMENSION(3, 3)                     :: super_lattice
+
+      TYPE(error_type), ALLOCATABLE                      :: error
+
+      IF (ANY(nkp_grid(:) < 1)) CPABORT("Invalid g-XTB Born-von-Karman grid")
+      nrep = PRODUCT(nkp_grid(:))
+      IF (nrep <= 1) THEN
+         CALL tb%calc%coulomb%get_potential(tb%mol, tb%cache, tb%wfn, tb%pot)
+         CALL tb%calc%coulomb%get_energy(tb%mol, tb%cache, tb%wfn, tb%e_es)
+         RETURN
+      END IF
+      IF (.NOT. ALLOCATED(tb%mol%lattice) .OR. .NOT. ALLOCATED(tb%mol%periodic)) &
+         CPABORT("g-XTB Born-von-Karman SCC requires a periodic lattice")
+      IF (ANY((nkp_grid(:) > 1) .AND. (.NOT. tb%mol%periodic(:)))) &
+         CPABORT("g-XTB Born-von-Karman grid extends a non-periodic direction")
+
+      natom = tb%mol%nat
+      IF (.NOT. tb%bvk_coulomb_ready .OR. ANY(tb%bvk_coulomb_grid /= nkp_grid)) THEN
+         ALLOCATE (super_numbers(natom*nrep), super_positions(3, natom*nrep))
+         super_lattice(:, :) = tb%mol%lattice(:, :)
+         DO idir = 1, 3
+            super_lattice(:, idir) = super_lattice(:, idir)*REAL(nkp_grid(idir), KIND=dp)
+         END DO
+
+         irep = 0
+         DO irep3 = 0, nkp_grid(3) - 1
+            DO irep2 = 0, nkp_grid(2) - 1
+               DO irep1 = 0, nkp_grid(1) - 1
+                  shift(:) = REAL(irep1, KIND=dp)*tb%mol%lattice(:, 1) + &
+                             REAL(irep2, KIND=dp)*tb%mol%lattice(:, 2) + &
+                             REAL(irep3, KIND=dp)*tb%mol%lattice(:, 3)
+                  DO iatom = 1, natom
+                     irep = irep + 1
+                     super_numbers(irep) = tb%mol%num(tb%mol%id(iatom))
+                     super_positions(:, irep) = tb%mol%xyz(:, iatom) + shift(:)
+                  END DO
+               END DO
+            END DO
+         END DO
+
+         super_charge = REAL(nrep, KIND=dp)*tb%mol%charge
+         CALL new(tb%bvk_coulomb_mol, super_numbers, super_positions, charge=super_charge, &
+                  uhf=tb%mol%uhf*nrep, lattice=super_lattice, periodic=tb%mol%periodic)
+         IF (ALLOCATED(tb%param)) THEN
+            CALL new_xtb_calculator(tb%bvk_coulomb_calc, tb%bvk_coulomb_mol, tb%param, error)
+         ELSE
+            CALL new_gxtb_calculator(tb%bvk_coulomb_calc, tb%bvk_coulomb_mol, error)
+         END IF
+         IF (ALLOCATED(error)) CPABORT("g-XTB Born-von-Karman SCC calculator setup failed")
+         IF (.NOT. ALLOCATED(tb%bvk_coulomb_calc%coulomb)) &
+            CPABORT("g-XTB Born-von-Karman calculator has no Coulomb container")
+
+         CALL new_wavefunction(tb%bvk_coulomb_wfn, tb%bvk_coulomb_mol%nat, &
+                               tb%bvk_coulomb_calc%bas%nsh, tb%bvk_coulomb_calc%bas%nao, &
+                               tb%wfn%nspin, tb%wfn%kt)
+         CALL new_potential(tb%bvk_coulomb_pot, tb%bvk_coulomb_mol, &
+                            tb%bvk_coulomb_calc%bas, tb%wfn%nspin)
+         IF (ALLOCATED(tb%bvk_coulomb_energy)) DEALLOCATE (tb%bvk_coulomb_energy)
+         ALLOCATE (tb%bvk_coulomb_energy(tb%bvk_coulomb_mol%nat), source=0.0_dp)
+         CALL tb%bvk_coulomb_calc%coulomb%update(tb%bvk_coulomb_mol, tb%bvk_coulomb_cache)
+         tb%bvk_coulomb_grid(:) = nkp_grid(:)
+         tb%bvk_coulomb_ready = .TRUE.
+         DEALLOCATE (super_numbers, super_positions)
+      END IF
+
+      CALL tb%bvk_coulomb_pot%reset
+      tb%bvk_coulomb_energy(:) = 0.0_dp
+      tb%bvk_coulomb_wfn%nocc = REAL(nrep, KIND=dp)*tb%wfn%nocc
+      tb%bvk_coulomb_wfn%nuhf = REAL(nrep, KIND=dp)*tb%wfn%nuhf
+      tb%bvk_coulomb_wfn%nel(:) = REAL(nrep, KIND=dp)*tb%wfn%nel(:)
+      DO irep = 0, nrep - 1
+         DO iatom = 1, natom
+            super_iatom = irep*natom + iatom
+            tb%bvk_coulomb_wfn%n0at(super_iatom) = tb%wfn%n0at(iatom)
+            tb%bvk_coulomb_wfn%qat(super_iatom, :) = tb%wfn%qat(iatom, :)
+            tb%bvk_coulomb_wfn%dpat(:, super_iatom, :) = tb%wfn%dpat(:, iatom, :)
+            tb%bvk_coulomb_wfn%qpat(:, super_iatom, :) = tb%wfn%qpat(:, iatom, :)
+            p_ish0 = tb%calc%bas%ish_at(iatom)
+            s_ish0 = tb%bvk_coulomb_calc%bas%ish_at(super_iatom)
+            IF (tb%calc%bas%nsh_at(iatom) /= tb%bvk_coulomb_calc%bas%nsh_at(super_iatom)) &
+               CPABORT("g-XTB Born-von-Karman shell mapping mismatch")
+            DO is = 1, tb%calc%bas%nsh_at(iatom)
+               tb%bvk_coulomb_wfn%n0sh(s_ish0 + is) = tb%wfn%n0sh(p_ish0 + is)
+               tb%bvk_coulomb_wfn%qsh(s_ish0 + is, :) = tb%wfn%qsh(p_ish0 + is, :)
+            END DO
+         END DO
+      END DO
+
+      CALL tb%bvk_coulomb_calc%coulomb%get_potential(tb%bvk_coulomb_mol, &
+                                                     tb%bvk_coulomb_cache, &
+                                                     tb%bvk_coulomb_wfn, &
+                                                     tb%bvk_coulomb_pot)
+      CALL tb%bvk_coulomb_calc%coulomb%get_energy(tb%bvk_coulomb_mol, &
+                                                  tb%bvk_coulomb_cache, &
+                                                  tb%bvk_coulomb_wfn, &
+                                                  tb%bvk_coulomb_energy)
+
+      inv_nrep = 1.0_dp/REAL(nrep, KIND=dp)
+      tb%e_es(:) = 0.0_dp
+      DO irep = 0, nrep - 1
+         DO iatom = 1, natom
+            super_iatom = irep*natom + iatom
+            tb%e_es(iatom) = tb%e_es(iatom) + inv_nrep*tb%bvk_coulomb_energy(super_iatom)
+            DO ispin = 1, tb%wfn%nspin
+               tb%pot%vat(iatom, ispin) = tb%pot%vat(iatom, ispin) + &
+                                          inv_nrep*tb%bvk_coulomb_pot%vat(super_iatom, ispin)
+               tb%pot%vdp(:, iatom, ispin) = tb%pot%vdp(:, iatom, ispin) + &
+                                             inv_nrep*tb%bvk_coulomb_pot%vdp(:, super_iatom, ispin)
+               tb%pot%vqp(:, iatom, ispin) = tb%pot%vqp(:, iatom, ispin) + &
+                                             inv_nrep*tb%bvk_coulomb_pot%vqp(:, super_iatom, ispin)
+            END DO
+            p_ish0 = tb%calc%bas%ish_at(iatom)
+            s_ish0 = tb%bvk_coulomb_calc%bas%ish_at(super_iatom)
+            DO is = 1, tb%calc%bas%nsh_at(iatom)
+               tb%pot%vsh(p_ish0 + is, :) = tb%pot%vsh(p_ish0 + is, :) + &
+                                            inv_nrep*tb%bvk_coulomb_pot%vsh(s_ish0 + is, :)
+            END DO
+         END DO
+      END DO
+#else
+      MARK_USED(tb)
+      MARK_USED(nkp_grid)
+      CPABORT("g-XTB Born-von-Karman SCC requires save_tblite")
+#endif
+
+   END SUBROUTINE tb_gxtb_bvk_coulomb_update
+
+! **************************************************************************************************
+!> \brief Fold the g-XTB SCC/Coulomb gradient and virial from the commensurate
+!>        Born-von-Karman supercell back to the primitive cell.
+!> \param tb ...
+!> \param nkp_grid ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_bvk_coulomb_gradient(tb, nkp_grid)
+
+      TYPE(tblite_type), POINTER                         :: tb
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: nkp_grid
+
+#if defined(__TBLITE) && defined(__TBLITE_GXTB)
+      INTEGER                                            :: iatom, irep, natom, nrep, super_iatom
+      REAL(KIND=dp)                                      :: inv_nrep
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: super_gradient
+      REAL(KIND=dp), DIMENSION(3, 3)                     :: super_sigma
+
+      IF (ANY(nkp_grid(:) < 1)) CPABORT("Invalid g-XTB Born-von-Karman gradient grid")
+      nrep = PRODUCT(nkp_grid(:))
+      IF (nrep <= 1) THEN
+         CALL tb%calc%coulomb%get_gradient(tb%mol, tb%cache, tb%wfn, tb%grad, tb%sigma)
+         RETURN
+      END IF
+      IF (.NOT. tb%bvk_coulomb_ready .OR. ANY(tb%bvk_coulomb_grid /= nkp_grid)) &
+         CPABORT("g-XTB Born-von-Karman Coulomb gradient requested before the potential update")
+
+      natom = tb%mol%nat
+      ALLOCATE (super_gradient(3, tb%bvk_coulomb_mol%nat), source=0.0_dp)
+      super_sigma(:, :) = 0.0_dp
+      CALL tb%bvk_coulomb_calc%coulomb%get_gradient(tb%bvk_coulomb_mol, &
+                                                    tb%bvk_coulomb_cache, &
+                                                    tb%bvk_coulomb_wfn, &
+                                                    super_gradient, super_sigma)
+
+      inv_nrep = 1.0_dp/REAL(nrep, KIND=dp)
+      tb%grad(:, :) = 0.0_dp
+      DO irep = 0, nrep - 1
+         DO iatom = 1, natom
+            super_iatom = irep*natom + iatom
+            tb%grad(:, iatom) = tb%grad(:, iatom) + inv_nrep*super_gradient(:, super_iatom)
+         END DO
+      END DO
+      tb%sigma(:, :) = tb%sigma(:, :) + inv_nrep*super_sigma(:, :)
+      DEALLOCATE (super_gradient)
+#else
+      MARK_USED(tb)
+      MARK_USED(nkp_grid)
+      CPABORT("g-XTB Born-von-Karman SCC gradient requires save_tblite")
+#endif
+
+   END SUBROUTINE tb_gxtb_bvk_coulomb_gradient
 
 ! **************************************************************************************************
 !> \brief ...
@@ -11643,13 +11878,14 @@ CONTAINS
 
 #if defined(__TBLITE_GXTB)
       COMPLEX(KIND=dp), ALLOCATABLE                      :: acp_density_k(:, :, :, :)
-      INTEGER                                            :: img, nao, nimg, nimg_response, nspin
+      INTEGER                                            :: acp_img, img, nao, nimg, nimg_response, nspin
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index, response_cell_to_index
       INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: response_index_to_cell
-      LOGICAL                                            :: validate_density
+      LOGICAL                                            :: self_inverse_kmesh, validate_density
       REAL(KIND=dp), ALLOCATABLE                         :: acp_gradient(:, :), acp_sigma(:, :), &
+                                                            acp_density_images(:, :, :, :), &
                                                             dEdcnbas(:), dEdqbas(:), &
                                                             density_images(:, :, :, :), &
                                                             exchange_gradient(:, :), &
@@ -11659,6 +11895,7 @@ CONTAINS
                                                             projector_translations(:, :), &
                                                             sigma(:, :), translations(:, :), &
                                                             wdensity_images(:, :, :, :)
+      REAL(KIND=dp)                                      :: translation_scale, translation_tol2
       TYPE(acp_image_type)                               :: acp_images
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_p, matrix_s, matrix_w
@@ -11677,7 +11914,8 @@ CONTAINS
       CALL qs_rho_get(rho, rho_ao_kp=matrix_p)
       CALL get_kpoint_info(kpoint=kpoints, cell_to_index=cell_to_index, index_to_cell=index_to_cell)
 
-      IF (.NOT. ASSOCIATED(cell) .OR. .NOT. ASSOCIATED(sab_kp) .OR. &
+      IF (.NOT. ASSOCIATED(cell) .OR. .NOT. ASSOCIATED(kpoints) .OR. &
+          .NOT. ASSOCIATED(sab_kp) .OR. &
           .NOT. ASSOCIATED(cell_to_index) .OR. .NOT. ASSOCIATED(index_to_cell)) THEN
          CPABORT("Incomplete CP2K k-point image data for the g-xTB gradient")
       END IF
@@ -11728,44 +11966,77 @@ CONTAINS
          CALL get_lattice_points(tb%mol%periodic, tb%mol%lattice, &
                                  cp2k_get_acp_cutoff(tb%calc, tb%accuracy), &
                                  projector_translations)
-         CALL tb_build_gxtb_acp_projectors(tb, projector_translations, acp_images)
          CALL tb_prepare_gxtb_kmesh_map(tb, kpoints, matrix_s, sab_kp, cell_to_index)
          kmap => tb%gxtb_kmesh_map
-         CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
-         ALLOCATE (acp_density_k(nao, nao, nspin, kmap%nfull), &
-                   dEdcnbas(tb%mol%nat), dEdqbas(tb%mol%nat), &
+         self_inverse_kmesh = MAXVAL(ABS(2.0_dp*kmap%xkp - &
+                                         REAL(NINT(2.0_dp*kmap%xkp), KIND=dp))) <= 1.0E-12_dp
+         ALLOCATE (dEdcnbas(tb%mol%nat), dEdqbas(tb%mol%nat), &
                    acp_gradient(3, tb%mol%nat), acp_sigma(3, 3))
-         IF (kmap%identity) THEN
-            CALL tb_collect_kpoint_density(qs_env, tb, kpoints, acp_density_k)
-         ELSE
-            CALL tb_collect_kpoint_density(qs_env, tb, kpoints, acp_density_k, &
-                                           kmap%representative)
-            validate_density = .NOT. tb%gxtb_density_map_validated .AND. &
-                               MAXVAL(ABS(acp_density_k)) > 1.0E-14_dp
-            CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
-                                               acp_density_k, validate_density)
-            IF (validate_density) tb%gxtb_density_map_validated = .TRUE.
-         END IF
-         IF (.NOT. ALL(ieee_is_finite(REAL(acp_density_k, KIND=dp))) .OR. &
-             .NOT. ALL(ieee_is_finite(AIMAG(acp_density_k)))) THEN
-            CPABORT("CP2K supplied a non-finite k-point density to the ACP gradient")
-         END IF
          dEdcnbas = 0.0_dp
          dEdqbas = 0.0_dp
          acp_gradient = 0.0_dp
          acp_sigma = 0.0_dp
-         CALL cp2k_acp_kmesh_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, &
-                                      acp_images, kmap%xkp, kmap%weight, acp_density_k, &
-                                      dEdcnbas, dEdqbas, acp_gradient, acp_sigma, error)
-         IF (ALLOCATED(error)) THEN
-            CPABORT("save_tblite g-xTB ACP k-mesh gradient failed: "//TRIM(error%message))
+         IF (self_inverse_kmesh) THEN
+            ! At time-reversal-invariant k points CP2K's real-wavefunction storage has an
+            ! ambiguous direct Bloch-space dual.  Contract the already exact CP2K image
+            ! density instead, padding translations outside its overlap support with zero.
+            CALL cp2k_build_image_acp(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                      projector_translations, acp_images)
+            ALLOCATE (acp_density_images(nao, nao, SIZE(acp_images%translation, 2), nspin))
+            acp_density_images = 0.0_dp
+            translation_scale = MAX(1.0_dp, MAXVAL(ABS(acp_images%translation)), &
+                                    MAXVAL(ABS(translations)))
+            translation_tol2 = (2048.0_dp*EPSILON(1.0_dp)*translation_scale)**2
+            DO acp_img = 1, SIZE(acp_images%translation, 2)
+               DO img = 1, nimg_response
+                  IF (SUM((acp_images%translation(:, acp_img) - translations(:, img))**2) <= &
+                      translation_tol2) THEN
+                     acp_density_images(:, :, acp_img, :) = density_images(:, :, img, :)
+                     EXIT
+                  END IF
+               END DO
+            END DO
+            CALL cp2k_acp_image_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                         acp_images, acp_images%translation, acp_density_images, &
+                                         dEdcnbas, dEdqbas, acp_gradient, acp_sigma, error)
+            IF (ALLOCATED(error)) THEN
+               CPABORT("save_tblite g-xTB ACP image gradient failed: "//TRIM(error%message))
+            END IF
+            DEALLOCATE (acp_density_images)
+         ELSE
+            ! A genuinely complex mesh has an unambiguous Bloch-space dual and avoids the
+            ! quadratic ACP translation-difference set used by the real-mesh reference path.
+            CALL tb_build_gxtb_acp_projectors(tb, projector_translations, acp_images)
+            CALL tb_gxtb_ao_layout(tb, ao_first, ao_size)
+            ALLOCATE (acp_density_k(nao, nao, nspin, kmap%nfull))
+            IF (kmap%identity) THEN
+               CALL tb_collect_kpoint_density(qs_env, tb, kpoints, acp_density_k)
+            ELSE
+               CALL tb_collect_kpoint_density(qs_env, tb, kpoints, acp_density_k, &
+                                              kmap%representative)
+               validate_density = .NOT. tb%gxtb_density_map_validated .AND. &
+                                  MAXVAL(ABS(acp_density_k)) > 1.0E-14_dp
+               CALL tb_expand_gxtb_kpoint_density(kpoints, kmap, ao_first, ao_size, &
+                                                  acp_density_k, validate_density)
+               IF (validate_density) tb%gxtb_density_map_validated = .TRUE.
+            END IF
+            IF (.NOT. ALL(ieee_is_finite(REAL(acp_density_k, KIND=dp))) .OR. &
+                .NOT. ALL(ieee_is_finite(AIMAG(acp_density_k)))) THEN
+               CPABORT("CP2K supplied a non-finite k-point density to the ACP gradient")
+            END IF
+            CALL cp2k_acp_kmesh_gradient(tb%calc, tb%mol, tb%bcache, tb%acache, &
+                                         acp_images, kmap%xkp, kmap%weight, acp_density_k, &
+                                         dEdcnbas, dEdqbas, acp_gradient, acp_sigma, error)
+            IF (ALLOCATED(error)) THEN
+               CPABORT("save_tblite g-xTB ACP k-mesh gradient failed: "//TRIM(error%message))
+            END IF
+            DEALLOCATE (acp_density_k, ao_first, ao_size)
          END IF
          CALL cp2k_apply_basis_gradient(tb%calc, tb%mol, tb%wfn_aux, dEdcnbas, dEdqbas, &
                                         acp_gradient, acp_sigma)
          gradient(:, :) = gradient(:, :) + acp_gradient(:, :)
          sigma(:, :) = sigma(:, :) + acp_sigma(:, :)
-         DEALLOCATE (acp_density_k, acp_gradient, acp_sigma, ao_first, ao_size, &
-                     dEdcnbas, dEdqbas, projector_translations)
+         DEALLOCATE (acp_gradient, acp_sigma, dEdcnbas, dEdqbas, projector_translations)
       END IF
 
       tb%grad(:, :) = gradient(:, :)
