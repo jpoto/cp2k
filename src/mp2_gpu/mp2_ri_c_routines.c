@@ -1045,81 +1045,110 @@ void c_mp2_ri_get_block_size(
       INTEGER, INTENT(OUT)                               :: my_ij_pairs
       LOGICAL, INTENT(IN)                                :: my_open_shell_SS
       INTEGER, INTENT(IN)                                :: unit_nr
- * -----------------------------------------------------------------------------------------
- * |            FORTRAN-SIDE               |                   C-SIDE                      |
- * ----------------------------------------------------------------------------------------|
- * |   (VAR TYPE) | (INTENT)               | (VAR TYPE)      |(INTENT) | (VAR NAME)        |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (TYPE)     | (IN) mp2_env           |                 |         |                   |
- * |    ====>  mp2_env%ri_mp2%block_size   | (int)           |         | (user_block_size) |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (TYPE)     | (IN) para_env          | (cp_mpi_comm_t) |         | (para_env)        |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (TYPE)     | (IN) para_env_sub      | (cp_mpi_comm_t) |         | (para_env_sub)    |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (TYPE)     | (IN) gd_array          | (int*)          | (const) |                   |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (TYPE(:))  | (IN) gd_B_virtual      | (int*)          | (const) |                   |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT(:))   | (IN) homo              | (int*)          | (const) | (homo)            |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT(:))   | (IN) virtual           | (int*)          | (const) | (virtual_arr)     |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT)      | (IN) dimen_RI          | (int)           |         | (dimen_RI)        |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT)      | (IN) unit_nr           | (int)           |         | (unit_nr)         |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT)      | (OUT) block_size       | (int*)          | (OUT)   | (block_size)      |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT)      | (OUT) ngroup           | (int*)          | (OUT)   | (ngroup_out)      |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (INT)      | (IN) num_integ_group   | (int)           |         | num_integ_group   |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (LOGICAL)  | (IN) my_open_shell_ss  | (bool)          |         | my_open_shell_ss  |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (LOGICAL)  | (IN) calc_forces       | (bool)          |         | calc_forces       |
- * ---------------|------------------------|-----------------|---------|-------------------|
- * |   (REAL(:))  | (OUT) buffer_1D        | (double*)       | (OUT)   | (buffer_1D)       |
- * -----------------------------------------------------------------------------------------
+ * ____________________________________________________________________________________________________________
+ * |                  FORTRAN-SIDE                   ||                   C-SIDE                              |
+ * |_________________________________________________||_______________________________________________________|
+ * |   (VAR TYPE) |(INTENT) |       (VAR NAME)       ||    (VAR TYPE)      |(INTENT) |      (VAR NAME)        |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (LOGICAL)  |   (IN)  |   my_alpha_beta_case   ||       bool         |         |   my_alpha_beta_case   |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |  (OUT)  |     total_ij_pairs     ||       int*         |         |      total_ij_pairs    |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |   (IN)  |         homo           ||       int          |         |          homo          |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |   (IN)  |       homo_beta        ||       int          |         |        homo_beta       |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |   (IN)  |      block_size        ||       int          |         |       block_size       |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |   (IN)  |        ngroup          ||       int          |         |         ngroup         |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |  (INTEGER )  |         |                        ||                    |         |                        |
+ * |  (DIM(:,:))  |  (IN)   |         ij_map         ||       int**        |  malloc |       ij_map           |
+ * | (ALLOCATABLE)|         |                        ||                    |         |                        |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |   (IN)  |       color_sub        ||       int          |         |       color_sub        |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |  (OUT)  |     my_ij_pairs        ||       int*         |         |      my_ij_pairs       |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (LOGICAL)  |   (IN)  |   my_open_shell_SS     ||       int          |         |    my_open_shell_SS    |
+ * |______________|_________|________________________||____________________|_________|________________________|
+ * |   (INTEGER)  |   (IN)  |       unit_nr          ||       int          |         |        unit_nr         |
+ * |______________|_________|________________________||____________________|_________|________________________|
  * 
+ * // INPUTS
+ * bool my_alpha_beta_case   // Alpha-beta case flag
+ * int homo                  // Number of occupied orbitals (spin 1)
+ * int homo_beta             // Number of occupied orbitals (spin 2)
+ * int block_size            // Block size for ij pairs
+ * int ngruop                // Number of groups
+ * int color_sub             // Process color in subgroup
+ * bool my_open_shell_SS     // Open shell same-spin flag
+ * int unit_nr               // Output unit number
+ * 
+ * //OUTPUT
+ * int* total_ij_pairs       // Total number of ij pairs
+ * int** ij_map              // Map fo ij pairs (3 x total)
+ * int* my_ij_pairs          // Number of pairs for this process
  */
-void c_mp2_ri_communication(){
+void c_mp2_ri_communication(
+    bool my_alpha_beta_case, int homo, int homo_beta,
+    int block_size, int ngroup, int color_sub,
+    bool my_open_shell_SS, int unit_nr, int* total_ij_pairs,
+    int** ij_map, int* my_ij_pairs
+){
     // start timer
     offload_timeset("mp2_ri_communication\0");
 
+    *total_ij_pairs = homo * (1 + homo) / 2;
+    int num_IJ_blocks = homo / block_size - 1;
+
+    int first_I_block = 1;
+    int last_i_block = block_size * (num_IJ_blocks - 1);
+    int first_J_block = block_size + 1;
+    int last_J_block = block_size * (num_IJ_blocks + 1);
+
     /**
-     * ============================ONLY THIS PART
      * 
-         total_ij_pairs = homo*(1 + homo)/2
-         num_IJ_blocks = homo/block_size - 1
-
-         first_I_block = 1
-         last_i_block = block_size*(num_IJ_blocks - 1)
-
-         first_J_block = block_size + 1
-         last_J_block = block_size*(num_IJ_blocks + 1)
-
          ij_block_counter = 0
          DO iiB = first_I_block, last_i_block, block_size
             DO jjB = iiB + block_size, last_J_block, block_size
                ij_block_counter = ij_block_counter + 1
             END DO
          END DO
+     */
+    // Count block pairs
+    int ij_block_counter = 0;
+    for (int iiB = first_I_block; iiB <= last_i_block; iiB += block_size) {
+        for (int jjB = iiB + block_size + 1; jjB <= last_J_block; jjB += block_size) {
+            ij_block_counter++;
+        }
+    }
 
-         total_ij_block = ij_block_counter
-         num_block_per_group = total_ij_block/ngroup
-         assigned_blocks = num_block_per_group*ngroup
+    int total_ij_block = ij_block_counter;
+    int num_block_per_group = total_ij_block / ngroup;
+    int assigned_blocks = num_block_per_group * ngroup;
+    int total_ij_pairs_blocks = assigned_blocks + (total_ij_pairs - assigned_blocks * (block_size * block_size));
 
-         total_ij_pairs_blocks = assigned_blocks + (total_ij_pairs - assigned_blocks*(block_size**2))
+    // ALLOCATE (ij_marker(homo, homo))
+    // ij_marker = .TRUE.
+    // array row-major flattened 1D
+    // According with some forums benefits by memory, single allocation and dynamic access 
+    // bool* arr = malloc(rows * cols * sizeof(bool));
+    // to access: arr[i * cols + j]
+    bool* ij_marker = (bool*)malloc(homo * homo * sizeof(bool));
+    for (int i = 0; i < homo * homo; i++) {
+        ij_marker[i] = true;
+    }
 
-         ALLOCATE (ij_marker(homo, homo))
-         ij_marker = .TRUE.
-         ALLOCATE (ij_map(3, total_ij_pairs_blocks))
-         ij_map = 0
-         ij_counter = 0
-         my_ij_pairs = 0
+    // ALLOCATE (ij_map(3, total_ij_pairs_blocks))
+    // ij_map = 0
+    *ij_map = (int*)calloc(3 * total_ij_pairs_blocks, sizeof(int));
+
+    int ij_counter = 0;
+    *my_ij_pairs = 0;
+
+    /**
+     * 
          DO iiB = first_I_block, last_i_block, block_size
             DO jjB = iiB + block_size, last_J_block, block_size
                IF (ij_counter + 1 > assigned_blocks) EXIT
@@ -1131,6 +1160,54 @@ void c_mp2_ri_communication(){
                IF (MOD(ij_counter, ngroup) == color_sub) my_ij_pairs = my_ij_pairs + 1
             END DO
          END DO
+     */
+    for (int iiB = first_I_block; iiB <= last_i_block; iiB += block_size) {
+        for (int jjB = iiB + block_size; jjB <= last_J_block; jjB += block_size) {
+            // exit
+            if (ij_counter + 1 > assigned_blocks) {break;}
+            ij_counter++;
+
+            // ij_marker(iiB:iiB + block_size - 1, jjB:jjB + block_size - 1) = .FALSE.
+            // i = iiB - 1 (index 0 in C)
+            for (int i = iiB - 1; i < iiB + block_size - 1; i++) {
+                // j = jjB - 1 (index 0 in C)
+                for (int j = jjB - 1; j < jjB + block_size - 1; j++) {
+                    ij_marker[i * homo + j] = false;
+                }
+
+                (*ij_map)[0 * total_ij_pairs_blocks + (ij_counter - 1)] = iiB;
+                (*ij_map)[1 * total_ij_pairs_blocks + (ij_counter - 1)] = jjB;
+                (*ij_map)[2 * total_ij_pairs_blocks + (ij_counter - 1)] = block_size;
+
+                if ((ij_block_counter % ngroup) == color_sub) {
+                    (*my_ij_pairs)++;
+                }
+            }
+
+            /**
+             * 
+         DO iiB = 1, homo
+            DO jjB = iiB, homo
+               IF (ij_marker(iiB, jjB)) THEN
+                  ij_counter = ij_counter + 1
+                  ij_map(1, ij_counter) = iiB
+                  ij_map(2, ij_counter) = jjB
+                  ij_map(3, ij_counter) = 1
+                  IF (MOD(ij_counter, ngroup) == color_sub) my_ij_pairs = my_ij_pairs + 1
+               END IF
+            END DO
+         END DO
+         DEALLOCATE (ij_marker)
+             */
+            for () {
+                for () {}
+            }
+        }
+    }
+    
+    
+    /**
+     * ============================ONLY THIS PART
          DO iiB = 1, homo
             DO jjB = iiB, homo
                IF (ij_marker(iiB, jjB)) THEN
