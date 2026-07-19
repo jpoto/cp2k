@@ -1199,28 +1199,29 @@ void c_mp2_ri_communication(
          END DO
          DEALLOCATE (ij_marker)
              */
-            for () {
-                for () {}
+            for (int iiB = 1; iiB <= homo; iiB++) {
+                for (int jjB = iiB; jjB <= homo; jjB++) {
+                    // to access: arr[i * cols + j]
+                    // 0-based in C-stlr
+                    if (ij_marker[(iiB - 1) * homo + (jjB - 1)]) {
+                        ij_counter++;
+                        (*ij_map)[0 * total_ij_pairs_blocks + (ij_counter -1)] = iiB;
+                        (*ij_map)[1 * total_ij_pairs_blocks + (ij_counter -1)] = jjB;
+                        (*ij_map)[3 * total_ij_pairs_blocks + (ij_counter -1)] = 1;
+
+                        if ((ij_counter % ngroup) == color_sub) {
+                            (*my_ij_pairs)++;
+                        }
+                    }
+                }
             }
+            free(ij_marker);
         }
     }
     
     
     /**
-     * ============================ONLY THIS PART
-         DO iiB = 1, homo
-            DO jjB = iiB, homo
-               IF (ij_marker(iiB, jjB)) THEN
-                  ij_counter = ij_counter + 1
-                  ij_map(1, ij_counter) = iiB
-                  ij_map(2, ij_counter) = jjB
-                  ij_map(3, ij_counter) = 1
-                  IF (MOD(ij_counter, ngroup) == color_sub) my_ij_pairs = my_ij_pairs + 1
-               END IF
-            END DO
-         END DO
-         DEALLOCATE (ij_marker)
-
+     * ============================ Should I also add this part?
          IF (unit_nr > 0) THEN
          IF (block_size == 1) THEN
             WRITE (UNIT=unit_nr, FMT="(T3,A,T66,F15.1)") &
