@@ -393,21 +393,26 @@ CONTAINS
 
       total_zeff_corr = 0.0_dp
       total_zeff_corr = scf_env%sum_zeff_corr
+      !write(*,*) "do_general_diag, homo1:",mos(1)%homo
 
       IF (ABS(total_zeff_corr) > 0.0_dp) THEN
+         write(*,*) "do_general_diag, A"
          CALL set_mo_occupation(mo_array=mos, &
                                 smear=scf_control%smear, tot_zeff_corr=total_zeff_corr)
       ELSE
          IF (PRESENT(probe) .EQV. .TRUE.) THEN
+            write(*,*) "do_general_diag, B"
             scf_control%smear%do_smear = .FALSE.
             CALL set_mo_occupation(mo_array=mos, &
                                    smear=scf_control%smear, &
                                    probe=probe)
          ELSE
             IF (.NOT. scf_control%gce%do_gce) THEN
+               write(*,*) "do_general_diag, C"
                CALL set_mo_occupation(mo_array=mos, &
                                       smear=scf_control%smear)
             ELSE
+               write(*,*) "do_general_diag, D"
                CALL set_mo_occupation(mo_array=mos, &
                                       smear=scf_control%smear, &
                                       gce=scf_control%gce)
@@ -416,6 +421,7 @@ CONTAINS
       END IF
 
       DO ispin = 1, nspin
+         !write(*,*) "do_general_diag, homo5:",mos(ispin)%homo  !!!!! this print statement fixes the bug. Why??????
          CALL calculate_density_matrix(mos(ispin), &
                                        scf_env%p_mix_new(ispin, 1)%matrix)
       END DO

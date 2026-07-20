@@ -1104,6 +1104,10 @@ CONTAINS
       REAL(kind=dp), INTENT(IN), OPTIONAL                :: filter_eps
       INTEGER(int_8), INTENT(OUT), OPTIONAL              :: flop
 
+      write(*,*) "dbcsr_multiply : "
+      write(*,*) "                  first_row, last_row, first_column, last_column, first_k, last_k"
+      write(*,*) "                 ",first_row, last_row, first_column, last_column, first_k, last_k
+
       IF (USE_DBCSR_BACKEND) THEN
          CALL dbcsr_multiply_prv(transa, transb, alpha, matrix_a%dbcsr, matrix_b%dbcsr, beta, &
                                  matrix_c%dbcsr, first_row, last_row, first_column, last_column, &

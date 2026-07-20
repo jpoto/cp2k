@@ -107,6 +107,7 @@ CONTAINS
 
       IF (.NOT. mo_set%uniform_occupation) THEN ! not all orbitals 1..homo are equally occupied
          IF (my_use_dbcsr) THEN
+            
             CALL dbcsr_copy(dbcsr_tmp, mo_set%mo_coeff_b)
             CALL dbcsr_scale_by_vector(dbcsr_tmp, mo_set%occupation_numbers(1:mo_set%homo), &
                                        side='right')
@@ -119,6 +120,7 @@ CONTAINS
             CALL cp_fm_to_fm(mo_set%mo_coeff, fm_tmp)
             CALL cp_fm_column_scale(fm_tmp, mo_set%occupation_numbers(1:mo_set%homo))
             alpha = 1.0_dp
+            write(*,*) "calculate_dm_sparse dbcsr_A2, k=",mo_set%homo, alpha
             CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=density_matrix, &
                                        matrix_v=mo_set%mo_coeff, &
                                        matrix_g=fm_tmp, &
@@ -133,6 +135,7 @@ CONTAINS
                                 last_k=mo_set%homo)
          ELSE
             alpha = mo_set%maxocc
+            write(*,*) "calculate_dm_sparse dbcsr_B, ind=", mo_set%homo, alpha
             CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=density_matrix, &
                                        matrix_v=mo_set%mo_coeff, &
                                        ncol=mo_set%homo, &

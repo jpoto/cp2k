@@ -188,6 +188,8 @@ CONTAINS
          END IF
       END IF
 
+      write(*,*) "qs_scf_new_mos, method: ", scf_env%method
+
       SELECT CASE (scf_env%method)
       CASE DEFAULT
          CALL cp_abort(__LOCATION__, &
@@ -209,6 +211,7 @@ CONTAINS
 
          ! Diagonlization in non orthonormal case
       CASE (general_diag_method_nr)
+         write(*,*) "qs_scf_new_mos, diag ", dft_control%roks, scf_control%diagonalization%mom, dft_control%hairy_probes
          IF (dft_control%roks) THEN
             CALL do_roks_diag(scf_env, mos, matrix_ks, matrix_s, &
                               scf_control, scf_section, diis_step, &
@@ -225,6 +228,7 @@ CONTAINS
                                        diis_step, &
                                        probe)
                ELSE
+                  write(*,*) "qs_scf_new_mos, path"
                   CALL do_general_diag(scf_env, mos, matrix_ks, &
                                        matrix_s, scf_control, scf_section, &
                                        diis_step)
@@ -234,6 +238,7 @@ CONTAINS
                skip_diag_sub = (scf_env%subspace_env%eps_diag_sub > 0.0_dp) .AND. &
                                (scf_env%iter_count == 1 .OR. scf_env%iter_delta > scf_env%subspace_env%eps_diag_sub)
                IF (.NOT. skip_diag_sub) THEN
+                  write(*,*) "qs_scf_new_mos, diag "
                   CALL do_scf_diag_subspace(qs_env, scf_env, scf_env%subspace_env, mos, rho, &
                                             ks_env, scf_section, scf_control)
                END IF
@@ -476,10 +481,12 @@ CONTAINS
                        scf_env%qs_ot_env)
 
       DO ispin = 1, SIZE(mos)
-         CALL set_mo_occupation(mo_set=mos(ispin), smear=smear)
+         CALL set_mo_occupation(mo_set=mos(ispin), smear=smear) 
+         write(*,*) "A ispin: ", ispin, " homo", mos(ispin)%homo
       END DO
 
       DO ispin = 1, SIZE(mos)
+         write(*,*) "B ispin: ", ispin, " homo", mos(ispin)%homo
          CALL calculate_density_matrix(mos(ispin), &
                                        rho_ao(ispin)%matrix, &
                                        use_dbcsr=.TRUE.)
