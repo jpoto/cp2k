@@ -96,9 +96,15 @@
 "CH4_gxtb_kp_restart_3.inp" = [
   {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
 ]
+"CH4_gxtb_kp_restart_3_same.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
+]
 "CH4_gxtb_kp_restart_4.inp" = [
   {matcher="E_total", tol=1.0E-10, ref=-40.468551982577388},
   {matcher="KPOINT_RESTART_VALIDATED_TRANSFER"},
+]
+"CH4_gxtb_kp_cold_4.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.468551982577388},
 ]
 "Si_prim_gxtb_kp_mixed_radix.inp" = [
   {matcher="E_total", tol=1.0E-10, ref=-579.050928767344203},
