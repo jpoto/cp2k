@@ -3,12 +3,12 @@
 !--------------------------------------------------------------------------------------------------!
 
 MODULE mp2_ri_c_interface
-    USE ISO_C_BINDING, ONLY: C_INT, C_DOUBLE, C_BOOL, C_PTR, C_FUNPTR
+    USE ISO_C_BINDING, ONLY: C_INT, C_DOUBLE, C_BOOL, C_PTR, C_FUNPTR, C_NULL_PTR
     USE kinds, ONLY: dp
     USE mp2_types, ONLY: mp2_type
     USE group_dist_types, ONLY: group_dist_d1_type, maxsize
     USE message_passing, ONLY: mp_para_env_type
-    USE mp2_ri_gpw, ONLY: mp2_ri_get_integ_group_size => mp2_ri_get_integ_group_size_orig
+    
 
     IMPLICIT NONE
     PRIVATE
@@ -44,7 +44,7 @@ MODULE mp2_ri_c_interface
             INTEGER(C_INT), INTENT(IN)  :: virtual_size
             INTEGER(C_INT), INTENT(IN)  :: virtual_arr(virtual_size)
             INTEGER(C_INT), INTENT(IN)  :: dimen_RI
-            LOGICAL(C_BOOL), INTENT(IN) :: calc_forces
+            INTEGER(C_INT), INTENT(IN)  :: calc_forces
             INTEGER(C_INT), INTENT(IN)  :: unit_nr
             INTEGER(C_INT), INTENT(IN)  :: gd_array_sizes_size
             INTEGER(C_INT), INTENT(IN)  :: gd_array_sizes(gd_array_sizes_size)
@@ -57,8 +57,8 @@ MODULE mp2_ri_c_interface
             INTEGER(C_INT), INTENT(IN)  :: max_homo
             INTEGER(C_INT), INTENT(IN)  :: sum_homo_virtual
             INTEGER(C_INT), INTENT(IN)  :: product_homo
-            INTEGER(C_INT), INTENT(IN)  :: nspins=1
-            LOGICAL(C_BOOL), INTENT(IN) :: calc_group_size
+            INTEGER(C_INT), INTENT(IN)  :: nspins
+            INTEGER(C_INT), INTENT(IN)  :: calc_group_size
             TYPE(C_PTR), VALUE, INTENT(IN) :: comm_handle
         END SUBROUTINE c_mp2_ri_get_integ_group_size
     END INTERFACE
@@ -112,23 +112,21 @@ CONTAINS
         calc_group_size_local = (mp2_env%ri_mp2%number_integration_groups <= 0) .OR. &
                                         (MOD(ngroup, mp2_env%ri_mp2%number_integration_groups) /= 0)
 
-        ! Get MPI communicator handle (using cp_mpi_comm_c2f)
-        ! Note: This needs the communicator from para_env
-        ! For now, we pass the Fortran handle
-        comm_handle = C_NULL_PTR  ! Placeholder - needs proper MPI communicator
+        comm_handle = C_NULL_PTR
 
         CALL c_mp2_ri_get_integ_group_size( &
             integ_group_size_out, ngroup_out, num_integ_group_out, &
             ngroup, num_integ_group, integ_group_size, &
             mp2_env%mp2_memory, mp2_env%ri_mp2%number_integration_groups, &
             homo, homo_size, virtual, virtual_size, &
-            dimen_RI, calc_forces, unit_nr, &
+            dimen_RI, MERGE(1, 0, calc_forces), unit_nr, &
             gd_array_sizes, gd_array_size, &
             gd_B_sizes, SIZE(gd_B_sizes), &
-            maxsize(gd_array), maxsize(gd_B_virtual), &
+            maxsize(gd_array), MAXVAL(maxsize(gd_B_virtual)), &
             MAXVAL(maxsize(gd_B_virtual)), MAXVAL(virtual), &
             max_homo, sum_homo_virtual, product_homo, &
-            nspins, calc_group_size_local, comm_handle &
+            nspins, MERGE(1, 0, calc_group_size_local), &
+            comm_handle &
         )
 
         ! Return values

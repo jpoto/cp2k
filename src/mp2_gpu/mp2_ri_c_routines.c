@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "cp_mpi.h"
+#include "../mpiwrap/cp_mpi.h"
 // I use it like a timer
 #include "../offload/offload_library.h"
 
@@ -149,7 +149,7 @@ void c_mp2_ri_get_integ_group_size(
     const int* gd_B_virtual_sizes, int gd_B_virtual_sizes_size,
     int maxsize_gd_array, int maxsize_gd_B_virtual, int maxval_gd_B_virtual,
     int maxval_virtual, int max_homo, int sum_homo_virtual,
-    int product_homo, int nspins, bool calc_group_size, cp_mpi_comm_t comm) {
+    int product_homo, int nspins, int calc_group_size, cp_mpi_comm_t comm) {
     // Local variables
     bool calc_group_size_local = calc_group_size;
     int block_size = 1;

@@ -414,6 +414,7 @@ list(
   mp2_setup.F
   mp2_types.F
   mp2_gpu/mp2_gpu_api.F
+  mp2_gpu/mp2_ri_c_interface.F
   mscfg_methods.F
   mscfg_types.F
   mulliken.F
@@ -1419,6 +1420,8 @@ list(
   CP2K_SRCS_C
   sockets.c
   mp2_gpu/mp2_gpu.c
+  mp2_gpu/mp2_ri_c_routines.c
+  mp2_gpu/gemm_c_api.c
   base/machine_cpuid.c
   base/openmp_trace.c
   base/openmp_trace.c
