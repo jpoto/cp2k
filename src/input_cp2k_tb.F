@@ -858,11 +858,11 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="FOURIER_TRANSFORM_BACKEND", &
                           description="Selects the regular-mesh k-to-R and R-to-k transform used by the "// &
-                          "complete-array exchange and dense derivative paths. DENSE uses the permanent phase-table "// &
+                          "complete-array or exact symmetry-fused exchange paths. DENSE uses the permanent phase-table "// &
                           "oracle. SEPARABLE_DFT factorizes the direct transform by mesh direction. "// &
-                          "MIXED_RADIX_FFT uses recursive Cooley--Tukey transforms with direct prime leaves. "// &
-                          "Non-dense transforms require COMPLETE_ARRAY exchange and DENSE gradient contraction, so "// &
-                          "the requested backend cannot be silently ignored by a streamed path. The developer-only "// &
+                          "MIXED_RADIX_FFT uses recursive Cooley--Tukey transforms with direct prime leaves. In the "// &
+                          "SYMMETRY_FUSED path, compact AO-pair tiles are composed exactly with bounded image batches; "// &
+                          "all derivative contraction choices use the same selected backend. The developer-only "// &
                           "CP2K_GXTB_EXCHANGE_TRANSFORM_MODE environment variable overrides this keyword.", &
                           usage="FOURIER_TRANSFORM_BACKEND (DENSE|SEPARABLE_DFT|MIXED_RADIX_FFT)", &
                           enum_c_vals=s2a("DENSE", "SEPARABLE_DFT", "MIXED_RADIX_FFT"), &

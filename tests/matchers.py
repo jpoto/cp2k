@@ -73,6 +73,12 @@ registry["GXTB_mixed_radix_transform"] = TextPresenceMatcher(
 registry["GXTB_mixed_radix_transform_forward"] = TextPresenceMatcher(
     "GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=MIXED_RADIX_FFT fallback=0"
 )
+registry["GXTB_separable_transform"] = TextPresenceMatcher(
+    "GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=SEPARABLE_DFT fallback=0"
+)
+registry["GXTB_separable_transform_forward"] = TextPresenceMatcher(
+    "GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=SEPARABLE_DFT fallback=0"
+)
 registry["GXTB_distributed_images_production"] = TextPresenceMatcher(
     "GXTB-KGROUP-PARTIAL-DISTRIBUTED-IMAGES importers="
 )

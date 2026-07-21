@@ -78,6 +78,8 @@ MODULE tblite_interface
                                  cp2k_exchange_stream_reverse_batch_pull, &
                                  cp2k_exchange_stream_reverse_push, &
                                  cp2k_exchange_stream_reverse_result, &
+                                 cp2k_exchange_stream_reverse_transform_advance, &
+                                 cp2k_exchange_stream_transform_advance, &
                                  cp2k_exchange_transform_dense, &
                                  cp2k_exchange_transform_mixed_radix_fft, &
                                  cp2k_exchange_transform_separable_dft, &
@@ -6093,7 +6095,7 @@ CONTAINS
                                                             last_image, local_image_count, &
                                                             local_image_first, nao, nowners, nred, &
                                                             nspin, provider_stream_mode, &
-                                                            requested_batch_size, source
+                                                            requested_batch_size, source, transform_backend
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, image_owner_count
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
       LOGICAL                                            :: batches_done, distributed_mode, fused_symmetry, &
@@ -6101,6 +6103,7 @@ CONTAINS
                                                             has_full_kspace_inputs, &
                                                             owns_image_range, &
                                                             run_block_qualification, use_real_wfn, &
+                                                            transform_done, &
                                                             validate_density, &
                                                             verified_no_full_exchange_star_storage
       REAL(KIND=dp)                                      :: exchange_energy, hermitian_error
@@ -6133,6 +6136,7 @@ CONTAINS
       kmap => tb%gxtb_kmesh_map
       CPASSERT(kmap%nred == nred)
       fused_symmetry = stream_mode == tb_gxtb_exchange_stream_symmetry_fused
+      transform_backend = tb_gxtb_exchange_transform_backend(tb)
       IF (fused_symmetry .AND. kmap%identity) THEN
          CPABORT("SYMMETRY_FUSED exchange requires an actually symmetry-reduced k mesh")
       END IF
@@ -6262,7 +6266,9 @@ CONTAINS
          END IF
          CALL cp2k_exchange_stream_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                          kmap%nmesh, kmap%xkp, kmap%weight, error, &
-                                         mode=provider_stream_mode, batch_size=batch_size)
+                                         mode=provider_stream_mode, batch_size=batch_size, &
+                                         transform_backend=transform_backend, &
+                                         transform_pair_batch_size=batch_size)
       ELSE
          CALL cp2k_exchange_stream_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                          kmap%nmesh, kmap%xkp, kmap%weight, error, &
@@ -6349,7 +6355,18 @@ CONTAINS
                CPABORT("save_tblite returned invalid exchange image-batch bounds")
             END IF
 
-            CALL push_stream_blocks()
+            IF (transform_backend == cp2k_exchange_transform_dense) THEN
+               CALL push_stream_blocks()
+            ELSE
+               transform_done = .FALSE.
+               DO WHILE (.NOT. transform_done)
+                  CALL push_stream_blocks()
+                  CALL cp2k_exchange_stream_transform_advance(stream, transform_done, error)
+                  IF (ALLOCATED(error)) THEN
+                     CPABORT("save_tblite compact forward transform failed: "//TRIM(error%message))
+                  END IF
+               END DO
+            END IF
             CALL cp2k_exchange_stream_batch_apply(stream, tb%calc, tb%mol, tb%ecache, error)
             IF (ALLOCATED(error)) CPABORT("save_tblite exchange image-batch evaluation failed")
 
@@ -6413,6 +6430,23 @@ CONTAINS
             " GXTB-SYMMETRY-FUSED nred=", nred, ", nfull=", kmap%nfull, &
             ", requestedBatch=", requested_batch_size, ", effectiveBatch=", batch_size, &
             ", cachedRepresentativeOverlaps=", nred, ", persistentFullExchangeStarMatrices=", 0
+      END IF
+      IF (fused_symmetry .AND. para_env%is_source()) THEN
+         SELECT CASE (transform_backend)
+         CASE (cp2k_exchange_transform_dense)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=DENSE fallback=0 iter=", iter_count
+         CASE (cp2k_exchange_transform_separable_dft)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=SEPARABLE_DFT fallback=0 iter=", &
+               iter_count
+         CASE (cp2k_exchange_transform_mixed_radix_fft)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=MIXED_RADIX_FFT fallback=0 iter=", &
+               iter_count
+         CASE DEFAULT
+            CPABORT("Unknown streamed g-XTB exchange transform backend")
+         END SELECT
       END IF
       CALL dbcsr_deallocate_matrix(rmatrix)
       CALL dbcsr_deallocate_matrix(cmatrix)
@@ -7734,12 +7768,14 @@ CONTAINS
                                                             transform_work
       INTEGER                                            :: actual_batch_size, batch_size, ic, ifull, &
                                                             ik, ikk, img, ispin, kplocal, nao, nat, &
-                                                            nc, nimg, nred, nspin, stream_mode
+                                                            nc, nimg, nred, nspin, stream_mode, &
+                                                            transform_backend, transform_pair_batch_size
       INTEGER(KIND=int_8)                                :: expected_peak, peak_complex
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size
       INTEGER, DIMENSION(2)                              :: kp_range
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: batch_done, fused_symmetry, use_real_wfn
+      LOGICAL                                            :: batch_done, fused_symmetry, transform_done, &
+                                                            use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: k_gradient, k_sigma, overlap_part
       TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_ao_fm_pools
@@ -7794,6 +7830,7 @@ CONTAINS
       kmap => tb%gxtb_kmesh_map
       stream_mode = tb_gxtb_exchange_stream_mode(tb)
       fused_symmetry = stream_mode == tb_gxtb_exchange_stream_symmetry_fused
+      transform_backend = tb_gxtb_exchange_transform_backend(tb)
 
       ! Keep the established one-point derivative, including its special CP2K symmetry handling.
       IF (kmap%nfull == 1) THEN
@@ -7848,10 +7885,16 @@ CONTAINS
       ! A bounded qualification must not silently become one complete AO image mesh.
       batch_size = MIN(batch_size, kmap%nfull - 1)
       actual_batch_size = MIN(batch_size, kmap%nfull)
+      IF (nao*nao > 1) THEN
+         transform_pair_batch_size = MIN(batch_size, nao*nao - 1)
+      ELSE
+         transform_pair_batch_size = 1
+      END IF
       CALL cp2k_exchange_stream_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                       kmap%nmesh, kmap%xkp, kmap%weight, error, &
                                       mode=cp2k_exchange_stream_batched, batch_size=batch_size, &
-                                      reverse_only=.TRUE.)
+                                      reverse_only=.TRUE., transform_backend=transform_backend, &
+                                      transform_pair_batch_size=transform_pair_batch_size)
       IF (ALLOCATED(error)) THEN
          CPABORT("save_tblite bounded reverse begin failed: "//TRIM(error%message))
       END IF
@@ -7862,15 +7905,35 @@ CONTAINS
       expected_peak = 6_int_8*INT(actual_batch_size, int_8)*INT(nao, int_8)**2* &
                       INT(nspin, int_8) + 5_int_8*INT(nao, int_8)*INT(nspin, int_8) + &
                       2_int_8*INT(kmap%nfull, int_8) + &
-                      3_int_8*INT(MAXVAL(kmap%nmesh), int_8) + &
-                      10_int_8*INT(nao, int_8)**2
+                      3_int_8*INT(MAXVAL(kmap%nmesh), int_8)
+      IF (transform_backend == cp2k_exchange_transform_dense) THEN
+         expected_peak = expected_peak + 10_int_8*INT(nao, int_8)**2
+      ELSE
+         expected_peak = expected_peak + &
+                         6_int_8*INT(transform_pair_batch_size, int_8)* &
+                         INT(kmap%nfull, int_8)*INT(nspin, int_8) + &
+                         MAX(10_int_8*INT(nao, int_8)**2, &
+                             3_int_8*INT(transform_pair_batch_size, int_8)* &
+                             INT(kmap%nfull, int_8))
+      END IF
       IF (peak_complex /= expected_peak) THEN
          CPABORT("save_tblite bounded reverse high-water counter violated its exact formula")
       END IF
 
       batch_done = .FALSE.
       DO WHILE (.NOT. batch_done)
-         CALL push_reverse_blocks()
+         IF (transform_backend == cp2k_exchange_transform_dense) THEN
+            CALL push_reverse_blocks()
+         ELSE
+            transform_done = .FALSE.
+            DO WHILE (.NOT. transform_done)
+               CALL push_reverse_blocks()
+               CALL cp2k_exchange_stream_reverse_transform_advance(stream, transform_done, error)
+               IF (ALLOCATED(error)) THEN
+                  CPABORT("save_tblite compact reverse transform failed: "//TRIM(error%message))
+               END IF
+            END DO
+         END IF
          CALL cp2k_exchange_stream_reverse_batch_apply(stream, tb%calc, tb%mol, tb%ecache, error)
          IF (ALLOCATED(error)) THEN
             CPABORT("save_tblite bounded reverse apply failed: "//TRIM(error%message))
@@ -7912,6 +7975,19 @@ CONTAINS
 
       IF (qualify) CALL qualify_bounded_reverse()
       IF (para_env%is_source()) THEN
+         SELECT CASE (transform_backend)
+         CASE (cp2k_exchange_transform_dense)
+            WRITE (*, '(A)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=DENSE fallback=0"
+         CASE (cp2k_exchange_transform_separable_dft)
+            WRITE (*, '(A)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=SEPARABLE_DFT fallback=0"
+         CASE (cp2k_exchange_transform_mixed_radix_fft)
+            WRITE (*, '(A)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=MIXED_RADIX_FFT fallback=0"
+         CASE DEFAULT
+            CPABORT("Unknown streamed reverse g-XTB transform backend")
+         END SELECT
          WRITE (*, '(A,I0,A,I0,A,I0)') " GXTB STREAMED-REVERSE nfull=", kmap%nfull, &
             " batch=", actual_batch_size, " peak_complex=", peak_complex
          IF (fused_symmetry) THEN
@@ -9456,9 +9532,10 @@ CONTAINS
          acceleration_forward_qualification = tb_gxtb_forward_qualification_enabled(tb)
          acp_projector_cache_mode = tb_gxtb_acp_projector_cache_mode(tb)
          IF (acceleration_transform_backend /= cp2k_exchange_transform_dense .AND. &
-             (acceleration_stream_mode /= 0 .OR. &
-              acceleration_gradient_mode /= tb_gxtb_exchange_gradient_dense)) THEN
-            CPABORT("Non-dense g-xTB transform requires dense complete-array paths")
+             .NOT. (acceleration_stream_mode == tb_gxtb_exchange_stream_symmetry_fused .OR. &
+                    (acceleration_stream_mode == 0 .AND. &
+                     acceleration_gradient_mode == tb_gxtb_exchange_gradient_dense))) THEN
+            CPABORT("Compact g-XTB transform has an incompatible exchange/gradient combination")
          END IF
          IF ((tb%gxtb_image_batch_explicit .OR. acceleration_batch_env_override) .AND. &
              .NOT. (ANY(acceleration_stream_mode == &
