@@ -63,6 +63,20 @@
   {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
   {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0},
 ]
+"O2_gxtb_uks_kp_symmetry_fused.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-150.541892482180998},
+  {matcher="TBLITE_alpha_population", tol=1.0E-10, ref=7.0},
+  {matcher="TBLITE_beta_population", tol=1.0E-10, ref=5.0},
+  {matcher="GXTB_symmetry_fused_forward"},
+  {matcher="GXTB_symmetry_fused_reverse"},
+  {matcher="GXTB_symmetry_fused_overlap_covariance"},
+  {matcher="GXTB_forward_stream_oracle_qualification"},
+  {matcher="GXTB_streamed_reverse_qualification"},
+  {matcher="GXTB_mixer_star_qualification"},
+  {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_mixed_radix_transform"},
+  {matcher="GXTB_mixed_radix_transform_forward"},
+]
 "Si_prim_gxtb_kp_general.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050928767344203}]
 "Si_prim_gxtb_kp_shifted_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.050928767344203}]
 "CH4_gxtb_kp_acceleration_qualify.inp" = [
