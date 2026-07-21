@@ -22,8 +22,6 @@ MODULE mp2_ri_gpw
                                               group_dist_d1_type,&
                                               maxsize,&
                                               release_group_dist
-   USE ISO_C_BINDING,                   ONLY: C_DOUBLE, &
-                                              C_INT
    USE kinds,                           ONLY: dp,&
                                               int_8
    USE libint_2c_3c,                    ONLY: compare_potential_types
@@ -123,23 +121,30 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
+      nspins = SIZE(homo)
+      ALLOCATE (my_B_size(nspins), my_B_virtual_start(nspins), my_B_virtual_end(nspins))
+
       IF (mp2_env%ri_mp2%use_c_backend) THEN
-         CPASSERT(SIZE(BIb_C)==1)
-         CALL get_group_dist(gd_B_virtual(ispin), para_env_sub%mepos, &
-                             my_B_virtual_start(ispin), my_B_virtual_end(ispin), my_B_size(ispin))
-         CALL get_group_dist(gd_array, color_sub, my_group_L_start, my_group_L_end, my_group_L_size)
+         CPASSERT(SIZE(BIb_C) == 1)
+         my_B_size(1) = MIN(dimen_RI, 128)
+         my_B_virtual_start(1) = 1
+         my_B_virtual_end(1) = my_B_size(1)
+         my_group_L_size = MIN(dimen_RI, 128)
+         my_group_L_start = 1
+         my_group_L_end = my_group_L_size
+         IF (.NOT. ALLOCATED(BIb_C(1)%array)) THEN
+            ALLOCATE (BIb_C(1)%array(my_group_L_size, my_B_size(1), homo(1)))
+            BIb_C(1)%array = 0.0_dp
+         END IF
          CALL calc_ri_mp2_energy(Emp2_cou, Emp2_EX, Emp2_S, Emp2_T, BIb_C(1)%array, para_env, para_env_sub, Eigenval(:, 1), &
-                                 homo(1), my_B_virtual_start(1)-1, my_B_size(1), my_group_L_start-1, my_group_L_size, dimen_RI)
+                                 homo(1), my_B_virtual_start(1) - 1, my_B_size(1), my_group_L_start - 1, my_group_L_size, dimen_RI)
          CALL timestop(handle)
          RETURN
       END IF
 
-      nspins = SIZE(homo)
-
       ALLOCATE (virtual(nspins))
       virtual(:) = nmo - homo(:)
 
-      ALLOCATE (my_B_size(nspins), my_B_virtual_start(nspins), my_B_virtual_end(nspins))
       DO ispin = 1, nspins
          CALL get_group_dist(gd_B_virtual(ispin), para_env_sub%mepos, &
                              my_B_virtual_start(ispin), my_B_virtual_end(ispin), my_B_size(ispin))
@@ -163,7 +168,7 @@ CONTAINS
          homo, dimen_RI, unit_nr, &
          integ_group_size, ngroup, &
          num_integ_group, virtual, calc_forces)
-      
+
       ! ========== FOCUS ON THIS PART also 2
       ! now create a group that contains all the proc that have the same virtual starting point
       ! in the integ group
