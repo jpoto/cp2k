@@ -19,8 +19,8 @@
  * @code
  *   gemm_ctx_t *ctx = gemm_ctx_create(GEMM_PU_GPU, GEMM_LIB_CUBLAS);
  *   gemm_ctx_set_threshold(ctx, 128*128*128*2);
- *   gemm_ctx_dgemm(ctx, 'N', 'N', m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
- *   gemm_ctx_destroy(ctx);
+ *   gemm_ctx_dgemm(ctx, 'N', 'N', m, n, k, alpha, A, lda, B, ldb, beta, C,
+ * ldc); gemm_ctx_destroy(ctx);
  * @endcode
  */
 
@@ -37,17 +37,17 @@ extern "C" {
  * Processing unit (where computation runs)
  ******************************************************************************/
 typedef enum {
-    GEMM_PU_HOST = 0, /**< CPU */
-    GEMM_PU_GPU = 1   /**< GPU accelerator */
+  GEMM_PU_HOST = 0, /**< CPU */
+  GEMM_PU_GPU = 1   /**< GPU accelerator */
 } gemm_pu_t;
 
 /*******************************************************************************
  * BLAS library backend
  ******************************************************************************/
 typedef enum {
-    GEMM_LIB_BLAS = 0,   /**< Standard BLAS (dgemm), CPU only */
-    GEMM_LIB_CUBLAS = 1, /**< NVIDIA cuBLAS, GPU direct */
-    GEMM_LIB_SPLA = 2    /**< Intel SPLA, GPU offload */
+  GEMM_LIB_BLAS = 0,   /**< Standard BLAS (dgemm), CPU only */
+  GEMM_LIB_CUBLAS = 1, /**< NVIDIA cuBLAS, GPU direct */
+  GEMM_LIB_SPLA = 2    /**< Intel SPLA, GPU offload */
 } gemm_lib_t;
 
 /*******************************************************************************
@@ -59,7 +59,8 @@ typedef struct gemm_ctx gemm_ctx_t;
  * Create a GEMM context for the given processing unit and backend.
  *
  * @param[in] pu   Processing unit: GEMM_PU_HOST or GEMM_PU_GPU
- * @param[in] lib  Backend library: GEMM_LIB_BLAS, GEMM_LIB_CUBLAS, GEMM_LIB_SPLA
+ * @param[in] lib  Backend library: GEMM_LIB_BLAS, GEMM_LIB_CUBLAS,
+ *GEMM_LIB_SPLA
  * @return         Opaque context handle, or NULL on failure (abort on GPU).
  *
  * Notes:
@@ -116,12 +117,15 @@ void gemm_ctx_set_cublas_math_mode(gemm_ctx_t *ctx, unsigned int mode);
  * @param[in]     n      Number of columns of op(B) and C
  * @param[in]     k      Number of columns of op(A) and rows of op(B)
  * @param[in]     alpha  Scalar multiplier for A*B
- * @param[in]     A      Left matrix (size lda x k, or lda x m if not transposed)
+ * @param[in]     A      Left matrix (size lda x k, or lda x m if not
+ *transposed)
  * @param[in]     lda    Leading dimension of A (lda >= max(1,m) or max(1,k))
- * @param[in]     B      Right matrix (size ldb x n, or ldb x k if not transposed)
+ * @param[in]     B      Right matrix (size ldb x n, or ldb x k if not
+ *transposed)
  * @param[in]     ldb    Leading dimension of B (ldb >= max(1,k) or max(1,n))
  * @param[in]     beta   Scalar multiplier for C
- * @param[in,out] C      Output matrix (size ldc x n, or ldc x m if not transposed)
+ * @param[in,out] C      Output matrix (size ldc x n, or ldc x m if not
+ *transposed)
  * @param[in]     ldc    Leading dimension of C (ldc >= max(1,m) or max(1,n))
  *
  * Memory layout:
@@ -129,14 +133,9 @@ void gemm_ctx_set_cublas_math_mode(gemm_ctx_t *ctx, unsigned int mode);
  *   - A, B, C are always host pointers. For GPU backends the wrapper handles
  *     host-to-device and device-to-host transfers internally.
  ******************************************************************************/
-void gemm_ctx_dgemm(gemm_ctx_t *ctx,
-                    char transa, char transb,
-                    int m, int n, int k,
-                    double alpha,
-                    const double *A, int lda,
-                    const double *B, int ldb,
-                    double beta,
-                    double *C, int ldc);
+void gemm_ctx_dgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
+                    int k, double alpha, const double *A, int lda,
+                    const double *B, int ldb, double beta, double *C, int ldc);
 
 /*******************************************************************************
  * Single-precision real GEMM (same signature as dgemm, but float).
@@ -144,14 +143,9 @@ void gemm_ctx_dgemm(gemm_ctx_t *ctx,
  * Only supported by GEMM_LIB_CUBLAS and GEMM_LIB_SPLA backends.
  * With GEMM_LIB_BLAS this calls sgemm from standard BLAS.
  ******************************************************************************/
-void gemm_ctx_sgemm(gemm_ctx_t *ctx,
-                    char transa, char transb,
-                    int m, int n, int k,
-                    float alpha,
-                    const float *A, int lda,
-                    const float *B, int ldb,
-                    float beta,
-                    float *C, int ldc);
+void gemm_ctx_sgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
+                    int k, float alpha, const float *A, int lda, const float *B,
+                    int ldb, float beta, float *C, int ldc);
 
 /*******************************************************************************
  * Get a human-readable string describing the active backend.
