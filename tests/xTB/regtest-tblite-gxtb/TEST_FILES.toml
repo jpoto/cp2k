@@ -30,6 +30,30 @@
 "Si_prim_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-579.025531393563028}]
 "CH4_gxtb_kp_full.inp" = [{matcher="E_total", tol=1.0E-10, ref=-40.473748967057020}]
 "H2_gxtb_kp_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-1.196733964557302}]
+"H2_gxtb_1d_kp_symmetry_fused.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-1.154127291280941},
+  {matcher="GXTB_symmetry_fused_forward"},
+  {matcher="GXTB_symmetry_fused_reverse"},
+  {matcher="GXTB_symmetry_fused_overlap_covariance"},
+  {matcher="GXTB_forward_stream_oracle_qualification"},
+  {matcher="GXTB_streamed_reverse_qualification"},
+  {matcher="GXTB_mixer_star_qualification"},
+  {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_mixed_radix_transform"},
+  {matcher="GXTB_mixed_radix_transform_forward"},
+]
+"H2_gxtb_2d_kp_symmetry_fused.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-1.137599991534640},
+  {matcher="GXTB_symmetry_fused_forward"},
+  {matcher="GXTB_symmetry_fused_reverse"},
+  {matcher="GXTB_symmetry_fused_overlap_covariance"},
+  {matcher="GXTB_forward_stream_oracle_qualification"},
+  {matcher="GXTB_streamed_reverse_qualification"},
+  {matcher="GXTB_mixer_star_qualification"},
+  {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_mixed_radix_transform"},
+  {matcher="GXTB_mixed_radix_transform_forward"},
+]
 "H2_gxtb_gamma_supercell_311.inp" = [{matcher="E_total", tol=1.0E-10, ref=-3.590201893735382}]
 "H2_gxtb_kp_311_force_stress.inp" = [{matcher="DEBUG_stress_sum", tol=1.0E-6, ref=0.0},
                                        {matcher="DEBUG_force_sum", tol=1.0E-6, ref=0.0}]
