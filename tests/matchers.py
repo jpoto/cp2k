@@ -50,6 +50,7 @@ registry["KPOINT_RESTART_STRICT_TRANSFER"] = TextPresenceMatcher(
 registry["KPOINT_SPGLIB_BACKEND"] = TextPresenceMatcher(
     "BRILLOUIN| Symmetry backend                                             SPGLIB"
 )
+registry["KPOINT_SPGLIB_SPACE_GROUP_P42MNM"] = TextPresenceMatcher("P4_2/mnm")
 registry["GXTB_native_raw"] = TextPresenceMatcher("GXTB-Raw")
 registry["GXTB_native_simple"] = TextPresenceMatcher("GXTB-Simple")
 registry["GXTB_native_fdiis"] = TextPresenceMatcher("GXTB-FDIIS")
