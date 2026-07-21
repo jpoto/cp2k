@@ -428,7 +428,7 @@ CONTAINS
       CALL section_vals_val_get(mp2_section, "RI_MP2%NUMBER_INTEGRATION_GROUPS", i_val=mp2_env%ri_mp2%number_integration_groups)
       CALL section_vals_val_get(mp2_section, "RI_MP2%PRINT_DGEMM_INFO", l_val=mp2_env%ri_mp2%print_dgemm_info)
       CALL section_vals_val_get(mp2_section, "RI_MP2%USE_C_BACKEND", l_val=mp2_env%ri_mp2%use_c_backend)
-      
+
       CALL section_vals_val_get(mp2_section, "RI%ROW_BLOCK", i_val=mp2_env%block_size_row)
       CALL section_vals_val_get(mp2_section, "RI%COL_BLOCK", i_val=mp2_env%block_size_col)
       CALL section_vals_val_get(mp2_section, "RI%CALC_COND_NUM", l_val=mp2_env%calc_PQ_cond_num)

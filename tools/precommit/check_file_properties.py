@@ -87,6 +87,7 @@ FLAG_EXCEPTIONS = (
     r"__SCALAPACK_NO_WA",
     r"__STATM_RESIDENT",
     r"__STATM_TOTAL",
+    r"__CUBLAS",
 )
 
 FLAG_EXCEPTIONS_RE = re.compile(r"|".join(FLAG_EXCEPTIONS))
@@ -141,6 +142,7 @@ BSD_PATHS = (
     "src/offload/",
     "src/grid/",
     "src/dbm/",
+    "src/mp2_gpu/",
 )
 MIT_PATHS = ("src/grpp/",)
 
