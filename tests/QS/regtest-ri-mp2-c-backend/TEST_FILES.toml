@@ -1,0 +1,5 @@
+# Test for RI-MP2 via the C backend (USE_C_BACKEND TRUE).
+# The C backend exercises gemm_ctx_dgemm in calc_ri_mp2_energy.
+# Reference value from actual run: Emp2 = -16.55025317.
+"RI_MP2_H2O_C_BACKEND.inp"              = [{matcher="M011", tol=1.0, ref=-16.55025317}]
+#EOF
