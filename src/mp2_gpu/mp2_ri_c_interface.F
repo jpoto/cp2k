@@ -1,5 +1,8 @@
 !--------------------------------------------------------------------------------------------------!
-! Interface between Fortran and C for MP2 RI routines intent (2)
+!   CP2K: A general program to perform molecular dynamics simulations                              !
+!   Copyright 2000-2026 CP2K developers group <https://cp2k.org>                                   !
+!                                                                                                  !
+!   SPDX-License-Identifier: BSD-3-Clause                                                          !
 !--------------------------------------------------------------------------------------------------!
 
 MODULE mp2_ri_c_interface

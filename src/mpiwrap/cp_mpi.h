@@ -208,7 +208,6 @@ void *cp_mpi_alloc_mem(size_t size);
  ******************************************************************************/
 void cp_mpi_free_mem(void *ptr);
 
-
 /*******************************************************************************
  * \brief Wrapper around MPI_allgather for datatype MPI_INT.
  * \author Acxel Orozco
@@ -221,8 +220,8 @@ void cp_mpi_allgather_int(const int *sendbuf, const int sendcount, int *recvbuf,
  * \author Acxel Orozco
  ******************************************************************************/
 void cp_mpi_allgather_double(const double *sendbuf, const int sendcount,
-                            double *recvbuf, const int recvcount,
-                            const cp_mpi_comm_t comm);
+                             double *recvbuf, const int recvcount,
+                             const cp_mpi_comm_t comm);
 
 /*******************************************************************************
  * \brief Wrapper around MPI_allgather for datatype MPI_BYTE.
@@ -232,8 +231,8 @@ void cp_mpi_allgather_double(const double *sendbuf, const int sendcount,
  * REVIEW
  */
 void cp_mpi_allgather_byte(const void *sendbuf, const int sendcount,
-                          void *recvbuf, const int recvcount,
-                          const cp_mpi_comm_t comm);
+                           void *recvbuf, const int recvcount,
+                           const cp_mpi_comm_t comm);
 
 #endif
 
