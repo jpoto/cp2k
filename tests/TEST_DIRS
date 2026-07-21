@@ -261,6 +261,7 @@ SE/regtest-4
 QMMM/xTB/regtest
 QS/regtest-ot-refine-2
 QS/regtest-ri-mp2                                           libint !ifx
+QS/regtest-ri-mp2-c-backend
 QS/regtest-stress
 QS/regtest-stress-analytical-2d
 QS/regtest-mom-2                                            libint !ifx
