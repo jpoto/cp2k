@@ -9,6 +9,20 @@
 ]
 "CH4_gxtb_kp_symmetry_fused_spglib.inp" = [
   {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
+  {matcher="KPOINT_SPGLIB_BACKEND"},
+  {matcher="GXTB_symmetry_fused_forward"},
+  {matcher="GXTB_symmetry_fused_reverse"},
+  {matcher="GXTB_symmetry_fused_overlap_covariance"},
+  {matcher="GXTB_forward_stream_oracle_qualification"},
+  {matcher="GXTB_streamed_reverse_qualification"},
+  {matcher="GXTB_mixer_star_qualification"},
+  {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_mixed_radix_transform"},
+  {matcher="GXTB_mixed_radix_transform_forward"},
+]
+"CH4_gxtb_kp_symmetry_fused_shifted_spglib.inp" = [
+  {matcher="E_total", tol=1.0E-10, ref=-40.468551982577395},
+  {matcher="KPOINT_SPGLIB_BACKEND"},
   {matcher="GXTB_symmetry_fused_forward"},
   {matcher="GXTB_symmetry_fused_reverse"},
   {matcher="GXTB_symmetry_fused_overlap_covariance"},

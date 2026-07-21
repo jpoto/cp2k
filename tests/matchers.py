@@ -47,6 +47,9 @@ registry["KPOINT_RESTART_VALIDATED_TRANSFER"] = TextPresenceMatcher(
 registry["KPOINT_RESTART_STRICT_TRANSFER"] = TextPresenceMatcher(
     "KPOINT_RESTART| Strict same-mesh restart accepted"
 )
+registry["KPOINT_SPGLIB_BACKEND"] = TextPresenceMatcher(
+    "BRILLOUIN| Symmetry backend                                             SPGLIB"
+)
 registry["GXTB_native_raw"] = TextPresenceMatcher("GXTB-Raw")
 registry["GXTB_native_simple"] = TextPresenceMatcher("GXTB-Simple")
 registry["GXTB_native_fdiis"] = TextPresenceMatcher("GXTB-FDIIS")
