@@ -2569,6 +2569,7 @@ CONTAINS
 !> AUTO keeps molecular and explicit one-point calculations on the compact legacy path.  A
 !> genuinely reduced mesh uses the exact symmetry-fused path and provider FFT.  An unreduced mesh
 !> uses distributed partial-image exchange when MPI can contribute and bounded batching otherwise.
+!> Periodic ACP terms use the exact streamed forward/reverse mesh contraction when present.
 !> Qualification is never enabled implicitly.
 ! **************************************************************************************************
    SUBROUTINE tb_resolve_gxtb_acceleration(tb, kpoints, kmap)
@@ -2588,6 +2589,10 @@ CONTAINS
 
       tb%gxtb_forward_fock_qualification = tblite_gxtb_forward_qualification_off
       tb%gxtb_acp_projector_cache = tblite_gxtb_acp_cache_enabled
+      tb%gxtb_acp_mesh_contraction = tblite_gxtb_acp_mesh_dense
+      IF (kmap%nfull > 1 .AND. ALLOCATED(tb%calc%acp)) THEN
+         tb%gxtb_acp_mesh_contraction = tblite_gxtb_acp_mesh_streamed
+      END IF
       IF (kmap%nfull <= 1) THEN
          tb%gxtb_exchange_stream_backend = tblite_gxtb_exchange_complete_array
          tb%gxtb_gradient_contraction = tblite_gxtb_gradient_dense
