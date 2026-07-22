@@ -47,17 +47,23 @@ MODULE tblite_interface
                                  cp2k_exchange_partial_export_forward, &
                                  cp2k_exchange_partial_export_reverse, &
                                  cp2k_exchange_partial_forward_pack, &
+                                 cp2k_exchange_partial_forward_pack_range, &
                                  cp2k_exchange_partial_forward_size, &
                                  cp2k_exchange_partial_forward_type, &
                                  cp2k_exchange_partial_forward_unpack, &
+                                 cp2k_exchange_partial_forward_unpack_range, &
                                  cp2k_exchange_partial_import_forward, &
+                                 cp2k_exchange_partial_import_forward_range, &
                                  cp2k_exchange_partial_import_reverse, &
+                                 cp2k_exchange_partial_import_reverse_range, &
                                  cp2k_exchange_partial_push, &
                                  cp2k_exchange_partial_reverse_pack, &
+                                 cp2k_exchange_partial_reverse_pack_range, &
                                  cp2k_exchange_partial_reverse_push, &
                                  cp2k_exchange_partial_reverse_size, &
                                  cp2k_exchange_partial_reverse_type, &
                                  cp2k_exchange_partial_reverse_unpack, &
+                                 cp2k_exchange_partial_reverse_unpack_range, &
                                  cp2k_exchange_partial_set_image_range, &
                                  cp2k_exchange_partial_set_pull_ownership, &
                                  cp2k_exchange_kpoint_gradient, &
@@ -4803,6 +4809,40 @@ CONTAINS
    END SUBROUTINE tb_gxtb_partial_reduce_complex_root
 
 ! **************************************************************************************************
+!> \brief Reduce one bounded complex payload to an arbitrary communicator rank.
+!>
+!> The range-local image bridge uses one reduction per disjoint importer tile.
+!> Chunking retains the provider's INT64 payload contract while keeping every
+!> CP2K/MPI count representable by a default integer.
+!> \param values ...
+!> \param para_env ...
+!> \param root ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_partial_reduce_complex_to_rank(values, para_env, root)
+
+      COMPLEX(KIND=dp), CONTIGUOUS, DIMENSION(:), &
+         INTENT(INOUT)                                   :: values
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      INTEGER, INTENT(IN)                                :: root
+
+      INTEGER(KIND=int_8), PARAMETER                     :: chunk_size = 1048576_int_8
+
+      INTEGER(KIND=int_8)                                :: first, last, nelements
+
+      IF (root < 0 .OR. root >= para_env%num_pe) THEN
+         CPABORT("Invalid range-local g-XTB reduction root")
+      END IF
+      nelements = SIZE(values, KIND=int_8)
+      first = 1_int_8
+      DO WHILE (first <= nelements)
+         last = MIN(nelements, first + chunk_size - 1_int_8)
+         CALL para_env%sum(values(first:last), root)
+         first = last + 1_int_8
+      END DO
+
+   END SUBROUTINE tb_gxtb_partial_reduce_complex_to_rank
+
+! **************************************************************************************************
 !> \brief Compare the complete provider descriptor on every replicated importer.
 !>
 !> Variant B permits every global CP2K rank to import the same merged source.
@@ -4848,6 +4888,59 @@ CONTAINS
       DEALLOCATE (local_words, root_words)
 
    END SUBROUTINE tb_gxtb_partial_descriptor_consensus_global
+
+! **************************************************************************************************
+!> \brief Validate leader descriptors, then distribute the canonical one globally.
+!>
+!> Range-local importers do not own a contributor accumulator and therefore
+!> cannot export a descriptor themselves.  The k-group leaders first prove
+!> exact agreement; the global service leader then broadcasts that immutable
+!> descriptor to every compact importer.
+!> \param leader ...
+!> \param service_rank ...
+!> \param descriptor ...
+!> \param para_env_global ...
+!> \param para_env_inter_kp ...
+!> \param para_env_kp ...
+! **************************************************************************************************
+   SUBROUTINE tb_gxtb_partial_descriptor_broadcast_global( &
+      leader, service_rank, descriptor, para_env_global, para_env_inter_kp, para_env_kp)
+
+      LOGICAL, INTENT(IN)                                :: leader, service_rank
+      TYPE(cp2k_exchange_partial_descriptor_type), &
+         INTENT(INOUT)                                   :: descriptor
+      TYPE(mp_para_env_type), POINTER                    :: para_env_global, para_env_inter_kp, &
+                                                            para_env_kp
+
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: words
+      LOGICAL                                            :: local_failed
+      TYPE(cp2k_exchange_partial_descriptor_type)        :: canonical
+      TYPE(error_type), ALLOCATABLE                      :: error
+
+      CALL tb_gxtb_partial_descriptor_consensus( &
+         leader, service_rank, descriptor, para_env_inter_kp, para_env_kp)
+      IF (service_rank) THEN
+         CALL cp2k_exchange_partial_descriptor_pack(descriptor, words, error)
+         local_failed = ALLOCATED(error)
+      ELSE
+         ALLOCATE (words(cp2k_exchange_partial_descriptor_words), source=0_int_8)
+         local_failed = .FALSE.
+      END IF
+      CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                        local_failed, &
+                                        "save_tblite canonical descriptor packing failed")
+      CALL para_env_global%bcast(words)
+      CALL cp2k_exchange_partial_descriptor_unpack(canonical, words, error)
+      local_failed = ALLOCATED(error)
+      IF (.NOT. local_failed .AND. leader) local_failed = &
+         .NOT. cp2k_exchange_partial_descriptors_match(descriptor, canonical)
+      CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                        local_failed, &
+                                        "save_tblite canonical descriptor broadcast failed")
+      descriptor = canonical
+      DEALLOCATE (words)
+
+   END SUBROUTINE tb_gxtb_partial_descriptor_broadcast_global
 
 ! **************************************************************************************************
 !> \brief All-reduce an arbitrarily long packed complex payload.
@@ -4936,6 +5029,34 @@ CONTAINS
    END SUBROUTINE tb_gxtb_partial_replicated_owner_map
 
 ! **************************************************************************************************
+!> \brief Return one deterministic quotient/remainder image tile.
+!> \param nimages ...
+!> \param nranks ...
+!> \param rank ...
+!> \param first_image ...
+!> \param image_count ...
+! **************************************************************************************************
+   PURE SUBROUTINE tb_gxtb_partial_image_range_for_rank( &
+      nimages, nranks, rank, first_image, image_count)
+
+      INTEGER, INTENT(IN)                                :: nimages, nranks, rank
+      INTEGER, INTENT(OUT)                               :: first_image, image_count
+
+      INTEGER                                            :: base_count, extra_count
+
+      first_image = 0
+      image_count = -1
+      IF (nimages < 1 .OR. nranks < 1 .OR. rank < 0 .OR. rank >= nranks) RETURN
+      base_count = nimages/nranks
+      extra_count = MOD(nimages, nranks)
+      image_count = base_count + MERGE(1, 0, rank < extra_count)
+      IF (image_count > 0) THEN
+         first_image = 1 + rank*base_count + MIN(rank, extra_count)
+      END IF
+
+   END SUBROUTINE tb_gxtb_partial_image_range_for_rank
+
+! **************************************************************************************************
 !> \brief Construct and prove an exact contiguous BvK-image partition.
 !>
 !> Every global CP2K rank is an importer in Variant C.  The deterministic
@@ -4957,22 +5078,15 @@ CONTAINS
       INTEGER, INTENT(OUT)                               :: first_image, image_count
       LOGICAL, INTENT(IN)                                :: inject_mismatch
 
-      INTEGER                                            :: base_count, extra_count, image, &
-                                                            importer_rank
+      INTEGER                                            :: image, importer_rank
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: cover
 
       IF (nimages < 1 .OR. para_env%num_pe < 1) THEN
          CPABORT("Invalid distributed-image partition extent")
       END IF
       importer_rank = para_env%mepos
-      base_count = nimages/para_env%num_pe
-      extra_count = MOD(nimages, para_env%num_pe)
-      image_count = base_count + MERGE(1, 0, importer_rank < extra_count)
-      IF (image_count > 0) THEN
-         first_image = 1 + importer_rank*base_count + MIN(importer_rank, extra_count)
-      ELSE
-         first_image = 0
-      END IF
+      CALL tb_gxtb_partial_image_range_for_rank( &
+         nimages, para_env%num_pe, importer_rank, first_image, image_count)
 
       IF (inject_mismatch) THEN
          IF (para_env%num_pe < 2) THEN
@@ -5427,11 +5541,13 @@ CONTAINS
       COMPLEX(KIND=dp), ALLOCATABLE, &
          DIMENSION(:, :, :, :)                           :: density_local
       INTEGER                                            :: actual_batch_size, batch_size, &
-                                                            done_count, empty_importers, group_index, ifull, &
+                                                            batch_first, batch_last, done_count, &
+                                                            empty_importers, group_index, ifull, &
                                                             importer_count, importer_rank, injection_mode, &
                                                             image_count, image_first, iop, ispin, &
                                                             local_source, nao, nkp_groups, &
-                                                            nlocal, nred, nspin, result_owner_rank, source
+                                                            nlocal, nred, nspin, result_owner_rank, source, &
+                                                            target_image_count, target_image_first, target_rank
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
                                                             owner_count, owner_sum, pull_owner
       INTEGER, DIMENSION(2)                              :: kp_range
@@ -5440,7 +5556,7 @@ CONTAINS
       INTEGER(KIND=int_8)                                :: local_payload_size, &
                                                             root_payload_size, transaction_id(2)
       LOGICAL                                            :: batch_done, contributor_done, &
-                                                            first_batch, leader, local_failed, &
+                                                            first_batch, importer_done, leader, local_failed, &
                                                             owns_source, service_rank, &
                                                             use_real_wfn, validate_density
       REAL(KIND=dp)                                      :: density_norm, exchange_energy, &
@@ -5449,7 +5565,7 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: overlap_part
       TYPE(cp2k_exchange_partial_descriptor_type)        :: descriptor
       TYPE(cp2k_exchange_partial_forward_type)           :: local_buffer, summed_buffer
-      TYPE(cp2k_exchange_stream_type)                    :: stream
+      TYPE(cp2k_exchange_stream_type)                    :: importer_stream, stream
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(error_type), ALLOCATABLE                      :: error
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -5592,7 +5708,17 @@ CONTAINS
          CPABORT("IMAGE_RANGE_MISMATCH qualification requires distributed images")
       END IF
       local_failed = .FALSE.
-      IF (leader .OR. replicated_importers) THEN
+      IF (distributed_images) THEN
+         IF (leader) THEN
+            CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
+                                             kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
+                                             transaction_id, error)
+            local_failed = ALLOCATED(error)
+         ELSE
+            CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
+            local_failed = ALLOCATED(error)
+         END IF
+      ELSE IF (leader .OR. replicated_importers) THEN
          CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                           kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
                                           transaction_id, error)
@@ -5607,6 +5733,16 @@ CONTAINS
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT initialization failed")
+      IF (distributed_images) THEN
+         CALL cp2k_exchange_partial_begin( &
+            importer_stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
+            kmap%nmesh, kmap%xkp, kmap%weight, batch_size, transaction_id, error, &
+            local_image_first=image_first, local_image_count=image_count)
+         local_failed = ALLOCATED(error)
+         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                           local_failed, &
+                                           "save_tblite range-local importer initialization failed")
+      END IF
 
       batch_done = .FALSE.
       first_batch = .TRUE.
@@ -5648,7 +5784,8 @@ CONTAINS
                                            "save_tblite KGROUP_PARTIAL_ROOT push failed")
          IF (validate_density .AND. first_batch) tb%gxtb_density_map_validated = .TRUE.
 
-         IF (leader .OR. replicated_importers) THEN
+         IF ((distributed_images .AND. leader) .OR. &
+             (.NOT. distributed_images .AND. (leader .OR. replicated_importers))) THEN
             CALL cp2k_exchange_partial_export_forward(stream, descriptor, owner_count, &
                                                       local_buffer, error)
             local_failed = ALLOCATED(error)
@@ -5658,99 +5795,198 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT export failed")
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            CALL tb_gxtb_partial_descriptor_broadcast_global( &
+               leader, service_rank, descriptor, para_env_global, para_env_inter_kp, para_env_kp)
+         ELSE IF (replicated_importers) THEN
             CALL tb_gxtb_partial_descriptor_consensus_global(descriptor, para_env_global)
          ELSE
             CALL tb_gxtb_partial_descriptor_consensus(leader, service_rank, descriptor, &
                                                       para_env_inter_kp, para_env_kp)
          END IF
 
-         IF (leader .OR. replicated_importers) THEN
-            local_payload_size = cp2k_exchange_partial_forward_size(local_buffer)
-            root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
-            IF (replicated_importers) THEN
-               CALL para_env_global%bcast(root_payload_size)
+         IF (distributed_images) THEN
+            CALL cp2k_exchange_stream_batch_bounds( &
+               importer_stream, batch_first, batch_last, error)
+            local_failed = ALLOCATED(error)
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite range-local batch bounds failed")
+            IF (leader) THEN
+               ALLOCATE (owner_sum, source=owner_count)
             ELSE
-               CALL para_env_inter_kp%bcast(root_payload_size)
+               ALLOCATE (owner_sum(kmap%nfull), source=0)
             END IF
-            local_failed = local_payload_size /= root_payload_size .OR. &
-                           local_payload_size < 0_int_8
-         ELSE
-            local_failed = .FALSE.
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "Inconsistent KGROUP_PARTIAL_ROOT payload size")
-
-         IF (leader .OR. replicated_importers) THEN
-            CALL cp2k_exchange_partial_forward_pack(local_buffer, packed_payload, error)
-            local_failed = ALLOCATED(error)
-            IF (.NOT. local_failed) local_failed = &
-               SIZE(packed_payload, KIND=int_8) /= root_payload_size
-         ELSE
-            local_failed = .FALSE.
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT packing failed")
-
-         IF (replicated_importers) THEN
-            ALLOCATE (owner_sum, source=owner_count)
             CALL para_env_global%sum(owner_sum)
-            CALL tb_gxtb_partial_allreduce_complex(packed_payload, para_env_global)
-            local_failed = ANY(owner_sum /= 1) .OR. &
-                           .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
-                           .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
-         ELSE IF (leader) THEN
-            ALLOCATE (owner_sum, source=owner_count)
-            CALL para_env_inter_kp%sum(owner_sum, para_env_inter_kp%source)
-            CALL tb_gxtb_partial_reduce_complex_root(packed_payload, para_env_inter_kp)
-            local_failed = .FALSE.
-            IF (service_rank) local_failed = ANY(owner_sum /= 1) .OR. &
-                                             .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
-                                             .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
-         ELSE
-            local_failed = .FALSE.
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "Invalid KGROUP_PARTIAL_ROOT ownership or payload")
+            local_failed = ANY(owner_sum /= 1)
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "Invalid range-local KGROUP ownership")
 
-         local_failed = .FALSE.
-         IF (service_rank .OR. replicated_importers) THEN
-            CALL cp2k_exchange_partial_forward_unpack(summed_buffer, descriptor, &
-                                                      packed_payload, error)
-            local_failed = ALLOCATED(error)
-            IF (.NOT. local_failed) THEN
-               CALL cp2k_exchange_partial_import_forward(stream, descriptor, owner_sum, &
-                                                         summed_buffer, tb%calc, tb%mol, &
-                                                         tb%ecache, error)
-               local_failed = ALLOCATED(error)
-            END IF
-            IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
-               IF (distributed_images) THEN
-                  CALL cp2k_exchange_partial_set_image_range( &
-                     stream, image_first, image_count, error)
-               ELSE
-                  CALL cp2k_exchange_partial_set_pull_ownership( &
-                     stream, pull_owner, importer_rank, importer_count, &
-                     result_owner_rank, error)
+            DO target_rank = 0, importer_count - 1
+               CALL tb_gxtb_partial_image_range_for_rank( &
+                  kmap%nfull, importer_count, target_rank, &
+                  target_image_first, target_image_count)
+               IF (target_image_count > 0) THEN
+                  target_image_count = &
+                     MIN(target_image_first + target_image_count - 1, batch_last) - &
+                     MAX(target_image_first, batch_first) + 1
+                  IF (target_image_count > 0) THEN
+                     target_image_first = MAX(target_image_first, batch_first)
+                  ELSE
+                     target_image_first = 0
+                     target_image_count = 0
+                  END IF
                END IF
+               IF (leader) THEN
+                  CALL cp2k_exchange_partial_forward_pack_range( &
+                     local_buffer, descriptor, target_image_first, target_image_count, &
+                     packed_payload, error)
+                  local_failed = ALLOCATED(error)
+                  IF (.NOT. local_failed) THEN
+                     local_payload_size = SIZE(packed_payload, KIND=int_8)
+                  ELSE
+                     local_payload_size = -1_int_8
+                  END IF
+               ELSE
+                  local_payload_size = 0_int_8
+                  local_failed = .FALSE.
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "save_tblite range-local forward packing failed")
+               root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
+               CALL para_env_global%bcast(root_payload_size)
+               local_failed = root_payload_size < 0_int_8 .OR. &
+                              root_payload_size > INT(HUGE(0), int_8)
+               IF (leader .AND. .NOT. local_failed) local_failed = &
+                  local_payload_size /= root_payload_size
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "Inconsistent range-local forward payload size")
+               IF (.NOT. leader) THEN
+                  ALLOCATE (packed_payload(INT(root_payload_size)), &
+                            source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+               END IF
+               CALL tb_gxtb_partial_reduce_complex_to_rank( &
+                  packed_payload, para_env_global, target_rank)
+               local_failed = .FALSE.
+               IF (para_env_global%mepos == target_rank) THEN
+                  local_failed = &
+                     .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                     .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+                  IF (.NOT. local_failed) THEN
+                     CALL cp2k_exchange_partial_forward_unpack_range( &
+                        summed_buffer, descriptor, target_image_first, target_image_count, &
+                        packed_payload, error)
+                     local_failed = ALLOCATED(error)
+                  END IF
+                  IF (.NOT. local_failed) THEN
+                     CALL cp2k_exchange_partial_import_forward_range( &
+                        importer_stream, descriptor, owner_sum, summed_buffer, &
+                        tb%calc, tb%mol, tb%ecache, error)
+                     local_failed = ALLOCATED(error)
+                  END IF
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "save_tblite range-local forward import failed")
+               DEALLOCATE (packed_payload)
+            END DO
+            CALL cp2k_exchange_stream_batch_apply( &
+               importer_stream, tb%calc, tb%mol, tb%ecache, error)
+            local_failed = ALLOCATED(error)
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite range-local forward apply failed")
+         ELSE
+            IF (leader .OR. replicated_importers) THEN
+               local_payload_size = cp2k_exchange_partial_forward_size(local_buffer)
+               root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
+               IF (replicated_importers) THEN
+                  CALL para_env_global%bcast(root_payload_size)
+               ELSE
+                  CALL para_env_inter_kp%bcast(root_payload_size)
+               END IF
+               local_failed = local_payload_size /= root_payload_size .OR. &
+                              local_payload_size < 0_int_8
+            ELSE
+               local_failed = .FALSE.
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "Inconsistent KGROUP_PARTIAL_ROOT payload size")
+
+            IF (leader .OR. replicated_importers) THEN
+               CALL cp2k_exchange_partial_forward_pack(local_buffer, packed_payload, error)
+               local_failed = ALLOCATED(error)
+               IF (.NOT. local_failed) local_failed = &
+                  SIZE(packed_payload, KIND=int_8) /= root_payload_size
+            ELSE
+               local_failed = .FALSE.
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT packing failed")
+
+            IF (replicated_importers) THEN
+               ALLOCATE (owner_sum, source=owner_count)
+               CALL para_env_global%sum(owner_sum)
+               CALL tb_gxtb_partial_allreduce_complex(packed_payload, para_env_global)
+               local_failed = ANY(owner_sum /= 1) .OR. &
+                              .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                              .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+            ELSE IF (leader) THEN
+               ALLOCATE (owner_sum, source=owner_count)
+               CALL para_env_inter_kp%sum(owner_sum, para_env_inter_kp%source)
+               CALL tb_gxtb_partial_reduce_complex_root(packed_payload, para_env_inter_kp)
+               local_failed = .FALSE.
+               IF (service_rank) local_failed = ANY(owner_sum /= 1) .OR. &
+                                                .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                                                .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+            ELSE
+               local_failed = .FALSE.
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "Invalid KGROUP_PARTIAL_ROOT ownership or payload")
+
+            local_failed = .FALSE.
+            IF (service_rank .OR. replicated_importers) THEN
+               CALL cp2k_exchange_partial_forward_unpack(summed_buffer, descriptor, &
+                                                         packed_payload, error)
+               local_failed = ALLOCATED(error)
+               IF (.NOT. local_failed) THEN
+                  CALL cp2k_exchange_partial_import_forward(stream, descriptor, owner_sum, &
+                                                            summed_buffer, tb%calc, tb%mol, &
+                                                            tb%ecache, error)
+                  local_failed = ALLOCATED(error)
+               END IF
+               IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
+                  IF (distributed_images) THEN
+                     CALL cp2k_exchange_partial_set_image_range( &
+                        stream, image_first, image_count, error)
+                  ELSE
+                     CALL cp2k_exchange_partial_set_pull_ownership( &
+                        stream, pull_owner, importer_rank, importer_count, &
+                        result_owner_rank, error)
+                  END IF
+                  local_failed = ALLOCATED(error)
+               END IF
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT import failed")
+
+            local_failed = .FALSE.
+            IF (service_rank .OR. replicated_importers) THEN
+               CALL cp2k_exchange_stream_batch_apply(stream, tb%calc, tb%mol, tb%ecache, error)
                local_failed = ALLOCATED(error)
             END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT apply failed")
          END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT import failed")
-
-         local_failed = .FALSE.
-         IF (service_rank .OR. replicated_importers) THEN
-            CALL cp2k_exchange_stream_batch_apply(stream, tb%calc, tb%mol, tb%ecache, error)
-            local_failed = ALLOCATED(error)
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT apply failed")
 
          DO ifull = 1, kmap%nfull
             source = kmap%source(ifull)
@@ -5761,8 +5997,13 @@ CONTAINS
             IF ((distributed_images) .OR. &
                 (replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
                 (.NOT. replicated_importers .AND. service_rank)) THEN
-               CALL cp2k_exchange_stream_batch_pull(stream, ifull, overlap_block, &
-                                                    fock_batch, error)
+               IF (distributed_images) THEN
+                  CALL cp2k_exchange_stream_batch_pull( &
+                     importer_stream, ifull, overlap_block, fock_batch, error)
+               ELSE
+                  CALL cp2k_exchange_stream_batch_pull(stream, ifull, overlap_block, &
+                                                       fock_batch, error)
+               END IF
                local_failed = ALLOCATED(error)
                IF (.NOT. local_failed) local_failed = &
                   .NOT. ALL(ieee_is_finite(REAL(fock_batch, KIND=dp))) .OR. &
@@ -5786,8 +6027,19 @@ CONTAINS
          END DO
 
          contributor_done = .FALSE.
+         importer_done = .FALSE.
          local_failed = .FALSE.
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            CALL cp2k_exchange_stream_batch_advance( &
+               importer_stream, importer_done, error)
+            local_failed = ALLOCATED(error)
+            IF (leader .AND. .NOT. local_failed) THEN
+               CALL cp2k_exchange_partial_contributor_advance( &
+                  stream, contributor_done, error)
+               local_failed = ALLOCATED(error)
+               IF (.NOT. local_failed) local_failed = contributor_done .NEQV. importer_done
+            END IF
+         ELSE IF (replicated_importers) THEN
             CALL cp2k_exchange_stream_batch_advance(stream, contributor_done, error)
             local_failed = ALLOCATED(error)
          ELSE IF (service_rank) THEN
@@ -5801,7 +6053,11 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT advance failed")
          done_count = 0
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            done_count = MERGE(1, 0, importer_done)
+            CALL para_env_global%sum(done_count)
+            local_failed = done_count /= 0 .AND. done_count /= importer_count
+         ELSE IF (replicated_importers) THEN
             done_count = MERGE(1, 0, contributor_done)
             CALL para_env_global%sum(done_count)
             local_failed = done_count /= 0 .AND. done_count /= importer_count
@@ -5822,15 +6078,24 @@ CONTAINS
             batch_done = done_count == nkp_groups
          END IF
          first_batch = .FALSE.
-         IF (leader .OR. replicated_importers) THEN
+         IF (distributed_images) THEN
+            IF (leader) DEALLOCATE (owner_count)
+            DEALLOCATE (owner_sum)
+         ELSE IF (leader .OR. replicated_importers) THEN
             DEALLOCATE (owner_count, owner_sum, packed_payload)
          END IF
       END DO
 
       local_failed = .FALSE.
       IF (service_rank .OR. distributed_images) THEN
-         CALL cp2k_exchange_stream_batch_result(stream, tb%calc, tb%mol, tb%ecache, &
-                                                exchange_vsh, exchange_energy, error)
+         IF (distributed_images) THEN
+            CALL cp2k_exchange_stream_batch_result( &
+               importer_stream, tb%calc, tb%mol, tb%ecache, &
+               exchange_vsh, exchange_energy, error)
+         ELSE
+            CALL cp2k_exchange_stream_batch_result(stream, tb%calc, tb%mol, tb%ecache, &
+                                                   exchange_vsh, exchange_energy, error)
+         END IF
          local_failed = ALLOCATED(error)
          IF (injection_mode == tb_gxtb_partial_inject_nonfinite_forward_result) THEN
             exchange_energy = ieee_value(exchange_energy, ieee_quiet_nan)
@@ -5842,14 +6107,22 @@ CONTAINS
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT result failed")
-      IF (replicated_importers) THEN
+      IF (distributed_images) THEN
+         CALL cp2k_exchange_stream_end(importer_stream, error)
+         local_failed = ALLOCATED(error)
+         IF (leader .AND. .NOT. local_failed) THEN
+            CALL cp2k_exchange_partial_discard(stream, error)
+            local_failed = ALLOCATED(error)
+         END IF
+      ELSE IF (replicated_importers) THEN
          CALL cp2k_exchange_stream_end(stream, error)
       ELSE IF (service_rank) THEN
          CALL cp2k_exchange_stream_end(stream, error)
       ELSE IF (leader) THEN
          CALL cp2k_exchange_partial_discard(stream, error)
       END IF
-      local_failed = (leader .OR. replicated_importers) .AND. ALLOCATED(error)
+      IF (.NOT. distributed_images) local_failed = &
+         (leader .OR. replicated_importers) .AND. ALLOCATED(error)
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT finalization failed")
@@ -8330,12 +8603,14 @@ CONTAINS
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: overlap_adjoint, overlap_block, &
                                                             transform_work
       INTEGER                                            :: actual_batch_size, batch_size, &
-                                                            done_count, empty_importers, group_index, ic, &
+                                                            batch_first, batch_last, done_count, &
+                                                            empty_importers, group_index, ic, &
                                                             ifull, ik, ikk, image_count, image_first, img, &
                                                             importer_count, &
                                                             importer_rank, injection_mode, ispin, kplocal, &
                                                             nao, nat, nc, nimg, nkp_groups, nred, nspin, &
-                                                            result_owner_rank, source
+                                                            result_owner_rank, source, target_image_count, &
+                                                            target_image_first, target_rank
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
                                                             owner_count, owner_sum, pull_owner
       INTEGER, DIMENSION(2)                              :: kp_range
@@ -8344,7 +8619,7 @@ CONTAINS
       INTEGER(KIND=int_8)                                :: local_payload_size, peak_complex, &
                                                             root_payload_size, transaction_id(2)
       LOGICAL                                            :: batch_done, contributor_done, &
-                                                            first_batch, leader, local_failed, owns_source, &
+                                                            first_batch, importer_done, leader, local_failed, owns_source, &
                                                             service_rank, use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: k_gradient, k_sigma, overlap_part
@@ -8354,7 +8629,7 @@ CONTAINS
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :, :)  :: pmat_ext
       TYPE(cp2k_exchange_partial_descriptor_type)        :: descriptor
       TYPE(cp2k_exchange_partial_reverse_type)           :: local_buffer, summed_buffer
-      TYPE(cp2k_exchange_stream_type)                    :: stream
+      TYPE(cp2k_exchange_stream_type)                    :: importer_stream, stream
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: exchange_w_rs, matrix_s, matrix_w
       TYPE(dbcsr_type), POINTER                          :: cmatrix, rmatrix
       TYPE(error_type), ALLOCATABLE                      :: error
@@ -8506,7 +8781,18 @@ CONTAINS
          CPABORT("IMAGE_RANGE_MISMATCH qualification requires distributed images")
       END IF
       local_failed = .FALSE.
-      IF (leader .OR. replicated_importers) THEN
+      IF (distributed_images) THEN
+         IF (leader) THEN
+            CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
+                                             kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
+                                             transaction_id, error, reverse_only=.TRUE.)
+            local_failed = ALLOCATED(error)
+         ELSE
+            CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
+            local_failed = ALLOCATED(error)
+         END IF
+         peak_complex = 0_int_8
+      ELSE IF (leader .OR. replicated_importers) THEN
          CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                           kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
                                           transaction_id, error, reverse_only=.TRUE.)
@@ -8524,6 +8810,18 @@ CONTAINS
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse initialization failed")
+      IF (distributed_images) THEN
+         CALL cp2k_exchange_partial_begin( &
+            importer_stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
+            kmap%nmesh, kmap%xkp, kmap%weight, batch_size, transaction_id, error, &
+            reverse_only=.TRUE., local_image_first=image_first, local_image_count=image_count)
+         local_failed = ALLOCATED(error)
+         IF (.NOT. local_failed) peak_complex = &
+            cp2k_exchange_stream_peak_complex_elements(importer_stream)
+         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                           local_failed, &
+                                           "save_tblite range-local reverse importer initialization failed")
+      END IF
 
       batch_done = .FALSE.
       first_batch = .TRUE.
@@ -8543,7 +8841,8 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse push failed")
 
-         IF (leader .OR. replicated_importers) THEN
+         IF ((distributed_images .AND. leader) .OR. &
+             (.NOT. distributed_images .AND. (leader .OR. replicated_importers))) THEN
             CALL cp2k_exchange_partial_export_reverse(stream, descriptor, owner_count, &
                                                       local_buffer, error)
             local_failed = ALLOCATED(error)
@@ -8553,98 +8852,197 @@ CONTAINS
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse export failed")
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            CALL tb_gxtb_partial_descriptor_broadcast_global( &
+               leader, service_rank, descriptor, para_env_global, para_env_inter_kp, para_env_kp)
+         ELSE IF (replicated_importers) THEN
             CALL tb_gxtb_partial_descriptor_consensus_global(descriptor, para_env_global)
          ELSE
             CALL tb_gxtb_partial_descriptor_consensus(leader, service_rank, descriptor, &
                                                       para_env_inter_kp, para_env_kp)
          END IF
 
-         IF (leader .OR. replicated_importers) THEN
-            local_payload_size = cp2k_exchange_partial_reverse_size(local_buffer)
-            root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
-            IF (replicated_importers) THEN
-               CALL para_env_global%bcast(root_payload_size)
+         IF (distributed_images) THEN
+            CALL cp2k_exchange_stream_batch_bounds( &
+               importer_stream, batch_first, batch_last, error)
+            local_failed = ALLOCATED(error)
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite range-local reverse batch bounds failed")
+            IF (leader) THEN
+               ALLOCATE (owner_sum, source=owner_count)
             ELSE
-               CALL para_env_inter_kp%bcast(root_payload_size)
+               ALLOCATE (owner_sum(kmap%nfull), source=0)
             END IF
-            local_failed = local_payload_size /= root_payload_size .OR. &
-                           local_payload_size < 0_int_8
-         ELSE
-            local_failed = .FALSE.
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "Inconsistent KGROUP_PARTIAL_ROOT reverse payload size")
-         IF (leader .OR. replicated_importers) THEN
-            CALL cp2k_exchange_partial_reverse_pack(local_buffer, packed_payload, error)
-            local_failed = ALLOCATED(error)
-            IF (.NOT. local_failed) local_failed = &
-               SIZE(packed_payload, KIND=int_8) /= root_payload_size
-         ELSE
-            local_failed = .FALSE.
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT reverse packing failed")
-
-         IF (replicated_importers) THEN
-            ALLOCATE (owner_sum, source=owner_count)
             CALL para_env_global%sum(owner_sum)
-            CALL tb_gxtb_partial_allreduce_complex(packed_payload, para_env_global)
-            local_failed = ANY(owner_sum /= 1) .OR. &
-                           .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
-                           .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
-         ELSE IF (leader) THEN
-            ALLOCATE (owner_sum, source=owner_count)
-            CALL para_env_inter_kp%sum(owner_sum, para_env_inter_kp%source)
-            CALL tb_gxtb_partial_reduce_complex_root(packed_payload, para_env_inter_kp)
-            local_failed = .FALSE.
-            IF (service_rank) local_failed = ANY(owner_sum /= 1) .OR. &
-                                             .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
-                                             .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
-         ELSE
-            local_failed = .FALSE.
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "Invalid KGROUP_PARTIAL_ROOT reverse ownership or payload")
+            local_failed = ANY(owner_sum /= 1)
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "Invalid range-local reverse KGROUP ownership")
 
-         local_failed = .FALSE.
-         IF (service_rank .OR. replicated_importers) THEN
-            CALL cp2k_exchange_partial_reverse_unpack(summed_buffer, descriptor, &
-                                                      packed_payload, error)
-            local_failed = ALLOCATED(error)
-            IF (.NOT. local_failed) THEN
-               CALL cp2k_exchange_partial_import_reverse(stream, descriptor, owner_sum, &
-                                                         summed_buffer, tb%calc, tb%mol, &
-                                                         tb%ecache, error)
-               local_failed = ALLOCATED(error)
-            END IF
-            IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
-               IF (distributed_images) THEN
-                  CALL cp2k_exchange_partial_set_image_range( &
-                     stream, image_first, image_count, error)
-               ELSE
-                  CALL cp2k_exchange_partial_set_pull_ownership( &
-                     stream, pull_owner, importer_rank, importer_count, &
-                     result_owner_rank, error)
+            DO target_rank = 0, importer_count - 1
+               CALL tb_gxtb_partial_image_range_for_rank( &
+                  kmap%nfull, importer_count, target_rank, &
+                  target_image_first, target_image_count)
+               IF (target_image_count > 0) THEN
+                  target_image_count = &
+                     MIN(target_image_first + target_image_count - 1, batch_last) - &
+                     MAX(target_image_first, batch_first) + 1
+                  IF (target_image_count > 0) THEN
+                     target_image_first = MAX(target_image_first, batch_first)
+                  ELSE
+                     target_image_first = 0
+                     target_image_count = 0
+                  END IF
                END IF
+               IF (leader) THEN
+                  CALL cp2k_exchange_partial_reverse_pack_range( &
+                     local_buffer, descriptor, target_image_first, target_image_count, &
+                     packed_payload, error)
+                  local_failed = ALLOCATED(error)
+                  IF (.NOT. local_failed) THEN
+                     local_payload_size = SIZE(packed_payload, KIND=int_8)
+                  ELSE
+                     local_payload_size = -1_int_8
+                  END IF
+               ELSE
+                  local_payload_size = 0_int_8
+                  local_failed = .FALSE.
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "save_tblite range-local reverse packing failed")
+               root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
+               CALL para_env_global%bcast(root_payload_size)
+               local_failed = root_payload_size < 0_int_8 .OR. &
+                              root_payload_size > INT(HUGE(0), int_8)
+               IF (leader .AND. .NOT. local_failed) local_failed = &
+                  local_payload_size /= root_payload_size
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "Inconsistent range-local reverse payload size")
+               IF (.NOT. leader) THEN
+                  ALLOCATE (packed_payload(INT(root_payload_size)), &
+                            source=CMPLX(0.0_dp, 0.0_dp, KIND=dp))
+               END IF
+               CALL tb_gxtb_partial_reduce_complex_to_rank( &
+                  packed_payload, para_env_global, target_rank)
+               local_failed = .FALSE.
+               IF (para_env_global%mepos == target_rank) THEN
+                  local_failed = &
+                     .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                     .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+                  IF (.NOT. local_failed) THEN
+                     CALL cp2k_exchange_partial_reverse_unpack_range( &
+                        summed_buffer, descriptor, target_image_first, target_image_count, &
+                        packed_payload, error)
+                     local_failed = ALLOCATED(error)
+                  END IF
+                  IF (.NOT. local_failed) THEN
+                     CALL cp2k_exchange_partial_import_reverse_range( &
+                        importer_stream, descriptor, owner_sum, summed_buffer, &
+                        tb%calc, tb%mol, tb%ecache, error)
+                     local_failed = ALLOCATED(error)
+                  END IF
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "save_tblite range-local reverse import failed")
+               DEALLOCATE (packed_payload)
+            END DO
+            CALL cp2k_exchange_stream_reverse_batch_apply( &
+               importer_stream, tb%calc, tb%mol, tb%ecache, error)
+            local_failed = ALLOCATED(error)
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite range-local reverse apply failed")
+         ELSE
+            IF (leader .OR. replicated_importers) THEN
+               local_payload_size = cp2k_exchange_partial_reverse_size(local_buffer)
+               root_payload_size = MERGE(local_payload_size, 0_int_8, service_rank)
+               IF (replicated_importers) THEN
+                  CALL para_env_global%bcast(root_payload_size)
+               ELSE
+                  CALL para_env_inter_kp%bcast(root_payload_size)
+               END IF
+               local_failed = local_payload_size /= root_payload_size .OR. &
+                              local_payload_size < 0_int_8
+            ELSE
+               local_failed = .FALSE.
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "Inconsistent KGROUP_PARTIAL_ROOT reverse payload size")
+            IF (leader .OR. replicated_importers) THEN
+               CALL cp2k_exchange_partial_reverse_pack(local_buffer, packed_payload, error)
+               local_failed = ALLOCATED(error)
+               IF (.NOT. local_failed) local_failed = &
+                  SIZE(packed_payload, KIND=int_8) /= root_payload_size
+            ELSE
+               local_failed = .FALSE.
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT reverse packing failed")
+
+            IF (replicated_importers) THEN
+               ALLOCATE (owner_sum, source=owner_count)
+               CALL para_env_global%sum(owner_sum)
+               CALL tb_gxtb_partial_allreduce_complex(packed_payload, para_env_global)
+               local_failed = ANY(owner_sum /= 1) .OR. &
+                              .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                              .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+            ELSE IF (leader) THEN
+               ALLOCATE (owner_sum, source=owner_count)
+               CALL para_env_inter_kp%sum(owner_sum, para_env_inter_kp%source)
+               CALL tb_gxtb_partial_reduce_complex_root(packed_payload, para_env_inter_kp)
+               local_failed = .FALSE.
+               IF (service_rank) local_failed = ANY(owner_sum /= 1) .OR. &
+                                                .NOT. ALL(ieee_is_finite(REAL(packed_payload, KIND=dp))) .OR. &
+                                                .NOT. ALL(ieee_is_finite(AIMAG(packed_payload)))
+            ELSE
+               local_failed = .FALSE.
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "Invalid KGROUP_PARTIAL_ROOT reverse ownership or payload")
+
+            local_failed = .FALSE.
+            IF (service_rank .OR. replicated_importers) THEN
+               CALL cp2k_exchange_partial_reverse_unpack(summed_buffer, descriptor, &
+                                                         packed_payload, error)
+               local_failed = ALLOCATED(error)
+               IF (.NOT. local_failed) THEN
+                  CALL cp2k_exchange_partial_import_reverse(stream, descriptor, owner_sum, &
+                                                            summed_buffer, tb%calc, tb%mol, &
+                                                            tb%ecache, error)
+                  local_failed = ALLOCATED(error)
+               END IF
+               IF (.NOT. local_failed .AND. replicated_importers .AND. first_batch) THEN
+                  IF (distributed_images) THEN
+                     CALL cp2k_exchange_partial_set_image_range( &
+                        stream, image_first, image_count, error)
+                  ELSE
+                     CALL cp2k_exchange_partial_set_pull_ownership( &
+                        stream, pull_owner, importer_rank, importer_count, &
+                        result_owner_rank, error)
+                  END IF
+                  local_failed = ALLOCATED(error)
+               END IF
+            END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT reverse import failed")
+            local_failed = .FALSE.
+            IF (service_rank .OR. replicated_importers) THEN
+               CALL cp2k_exchange_stream_reverse_batch_apply(stream, tb%calc, tb%mol, &
+                                                             tb%ecache, error)
                local_failed = ALLOCATED(error)
             END IF
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT reverse apply failed")
          END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT reverse import failed")
-         local_failed = .FALSE.
-         IF (service_rank .OR. replicated_importers) THEN
-            CALL cp2k_exchange_stream_reverse_batch_apply(stream, tb%calc, tb%mol, &
-                                                          tb%ecache, error)
-            local_failed = ALLOCATED(error)
-         END IF
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT reverse apply failed")
 
          DO ifull = 1, kmap%nfull
             source = kmap%source(ifull)
@@ -8655,8 +9053,14 @@ CONTAINS
             IF ((distributed_images) .OR. &
                 (replicated_importers .AND. pull_owner(ifull) == importer_rank) .OR. &
                 (.NOT. replicated_importers .AND. service_rank)) THEN
-               CALL cp2k_exchange_stream_reverse_batch_pull( &
-                  stream, ifull, density_block, overlap_block, overlap_adjoint, error)
+               IF (distributed_images) THEN
+                  CALL cp2k_exchange_stream_reverse_batch_pull( &
+                     importer_stream, ifull, density_block, overlap_block, &
+                     overlap_adjoint, error)
+               ELSE
+                  CALL cp2k_exchange_stream_reverse_batch_pull( &
+                     stream, ifull, density_block, overlap_block, overlap_adjoint, error)
+               END IF
                local_failed = ALLOCATED(error)
                IF (.NOT. local_failed) local_failed = &
                   .NOT. ALL(ieee_is_finite(REAL(overlap_adjoint, KIND=dp))) .OR. &
@@ -8678,8 +9082,19 @@ CONTAINS
          END DO
 
          contributor_done = .FALSE.
+         importer_done = .FALSE.
          local_failed = .FALSE.
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            CALL cp2k_exchange_stream_reverse_batch_advance( &
+               importer_stream, importer_done, error)
+            local_failed = ALLOCATED(error)
+            IF (leader .AND. .NOT. local_failed) THEN
+               CALL cp2k_exchange_partial_contributor_advance( &
+                  stream, contributor_done, error)
+               local_failed = ALLOCATED(error)
+               IF (.NOT. local_failed) local_failed = contributor_done .NEQV. importer_done
+            END IF
+         ELSE IF (replicated_importers) THEN
             CALL cp2k_exchange_stream_reverse_batch_advance(stream, contributor_done, error)
             local_failed = ALLOCATED(error)
          ELSE IF (service_rank) THEN
@@ -8693,7 +9108,11 @@ CONTAINS
                                            local_failed, &
                                            "save_tblite KGROUP_PARTIAL_ROOT reverse advance failed")
          done_count = 0
-         IF (replicated_importers) THEN
+         IF (distributed_images) THEN
+            done_count = MERGE(1, 0, importer_done)
+            CALL para_env_global%sum(done_count)
+            local_failed = done_count /= 0 .AND. done_count /= importer_count
+         ELSE IF (replicated_importers) THEN
             done_count = MERGE(1, 0, contributor_done)
             CALL para_env_global%sum(done_count)
             local_failed = done_count /= 0 .AND. done_count /= importer_count
@@ -8713,7 +9132,10 @@ CONTAINS
          ELSE
             batch_done = done_count == nkp_groups
          END IF
-         IF (leader .OR. replicated_importers) THEN
+         IF (distributed_images) THEN
+            IF (leader) DEALLOCATE (owner_count)
+            DEALLOCATE (owner_sum)
+         ELSE IF (leader .OR. replicated_importers) THEN
             DEALLOCATE (owner_count, owner_sum, packed_payload)
          END IF
          first_batch = .FALSE.
@@ -8721,8 +9143,13 @@ CONTAINS
 
       local_failed = .FALSE.
       IF (service_rank .OR. distributed_images) THEN
-         CALL cp2k_exchange_stream_reverse_result(stream, tb%calc, tb%mol, tb%ecache, &
-                                                  k_gradient, k_sigma, error)
+         IF (distributed_images) THEN
+            CALL cp2k_exchange_stream_reverse_result( &
+               importer_stream, tb%calc, tb%mol, tb%ecache, k_gradient, k_sigma, error)
+         ELSE
+            CALL cp2k_exchange_stream_reverse_result(stream, tb%calc, tb%mol, tb%ecache, &
+                                                     k_gradient, k_sigma, error)
+         END IF
          local_failed = ALLOCATED(error)
          IF (.NOT. local_failed) local_failed = &
             .NOT. ALL(ieee_is_finite(k_gradient)) .OR. &
@@ -8731,14 +9158,22 @@ CONTAINS
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse result failed")
-      IF (replicated_importers) THEN
+      IF (distributed_images) THEN
+         CALL cp2k_exchange_stream_end(importer_stream, error)
+         local_failed = ALLOCATED(error)
+         IF (leader .AND. .NOT. local_failed) THEN
+            CALL cp2k_exchange_partial_discard(stream, error)
+            local_failed = ALLOCATED(error)
+         END IF
+      ELSE IF (replicated_importers) THEN
          CALL cp2k_exchange_stream_end(stream, error)
       ELSE IF (service_rank) THEN
          CALL cp2k_exchange_stream_end(stream, error)
       ELSE IF (leader) THEN
          CALL cp2k_exchange_partial_discard(stream, error)
       END IF
-      local_failed = (leader .OR. replicated_importers) .AND. ALLOCATED(error)
+      IF (.NOT. distributed_images) local_failed = &
+         (leader .OR. replicated_importers) .AND. ALLOCATED(error)
       CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                         local_failed, &
                                         "save_tblite KGROUP_PARTIAL_ROOT reverse finalization failed")
@@ -9564,7 +9999,7 @@ CONTAINS
          END IF
          IF (acp_projector_cache_mode /= tblite_gxtb_acp_cache_enabled) THEN
             IF (.NOT. ALLOCATED(tb%calc%acp)) THEN
-               CPABORT("Non-default ACP_PROJECTOR_CACHE requires an ACP-enabled g-xTB parametrization")
+               CPABORT("ACP_PROJECTOR_CACHE requires ACP-enabled g-xTB parameters")
             END IF
          END IF
       END IF
