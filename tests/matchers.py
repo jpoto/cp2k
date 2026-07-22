@@ -76,6 +76,12 @@ registry["GXTB_mixer_star_qualification"] = TextPresenceMatcher(
 registry["GXTB_acp_cache_qualification"] = TextPresenceMatcher(
     "GXTB-QUALIFICATION_ONLY ACP-PROJECTOR-CACHE repeatedHit=1 directBypass=1"
 )
+registry["GXTB_acp_mesh_qualification"] = TextPresenceMatcher(
+    "GXTB-QUALIFICATION_ONLY ACP-SPARSE-REVERSE"
+)
+registry["GXTB_acp_response_qualification"] = TextPresenceMatcher(
+    "ACP_SPARSE_RESPONSE_QUALIFY residual="
+)
 registry["GXTB_mixed_radix_transform"] = TextPresenceMatcher(
     "GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=MIXED_RADIX_FFT fallback=0"
 )
@@ -96,6 +102,12 @@ registry["GXTB_streamed_star_production"] = TextPresenceMatcher(
 )
 registry["GXTB_distributed_images_reverse_production"] = TextPresenceMatcher(
     "GXTB KGROUP-PARTIAL-DISTRIBUTED-IMAGES-REVERSE nfull="
+)
+registry["GXTB_acp_mesh_production"] = TextPresenceMatcher(
+    "GXTB-ACP-MESH STREAMED nFull="
+)
+registry["GXTB_acp_sparse_reverse_production"] = TextPresenceMatcher(
+    "GXTB-ACP-MESH SPARSE-REVERSE projectorImages="
 )
 registry["GXTB_symmetry_fused_forward"] = TextPresenceMatcher(
     "GXTB-SYMMETRY-FUSED nred="

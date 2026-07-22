@@ -1431,6 +1431,9 @@ MODULE input_constants
    INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_acp_cache_enabled = 0, &
                                                tblite_gxtb_acp_cache_direct = 1, &
                                                tblite_gxtb_acp_cache_qualify = 2
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_acp_mesh_dense = 0, &
+                                               tblite_gxtb_acp_mesh_streamed = 1, &
+                                               tblite_gxtb_acp_mesh_qualify = 2
    INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_forward_qualification_off = 0, &
                                                tblite_gxtb_forward_qualification_qualify = 1
    INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_image_batch_default = 8

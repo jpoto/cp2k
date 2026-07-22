@@ -110,12 +110,16 @@
   {matcher="GXTB_forward_fock_qualification"},
   {matcher="GXTB_mixer_star_qualification"},
   {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_acp_mesh_qualification"},
+  {matcher="GXTB_acp_response_qualification"},
 ]
 "CH4_gxtb_kp_acceleration_production.inp" = [
   {matcher="E_total", tol=1.0E-10, ref=-40.473748967057020},
   {matcher="GXTB_distributed_images_production"},
   {matcher="GXTB_streamed_star_production"},
   {matcher="GXTB_distributed_images_reverse_production"},
+  {matcher="GXTB_acp_mesh_production"},
+  {matcher="GXTB_acp_sparse_reverse_production"},
 ]
 "CH4_gxtb_kp_symmetry_fused_qualify.inp" = [
   {matcher="E_total", tol=1.0E-10, ref=-40.468866070692428},
@@ -126,6 +130,8 @@
   {matcher="GXTB_streamed_reverse_qualification"},
   {matcher="GXTB_mixer_star_qualification"},
   {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_acp_mesh_qualification"},
+  {matcher="GXTB_acp_response_qualification"},
   {matcher="GXTB_mixed_radix_transform"},
   {matcher="GXTB_mixed_radix_transform_forward"},
 ]
@@ -171,6 +177,8 @@
   {matcher="GXTB_symmetry_fused_reverse"},
   {matcher="GXTB_symmetry_fused_overlap_covariance"},
   {matcher="GXTB_streamed_star_production"},
+  {matcher="GXTB_acp_mesh_production"},
+  {matcher="GXTB_acp_sparse_reverse_production"},
   {matcher="GXTB_mixed_radix_transform"},
   {matcher="GXTB_mixed_radix_transform_forward"},
 ]

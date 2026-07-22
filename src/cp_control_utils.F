@@ -995,7 +995,8 @@ CONTAINS
                                                             ngauss, ngp, nrep, znum
       INTEGER, DIMENSION(:), POINTER                     :: tmplist
       LOGICAL :: dftb_scc_mixer_explicit, dftb_tblite_mixer_explicit, explicit, &
-         gxtb_acceleration_explicit, gxtb_acp_cache_explicit, gxtb_exchange_explicit, &
+         gxtb_acceleration_explicit, gxtb_acp_cache_explicit, gxtb_acp_mesh_explicit, &
+         gxtb_exchange_explicit, &
          gxtb_forward_qualification_explicit, gxtb_gradient_explicit, gxtb_image_batch_explicit, &
          gxtb_mode_explicit, gxtb_star_explicit, gxtb_transform_explicit, tblite_reference_cli, &
          tblite_reference_cli_section, tblite_section_active, was_present, xtb_scc_mixer_explicit, &
@@ -1956,10 +1957,13 @@ CONTAINS
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "ACP_PROJECTOR_CACHE", &
                                    explicit=gxtb_acp_cache_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_acp_projector_cache)
+         CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "ACP_MESH_CONTRACTION", &
+                                   explicit=gxtb_acp_mesh_explicit, &
+                                   i_val=qs_control%xtb_control%gxtb_acp_mesh_contraction)
          IF (qs_control%xtb_control%gxtb_acceleration_mode == tblite_gxtb_acceleration_auto .AND. &
              ANY([gxtb_exchange_explicit, gxtb_forward_qualification_explicit, &
                   gxtb_gradient_explicit, gxtb_transform_explicit, gxtb_star_explicit, &
-                  gxtb_image_batch_explicit, gxtb_acp_cache_explicit])) THEN
+                  gxtb_image_batch_explicit, gxtb_acp_cache_explicit, gxtb_acp_mesh_explicit])) THEN
             CALL cp_abort(__LOCATION__, &
                           "MODE AUTO cannot be combined with individual GXTB_ACCELERATION "// &
                           "choices; use MODE MANUAL for explicit backend selection")

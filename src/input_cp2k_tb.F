@@ -31,7 +31,8 @@ MODULE input_cp2k_tb
         tblite_guess_auto, tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
         tblite_gxtb_acceleration_auto, tblite_gxtb_acceleration_manual, &
         tblite_gxtb_acp_cache_direct, tblite_gxtb_acp_cache_enabled, &
-        tblite_gxtb_acp_cache_qualify, tblite_gxtb_exchange_batched, &
+        tblite_gxtb_acp_cache_qualify, tblite_gxtb_acp_mesh_dense, tblite_gxtb_acp_mesh_qualify, &
+        tblite_gxtb_acp_mesh_streamed, tblite_gxtb_exchange_batched, &
         tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_distributed, &
         tblite_gxtb_exchange_kgroup_owner, tblite_gxtb_exchange_kgroup_partial_images, &
         tblite_gxtb_exchange_kgroup_partial_replicated, tblite_gxtb_exchange_kgroup_partial_root, &
@@ -944,6 +945,27 @@ CONTAINS
                                         "Rebuild compact projector data directly.", &
                                         "Compare cached and direct compact projector data."), &
                           default_i_val=tblite_gxtb_acp_cache_enabled)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="ACP_MESH_CONTRACTION", &
+                          description="Selects the periodic ACP mesh contraction. DENSE retains the complete "// &
+                          "mesh Bloch operator and the established dense derivative oracle. STREAMED evaluates "// &
+                          "bounded forward k batches, folds each block immediately, and contracts compact "// &
+                          "projector images directly with CP2K's existing sparse density images for forces and "// &
+                          "stress. It therefore forms neither an ACP(AO,AO,Nk_full) payload nor the quadratic "// &
+                          "projector-translation difference set. QUALIFY executes both paths, aborts unless "// &
+                          "their strict numerical gates pass, and applies the streamed result once. The "// &
+                          "developer-only CP2K_GXTB_ACP_MESH_CONTRACTION environment variable overrides this "// &
+                          "keyword.", &
+                          usage="ACP_MESH_CONTRACTION (DENSE|STREAMED|QUALIFY)", &
+                          enum_c_vals=s2a("DENSE", "STREAMED", "QUALIFY"), &
+                          enum_i_vals=[tblite_gxtb_acp_mesh_dense, tblite_gxtb_acp_mesh_streamed, &
+                                       tblite_gxtb_acp_mesh_qualify], &
+                          enum_desc=s2a("Use complete-mesh and full-difference-set ACP oracles.", &
+                                        "Use bounded forward and sparse-image reverse contractions.", &
+                                        "Compare streamed and dense ACP contractions before applying streamed."), &
+                          default_i_val=tblite_gxtb_acp_mesh_dense)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

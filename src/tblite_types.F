@@ -32,6 +32,7 @@ MODULE tblite_types
    USE cp_dbcsr_operations, ONLY: dbcsr_deallocate_matrix_set
    USE input_constants, ONLY: tblite_gxtb_acceleration_auto, &
                               tblite_gxtb_acp_cache_enabled, &
+                              tblite_gxtb_acp_mesh_dense, &
                               tblite_gxtb_exchange_complete_array, &
                               tblite_gxtb_forward_qualification_off, &
                               tblite_gxtb_gradient_dense, &
@@ -148,6 +149,7 @@ MODULE tblite_types
       INTEGER                                            :: gxtb_symmetry_star_contraction = tblite_gxtb_star_dense
       INTEGER                                            :: gxtb_image_batch_size = tblite_gxtb_image_batch_default
       INTEGER                                            :: gxtb_acp_projector_cache = tblite_gxtb_acp_cache_enabled
+      INTEGER                                            :: gxtb_acp_mesh_contraction = tblite_gxtb_acp_mesh_dense
       INTEGER                                            :: potential_mixer_dimension = 0
       TYPE(cp2k_potential_mixer_type), ALLOCATABLE       :: potential_mixer
       TYPE(wavefunction_type)                            :: wfn_aux = wavefunction_type()
