@@ -62,12 +62,12 @@ MODULE cp_control_utils
         sic_mauri_spz, sic_mauri_us, sic_none, slater, tblite_cli_born_kernel_auto, &
         tblite_cli_solution_state_gsolv, tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
         tblite_cli_solvation_gb, tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, &
-        tblite_guess_ceh, tblite_gxtb_exchange_complete_array, &
-        tblite_gxtb_exchange_symmetry_fused, tblite_gxtb_gradient_dense, &
-        tblite_gxtb_transform_dense, tblite_mixer_memory_inherit, tblite_scc_mixer_auto, &
-        tblite_scc_mixer_cp2k, tblite_scc_mixer_none, tblite_scc_mixer_tblite, tblite_solver_gvd, &
-        tblite_solver_gvr, tddfpt_dipole_length, tddfpt_kernel_stda, use_mom_ref_user, &
-        xtb_vdw_type_d3, xtb_vdw_type_d4, xtb_vdw_type_none
+        tblite_guess_ceh, tblite_gxtb_acceleration_auto, tblite_gxtb_acceleration_manual, &
+        tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_symmetry_fused, &
+        tblite_gxtb_gradient_dense, tblite_gxtb_transform_dense, tblite_mixer_memory_inherit, &
+        tblite_scc_mixer_auto, tblite_scc_mixer_cp2k, tblite_scc_mixer_none, &
+        tblite_scc_mixer_tblite, tblite_solver_gvd, tblite_solver_gvr, tddfpt_dipole_length, &
+        tddfpt_kernel_stda, use_mom_ref_user, xtb_vdw_type_d3, xtb_vdw_type_d4, xtb_vdw_type_none
    USE input_cp2k_check,                ONLY: xc_functionals_expand
    USE input_cp2k_dft,                  ONLY: create_dft_section
    USE input_enumeration_types,         ONLY: enum_i2c,&
@@ -995,7 +995,9 @@ CONTAINS
                                                             ngauss, ngp, nrep, znum
       INTEGER, DIMENSION(:), POINTER                     :: tmplist
       LOGICAL :: dftb_scc_mixer_explicit, dftb_tblite_mixer_explicit, explicit, &
-         gxtb_acceleration_explicit, gxtb_image_batch_explicit, tblite_reference_cli, &
+         gxtb_acceleration_explicit, gxtb_acp_cache_explicit, gxtb_exchange_explicit, &
+         gxtb_forward_qualification_explicit, gxtb_gradient_explicit, gxtb_image_batch_explicit, &
+         gxtb_mode_explicit, gxtb_star_explicit, gxtb_transform_explicit, tblite_reference_cli, &
          tblite_reference_cli_section, tblite_section_active, was_present, xtb_scc_mixer_explicit, &
          xtb_tblite_mixer_explicit
       REAL(dp)                                           :: tmp, tmpsqrt, value
@@ -1924,22 +1926,44 @@ CONTAINS
              qs_control%xtb_control%tblite_method /= gxtb) THEN
             CPABORT("XTB/TBLITE/GXTB_ACCELERATION requires XTB/TBLITE/METHOD GXTB")
          END IF
+         CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "MODE", &
+                                   explicit=gxtb_mode_explicit, &
+                                   i_val=qs_control%xtb_control%gxtb_acceleration_mode)
+         IF (gxtb_acceleration_explicit .AND. .NOT. gxtb_mode_explicit) THEN
+            ! Preserve the meaning of existing inputs which explicitly opened the
+            ! section to select one or more legacy/manual backends.
+            qs_control%xtb_control%gxtb_acceleration_mode = tblite_gxtb_acceleration_manual
+         END IF
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "EXCHANGE_STREAM_BACKEND", &
+                                   explicit=gxtb_exchange_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_exchange_stream_backend)
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "FORWARD_FOCK_QUALIFICATION", &
+                                   explicit=gxtb_forward_qualification_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_forward_fock_qualification)
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "GRADIENT_CONTRACTION", &
+                                   explicit=gxtb_gradient_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_gradient_contraction)
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "FOURIER_TRANSFORM_BACKEND", &
+                                   explicit=gxtb_transform_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_fourier_transform_backend)
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "SYMMETRY_STAR_CONTRACTION", &
+                                   explicit=gxtb_star_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_symmetry_star_contraction)
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "IMAGE_BATCH_SIZE", &
                                    explicit=gxtb_image_batch_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_image_batch_size)
          qs_control%xtb_control%gxtb_image_batch_explicit = gxtb_image_batch_explicit
          CALL section_vals_val_get(xtb_tblite_gxtb_acceleration, "ACP_PROJECTOR_CACHE", &
+                                   explicit=gxtb_acp_cache_explicit, &
                                    i_val=qs_control%xtb_control%gxtb_acp_projector_cache)
+         IF (qs_control%xtb_control%gxtb_acceleration_mode == tblite_gxtb_acceleration_auto .AND. &
+             ANY([gxtb_exchange_explicit, gxtb_forward_qualification_explicit, &
+                  gxtb_gradient_explicit, gxtb_transform_explicit, gxtb_star_explicit, &
+                  gxtb_image_batch_explicit, gxtb_acp_cache_explicit])) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "MODE AUTO cannot be combined with individual GXTB_ACCELERATION "// &
+                          "choices; use MODE MANUAL for explicit backend selection")
+         END IF
          IF (qs_control%xtb_control%gxtb_image_batch_size < 1) THEN
             CPABORT("XTB/TBLITE/GXTB_ACCELERATION/IMAGE_BATCH_SIZE must be positive")
          END IF

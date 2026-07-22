@@ -29,6 +29,7 @@ MODULE input_cp2k_tb
         tblite_cli_solution_state_reference, tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
         tblite_cli_solvation_gb, tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, &
         tblite_guess_auto, tblite_guess_ceh, tblite_guess_eeq, tblite_guess_sad, &
+        tblite_gxtb_acceleration_auto, tblite_gxtb_acceleration_manual, &
         tblite_gxtb_acp_cache_direct, tblite_gxtb_acp_cache_enabled, &
         tblite_gxtb_acp_cache_qualify, tblite_gxtb_exchange_batched, &
         tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_distributed, &
@@ -759,7 +760,9 @@ CONTAINS
                           "Brillouin-zone-coupled nonlocal exchange, its derivative contraction, regular-mesh "// &
                           "Fourier transforms, symmetry-star validation, and ACP projector construction. "// &
                           "The section is valid only with XTB/TBLITE/METHOD GXTB. Dense complete-array paths "// &
-                          "remain the defaults and permanent numerical oracles. QUALIFY choices execute an "// &
+                          "remain permanent numerical oracles. By default, AUTO deterministically selects "// &
+                          "qualified production paths from the effective mesh symmetry and MPI layout. "// &
+                          "QUALIFY choices execute an "// &
                           "accelerated path and its oracle and abort if their strict numerical gate is exceeded. "// &
                           "Non-default choices require an explicit periodic KPOINTS path; an explicit 1x1x1 "// &
                           "mesh is accepted, whereas implicit Gamma-only calculations retain all defaults. "// &
@@ -772,6 +775,25 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="_SECTION_PARAMETERS_", &
                           description="Marks the periodic g-xTB acceleration section as present.", &
                           lone_keyword_l_val=.TRUE., default_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="MODE", &
+                          description="AUTO is the production default. It selects SYMMETRY_FUSED with "// &
+                          "MIXED_RADIX_FFT on genuinely symmetry-reduced meshes, distributed partial-image "// &
+                          "exchange on unreduced multi-rank meshes, and bounded batching on unreduced "// &
+                          "single-rank meshes. Analytic exchange derivatives are streamed whenever the complete "// &
+                          "mesh has more than one point; symmetry-star contraction is streamed when symmetry "// &
+                          "reduction and the native potential mixer are both active. AUTO never enables a "// &
+                          "QUALIFY oracle. MANUAL exposes the individual choices below. For backward "// &
+                          "compatibility, an explicitly present GXTB_ACCELERATION section without MODE is "// &
+                          "interpreted as MANUAL. Explicit individual choices are rejected with MODE AUTO.", &
+                          usage="MODE (AUTO|MANUAL)", &
+                          enum_c_vals=s2a("AUTO", "MANUAL"), &
+                          enum_i_vals=[tblite_gxtb_acceleration_auto, tblite_gxtb_acceleration_manual], &
+                          enum_desc=s2a("Select compatible qualified production paths automatically.", &
+                                        "Use the individually selected acceleration controls."), &
+                          default_i_val=tblite_gxtb_acceleration_auto)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

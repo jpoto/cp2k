@@ -1407,6 +1407,8 @@ MODULE input_constants
    ! Periodic g-xTB acceleration backends.  These values are part of CP2K's
    ! input/control contract; provider-specific identifiers are mapped in the
    ! tblite interface rather than exposed directly to the input parser.
+   INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_acceleration_auto = 0, &
+                                               tblite_gxtb_acceleration_manual = 1
    INTEGER, PARAMETER, PUBLIC               :: tblite_gxtb_exchange_complete_array = 0, &
                                                tblite_gxtb_exchange_reduced = 1, &
                                                tblite_gxtb_exchange_oracle = 2, &

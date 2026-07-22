@@ -56,6 +56,11 @@ registry["GXTB_native_simple"] = TextPresenceMatcher("GXTB-Simple")
 registry["GXTB_native_fdiis"] = TextPresenceMatcher("GXTB-FDIIS")
 registry["GXTB_cp2k_pmix"] = TextPresenceMatcher("P_Mix/Diag.")
 registry["GXTB_cp2k_fdiis"] = TextPresenceMatcher("DIIS/Diag.")
+registry["GXTB_auto_mode"] = TextPresenceMatcher("GXTB-ACCELERATION mode=AUTO")
+registry["GXTB_auto_symmetry_fused"] = TextPresenceMatcher(
+    "GXTB-ACCELERATION mode=AUTO exchange=SYMMETRY_FUSED gradient=STREAMED transform=MIXED_RADIX_FFT"
+)
+registry["GXTB_manual_mode"] = TextPresenceMatcher("GXTB-ACCELERATION mode=MANUAL")
 registry["GXTB_exchange_qualification"] = TextPresenceMatcher(
     "GXTB-QUALIFICATION_ONLY KGROUP-PARTIAL-ROOT-REVERSE"
 )

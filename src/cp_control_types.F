@@ -16,13 +16,14 @@ MODULE cp_control_types
    USE input_constants,                 ONLY: &
         do_full_density, rtp_bse_ham_G0W0, rtp_method_tddft, tblite_cli_born_kernel_auto, &
         tblite_cli_solution_state_gsolv, tblite_cli_solvation_none, tblite_guess_auto, &
-        tblite_guess_ceh, tblite_gxtb_acp_cache_enabled, tblite_gxtb_exchange_complete_array, &
-        tblite_gxtb_forward_qualification_off, tblite_gxtb_gradient_dense, &
-        tblite_gxtb_image_batch_default, tblite_gxtb_star_dense, tblite_gxtb_transform_dense, &
-        tblite_mixer_damping_default, tblite_mixer_iterations_default, &
-        tblite_mixer_max_weight_default, tblite_mixer_min_weight_default, &
-        tblite_mixer_omega0_default, tblite_mixer_weight_factor_default, tblite_scc_mixer_auto, &
-        tblite_solver_gvd, use_mom_ref_coac
+        tblite_guess_ceh, tblite_gxtb_acceleration_auto, tblite_gxtb_acp_cache_enabled, &
+        tblite_gxtb_exchange_complete_array, tblite_gxtb_forward_qualification_off, &
+        tblite_gxtb_gradient_dense, tblite_gxtb_image_batch_default, tblite_gxtb_star_dense, &
+        tblite_gxtb_transform_dense, tblite_mixer_damping_default, &
+        tblite_mixer_iterations_default, tblite_mixer_max_weight_default, &
+        tblite_mixer_min_weight_default, tblite_mixer_omega0_default, &
+        tblite_mixer_weight_factor_default, tblite_scc_mixer_auto, tblite_solver_gvd, &
+        use_mom_ref_coac
    USE kinds,                           ONLY: default_path_length,&
                                               default_string_length,&
                                               dp
@@ -271,6 +272,7 @@ MODULE cp_control_types
       INTEGER                              :: tblite_mixer_iterations = tblite_mixer_iterations_default
       INTEGER                              :: tblite_mixer_memory = tblite_mixer_iterations_default
       INTEGER                              :: tblite_mixer_solver = tblite_solver_gvd
+      INTEGER                              :: gxtb_acceleration_mode = tblite_gxtb_acceleration_auto
       INTEGER                              :: gxtb_exchange_stream_backend = tblite_gxtb_exchange_complete_array
       INTEGER                              :: gxtb_forward_fock_qualification = &
                                               tblite_gxtb_forward_qualification_off
