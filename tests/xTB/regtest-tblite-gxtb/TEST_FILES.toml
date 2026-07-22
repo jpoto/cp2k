@@ -40,6 +40,8 @@
   {matcher="GXTB_streamed_reverse_qualification"},
   {matcher="GXTB_mixer_star_qualification"},
   {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_acp_mesh_qualification"},
+  {matcher="GXTB_acp_response_qualification"},
   {matcher="GXTB_mixed_radix_transform"},
   {matcher="GXTB_mixed_radix_transform_forward"},
 ]
@@ -52,6 +54,8 @@
   {matcher="GXTB_streamed_reverse_qualification"},
   {matcher="GXTB_mixer_star_qualification"},
   {matcher="GXTB_acp_cache_qualification"},
+  {matcher="GXTB_acp_mesh_qualification"},
+  {matcher="GXTB_acp_response_qualification"},
   {matcher="GXTB_mixed_radix_transform"},
   {matcher="GXTB_mixed_radix_transform_forward"},
 ]
