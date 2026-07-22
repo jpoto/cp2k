@@ -5892,7 +5892,8 @@ CONTAINS
                                                             image_count, image_first, iop, ispin, &
                                                             local_source, nao, nkp_groups, &
                                                             nlocal, nred, nspin, result_owner_rank, source, &
-                                                            target_image_count, target_image_first, target_rank
+                                                            target_image_count, target_image_first, target_rank, &
+                                                            transform_backend, transform_pair_batch_size
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
                                                             owner_count, owner_sum, pull_owner
       INTEGER, DIMENSION(2)                              :: kp_range
@@ -5903,7 +5904,7 @@ CONTAINS
       LOGICAL                                            :: batch_done, contributor_done, &
                                                             first_batch, importer_done, leader, local_failed, &
                                                             owns_source, service_rank, &
-                                                            use_real_wfn, validate_density
+                                                            transform_done, use_real_wfn, validate_density
       REAL(KIND=dp)                                      :: density_norm, exchange_energy, &
                                                             hermitian_error, residual, scale
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: exchange_vsh
@@ -6032,6 +6033,12 @@ CONTAINS
 
       batch_size = tb_gxtb_exchange_stream_batch_size(tb)
       actual_batch_size = MIN(batch_size, kmap%nfull)
+      transform_backend = tb_gxtb_exchange_transform_backend(tb)
+      IF (nao*nao > 1) THEN
+         transform_pair_batch_size = MIN(batch_size, nao*nao - 1)
+      ELSE
+         transform_pair_batch_size = 1
+      END IF
       CALL tb_gxtb_partial_next_transaction(leader, service_rank, para_env_inter_kp, &
                                             para_env_kp, transaction_id)
       IF (replicated_importers) CALL para_env_kp%bcast(transaction_id)
@@ -6057,7 +6064,9 @@ CONTAINS
          IF (leader) THEN
             CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                              kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
-                                             transaction_id, error)
+                                             transaction_id, error, &
+                                             transform_backend=transform_backend, &
+                                             transform_pair_batch_size=transform_pair_batch_size)
             local_failed = ALLOCATED(error)
          ELSE
             CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
@@ -6066,7 +6075,9 @@ CONTAINS
       ELSE IF (leader .OR. replicated_importers) THEN
          CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                           kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
-                                          transaction_id, error)
+                                          transaction_id, error, &
+                                          transform_backend=transform_backend, &
+                                          transform_pair_batch_size=transform_pair_batch_size)
          local_failed = ALLOCATED(error)
       ELSE
          CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
@@ -6082,7 +6093,9 @@ CONTAINS
          CALL cp2k_exchange_partial_begin( &
             importer_stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
             kmap%nmesh, kmap%xkp, kmap%weight, batch_size, transaction_id, error, &
-            local_image_first=image_first, local_image_count=image_count)
+            local_image_first=image_first, local_image_count=image_count, &
+            transform_backend=transform_backend, &
+            transform_pair_batch_size=transform_pair_batch_size)
          local_failed = ALLOCATED(error)
          CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
                                            local_failed, &
@@ -6092,41 +6105,71 @@ CONTAINS
       batch_done = .FALSE.
       first_batch = .TRUE.
       DO WHILE (.NOT. batch_done)
-         local_failed = .FALSE.
-         DO ifull = 1, kmap%nfull
-            source = kmap%source(ifull)
-            owns_source = source >= kp_range(1) .AND. source <= kp_range(2)
-            CALL prepare_overlap_block(ifull)
-            IF (leader .AND. owns_source .AND. .NOT. local_failed) THEN
-               local_source = source - kp_range(1) + 1
-               DO ispin = 1, nspin
-                  CALL tb_expand_gxtb_kpoint_block( &
-                     kpoints, kmap, ao_first, ao_size, ifull, &
-                     density_local(:, :, ispin, local_source), &
-                     density_block(:, :, ispin), transform_work)
-                  IF (validate_density .AND. first_batch) THEN
-                     DO iop = 1, kmap%op_count(ifull)
-                        CALL tb_transform_gxtb_kpoint_matrix( &
-                           kpoints, source, kmap%symops(iop, ifull), &
-                           kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
-                           density_local(:, :, ispin, local_source), &
-                           transform_work, .FALSE., kmap%atom_phase(:, iop, ifull))
-                        scale = MAX(1.0_dp, MAXVAL(ABS(density_block(:, :, ispin))))
-                        residual = MAXVAL(ABS(transform_work - density_block(:, :, ispin)))/scale
-                        IF (residual > MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)) THEN
-                           CPABORT("KGROUP_PARTIAL_ROOT density violates its little group")
-                        END IF
-                     END DO
-                  END IF
-               END DO
-               CALL cp2k_exchange_partial_push(stream, ifull, density_block, &
-                                               overlap_block, error)
-               local_failed = ALLOCATED(error)
+         transform_done = .FALSE.
+         DO WHILE (.NOT. transform_done)
+            local_failed = .FALSE.
+            DO ifull = 1, kmap%nfull
+               source = kmap%source(ifull)
+               owns_source = source >= kp_range(1) .AND. source <= kp_range(2)
+               CALL prepare_overlap_block(ifull)
+               IF (leader .AND. owns_source .AND. .NOT. local_failed) THEN
+                  local_source = source - kp_range(1) + 1
+                  DO ispin = 1, nspin
+                     CALL tb_expand_gxtb_kpoint_block( &
+                        kpoints, kmap, ao_first, ao_size, ifull, &
+                        density_local(:, :, ispin, local_source), &
+                        density_block(:, :, ispin), transform_work)
+                     IF (validate_density .AND. first_batch) THEN
+                        DO iop = 1, kmap%op_count(ifull)
+                           CALL tb_transform_gxtb_kpoint_matrix( &
+                              kpoints, source, kmap%symops(iop, ifull), &
+                              kmap%rotation_slot(iop, ifull), ao_first, ao_size, &
+                              density_local(:, :, ispin, local_source), &
+                              transform_work, .FALSE., kmap%atom_phase(:, iop, ifull))
+                           scale = MAX(1.0_dp, MAXVAL(ABS(density_block(:, :, ispin))))
+                           residual = MAXVAL(ABS(transform_work - density_block(:, :, ispin)))/scale
+                           IF (residual > MAX(1.0E-10_dp, 100.0_dp*kpoints%eps_geo)) THEN
+                              CPABORT("KGROUP_PARTIAL_ROOT density violates its little group")
+                           END IF
+                        END DO
+                     END IF
+                  END DO
+                  CALL cp2k_exchange_partial_push(stream, ifull, density_block, &
+                                                  overlap_block, error)
+                  local_failed = ALLOCATED(error)
+               END IF
+            END DO
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT push failed")
+            IF (transform_backend == cp2k_exchange_transform_dense) THEN
+               transform_done = .TRUE.
+            ELSE
+               done_count = 0
+               IF ((distributed_images .AND. leader) .OR. &
+                   (.NOT. distributed_images .AND. (leader .OR. replicated_importers))) THEN
+                  CALL cp2k_exchange_stream_transform_advance(stream, transform_done, error)
+                  local_failed = ALLOCATED(error)
+                  IF (.NOT. local_failed) done_count = MERGE(1, 0, transform_done)
+               ELSE
+                  local_failed = .FALSE.
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "save_tblite partial compact forward transform failed")
+               CALL para_env_global%sum(done_count)
+               IF (replicated_importers .AND. .NOT. distributed_images) THEN
+                  local_failed = done_count /= 0 .AND. done_count /= importer_count
+                  transform_done = done_count == importer_count
+               ELSE
+                  local_failed = done_count /= 0 .AND. done_count /= nkp_groups
+                  transform_done = done_count == nkp_groups
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "Partial compact forward transform tiles diverged")
             END IF
          END DO
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT push failed")
          IF (validate_density .AND. first_batch) tb%gxtb_density_map_validated = .TRUE.
 
          IF ((distributed_images .AND. leader) .OR. &
@@ -6538,6 +6581,21 @@ CONTAINS
                ", nfull=", kmap%nfull, ", batch=", actual_batch_size, &
                "; only pre-kernel k-to-R is distributed"
          END IF
+         SELECT CASE (transform_backend)
+         CASE (cp2k_exchange_transform_dense)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=DENSE fallback=0 iter=", iter_count
+         CASE (cp2k_exchange_transform_separable_dft)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=SEPARABLE_DFT fallback=0 iter=", &
+               iter_count
+         CASE (cp2k_exchange_transform_mixed_radix_fft)
+            WRITE (*, '(A,I0)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=FORWARD backend=MIXED_RADIX_FFT fallback=0 iter=", &
+               iter_count
+         CASE DEFAULT
+            CPABORT("Unknown partial g-xTB exchange transform backend")
+         END SELECT
       END IF
 
       CALL dbcsr_deallocate_matrix(rmatrix)
@@ -8956,7 +9014,8 @@ CONTAINS
                                                             importer_rank, injection_mode, ispin, kplocal, &
                                                             nao, nat, nc, nimg, nkp_groups, nred, nspin, &
                                                             result_owner_rank, source, target_image_count, &
-                                                            target_image_first, target_rank
+                                                            target_image_first, target_rank, &
+                                                            transform_backend, transform_pair_batch_size
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: ao_first, ao_size, &
                                                             owner_count, owner_sum, pull_owner
       INTEGER, DIMENSION(2)                              :: kp_range
@@ -8966,7 +9025,7 @@ CONTAINS
                                                             root_payload_size, transaction_id(2)
       LOGICAL                                            :: batch_done, contributor_done, &
                                                             first_batch, importer_done, leader, local_failed, owns_source, &
-                                                            service_rank, use_real_wfn
+                                                            service_rank, transform_done, use_real_wfn
       REAL(KIND=dp)                                      :: hermitian_error
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: k_gradient, k_sigma, overlap_part
       TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_ao_fm_pools
@@ -9106,6 +9165,12 @@ CONTAINS
 
       batch_size = tb_gxtb_exchange_stream_batch_size(tb)
       actual_batch_size = MIN(batch_size, kmap%nfull)
+      transform_backend = tb_gxtb_exchange_transform_backend(tb)
+      IF (nao*nao > 1) THEN
+         transform_pair_batch_size = MIN(batch_size, nao*nao - 1)
+      ELSE
+         transform_pair_batch_size = 1
+      END IF
       CALL tb_gxtb_partial_next_transaction(leader, service_rank, para_env_inter_kp, &
                                             para_env_kp, transaction_id)
       IF (replicated_importers) CALL para_env_kp%bcast(transaction_id)
@@ -9131,7 +9196,9 @@ CONTAINS
          IF (leader) THEN
             CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                              kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
-                                             transaction_id, error, reverse_only=.TRUE.)
+                                             transaction_id, error, reverse_only=.TRUE., &
+                                             transform_backend=transform_backend, &
+                                             transform_pair_batch_size=transform_pair_batch_size)
             local_failed = ALLOCATED(error)
          ELSE
             CALL cp2k_prepare_exchange(tb%calc, tb%mol, tb%ecache, tb%wfn, error)
@@ -9141,7 +9208,9 @@ CONTAINS
       ELSE IF (leader .OR. replicated_importers) THEN
          CALL cp2k_exchange_partial_begin(stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
                                           kmap%nmesh, kmap%xkp, kmap%weight, batch_size, &
-                                          transaction_id, error, reverse_only=.TRUE.)
+                                          transaction_id, error, reverse_only=.TRUE., &
+                                          transform_backend=transform_backend, &
+                                          transform_pair_batch_size=transform_pair_batch_size)
          local_failed = ALLOCATED(error)
          IF (.NOT. local_failed) peak_complex = &
             cp2k_exchange_stream_peak_complex_elements(stream)
@@ -9160,7 +9229,9 @@ CONTAINS
          CALL cp2k_exchange_partial_begin( &
             importer_stream, tb%calc, tb%mol, tb%ecache, tb%wfn, &
             kmap%nmesh, kmap%xkp, kmap%weight, batch_size, transaction_id, error, &
-            reverse_only=.TRUE., local_image_first=image_first, local_image_count=image_count)
+            reverse_only=.TRUE., local_image_first=image_first, local_image_count=image_count, &
+            transform_backend=transform_backend, &
+            transform_pair_batch_size=transform_pair_batch_size)
          local_failed = ALLOCATED(error)
          IF (.NOT. local_failed) peak_complex = &
             cp2k_exchange_stream_peak_complex_elements(importer_stream)
@@ -9172,20 +9243,51 @@ CONTAINS
       batch_done = .FALSE.
       first_batch = .TRUE.
       DO WHILE (.NOT. batch_done)
-         local_failed = .FALSE.
-         DO ifull = 1, kmap%nfull
-            source = kmap%source(ifull)
-            owns_source = source >= kp_range(1) .AND. source <= kp_range(2)
-            CALL prepare_reverse_block(ifull, .FALSE.)
-            IF (leader .AND. owns_source .AND. .NOT. local_failed) THEN
-               CALL cp2k_exchange_partial_reverse_push(stream, ifull, density_block, &
-                                                       overlap_block, error)
-               local_failed = ALLOCATED(error)
+         transform_done = .FALSE.
+         DO WHILE (.NOT. transform_done)
+            local_failed = .FALSE.
+            DO ifull = 1, kmap%nfull
+               source = kmap%source(ifull)
+               owns_source = source >= kp_range(1) .AND. source <= kp_range(2)
+               CALL prepare_reverse_block(ifull, .FALSE.)
+               IF (leader .AND. owns_source .AND. .NOT. local_failed) THEN
+                  CALL cp2k_exchange_partial_reverse_push(stream, ifull, density_block, &
+                                                          overlap_block, error)
+                  local_failed = ALLOCATED(error)
+               END IF
+            END DO
+            CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                              local_failed, &
+                                              "save_tblite KGROUP_PARTIAL_ROOT reverse push failed")
+            IF (transform_backend == cp2k_exchange_transform_dense) THEN
+               transform_done = .TRUE.
+            ELSE
+               done_count = 0
+               IF ((distributed_images .AND. leader) .OR. &
+                   (.NOT. distributed_images .AND. (leader .OR. replicated_importers))) THEN
+                  CALL cp2k_exchange_stream_reverse_transform_advance( &
+                     stream, transform_done, error)
+                  local_failed = ALLOCATED(error)
+                  IF (.NOT. local_failed) done_count = MERGE(1, 0, transform_done)
+               ELSE
+                  local_failed = .FALSE.
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "save_tblite partial compact reverse transform failed")
+               CALL para_env_global%sum(done_count)
+               IF (replicated_importers .AND. .NOT. distributed_images) THEN
+                  local_failed = done_count /= 0 .AND. done_count /= importer_count
+                  transform_done = done_count == importer_count
+               ELSE
+                  local_failed = done_count /= 0 .AND. done_count /= nkp_groups
+                  transform_done = done_count == nkp_groups
+               END IF
+               CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
+                                                 local_failed, &
+                                                 "Partial compact reverse transform tiles diverged")
             END IF
          END DO
-         CALL tb_gxtb_partial_sync_failure(leader, para_env_inter_kp, para_env_kp, &
-                                           local_failed, &
-                                           "save_tblite KGROUP_PARTIAL_ROOT reverse push failed")
 
          IF ((distributed_images .AND. leader) .OR. &
              (.NOT. distributed_images .AND. (leader .OR. replicated_importers))) THEN
@@ -9592,6 +9694,19 @@ CONTAINS
                ", groups=", nkp_groups, ", batch=", actual_batch_size, &
                ", provider_peak_complex=", peak_complex, "; R-to-k remains root-serial"
          END IF
+         SELECT CASE (transform_backend)
+         CASE (cp2k_exchange_transform_dense)
+            WRITE (*, '(A)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=DENSE fallback=0"
+         CASE (cp2k_exchange_transform_separable_dft)
+            WRITE (*, '(A)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=SEPARABLE_DFT fallback=0"
+         CASE (cp2k_exchange_transform_mixed_radix_fft)
+            WRITE (*, '(A)') &
+               " GXTB-EXCHANGE-TRANSFORM stage=REVERSE backend=MIXED_RADIX_FFT fallback=0"
+         CASE DEFAULT
+            CPABORT("Unknown partial reverse g-xTB transform backend")
+         END SELECT
       END IF
 
       ALLOCATE (pmat_ext(kplocal, nc, nspin))
@@ -10320,6 +10435,7 @@ CONTAINS
          acp_mesh_mode = tb_gxtb_acp_mesh_mode(tb)
          IF (acceleration_transform_backend /= cp2k_exchange_transform_dense .AND. &
              .NOT. (acceleration_stream_mode == tb_gxtb_exchange_stream_symmetry_fused .OR. &
+                    acceleration_stream_mode == tb_gxtb_exchange_stream_kgroup_partial_images .OR. &
                     (acceleration_stream_mode == 0 .AND. &
                      acceleration_gradient_mode == tb_gxtb_exchange_gradient_dense))) THEN
             CPABORT("Compact g-XTB transform has an incompatible exchange/gradient combination")

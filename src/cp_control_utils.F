@@ -63,11 +63,12 @@ MODULE cp_control_utils
         tblite_cli_solution_state_gsolv, tblite_cli_solvation_alpb, tblite_cli_solvation_cpcm, &
         tblite_cli_solvation_gb, tblite_cli_solvation_gbe, tblite_cli_solvation_gbsa, &
         tblite_guess_ceh, tblite_gxtb_acceleration_auto, tblite_gxtb_acceleration_manual, &
-        tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_symmetry_fused, &
-        tblite_gxtb_gradient_dense, tblite_gxtb_transform_dense, tblite_mixer_memory_inherit, &
-        tblite_scc_mixer_auto, tblite_scc_mixer_cp2k, tblite_scc_mixer_none, &
-        tblite_scc_mixer_tblite, tblite_solver_gvd, tblite_solver_gvr, tddfpt_dipole_length, &
-        tddfpt_kernel_stda, use_mom_ref_user, xtb_vdw_type_d3, xtb_vdw_type_d4, xtb_vdw_type_none
+        tblite_gxtb_exchange_complete_array, tblite_gxtb_exchange_kgroup_partial_images, &
+        tblite_gxtb_exchange_symmetry_fused, tblite_gxtb_gradient_dense, &
+        tblite_gxtb_transform_dense, tblite_mixer_memory_inherit, tblite_scc_mixer_auto, &
+        tblite_scc_mixer_cp2k, tblite_scc_mixer_none, tblite_scc_mixer_tblite, tblite_solver_gvd, &
+        tblite_solver_gvr, tddfpt_dipole_length, tddfpt_kernel_stda, use_mom_ref_user, &
+        xtb_vdw_type_d3, xtb_vdw_type_d4, xtb_vdw_type_none
    USE input_cp2k_check,                ONLY: xc_functionals_expand
    USE input_cp2k_dft,                  ONLY: create_dft_section
    USE input_enumeration_types,         ONLY: enum_i2c,&
@@ -1974,6 +1975,8 @@ CONTAINS
          IF (qs_control%xtb_control%gxtb_fourier_transform_backend /= tblite_gxtb_transform_dense .AND. &
              .NOT. (qs_control%xtb_control%gxtb_exchange_stream_backend == &
                     tblite_gxtb_exchange_symmetry_fused .OR. &
+                    qs_control%xtb_control%gxtb_exchange_stream_backend == &
+                    tblite_gxtb_exchange_kgroup_partial_images .OR. &
                     (qs_control%xtb_control%gxtb_exchange_stream_backend == &
                      tblite_gxtb_exchange_complete_array .AND. &
                      qs_control%xtb_control%gxtb_gradient_contraction == &
