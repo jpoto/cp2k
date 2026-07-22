@@ -35,19 +35,23 @@ CONTAINS
 !> \param aux_start ...
 !> \param aux_size ...
 !> \param n_aux ...
+!> \param preferred_dgemm_lib ...
 ! **************************************************************************************************
    SUBROUTINE calc_ri_mp2_energy(E_cou, E_ex, E_s, E_t, BIb_C, comm_all, comm_sub, eigenval, n_homo, &
-                                 virtual_start, virtual_size, aux_start, aux_size, n_aux)
+                                 virtual_start, virtual_size, aux_start, aux_size, n_aux, &
+                                 preferred_dgemm_lib)
       REAL(KIND=dp), INTENT(OUT)                         :: E_cou, E_ex, E_s, E_t
       REAL(KIND=dp), DIMENSION(:, :, :), INTENT(IN)      :: BIb_C
 
       CLASS(mp_comm_type), INTENT(IN) :: comm_all, comm_sub
       REAL(KIND=dp), DIMENSION(:), INTENT(IN) :: eigenval
       INTEGER, INTENT(IN) :: n_homo, virtual_start, virtual_size, aux_start, aux_size, n_aux
+      INTEGER, INTENT(IN) :: preferred_dgemm_lib
 
       INTERFACE
          SUBROUTINE calc_ri_mp2_energy_c(E_cou, E_ex, E_s, E_t, BIb_C, comm_all, comm_sub, eigenval, n_homo, &
-                                         virtual_start, virtual_size, aux_start, aux_size, n_aux) &
+                                         virtual_start, virtual_size, aux_start, aux_size, n_aux, &
+                                         preferred_dgemm_lib) &
             BIND(C, name="calc_ri_mp2_energy")
             IMPORT :: C_DOUBLE, C_INT
             REAL(C_DOUBLE) :: E_cou, E_ex, E_s, E_t
@@ -55,11 +59,12 @@ CONTAINS
             INTEGER(C_INT), VALUE :: comm_all, comm_sub
             REAL(C_DOUBLE), DIMENSION(*) :: eigenval
             INTEGER(C_INT), VALUE :: n_homo, virtual_start, virtual_size, aux_start, aux_size, n_aux
+            INTEGER(C_INT), VALUE :: preferred_dgemm_lib
          END SUBROUTINE calc_ri_mp2_energy_c
       END INTERFACE
 
       CALL calc_ri_mp2_energy_c(E_cou, E_ex, E_s, E_t, BIb_C, comm_all%get_handle(), comm_sub%get_handle(), eigenval, n_homo, &
-                                virtual_start, virtual_size, aux_start, aux_size, n_aux)
+                                virtual_start, virtual_size, aux_start, aux_size, n_aux, preferred_dgemm_lib)
 
    END SUBROUTINE calc_ri_mp2_energy
 END MODULE mp2_gpu_api

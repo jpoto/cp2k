@@ -20,6 +20,7 @@
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
 #include <spla/spla.h>
+#include <cuda_runtime.h>
 #endif
 
 /*******************************************************************************
@@ -266,9 +267,9 @@ static void spla_dgemm_impl(gemm_ctx_t *ctx, char transa, char transb, int m,
                             int n, int k, double alpha, const double *A,
                             int lda, const double *B, int ldb, double beta,
                             double *C, int ldc) {
-  SPLA spLA_op_A =
+  SplaOperation spLA_op_A =
       (transa == 'N' || transa == 'n') ? SPLA_OP_NONE : SPLA_OP_TRANSPOSE;
-  SPLA spLA_op_B =
+  SplaOperation spLA_op_B =
       (transb == 'N' || transb == 'n') ? SPLA_OP_NONE : SPLA_OP_TRANSPOSE;
 
   SPLA_CHECK(spla_dgemm(spLA_op_A, spLA_op_B, m, n, k, alpha, A, lda, B, ldb,
@@ -281,6 +282,30 @@ static void spla_dgemm_impl(gemm_ctx_t *ctx, char transa, char transb, int m,
  * Public API
  ******************************************************************************/
 
+void gemm_init(gemm_lib_t lib) {
+#if defined(__CUBLAS) || (defined(__SPLA) && defined(__OFFLOAD_GEMM))
+  int device_count = 0;
+  cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
+  if (cuda_err != cudaSuccess) {
+    fprintf(stderr, "GEMM INIT ERROR: cudaGetDeviceCount failed: %s\n",
+            cudaGetErrorString(cuda_err));
+    abort();
+  }
+  if (device_count == 0) {
+    fprintf(stderr, "GEMM INIT ERROR: No CUDA devices found. "
+                    "Cannot use %s backend without GPU.\n",
+            (lib == GEMM_LIB_CUBLAS) ? "cuBLAS" : "SPLA");
+    abort();
+  }
+  fprintf(stderr, "GEMM INIT: Found %d CUDA device(s), library=%s\n",
+          device_count,
+          (lib == GEMM_LIB_CUBLAS) ? "cuBLAS" :
+          (lib == GEMM_LIB_SPLA) ? "SPLA" : "BLAS");
+#else
+  (void)lib;
+#endif
+}
+
 gemm_ctx_t *gemm_ctx_create(gemm_pu_t pu, gemm_lib_t lib) {
   gemm_ctx_t *ctx = (gemm_ctx_t *)calloc(1, sizeof(gemm_ctx_t));
   if (!ctx) {
@@ -291,6 +316,8 @@ gemm_ctx_t *gemm_ctx_create(gemm_pu_t pu, gemm_lib_t lib) {
   ctx->lib = lib;
   ctx->pu = pu;
   ctx->uses_gpu = 0;
+
+  fprintf(stderr, "DEBUG GEMM: Creating context with pu=%d, lib=%d\n", pu, lib);
 
   switch (lib) {
 
@@ -397,6 +424,9 @@ void gemm_ctx_dgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
     abort();
   }
 
+  fprintf(stderr, "DEBUG GEMM: Using backend '%s' (lib=%d, uses_gpu=%d) for dgemm m=%d n=%d k=%d\n",
+          gemm_ctx_get_backend_name(ctx), ctx->lib, ctx->uses_gpu, m, n, k);
+
   switch (ctx->lib) {
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
@@ -432,6 +462,9 @@ void gemm_ctx_sgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
     fprintf(stderr, "gemm_ctx_sgemm: NULL context\n");
     abort();
   }
+
+  fprintf(stderr, "DEBUG GEMM: Using backend '%s' (lib=%d, uses_gpu=%d) for sgemm m=%d n=%d k=%d\n",
+          gemm_ctx_get_backend_name(ctx), ctx->lib, ctx->uses_gpu, m, n, k);
 
   switch (ctx->lib) {
 
