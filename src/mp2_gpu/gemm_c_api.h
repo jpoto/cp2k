@@ -56,6 +56,14 @@ typedef enum {
 typedef struct gemm_ctx gemm_ctx_t;
 
 /*******************************************************************************
+ * Initialize GEMM library. Checks for available CUDA devices for GPU backends.
+ * Must be called before gemm_ctx_create if using SPLA or cuBLAS.
+ *
+ * @param[in] lib  Backend library to initialize
+ ******************************************************************************/
+void gemm_init(gemm_lib_t lib);
+
+/*******************************************************************************
  * Create a GEMM context for the given processing unit and backend.
  *
  * @param[in] pu   Processing unit: GEMM_PU_HOST or GEMM_PU_GPU

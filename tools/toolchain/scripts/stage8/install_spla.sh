@@ -130,6 +130,19 @@ case "${with_spla}" in
     check_dir "${pkg_install_dir}/include/spla"
     ;;
 esac
+if [ "$with_spla" = "__INSTALL__" ] || [ "$with_spla" = "__SYSTEM__" ] || [ -n "${with_spla##@(__DONTUSE__|__SYSTEM__|__INSTALL__)}" ]; then
+  spla_gpu_dir="${INSTALLDIR}/SpLA-${spla_ver}-cuda"
+  if [ "$ENABLE_HIP" = "__TRUE__" ]; then
+    case "${GPUVER}" in
+      K20X | K40 | K80 | P100 | V100 | A100 | A40 | H100 | Mi50 | Mi100 | Mi200 | Mi250)
+        spla_gpu_dir="${INSTALLDIR}/SpLA-${spla_ver}-hip"
+        ;;
+    esac
+  fi
+  if [ -d "${spla_gpu_dir}" ]; then
+    pkg_install_dir="${spla_gpu_dir}"
+  fi
+fi
 if [ "$with_spla" != "__DONTUSE__" ]; then
   if [ "$with_spla" != "__SYSTEM__" ]; then
     cat << EOF > "${BUILDDIR}/setup_spla"

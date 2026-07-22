@@ -14,7 +14,7 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
                         const double *BIb_C, int comm_all_f, int comm_sub_f,
                         const double *eigenval, int n_homo, int virtual_start,
                         int virtual_size, int aux_start, int aux_size,
-                        int n_aux) {
+                        int n_aux, int preferred_dgemm_lib) {
   const cp_mpi_comm_t comm_all = cp_mpi_comm_f2c(comm_all_f);
   const cp_mpi_comm_t comm_sub = cp_mpi_comm_f2c(comm_sub_f);
 
@@ -25,7 +25,15 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
   (void)aux_start;
   (void)n_aux;
 
-  gemm_ctx_t *ctx = gemm_ctx_create(GEMM_PU_HOST, GEMM_LIB_BLAS);
+  gemm_lib_t lib;
+  if (preferred_dgemm_lib == 1) {
+    lib = GEMM_LIB_SPLA;
+  } else {
+    lib = GEMM_LIB_BLAS;
+  }
+
+  gemm_init(lib);
+  gemm_ctx_t *ctx = gemm_ctx_create(GEMM_PU_HOST, lib);
 
   const int M = aux_size;
   const int N = n_homo;

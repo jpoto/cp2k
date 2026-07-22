@@ -25,7 +25,7 @@ MODULE mp2_ri_gpw
    USE kinds,                           ONLY: dp,&
                                               int_8
    USE libint_2c_3c,                    ONLY: compare_potential_types
-   USE local_gemm_api,                  ONLY: LOCAL_GEMM_PU_GPU
+   USE local_gemm_api,                  ONLY: LOCAL_GEMM_PU_GPU, local_gemm_get_library
    USE machine,                         ONLY: m_flush,&
                                               m_memory,&
                                               m_walltime
@@ -136,8 +136,9 @@ CONTAINS
             ALLOCATE (BIb_C(1)%array(my_group_L_size, my_B_size(1), homo(1)))
             BIb_C(1)%array = 0.0_dp
          END IF
-         CALL calc_ri_mp2_energy(Emp2_cou, Emp2_EX, Emp2_S, Emp2_T, BIb_C(1)%array, para_env, para_env_sub, Eigenval(:, 1), &
-                                 homo(1), my_B_virtual_start(1) - 1, my_B_size(1), my_group_L_start - 1, my_group_L_size, dimen_RI)
+CALL calc_ri_mp2_energy(Emp2_cou, Emp2_EX, Emp2_S, Emp2_T, BIb_C(1)%array, para_env, para_env_sub, Eigenval(:, 1), &
+                               homo(1), my_B_virtual_start(1) - 1, my_B_size(1), my_group_L_start - 1, my_group_L_size, dimen_RI, &
+                               local_gemm_get_library())
          CALL timestop(handle)
          RETURN
       END IF
