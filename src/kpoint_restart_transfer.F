@@ -75,7 +75,6 @@ MODULE kpoint_restart_transfer
    REAL(KIND=dp), PARAMETER             :: hermiticity_tol = 1.0e-10_dp
    REAL(KIND=dp), PARAMETER             :: electron_tol = 1.0e-10_dp
    REAL(KIND=dp), PARAMETER             :: electron_renormalization_tol = 1.0e-6_dp
-   REAL(KIND=dp), PARAMETER             :: payload_zero_tol = 1.0e-14_dp
    REAL(KIND=dp), PARAMETER             :: alias_consistency_tol = 1.0e-10_dp
    REAL(KIND=dp), PARAMETER             :: overlap_condition_tol = 1.0e-10_dp
    REAL(KIND=dp), PARAMETER             :: occupation_bound_tol = 1.0e-10_dp
@@ -2270,21 +2269,20 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'apply_bvk_transfer'
 
-      COMPLEX(KIND=dp)                                   :: phase
+      COMPLEX(KIND=dp)                                   :: phase, source_twist
       COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:, :)     :: dense
       INTEGER                                            :: dense_nonfinite, handle, ic, idim, ikp, &
                                                             irecord, ispin, kplocal, nao, nc, &
                                                             nimages, nrecords, nspin
       INTEGER, DIMENSION(3)                              :: nkp_grid_target
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: cross_mesh, need_renormalization, &
-                                                            nyquist_present, phase_ok, &
-                                                            phase_snapshot_taken, &
-                                                            projection_accepted
-      REAL(KIND=dp) :: electron_error, expected_electrons, herm_error, herm_error_global, &
-         imag_error, imag_error_global, matrix_norm, normalization_factor, nyquist_norm, &
+      LOGICAL :: cross_mesh, gamma_centered_target, need_renormalization, phase_ok, &
+         phase_snapshot_taken, projection_accepted
+      REAL(KIND=dp) :: angle, electron_error, expected_electrons, herm_error, herm_error_global, &
+         imag_error, imag_error_global, kfirst_source, matrix_norm, normalization_factor, &
          spin_trace, trace_term
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: dense_i, dense_r
+      REAL(KIND=dp), DIMENSION(3)                        :: kp_shift_target
       TYPE(cp_fm_struct_type), POINTER                   :: matrix_struct
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :, :)  :: pmat_tmp
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: denmat_tmp
@@ -2305,7 +2303,8 @@ CONTAINS
       nimages = SIZE(denmat, 2)
       nao = SIZE(payload_r, 2)
       nrecords = SIZE(cells, 2)
-      CALL get_kpoint_info(kpoints, nkp_grid=nkp_grid_target, sab_nl=sab_nl, &
+      CALL get_kpoint_info(kpoints, nkp_grid=nkp_grid_target, kp_shift=kp_shift_target, &
+                           gamma_centered=gamma_centered_target, sab_nl=sab_nl, &
                            cell_to_index=cell_to_index)
       ! A shift change is rejected by the metadata gate before this routine.  Therefore equal grid
       ! dimensions (including an identically shifted MacDonald mesh) are the historical strict
@@ -2323,6 +2322,11 @@ CONTAINS
                reason = "target k-point symmetry metadata is unavailable"
                GOTO 800
             END IF
+            ! FULL_GRID OFF does not imply that point-group symmetry is active.  In particular,
+            ! SYMMETRY OFF still has a reduced-grid container but no phase selectors because the
+            ! direct transform below never consumes them.  Snapshot and validate selectors only
+            ! for stars that will actually be symmetrized.
+            IF (.NOT. kpsym%apply_symmetry) CYCLE
             IF (.NOT. ASSOCIATED(kpsym%phase_mode) .OR. &
                 .NOT. ASSOCIATED(kpsym%phase_gauge)) THEN
                reason = "target symmetry phases are unavailable"
@@ -2338,28 +2342,6 @@ CONTAINS
                                         cell_to_index, success=phase_ok, error_message=reason)
          IF (.NOT. phase_ok) GOTO 800
       END IF
-
-      ! An even source mesh has a single aliased Nyquist coefficient. Splitting it into the two
-      ! independent modes of a refined mesh is deliberately deferred to stage 2. A zero plane is
-      ! harmless and can be refined without special treatment.
-      DO idim = 1, 3
-         IF (MOD(nkp_grid_source(idim), 2) == 0 .AND. &
-             nkp_grid_target(idim) > nkp_grid_source(idim)) THEN
-            nyquist_norm = 0.0_dp
-            nyquist_present = .FALSE.
-            DO irecord = 1, nrecords
-               IF (cells(idim, irecord) == -nkp_grid_source(idim)/2) THEN
-                  nyquist_present = .TRUE.
-                  nyquist_norm = MAX(nyquist_norm, MAXVAL(ABS(payload_r(:, :, :, irecord))))
-                  nyquist_norm = MAX(nyquist_norm, MAXVAL(ABS(payload_i(:, :, :, irecord))))
-               END IF
-            END DO
-            IF (nyquist_present .AND. nyquist_norm > payload_zero_tol) THEN
-               reason = "refinement of a nonzero even-mesh Nyquist plane is a stage-2 feature"
-               GOTO 800
-            END IF
-         END IF
-      END DO
 
       kplocal = SIZE(kpoints%kp_env)
       kp => kpoints%kp_env(1)%kpoint_env
@@ -2390,8 +2372,40 @@ CONTAINS
          DO ispin = 1, nspin
             dense = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
             DO irecord = 1, nrecords
-               phase = CMPLX(COS(twopi*DOT_PRODUCT(kp%xkp, REAL(cells(:, irecord), dp))), &
-                             SIN(twopi*DOT_PRODUCT(kp%xkp, REAL(cells(:, irecord), dp))), KIND=dp)
+               phase = CMPLX(1.0_dp, 0.0_dp, KIND=dp)
+               DO idim = 1, 3
+                  angle = twopi*kp%xkp(idim)*REAL(cells(idim, irecord), dp)
+                  IF (cross_mesh .AND. MOD(nkp_grid_source(idim), 2) == 0 .AND. &
+                      nkp_grid_target(idim) > nkp_grid_source(idim) .AND. &
+                      cells(idim, irecord) == -nkp_grid_source(idim)/2) THEN
+                     ! The even source mesh aliases the two equally short representatives
+                     ! +/-N/2.  Lift the canonical coefficient to both target images with
+                     ! equal amplitude.  The positive representative carries the inverse
+                     ! source-twist phase because canonical_bvk_cell folds +N/2 to -N/2.
+                     ! Their sum exactly reproduces every source-mesh Bloch block and gives
+                     ! a Hermitian, gauge-consistent trigonometric interpolation on the
+                     ! refined mesh.  Products of this one-dimensional factor split edges
+                     ! and corners over all 2**m Nyquist representatives.
+                     IF (gamma_centered_target) THEN
+                        kfirst_source = REAL(2 - nkp_grid_source(idim), dp)/ &
+                                        (2.0_dp*REAL(nkp_grid_source(idim), dp)) + &
+                                        kp_shift_target(idim)
+                     ELSE
+                        kfirst_source = REAL(1 - nkp_grid_source(idim), dp)/ &
+                                        (2.0_dp*REAL(nkp_grid_source(idim), dp)) + &
+                                        kp_shift_target(idim)
+                     END IF
+                     source_twist = CMPLX( &
+                                    COS(twopi*REAL(nkp_grid_source(idim), dp)*kfirst_source), &
+                                    SIN(twopi*REAL(nkp_grid_source(idim), dp)*kfirst_source), KIND=dp)
+                     angle = twopi*kp%xkp(idim)*REAL(nkp_grid_source(idim)/2, dp)
+                     phase = phase*0.5_dp*( &
+                             CMPLX(COS(-angle), SIN(-angle), KIND=dp) + &
+                             CONJG(source_twist)*CMPLX(COS(angle), SIN(angle), KIND=dp))
+                  ELSE
+                     phase = phase*CMPLX(COS(angle), SIN(angle), KIND=dp)
+                  END IF
+               END DO
                DO ic = 1, nao
                   dense(:, ic) = dense(:, ic) + phase*CMPLX(payload_r(ispin, :, ic, irecord), &
                                                             payload_i(ispin, :, ic, irecord), KIND=dp)
@@ -2546,6 +2560,7 @@ CONTAINS
 800   CONTINUE
       IF (phase_snapshot_taken .AND. .NOT. accepted) THEN
          DO ikp = 1, kpoints%nkp
+            IF (.NOT. ALLOCATED(phase_snapshot(ikp)%mode)) CYCLE
             kpsym => kpoints%kp_sym(ikp)%kpoint_sym
             kpsym%phase_mode = phase_snapshot(ikp)%mode
             kpsym%phase_gauge = phase_snapshot(ikp)%gauge
