@@ -10,7 +10,7 @@ tblite_ver="0.6.0"
 tblite_sha256="372281aedb89234168d00eb691addb303197a9462a9c55d145c835f2cf5e8b42"
 tblite_sdftd3_ver="1.4.0"
 tblite_dftd4_ver="4.2.0"
-save_tblite_rev="15915c9435644eb257178ca8f8bf7220c38b1a84"
+save_tblite_rev="5c25e149ad10f85bb12f31b0f50860cd3589a1ce"
 save_tblite_repo="${SAVE_TBLITE_REPOSITORY:-https://github.com/DCM-Uni-Paderborn/save_tblite.git}"
 save_tblite_src_dir="save_tblite-${save_tblite_rev}"
 
@@ -52,6 +52,8 @@ case "$with_tblite" in
           -DWITH_TESTS=OFF \
           -DWITH_OpenMP=ON \
           -DWITH_DDX=OFF \
+          -DCMAKE_Fortran_FLAGS="-ffree-line-length-none" \
+          -DCMAKE_Fortran_MODULE_DIRECTORY="${pkg_install_dir}/include/tblite" \
           -Dtblite-dependency-method=fetch \
           .. \
           > cmake.log 2>&1 || tail_excerpt cmake.log
