@@ -27,7 +27,11 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
 
   gemm_lib_t lib;
   if (preferred_dgemm_lib == 1) {
+#if defined(__SPLA) && defined(__OFFLOAD_GEMM)
     lib = GEMM_LIB_SPLA;
+#else
+    lib = GEMM_LIB_BLAS;
+#endif
   } else {
     lib = GEMM_LIB_BLAS;
   }

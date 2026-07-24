@@ -1,0 +1,5 @@
+# Test for RI-MP2 via C backend with SPLA library.
+"RI_MP2_H2O_SPLA_C.inp"                 = [{matcher="M011", tol=1.0, ref=-16.55025317}]
+# Test for RI-MP2 via Fortran backend with SPLA library.
+"RI_MP2_H2O_SPLA_FORTRAN.inp"           = [{matcher="M011", tol=1.0, ref=-17.18255767}]
+#EOF
