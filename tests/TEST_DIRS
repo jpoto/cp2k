@@ -263,7 +263,8 @@ QMMM/xTB/regtest
 QS/regtest-ot-refine-2
 QS/regtest-ri-mp2                                           libint !ifx
 QS/regtest-ri-mp2-c-backend-blas
-QS/regtest-ri-mp2-c-backend-spla                                       spla
+QS/regtest-ri-mp2-c-backend-spla                                       spla_gemm_offloading
+QS/regtest-ri-mp2-c-backend-cublas                                     offload_cuda
 QS/regtest-stress
 QS/regtest-stress-analytical-2d
 QS/regtest-mom-2                                            libint !ifx

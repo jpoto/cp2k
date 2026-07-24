@@ -51,7 +51,7 @@ MODULE input_cp2k_global
                                               GRID_BACKEND_REF
    USE input_constants,                 ONLY: &
         bsse_run, callgraph_all, callgraph_master, callgraph_none, cell_opt_run, debug_run, &
-        do_atom, do_band, do_cosma, do_cp2k, do_dgemm_blas, do_dgemm_spla, do_farming, &
+        do_atom, do_band, do_cosma, do_cp2k, do_dgemm_blas, do_dgemm_cublas, do_dgemm_spla, do_farming, &
         do_fft_fftw3, do_fft_sg, do_opt_basis, do_optimize_input, do_scalapack, do_swarm, do_tamc, &
         do_test, do_tree_mc, do_tree_mc_ana, driver_run, ehrenfest, energy_force_run, energy_run, &
         fftw_plan_estimate, fftw_plan_exhaustive, fftw_plan_measure, fftw_plan_patient, gaussian, &
@@ -176,9 +176,9 @@ CONTAINS
                           "(see keyword FM%TYPE_OF_MATRIX_MULTIPLICATION).", &
                           usage="PREFERRED_DGEMM_LIBRARY SPLA", &
                           default_i_val=default_dgemm, &
-                          enum_i_vals=[do_dgemm_spla, do_dgemm_blas], &
-                          enum_c_vals=s2a("SPLA", "BLAS"), &
-                          enum_desc=s2a("SPLA library", "BLAS library"))
+                            enum_i_vals=[do_dgemm_spla, do_dgemm_blas, do_dgemm_cublas], &
+                            enum_c_vals=s2a("SPLA", "BLAS", "CUBLAS"), &
+                            enum_desc=s2a("SPLA library", "BLAS library", "CUBLAS library"))
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

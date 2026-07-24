@@ -951,9 +951,10 @@ MODULE input_constants
                                                fftw_plan_measure = 2, &
                                                fftw_plan_patient = 3, &
                                                fftw_plan_exhaustive = 4
-   ! Local DGEMM library
-   INTEGER, PARAMETER, PUBLIC               :: do_dgemm_spla = 1, &
-                                               do_dgemm_blas = 2
+    ! Local DGEMM library
+    INTEGER, PARAMETER, PUBLIC               :: do_dgemm_spla = 1, &
+                                                do_dgemm_blas = 2, &
+                                                do_dgemm_cublas = 3
 
    !real time propagation
    INTEGER, PARAMETER, PUBLIC               :: do_taylor = 1, &

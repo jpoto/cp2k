@@ -69,7 +69,7 @@ MODULE environment
    USE header,                          ONLY: cp2k_footer,&
                                               cp2k_header
    USE input_constants,                 ONLY: &
-        callgraph_all, callgraph_none, do_cosma, do_cp2k, do_dgemm_blas, do_dgemm_spla, do_eip, &
+        callgraph_all, callgraph_none, do_cosma, do_cp2k, do_dgemm_blas, do_dgemm_cublas, do_dgemm_spla, do_eip, &
         do_farming, do_fft_fftw3, do_fft_sg, do_fist, do_qs, do_scalapack, do_sirius, do_test, &
         energy_run, mol_dyn_run, none_run
    USE input_cp2k_global,               ONLY: create_global_section
@@ -646,14 +646,16 @@ CONTAINS
          CPABORT("Unknown FFT library specified")
       END SELECT
 
-      SELECT CASE (i_dgemm)
-      CASE (do_dgemm_spla)
-         globenv%default_dgemm_library = "SPLA"
-      CASE (do_dgemm_blas)
-         globenv%default_dgemm_library = "BLAS"
-      CASE DEFAULT
-         CPABORT("Unknown DGEMM library specified")
-      END SELECT
+       SELECT CASE (i_dgemm)
+       CASE (do_dgemm_spla)
+          globenv%default_dgemm_library = "SPLA"
+       CASE (do_dgemm_blas)
+          globenv%default_dgemm_library = "BLAS"
+       CASE (do_dgemm_cublas)
+          globenv%default_dgemm_library = "CUBLAS"
+       CASE DEFAULT
+          CPABORT("Unknown DGEMM library specified")
+       END SELECT
 
       IF (globenv%run_type_id == 0) THEN
          SELECT CASE (globenv%prog_name_id)

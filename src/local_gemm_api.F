@@ -10,7 +10,7 @@ MODULE local_gemm_api
                             C_PTR
    USE kinds, ONLY: dp
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-   USE input_constants, ONLY: do_dgemm_spla
+    USE input_constants, ONLY: do_dgemm_spla, do_dgemm_cublas, do_dgemm_blas
    USE ISO_C_BINDING, ONLY: C_ASSOCIATED, &
                             C_LOC
    USE spla, ONLY: SPLA_PU_HOST, &
@@ -167,7 +167,7 @@ CONTAINS
       INTEGER :: error_
 
       IF (.NOT. C_ASSOCIATED(ctx%spla_context)) THEN
-         IF (do_dgemm == do_dgemm_spla) THEN
+         IF (do_dgemm == do_dgemm_spla .OR. do_dgemm == do_dgemm_blas) THEN
             CALL offload_activate_chosen_device()
 
             error_ = spla_ctx_create(ctx%spla_context, pu)
