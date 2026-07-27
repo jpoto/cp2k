@@ -196,9 +196,12 @@ CONTAINS
       IF (do_dgemm == do_dgemm_spla) THEN
          CALL offload_activate_chosen_device()
 
-         error_ = spla_ctx_destroy(ctx%spla_context)
-         IF (error_ /= SPLA_SUCCESS) &
-            CPABORT("spla_ctx_destroy failed: "//cp_to_string(error_))
+         IF (C_ASSOCIATED(ctx%spla_context)) THEN
+            error_ = spla_ctx_destroy(ctx%spla_context)
+            IF (error_ /= SPLA_SUCCESS) &
+               CPABORT("spla_ctx_destroy failed: "//cp_to_string(error_))
+            ctx%spla_context = C_NULL_PTR
+         END IF
       END IF
 #endif
       ctx%spla_context = C_NULL_PTR
