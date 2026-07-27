@@ -313,11 +313,9 @@ gemm_ctx_t *gemm_ctx_create(gemm_pu_t pu, gemm_lib_t lib) {
     abort();
   }
 
-  ctx->lib = lib;
-  ctx->pu = pu;
-  ctx->uses_gpu = 0;
-
-  fprintf(stderr, "DEBUG GEMM: Creating context with pu=%d, lib=%d\n", pu, lib);
+   ctx->lib = lib;
+   ctx->pu = pu;
+   ctx->uses_gpu = 0;
 
   switch (lib) {
 
@@ -334,19 +332,19 @@ gemm_ctx_t *gemm_ctx_create(gemm_pu_t pu, gemm_lib_t lib) {
 #endif
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-  case GEMM_LIB_SPLA: {
-    if (pu == GEMM_PU_GPU) {
-      offload_activate_chosen_device();
-      SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_GPU));
-      ctx->uses_gpu = 1;
-      ctx->threshold = 128 * 128 * 128 * 2;
-    } else {
-      SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_HOST));
-      ctx->uses_gpu = 0;
-      ctx->threshold = 0;
-    }
-    break;
-  }
+   case GEMM_LIB_SPLA: {
+     if (pu == GEMM_PU_GPU) {
+       offload_activate_chosen_device();
+       SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_GPU));
+       ctx->uses_gpu = 1;
+       ctx->threshold = 128 * 128 * 128 * 2;
+     } else {
+       SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_HOST));
+       ctx->uses_gpu = 0;
+       ctx->threshold = 0;
+     }
+     break;
+   }
 #endif
 
   case GEMM_LIB_BLAS:
@@ -376,7 +374,10 @@ void gemm_ctx_destroy(gemm_ctx_t *ctx) {
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
   case GEMM_LIB_SPLA:
-    SPLA_CHECK(spla_ctx_destroy(ctx->spla_ctx));
+    if (ctx->spla_ctx != NULL) {
+        SPLA_CHECK(spla_ctx_destroy(ctx->spla_ctx));
+        ctx->spla_ctx = NULL;
+    }
     break;
 #endif
 
@@ -422,12 +423,9 @@ void gemm_ctx_dgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
   if (!ctx) {
     fprintf(stderr, "gemm_ctx_dgemm: NULL context\n");
     abort();
-  }
+   }
 
-  fprintf(stderr, "DEBUG GEMM: Using backend '%s' (lib=%d, uses_gpu=%d) for dgemm m=%d n=%d k=%d\n",
-          gemm_ctx_get_backend_name(ctx), ctx->lib, ctx->uses_gpu, m, n, k);
-
-  switch (ctx->lib) {
+   switch (ctx->lib) {
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
   case GEMM_LIB_SPLA:
@@ -463,10 +461,7 @@ void gemm_ctx_sgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
     abort();
   }
 
-  fprintf(stderr, "DEBUG GEMM: Using backend '%s' (lib=%d, uses_gpu=%d) for sgemm m=%d n=%d k=%d\n",
-          gemm_ctx_get_backend_name(ctx), ctx->lib, ctx->uses_gpu, m, n, k);
-
-  switch (ctx->lib) {
+   switch (ctx->lib) {
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
   case GEMM_LIB_SPLA:
