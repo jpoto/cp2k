@@ -26,13 +26,13 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
   (void)aux_start;
   (void)n_aux;
 
-   gemm_lib_t lib;
-   if (preferred_dgemm_lib == 1) {
+    gemm_lib_t lib;
+    if (preferred_dgemm_lib == 1) {
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-     lib = GEMM_LIB_SPLA;
+      lib = GEMM_LIB_SPLA;
 #else
-     fprintf(stderr, "SPLA was requested but is not available. Aborting.\n");
-     abort();
+      fprintf(stderr, "SPLA was requested but is not available. Aborting.\n");
+      abort();
 #endif
     } else if (preferred_dgemm_lib == 3) {
 #if defined(__OFFLOAD_CUDA)
