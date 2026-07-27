@@ -34,16 +34,16 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
      fprintf(stderr, "SPLA was requested but is not available. Aborting.\n");
      abort();
 #endif
-   } else if (preferred_dgemm_lib == 3) {
-#if defined(__CUBLAS)
-     lib = GEMM_LIB_CUBLAS;
+    } else if (preferred_dgemm_lib == 3) {
+#if defined(__OFFLOAD_CUDA)
+      lib = GEMM_LIB_CUBLAS;
 #else
-     fprintf(stderr, "CUBLAS was requested but is not available. Aborting.\n");
-     abort();
+      fprintf(stderr, "CUBLAS was requested but CUDA is not available. Aborting.\n");
+      abort();
 #endif
-   } else {
-     lib = GEMM_LIB_BLAS;
-   }
+    } else {
+      lib = GEMM_LIB_BLAS;
+    }
 
   gemm_init(lib);
   gemm_ctx_t *ctx = gemm_ctx_create(GEMM_PU_HOST, lib);
@@ -77,9 +77,6 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
    *E_s = 0.0;
    *E_t = 0.0;
 
-   // Only destroy context for non-SPLA libraries to avoid segmentation fault
-   // SPLA context should be managed externally or kept alive
-   if (lib != GEMM_LIB_SPLA) {
-     gemm_ctx_destroy(ctx);
-   }
+    // Destroy context for all libraries
+    gemm_ctx_destroy(ctx);
  }
