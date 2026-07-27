@@ -10,7 +10,7 @@ MODULE local_gemm_api
                             C_PTR
    USE kinds, ONLY: dp
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-    USE input_constants, ONLY: do_dgemm_spla, do_dgemm_cublas, do_dgemm_blas
+   USE input_constants, ONLY: do_dgemm_spla, do_dgemm_cublas, do_dgemm_blas
    USE ISO_C_BINDING, ONLY: C_ASSOCIATED, &
                             C_LOC
    USE spla, ONLY: SPLA_PU_HOST, &
@@ -39,9 +39,9 @@ MODULE local_gemm_api
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'local_gemm_api'
 
-PUBLIC :: local_gemm_ctxt_type, &
-              local_gemm_set_library, &
-              local_gemm_get_library
+   PUBLIC :: local_gemm_ctxt_type, &
+             local_gemm_set_library, &
+             local_gemm_get_library
 
    INTEGER, PARAMETER, PUBLIC :: &
       LOCAL_GEMM_PU_HOST = 0, &
@@ -242,7 +242,7 @@ CONTAINS
 !> \return Current DGEMM library (1=SPLA, 2=BLAS)
 ! **************************************************************************************************
    FUNCTION local_gemm_get_library()
-      INTEGER :: local_gemm_get_library
+      INTEGER                                            :: local_gemm_get_library
 
       local_gemm_get_library = do_dgemm
    END FUNCTION local_gemm_get_library

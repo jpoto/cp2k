@@ -7,9 +7,9 @@
 
 #include "../mpiwrap/cp_mpi.h"
 #include "gemm_c_api.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
                         const double *BIb_C, int comm_all_f, int comm_sub_f,
@@ -26,24 +26,25 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
   (void)aux_start;
   (void)n_aux;
 
-    gemm_lib_t lib;
-    if (preferred_dgemm_lib == 1) {
+  gemm_lib_t lib;
+  if (preferred_dgemm_lib == 1) {
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-      lib = GEMM_LIB_SPLA;
+    lib = GEMM_LIB_SPLA;
 #else
-      fprintf(stderr, "SPLA was requested but is not available. Aborting.\n");
-      abort();
+    fprintf(stderr, "SPLA was requested but is not available. Aborting.\n");
+    abort();
 #endif
-    } else if (preferred_dgemm_lib == 3) {
+  } else if (preferred_dgemm_lib == 3) {
 #if defined(__OFFLOAD_CUDA)
-      lib = GEMM_LIB_CUBLAS;
+    lib = GEMM_LIB_CUBLAS;
 #else
-      fprintf(stderr, "CUBLAS was requested but CUDA is not available. Aborting.\n");
-      abort();
+    fprintf(stderr,
+            "CUBLAS was requested but CUDA is not available. Aborting.\n");
+    abort();
 #endif
-    } else {
-      lib = GEMM_LIB_BLAS;
-    }
+  } else {
+    lib = GEMM_LIB_BLAS;
+  }
 
   gemm_init(lib);
   gemm_ctx_t *ctx = gemm_ctx_create(GEMM_PU_HOST, lib);
@@ -51,32 +52,32 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
   const int M = aux_size;
   const int N = n_homo;
 
-   if (M > 0 && N > 0) {
-     double *A = (double *)malloc(M * N * sizeof(double));
-     for (int j = 0; j < N; j++) {
-       for (int i = 0; i < M; i++) {
-         A[i + j * M] = BIb_C[i + j * M];
-       }
-     }
+  if (M > 0 && N > 0) {
+    double *A = (double *)malloc(M * N * sizeof(double));
+    for (int j = 0; j < N; j++) {
+      for (int i = 0; i < M; i++) {
+        A[i + j * M] = BIb_C[i + j * M];
+      }
+    }
 
-     double *C = (double *)calloc(M * M, sizeof(double));
-     gemm_ctx_dgemm(ctx, 'N', 'T', M, M, N, 1.0, A, M, A, M, 0.0, C, M);
+    double *C = (double *)calloc(M * M, sizeof(double));
+    gemm_ctx_dgemm(ctx, 'N', 'T', M, M, N, 1.0, A, M, A, M, 0.0, C, M);
 
-     free(A);
-     double sum = 0.0;
-     for (int i = 0; i < M * M; i++)
-       sum += C[i];
-     free(C);
+    free(A);
+    double sum = 0.0;
+    for (int i = 0; i < M * M; i++)
+      sum += C[i];
+    free(C);
 
-     *E_cou = sum;
-   } else {
-     *E_cou = 0.0;
-   }
+    *E_cou = sum;
+  } else {
+    *E_cou = 0.0;
+  }
 
-   *E_ex = 0.0;
-   *E_s = 0.0;
-   *E_t = 0.0;
+  *E_ex = 0.0;
+  *E_s = 0.0;
+  *E_t = 0.0;
 
-    // Destroy context for all libraries
-    gemm_ctx_destroy(ctx);
- }
+  // Destroy context for all libraries
+  gemm_ctx_destroy(ctx);
+}

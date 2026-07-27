@@ -19,20 +19,20 @@
 #endif
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-#include <spla/spla.h>
 #include <cuda_runtime.h>
+#include <spla/spla.h>
 #endif
 
 /*******************************************************************************
  * Error-checking macros
  ******************************************************************************/
 #if defined(__OFFLOAD_CUDA)
-#define CUDA_CHECK(cmd)                                                       \
+#define CUDA_CHECK(cmd)                                                        \
   do {                                                                         \
-    cudaError_t status__ = (cmd);                                             \
+    cudaError_t status__ = (cmd);                                              \
     if (status__ != cudaSuccess) {                                             \
       fprintf(stderr, "CUDA_ERROR: %s:%d: %s\n", __FILE__, __LINE__,           \
-              cudaGetErrorString(status__));                                  \
+              cudaGetErrorString(status__));                                   \
       abort();                                                                 \
     }                                                                          \
   } while (0)
@@ -61,8 +61,8 @@
       case CUBLAS_STATUS_EXECUTION_FAILED:                                     \
         fprintf(stderr, "CUBLAS_STATUS_EXECUTION_FAILED\n");                   \
         break;                                                                 \
-      case CUBLAS_STATUS_INTERNAL_ERROR:                                      \
-        fprintf(stderr, "CUBLAS_STATUS_INTERNAL_ERROR\n");                    \
+      case CUBLAS_STATUS_INTERNAL_ERROR:                                       \
+        fprintf(stderr, "CUBLAS_STATUS_INTERNAL_ERROR\n");                     \
         break;                                                                 \
       case CUBLAS_STATUS_NOT_SUPPORTED:                                        \
         fprintf(stderr, "CUBLAS_STATUS_NOT_SUPPORTED\n");                      \
@@ -72,7 +72,7 @@
         break;                                                                 \
       default:                                                                 \
         fprintf(stderr, "Unknown CUBLAS error %d\n", status__);                \
-      }                                                                         \
+      }                                                                        \
       abort();                                                                 \
     }                                                                          \
   } while (0)
@@ -297,16 +297,18 @@ void gemm_init(gemm_lib_t lib) {
     abort();
   }
   if (device_count == 0) {
-    fprintf(stderr, "GEMM INIT ERROR: No CUDA devices found. "
-                    "Cannot use %s backend without GPU.\n",
+    fprintf(stderr,
+            "GEMM INIT ERROR: No CUDA devices found. "
+            "Cannot use %s backend without GPU.\n",
             (lib == GEMM_LIB_CUBLAS) ? "cuBLAS" : "SPLA");
     abort();
   }
 
   fprintf(stderr, "GEMM INIT: Found %d CUDA device(s), library=%s\n",
           device_count,
-          (lib == GEMM_LIB_CUBLAS) ? "cuBLAS" :
-          (lib == GEMM_LIB_SPLA) ? "SPLA" : "BLAS");
+          (lib == GEMM_LIB_CUBLAS) ? "cuBLAS"
+          : (lib == GEMM_LIB_SPLA) ? "SPLA"
+                                   : "BLAS");
 #else
   (void)lib;
 #endif
@@ -319,7 +321,7 @@ gemm_ctx_t *gemm_ctx_create(gemm_pu_t pu, gemm_lib_t lib) {
     abort();
   }
 
-   ctx->lib = lib;
+  ctx->lib = lib;
   ctx->pu = pu;
   ctx->uses_gpu = 0;
 
@@ -338,19 +340,19 @@ gemm_ctx_t *gemm_ctx_create(gemm_pu_t pu, gemm_lib_t lib) {
 #endif
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
-   case GEMM_LIB_SPLA: {
-     if (pu == GEMM_PU_GPU) {
-       offload_activate_chosen_device();
-       SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_GPU));
-       ctx->uses_gpu = 1;
-       ctx->threshold = 128 * 128 * 128 * 2;
-     } else {
-       SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_HOST));
-       ctx->uses_gpu = 0;
-       ctx->threshold = 0;
-     }
-     break;
-   }
+  case GEMM_LIB_SPLA: {
+    if (pu == GEMM_PU_GPU) {
+      offload_activate_chosen_device();
+      SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_GPU));
+      ctx->uses_gpu = 1;
+      ctx->threshold = 128 * 128 * 128 * 2;
+    } else {
+      SPLA_CHECK(spla_ctx_create(&ctx->spla_ctx, SPLA_PU_HOST));
+      ctx->uses_gpu = 0;
+      ctx->threshold = 0;
+    }
+    break;
+  }
 #endif
 
   case GEMM_LIB_BLAS:
@@ -383,8 +385,8 @@ void gemm_ctx_destroy(gemm_ctx_t *ctx) {
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
   case GEMM_LIB_SPLA:
     if (ctx->spla_ctx != NULL) {
-        SPLA_CHECK(spla_ctx_destroy(ctx->spla_ctx));
-        ctx->spla_ctx = NULL;
+      SPLA_CHECK(spla_ctx_destroy(ctx->spla_ctx));
+      ctx->spla_ctx = NULL;
     }
     break;
 #endif
@@ -431,9 +433,9 @@ void gemm_ctx_dgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
   if (!ctx) {
     fprintf(stderr, "gemm_ctx_dgemm: NULL context\n");
     abort();
-   }
+  }
 
-   switch (ctx->lib) {
+  switch (ctx->lib) {
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
   case GEMM_LIB_SPLA:
@@ -469,7 +471,7 @@ void gemm_ctx_sgemm(gemm_ctx_t *ctx, char transa, char transb, int m, int n,
     abort();
   }
 
-   switch (ctx->lib) {
+  switch (ctx->lib) {
 
 #if defined(__SPLA) && defined(__OFFLOAD_GEMM)
   case GEMM_LIB_SPLA:
