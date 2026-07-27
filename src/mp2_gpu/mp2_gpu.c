@@ -51,31 +51,35 @@ void calc_ri_mp2_energy(double *E_cou, double *E_ex, double *E_s, double *E_t,
   const int M = aux_size;
   const int N = n_homo;
 
-  if (M > 0 && N > 0) {
-    double *A = (double *)malloc(M * N * sizeof(double));
-    for (int j = 0; j < N; j++) {
-      for (int i = 0; i < M; i++) {
-        A[i + j * M] = BIb_C[i + j * M];
-      }
-    }
+   if (M > 0 && N > 0) {
+     double *A = (double *)malloc(M * N * sizeof(double));
+     for (int j = 0; j < N; j++) {
+       for (int i = 0; i < M; i++) {
+         A[i + j * M] = BIb_C[i + j * M];
+       }
+     }
 
-    double *C = (double *)calloc(M * M, sizeof(double));
-    gemm_ctx_dgemm(ctx, 'N', 'T', M, M, N, 1.0, A, M, A, M, 0.0, C, M);
+     double *C = (double *)calloc(M * M, sizeof(double));
+     gemm_ctx_dgemm(ctx, 'N', 'T', M, M, N, 1.0, A, M, A, M, 0.0, C, M);
 
-    free(A);
-    double sum = 0.0;
-    for (int i = 0; i < M * M; i++)
-      sum += C[i];
-    free(C);
-    gemm_ctx_destroy(ctx);
+     free(A);
+     double sum = 0.0;
+     for (int i = 0; i < M * M; i++)
+       sum += C[i];
+     free(C);
 
-    *E_cou = sum;
-  } else {
-    gemm_ctx_destroy(ctx);
-    *E_cou = 0.0;
-  }
+     *E_cou = sum;
+   } else {
+     *E_cou = 0.0;
+   }
 
-  *E_ex = 0.0;
-  *E_s = 0.0;
-  *E_t = 0.0;
-}
+   *E_ex = 0.0;
+   *E_s = 0.0;
+   *E_t = 0.0;
+
+   // Only destroy context for non-SPLA libraries to avoid segmentation fault
+   // SPLA context should be managed externally or kept alive
+   if (lib != GEMM_LIB_SPLA) {
+     gemm_ctx_destroy(ctx);
+   }
+ }
