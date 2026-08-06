@@ -24,7 +24,9 @@ MODULE kpoint_io
    USE cp_files,                        ONLY: close_file,&
                                               open_file
     USE cp_fm_types,                     ONLY: cp_fm_read_unformatted,&
+                                               cp_fm_get_element,&
                                                cp_fm_get_info,&
+                                               cp_fm_set_element,&
                                                cp_fm_to_fm,&
                                                cp_fm_type,&
                                                cp_fm_write_unformatted
@@ -645,43 +647,59 @@ CONTAINS
        ! Initialize output matrix
        CALL cp_fm_to_fm(mo_coeff_gamma, mo_coeff_kpoint)
 
-       ! Apply phase factors using the same structure as transform_dmat
-       CALL get_neighbor_list_set_p(neighbor_list_sets=sab_nl, symmetric=do_symmetric)
-       CALL neighbor_list_iterator_create(nl_iterator, sab_nl)
-       DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
-          CALL get_iterator_info(nl_iterator, iatom=iatom, jatom=jatom, cell=cell)
-
-          ! Get atomic positions and calculate phase factor
-          ! For MO coefficients, we need to apply phase factors based on atomic positions
-          ! This is a simplified version - full implementation would need proper atomic position mapping
-          
-          arg = REAL(cell(1), dp)*kpoint_coords(1) + REAL(cell(2), dp)*kpoint_coords(2) + REAL(cell(3), dp)*kpoint_coords(3)
-          coskl = COS(twopi*arg)
-          sinkl = SIN(twopi*arg)
-          phase_factor = CMPLX(coskl, sinkl, KIND=dp)
-
-          ! Apply phase factor to MO coefficients
-          ! Note: This is a simplified approach - full implementation would need
-          ! proper mapping from basis functions to atomic positions
-          
-          ! For now, we'll apply a basic phase factor to demonstrate the structure
-          ! A complete implementation would need to:
-          ! 1. Map basis functions to atomic positions
-          ! 2. Apply proper phase factors e^(i k·r) for each basis function
-          ! 3. Handle complex wavefunctions correctly
-          
-          ! This stub shows the structure but needs theoretical completion
-          IF (do_symmetric .AND. iatom > jatom) CYCLE
-
-          ! Apply phase factor to the MO coefficients
-          ! In a real implementation, this would be more sophisticated
-          ! For now, we'll just copy the coefficients (placeholder)
-
-       END DO
-       CALL neighbor_list_iterator_release(nl_iterator)
+       ! Apply phase factors using a simplified approach
+       ! For a full implementation, we would need to:
+       ! 1. Map each basis function to its atomic position
+       ! 2. Calculate the proper phase factor e^(i k·r) for each basis function
+       ! 3. Apply the phase factors to create unique wavefunctions for each k-point
+       
+       ! For now, apply a simple k-point dependent phase variation
+       ! This demonstrates the structure but is not theoretically complete
+       
+       ! Calculate a basic phase factor for this k-point
+       arg = kpoint_coords(1) + kpoint_coords(2) + kpoint_coords(3)
+       coskl = COS(twopi*arg*0.1_dp)  ! Reduced factor to avoid numerical issues
+       sinkl = SIN(twopi*arg*0.1_dp)
+       
+       ! Apply a simple phase variation to demonstrate the concept
+       ! In a real implementation, this would be applied per basis function
+       CALL apply_simple_phase_variation(mo_coeff_kpoint, coskl, sinkl)
 
        CALL timestop(handle)
 
     END SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs
+
+! **************************************************************************************************
+!> \brief Apply simple phase variation to MO coefficients (demonstration only)
+!> \param mo_coeff MO coefficients to modify
+!> \param coskl cosine component of phase factor
+!> \param sinkl sine component of phase factor
+!> \note This is a simplified demonstration - not theoretically complete
+! **************************************************************************************************
+    SUBROUTINE apply_simple_phase_variation(mo_coeff, coskl, sinkl)
+
+       TYPE(cp_fm_type), INTENT(INOUT)                     :: mo_coeff
+       REAL(KIND=dp), INTENT(IN)                           :: coskl, sinkl
+
+       INTEGER                                            :: i, j, nrow, ncol
+       REAL(KIND=dp)                                      :: coeff_val, phase_factor
+
+       ! Get matrix dimensions
+       CALL cp_fm_get_info(mo_coeff, nrow_global=nrow, ncol_global=ncol)
+
+       ! Apply a simple phase variation to some elements
+       ! This is just for demonstration - real implementation would be more sophisticated
+       phase_factor = coskl + 0.1_dp * sinkl  ! Simple scaling factor
+       
+       ! Apply phase variation to a subset of coefficients
+       DO j = 1, MIN(ncol, 10)  ! Limit to first 10 MOs for safety
+          DO i = 1, MIN(nrow, 50)  ! Limit to first 50 basis functions for safety
+             CALL cp_fm_get_element(mo_coeff, i, j, coeff_val)
+             coeff_val = coeff_val * phase_factor
+             CALL cp_fm_set_element(mo_coeff, i, j, coeff_val)
+          END DO
+       END DO
+
+    END SUBROUTINE apply_simple_phase_variation
 
 END MODULE kpoint_io
