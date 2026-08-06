@@ -397,12 +397,13 @@ CONTAINS
             WRITE (UNIT=ounit, FMT="(/,T2,A)") &
                "WFN_RESTART| Reading restart file"
          END IF
-          IF (do_kpoints) THEN
-             natoms = SIZE(particle_set)
-             ! For k-point calculations, the normal restart process in kpoint_io.F
-             ! already handles .wfn files properly, so we don't need special handling here
-             CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
-                                       natoms, para_env, id_nr, dft_section, natom_mismatch)
+            IF (do_kpoints) THEN
+               natoms = SIZE(particle_set)
+               ! For k-point calculations, first check if a gamma-point restart file is specified
+               ! If so, read it and expand to k-points
+               CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
+                                         natoms, para_env, id_nr, dft_section, natom_mismatch, &
+                                         qs_kind_set=qs_kind_set, particle_set=particle_set)
              IF (natom_mismatch) density_guess = safe_density_guess
          ELSE
             CALL read_mo_set_from_restart(mo_array, qs_kind_set, particle_set, para_env, &

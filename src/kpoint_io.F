@@ -358,17 +358,17 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_kpoints_restart'
 
-      CHARACTER(LEN=default_path_length)                 :: file_name
-      INTEGER                                            :: handle, ic, ispin, ncol, nspin, &
-                                                            restart_unit
-      LOGICAL                                            :: do_wfn_expand, exist
-      TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
-      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
-      TYPE(section_vals_type), POINTER                   :: print_key
+       CHARACTER(LEN=default_path_length)                 :: file_name, gamma_file_name
+       INTEGER                                            :: handle, ic, ispin, ncol, nspin, &
+                                                             restart_unit
+       LOGICAL                                            :: do_wfn_expand, exist, gamma_exist
+       TYPE(cp_logger_type), POINTER                      :: logger
+       TYPE(dft_control_type), POINTER                    :: dft_control
+       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
+       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+          POINTER                                         :: sab_orb
+       TYPE(qs_scf_env_type), POINTER                     :: scf_env
+       TYPE(section_vals_type), POINTER                   :: print_key
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -446,26 +446,87 @@ CONTAINS
          END IF
       END IF
 
-      restart_unit = -1
+       restart_unit = -1
 
-      IF (para_env%is_source()) THEN
+       IF (para_env%is_source()) THEN
 
-         CALL wfn_restart_file_name(file_name, exist, dft_section, logger, kp=.TRUE.)
-         IF (id_nr /= 0) THEN
-            ! Is it one of the backup files?
-            file_name = TRIM(file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
-         END IF
+          ! First check if a gamma-point restart file is specified
+          CALL wfn_restart_file_name(gamma_file_name, gamma_exist, dft_section, logger, kp=.FALSE.)
+          IF (id_nr /= 0) THEN
+             ! Is it one of the backup files?
+             gamma_file_name = TRIM(gamma_file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
+          END IF
 
-         CALL open_file(file_name=file_name, &
-                        file_action="READ", &
-                        file_form="UNFORMATTED", &
-                        file_status="OLD", &
-                        unit_number=restart_unit)
+          ! If gamma-point file exists and is different from k-point file, use gamma expansion
+          CALL wfn_restart_file_name(file_name, exist, dft_section, logger, kp=.TRUE.)
+          IF (id_nr /= 0) THEN
+             ! Is it one of the backup files?
+             file_name = TRIM(file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
+          END IF
 
-      END IF
+           IF (gamma_exist) THEN
+              ! Use gamma-point expansion logic
+              IF (.NOT. PRESENT(qs_kind_set) .OR. .NOT. PRESENT(particle_set)) THEN
+                 CPABORT("qs_kind_set and particle_set are required for gamma-point expansion")
+              END IF
+              ALLOCATE (mo_set(2))
+              CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
+                                            id_nr, dft_control%multiplicity, dft_section, &
+                                            natom_mismatch=natom_mismatch)
 
-      CALL read_kpoints_restart_low(denmat, kpoints, fmwork(1), para_env, &
-                                    natom, restart_unit, natom_mismatch)
+             nspin = SIZE(mo_set)
+             DO ispin = 1, nspin
+                CALL get_mo_set(mo_set(ispin), nmo=ncol)
+                IF (ncol > 0) CALL make_basis_simple(mo_set(ispin)%mo_coeff, ncol)
+                CALL calculate_density_matrix(mo_set(ispin), denmat(ispin, 1)%matrix)
+             END DO
+
+             CALL kpoint_initialize_mos(kpoints, mo_set)
+             CALL kpoint_initialize_mo_set(kpoints)
+
+             DO ispin = 1, nspin
+                DO ic = 1, SIZE(kpoints%kp_range)
+                   ! Apply proper phase factors for gamma-to-kpoint expansion
+                   CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
+                                                              kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff, &
+                                                              kpoints%kp_env(ic)%kpoint_env%xkp, &
+                                                              particle_set, sab_orb, kpoints%cell_to_index)
+                   IF (.NOT. kpoints%use_real_wfn) THEN
+                      CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
+                                                                kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff, &
+                                                                kpoints%kp_env(ic)%kpoint_env%xkp, &
+                                                                particle_set, sab_orb, kpoints%cell_to_index)
+                   END IF
+                END DO
+             END DO
+
+             CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
+
+             CPASSERT(ASSOCIATED(scf_env%p_mix_new))
+             CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
+                                           denmat(1, 1)%matrix, sab_orb, fmwork)
+
+             DO ispin = 1, nspin
+                DO ic = 1, SIZE(scf_env%p_mix_new, 2)
+                   CALL dbcsr_copy(denmat(ispin, ic)%matrix, scf_env%p_mix_new(ispin, ic)%matrix)
+                END DO
+             END DO
+
+             DEALLOCATE (mo_set)
+             CALL timestop(handle)
+             RETURN
+          END IF
+
+          CALL open_file(file_name=file_name, &
+                         file_action="READ", &
+                         file_form="UNFORMATTED", &
+                         file_status="OLD", &
+                         unit_number=restart_unit)
+
+       END IF
+
+       CALL read_kpoints_restart_low(denmat, kpoints, fmwork(1), para_env, &
+                                     natom, restart_unit, natom_mismatch)
 
       ! only the io_node returns natom_mismatch, must broadcast it
       CALL para_env%bcast(natom_mismatch)
