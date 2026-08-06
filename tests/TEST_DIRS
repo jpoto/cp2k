@@ -22,6 +22,7 @@ QS/regtest-ec                                               libint libvori !ifx
 QS/regtest-acc-2                                            libint libxc !ifx
 QS/regtest-debug-5                                          libint !ifx
 QS/regtest-kp-1                                             libint !ifx
+QS/regtest-kp-from-gamma
 QS/regtest-gpw-3
 QS/regtest-p-efield
 Fist/regtest-7-1
