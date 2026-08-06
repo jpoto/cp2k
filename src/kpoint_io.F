@@ -377,13 +377,13 @@ CONTAINS
                             dft_control=dft_control)
          END IF
 
-         print_key => section_vals_get_subs_vals(dft_section, "SCF%PRINT%RESTART")
-         file_name = cp_print_key_generate_filename(logger, print_key, &
-                                                    extension=".wfn", my_local=.FALSE.)
-         INQUIRE (FILE=file_name, exist=exist)
-         IF (exist) THEN
+          print_key => section_vals_get_subs_vals(dft_section, "SCF%PRINT%RESTART")
+          file_name = cp_print_key_generate_filename(logger, print_key, &
+                                                     extension=".wfn", my_local=.FALSE.)
+          INQUIRE (FILE=file_name, exist=exist)
+          IF (exist) THEN
 
-            ALLOCATE (mo_set(2))
+             ALLOCATE (mo_set(2))
 
             CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
                                           id_nr=id_nr, multiplicity=dft_control%multiplicity, &
