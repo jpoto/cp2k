@@ -15,13 +15,16 @@ MODULE kpoint_io
    USE atomic_kind_types,               ONLY: get_atomic_kind
    USE basis_set_types,                 ONLY: get_gto_basis_set,&
                                               gto_basis_set_type
-   USE cp_dbcsr_api,                    ONLY: dbcsr_get_info,&
+   USE cp_control_types,                ONLY: dft_control_type
+   USE cp_dbcsr_api,                    ONLY: dbcsr_copy,&
+                                              dbcsr_get_info,&
                                               dbcsr_p_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
    USE cp_files,                        ONLY: close_file,&
                                               open_file
    USE cp_fm_types,                     ONLY: cp_fm_read_unformatted,&
+                                              cp_fm_to_fm,&
                                               cp_fm_type,&
                                               cp_fm_write_unformatted
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
@@ -29,21 +32,35 @@ MODULE kpoint_io
                                               cp_to_string
    USE cp_output_handling,              ONLY: cp_p_file,&
                                               cp_print_key_finished_output,&
+                                              cp_print_key_generate_filename,&
                                               cp_print_key_should_output,&
                                               cp_print_key_unit_nr
-   USE input_section_types,             ONLY: section_vals_type
+   USE input_section_types,             ONLY: section_vals_get_subs_vals,&
+                                              section_vals_type
    USE kinds,                           ONLY: default_path_length,&
                                               default_string_length
+   USE kpoint_methods,                  ONLY: kpoint_density_matrices,&
+                                              kpoint_density_transform,&
+                                              kpoint_initialize_mo_set,&
+                                              kpoint_initialize_mos
    USE kpoint_types,                    ONLY: get_kpoint_info,&
                                               kpoint_type
    USE message_passing,                 ONLY: mp_para_env_type
    USE orbital_pointers,                ONLY: nso
    USE particle_types,                  ONLY: particle_type
+   USE qs_density_matrices,             ONLY: calculate_density_matrix
    USE qs_dftb_types,                   ONLY: qs_dftb_atom_type
    USE qs_dftb_utils,                   ONLY: get_dftb_atom_param
+   USE qs_environment_types,            ONLY: get_qs_env,&
+                                              qs_environment_type
    USE qs_kind_types,                   ONLY: get_qs_kind,&
                                               qs_kind_type
-   USE qs_mo_io,                        ONLY: wfn_restart_file_name
+   USE qs_mo_io,                        ONLY: read_mo_set_from_restart,&
+                                              wfn_restart_file_name
+   USE qs_mo_methods,                   ONLY: make_basis_simple
+   USE qs_mo_types,                     ONLY: get_mo_set,&
+                                              mo_set_type
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
 #include "./base/base_uses.f90"
 
@@ -303,9 +320,14 @@ CONTAINS
 !> \param id_nr ...
 !> \param dft_section ...
 !> \param natom_mismatch ...
+!> \param use_wfn ...
+!> \param qs_kind_set ...
+!> \param particle_set ...
+!> \param qs_env ...
 ! **************************************************************************************************
    SUBROUTINE read_kpoints_restart(denmat, kpoints, fmwork, natom, &
-                                   para_env, id_nr, dft_section, natom_mismatch)
+                                   para_env, id_nr, dft_section, natom_mismatch, &
+                                   use_wfn, qs_kind_set, particle_set, qs_env)
 
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: denmat
       TYPE(kpoint_type), POINTER                         :: kpoints
@@ -315,16 +337,97 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: id_nr
       TYPE(section_vals_type), POINTER                   :: dft_section
       LOGICAL, INTENT(OUT)                               :: natom_mismatch
+      LOGICAL, INTENT(IN), OPTIONAL                      :: use_wfn
+      TYPE(qs_kind_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: qs_kind_set
+      TYPE(particle_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: particle_set
+      TYPE(qs_environment_type), OPTIONAL, POINTER       :: qs_env
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_kpoints_restart'
 
       CHARACTER(LEN=default_path_length)                 :: file_name
-      INTEGER                                            :: handle, restart_unit
-      LOGICAL                                            :: exist
+      INTEGER                                            :: handle, ic, ispin, ncol, nspin, &
+                                                            restart_unit
+      LOGICAL                                            :: do_wfn_expand, exist
       TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
+      TYPE(section_vals_type), POINTER                   :: print_key
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
+
+      do_wfn_expand = .FALSE.
+      IF (PRESENT(use_wfn)) do_wfn_expand = use_wfn
+
+      IF (do_wfn_expand) THEN
+         IF (.NOT. PRESENT(qs_kind_set) .OR. .NOT. PRESENT(particle_set)) THEN
+            CPABORT("qs_kind_set and particle_set are required when use_wfn=.TRUE.")
+         END IF
+         IF (PRESENT(qs_env)) THEN
+            CALL get_qs_env(qs_env, scf_env=scf_env, sab_orb=sab_orb, &
+                            dft_control=dft_control)
+         ELSE
+            CALL get_qs_env(qs_env)
+            CALL get_qs_env(qs_env, scf_env=scf_env, sab_orb=sab_orb, &
+                            dft_control=dft_control)
+         END IF
+
+         print_key => section_vals_get_subs_vals(dft_section, "SCF%PRINT%RESTART")
+         file_name = cp_print_key_generate_filename(logger, print_key, &
+                                                    extension=".wfn", my_local=.FALSE.)
+         INQUIRE (FILE=file_name, exist=exist)
+         IF (exist) THEN
+
+            ALLOCATE (mo_set(2))
+
+            CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
+                                          id_nr=id_nr, multiplicity=dft_control%multiplicity, &
+                                          dft_section=dft_section, &
+                                          natom_mismatch=natom_mismatch)
+
+            nspin = SIZE(mo_set)
+            DO ispin = 1, nspin
+               CALL get_mo_set(mo_set(ispin), nmo=ncol)
+               IF (ncol > 0) CALL make_basis_simple(mo_set(ispin)%mo_coeff, ncol)
+               CALL calculate_density_matrix(mo_set(ispin), denmat(ispin, 1)%matrix)
+            END DO
+
+            CALL kpoint_initialize_mos(kpoints, mo_set)
+            CALL kpoint_initialize_mo_set(kpoints)
+
+            DO ispin = 1, nspin
+               DO ic = 1, SIZE(kpoints%kp_range)
+                  CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
+                                   kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff)
+                  IF (.NOT. kpoints%use_real_wfn) THEN
+                     CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
+                                      kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff)
+                  END IF
+               END DO
+            END DO
+
+            CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
+
+            CPASSERT(ASSOCIATED(scf_env%p_mix_new))
+            CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
+                                          denmat(1, 1)%matrix, sab_orb, fmwork)
+
+            DO ispin = 1, nspin
+               DO ic = 1, SIZE(scf_env%p_mix_new, 2)
+                  CALL dbcsr_copy(denmat(ispin, ic)%matrix, scf_env%p_mix_new(ispin, ic)%matrix)
+               END DO
+            END DO
+
+            DEALLOCATE (mo_set)
+            CALL timestop(handle)
+            RETURN
+         END IF
+      END IF
 
       restart_unit = -1
 
