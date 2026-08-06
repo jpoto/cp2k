@@ -415,11 +415,29 @@ CONTAINS
                       IF (dft_control%restricted) EXIT
                    END DO
                    
+                   ! Initialize k-point MO structure and copy gamma coefficients to all k-points
+                   CALL kpoint_initialize_mos(kpoints, mo_set)
+                   CALL kpoint_initialize_mo_set(kpoints)
+                   
+                   DO ispin = 1, nspin
+                      DO ic = 1, SIZE(kpoints%kp_range)
+                         CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
+                                          kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff)
+                         IF (.NOT. kpoints%use_real_wfn) THEN
+                            CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
+                                             kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff)
+                         END IF
+                      END DO
+                      IF (dft_control%restricted) EXIT
+                   END DO
+                   
+                   ! Compute k-point density matrices from the MO coefficients
+                   CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
+                   
                    ! Get sab_orb from qs_env for density transformation
                    CALL get_qs_env(qs_env, sab_orb=sab_orb)
                    
-                   ! Transform the gamma-point density to all k-points using kpoint_density_transform
-                   ! This is the proper approach for gamma-to-kpoint expansion
+                   ! Transform the density to k-point representation using kpoint_density_transform
                    CPASSERT(ASSOCIATED(scf_env%p_mix_new))
                    CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
                                                  rho_ao_kp(1, 1)%matrix, sab_orb, work1)
