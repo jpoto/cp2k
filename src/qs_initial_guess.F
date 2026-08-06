@@ -59,10 +59,7 @@ MODULE qs_initial_guess
    USE kinds,                           ONLY: default_path_length,&
                                               dp
     USE kpoint_io,                       ONLY: read_kpoints_restart
-    USE kpoint_methods,                  ONLY: kpoint_density_matrices, &
-                                               kpoint_density_transform, &
-                                               kpoint_initialize_mo_set, &
-                                               kpoint_initialize_mos
+     USE kpoint_methods,                  ONLY: kpoint_density_transform
     USE kpoint_types,                    ONLY: kpoint_type
     USE message_passing,                 ONLY: mp_para_env_type
     USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
