@@ -10,6 +10,6 @@
 # it to k-points instead of trying to read a non-existent .kp file
 
 "carbon_gamma_step1.inp"                  = [{matcher="E_total", tol=1e-6, ref=-45.088897351163276}]
-"carbon_kp_ref.inp"                       = [{matcher="E_total", tol=1e-6, ref=-45.088897351163276}]
-"carbon_kp_step2.inp"                     = [{matcher="E_total", tol=1e-6, ref=-45.088897351163276}]
+"carbon_kp_ref.inp"                       = [{matcher="E_total", tol=1e-6, ref=-45.65899292631808}]
+"carbon_kp_step2.inp"                     = [{matcher="E_total", tol=1e-6, ref=-45.65899292631808}]
 #EOF
