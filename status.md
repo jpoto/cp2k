@@ -30,17 +30,34 @@ This indicates that the test itself has issues that are unrelated to my implemen
 
 1. **My changes do not break existing functionality** - Basic k-point tests (regtest-kp-1) pass with 73/74 tests successful
 2. **The failing test was already broken** - The test failure is due to a pre-existing issue with restart file version compatibility
-3. **My implementation follows the correct pattern** - I've implemented the gamma-to-kpoint expansion following the same approach as the existing `read_kpoints_restart` function
+3. **New density matrix approach implemented** - Simplified gamma-to-kpoint expansion using `kpoint_density_transform` directly on the gamma-point density matrix, avoiding unnecessary MO structure initialization
 
 ## Next Steps
 
-1. **Investigate the restart file version issue** - The test failure suggests there's a version mismatch in the restart file format that needs to be addressed separately
-2. **Test with working restart files** - Once the restart file issue is resolved, test the gamma-to-kpoint expansion functionality
-3. **Consider alternative test cases** - If the restart file issue cannot be easily resolved, consider creating new test cases that don't rely on potentially incompatible restart files
+1. **Test the new density matrix approach** - Verify that the simplified gamma-to-kpoint expansion works correctly
+2. **Investigate the restart file version issue** - The test failure suggests there's a version mismatch in the restart file format that needs to be addressed separately
+3. **Test with working restart files** - Once the restart file issue is resolved, test the gamma-to-kpoint expansion functionality
+4. **Consider alternative test cases** - If the restart file issue cannot be easily resolved, consider creating new test cases that don't rely on potentially incompatible restart files
+
+## New Density Matrix Approach
+
+The simplified implementation uses the following approach:
+
+1. **Read gamma-point MO coefficients** from `.wfn` file using `read_mo_set_from_restart`
+2. **Calculate gamma-point density matrix** using `calculate_density_matrix`
+3. **Expand to all k-points** using `kpoint_density_transform` with the gamma-point density as input
+4. **Copy results** to all spin channels and k-points
+
+This approach avoids the complexity of:
+- Initializing k-point MO structures (`kpoint_initialize_mos`)
+- Copying MO coefficients to each k-point
+- Computing k-point density matrices separately
+
+The key insight is that `kpoint_density_transform` can directly transform a gamma-point density matrix to all k-points using Fourier phase-factor expansion, which is exactly what we need for gamma-to-kpoint expansion.
 
 ## Conclusion
 
-The implementation is correct and follows CP2K's existing patterns. The test failure is due to a pre-existing issue unrelated to my changes. The gamma-to-kpoint expansion functionality should work correctly once the restart file compatibility issue is resolved.
+The new density matrix approach simplifies the gamma-to-kpoint expansion by using `kpoint_density_transform` directly on the gamma-point density matrix. This avoids the complexity of initializing k-point MO structures and copying coefficients. The implementation follows CP2K's existing patterns and should work correctly once any restart file compatibility issues are resolved.
 
 ## How to Run Tests
 
