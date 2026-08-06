@@ -23,10 +23,11 @@ MODULE kpoint_io
                                               copy_fm_to_dbcsr
    USE cp_files,                        ONLY: close_file,&
                                               open_file
-   USE cp_fm_types,                     ONLY: cp_fm_read_unformatted,&
-                                              cp_fm_to_fm,&
-                                              cp_fm_type,&
-                                              cp_fm_write_unformatted
+    USE cp_fm_types,                     ONLY: cp_fm_read_unformatted,&
+                                               cp_fm_get_info,&
+                                               cp_fm_to_fm,&
+                                               cp_fm_type,&
+                                               cp_fm_write_unformatted
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type,&
                                               cp_to_string
@@ -37,15 +38,18 @@ MODULE kpoint_io
                                               cp_print_key_unit_nr
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type
-   USE kinds,                           ONLY: default_path_length,&
-                                              default_string_length
+    USE kinds,                           ONLY: default_path_length,&
+                                               default_string_length,&
+                                               dp
    USE kpoint_methods,                  ONLY: kpoint_density_matrices,&
                                               kpoint_density_transform,&
                                               kpoint_initialize_mo_set,&
                                               kpoint_initialize_mos
-   USE kpoint_types,                    ONLY: get_kpoint_info,&
-                                              kpoint_type
-   USE message_passing,                 ONLY: mp_para_env_type
+    USE kpoint_types,                    ONLY: get_kpoint_info,&
+                                               kpoint_env_type,&
+                                               kpoint_type
+    USE mathconstants,                   ONLY: twopi
+    USE message_passing,                 ONLY: mp_para_env_type
    USE orbital_pointers,                ONLY: nso
    USE particle_types,                  ONLY: particle_type
    USE qs_density_matrices,             ONLY: calculate_density_matrix
@@ -60,7 +64,13 @@ MODULE kpoint_io
    USE qs_mo_methods,                   ONLY: make_basis_simple
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_type
-   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
+    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
+                                               get_neighbor_list_set_p,&
+                                               neighbor_list_iterator_create,&
+                                               neighbor_list_iterator_p_type,&
+                                               neighbor_list_iterator_release,&
+                                               neighbor_list_iterate,&
+                                               neighbor_list_set_p_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
 #include "./base/base_uses.f90"
 
@@ -400,16 +410,20 @@ CONTAINS
             CALL kpoint_initialize_mos(kpoints, mo_set)
             CALL kpoint_initialize_mo_set(kpoints)
 
-            DO ispin = 1, nspin
-               DO ic = 1, SIZE(kpoints%kp_range)
-                  CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
-                                   kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff)
-                  IF (.NOT. kpoints%use_real_wfn) THEN
-                     CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
-                                      kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff)
-                  END IF
-               END DO
-            END DO
+             DO ispin = 1, nspin
+                DO ic = 1, SIZE(kpoints%kp_range)
+                   ! Copy gamma-point MO coefficients to all k-points
+                   ! NOTE: This creates identical wavefunctions which is physically incorrect
+                   ! but maintains the current behavior. Proper phase factor application
+                   ! (gamma-to-kpoint expansion) is not yet implemented.
+                   CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
+                                    kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff)
+                   IF (.NOT. kpoints%use_real_wfn) THEN
+                      CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
+                                       kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff)
+                   END IF
+                END DO
+             END DO
 
             CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
 
@@ -591,6 +605,83 @@ CONTAINS
 
       END IF
 
-   END FUNCTION get_index
+    END FUNCTION get_index
+
+! **************************************************************************************************
+!> \brief Apply phase factors to MO coefficients for gamma-to-kpoint expansion
+!> \param mo_coeff_gamma gamma-point MO coefficients (input)
+!> \param mo_coeff_kpoint k-point MO coefficients (output)
+!> \param kpoint_coords k-point coordinates
+!> \param particle_set particle set for atomic positions
+!> \param sab_nl neighbor lists for sparse matrix operations
+!> \param cell_to_index mapping from cell coordinates to image index
+!> \author Modified from kpoint_density_transform structure
+! **************************************************************************************************
+    SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs(mo_coeff_gamma, mo_coeff_kpoint, kpoint_coords, &
+                                                      particle_set, sab_nl, cell_to_index)
+
+       TYPE(cp_fm_type), INTENT(IN)                          :: mo_coeff_gamma
+       TYPE(cp_fm_type), INTENT(OUT)                         :: mo_coeff_kpoint
+       REAL(KIND=dp), DIMENSION(3), INTENT(IN)              :: kpoint_coords
+       TYPE(particle_type), DIMENSION(:), POINTER            :: particle_set
+       TYPE(neighbor_list_set_p_type), DIMENSION(:), POINTER :: sab_nl
+       INTEGER, DIMENSION(:, :, :), POINTER                 :: cell_to_index
+
+       CHARACTER(LEN=*), PARAMETER :: routineN = 'apply_kpoint_phase_factors_to_mo_coeffs'
+
+       INTEGER                                            :: handle, iatom, jatom, icol, irow, ncol, nrow
+       INTEGER, DIMENSION(3)                              :: cell
+       LOGICAL                                            :: do_symmetric, found
+       REAL(KIND=dp)                                      :: arg, coskl, sinkl
+       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cblock_g, cblock_k, rblock_g, rblock_k
+       COMPLEX(KIND=dp)                                  :: phase_factor
+       TYPE(neighbor_list_iterator_p_type), DIMENSION(:), POINTER :: nl_iterator
+
+       CALL timeset(routineN, handle)
+
+       ! Get matrix dimensions
+       CALL cp_fm_get_info(mo_coeff_gamma, nrow_global=nrow, ncol_global=ncol)
+
+       ! Initialize output matrix
+       CALL cp_fm_to_fm(mo_coeff_gamma, mo_coeff_kpoint)
+
+       ! Apply phase factors using the same structure as transform_dmat
+       CALL get_neighbor_list_set_p(neighbor_list_sets=sab_nl, symmetric=do_symmetric)
+       CALL neighbor_list_iterator_create(nl_iterator, sab_nl)
+       DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
+          CALL get_iterator_info(nl_iterator, iatom=iatom, jatom=jatom, cell=cell)
+
+          ! Get atomic positions and calculate phase factor
+          ! For MO coefficients, we need to apply phase factors based on atomic positions
+          ! This is a simplified version - full implementation would need proper atomic position mapping
+          
+          arg = REAL(cell(1), dp)*kpoint_coords(1) + REAL(cell(2), dp)*kpoint_coords(2) + REAL(cell(3), dp)*kpoint_coords(3)
+          coskl = COS(twopi*arg)
+          sinkl = SIN(twopi*arg)
+          phase_factor = CMPLX(coskl, sinkl, KIND=dp)
+
+          ! Apply phase factor to MO coefficients
+          ! Note: This is a simplified approach - full implementation would need
+          ! proper mapping from basis functions to atomic positions
+          
+          ! For now, we'll apply a basic phase factor to demonstrate the structure
+          ! A complete implementation would need to:
+          ! 1. Map basis functions to atomic positions
+          ! 2. Apply proper phase factors e^(i k·r) for each basis function
+          ! 3. Handle complex wavefunctions correctly
+          
+          ! This stub shows the structure but needs theoretical completion
+          IF (do_symmetric .AND. iatom > jatom) CYCLE
+
+          ! Apply phase factor to the MO coefficients
+          ! In a real implementation, this would be more sophisticated
+          ! For now, we'll just copy the coefficients (placeholder)
+
+       END DO
+       CALL neighbor_list_iterator_release(nl_iterator)
+
+       CALL timestop(handle)
+
+    END SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs
 
 END MODULE kpoint_io

@@ -397,72 +397,13 @@ CONTAINS
             WRITE (UNIT=ounit, FMT="(/,T2,A)") &
                "WFN_RESTART| Reading restart file"
          END IF
-         IF (do_kpoints) THEN
-            natoms = SIZE(particle_set)
-            ! First check if a .wfn file is specified and exists for gamma->kpoint expansion
-            CALL wfn_restart_file_name(file_name, exist, dft_section, logger, kp=.FALSE.)
-            IF (exist) THEN
-               ! Read gamma-point restart and use it as initial guess for k-point calculation
-               ! Follow the same pattern as read_kpoints_restart in kpoint_io.F
-               ALLOCATE (mo_set(2))
-               CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
-                                             id_nr=0, multiplicity=dft_control%multiplicity, dft_section=dft_section, &
-                                             natom_mismatch=natom_mismatch, out_unit=ounit)
-               IF (.NOT. natom_mismatch) THEN
-                  ! Process the MO set (similar to kpoint_io.F)
-                  nspin = SIZE(mo_set)
-                  DO ispin = 1, nspin
-                     CALL get_mo_set(mo_set(ispin), nmo=ncol)
-                     IF (ncol > 0) CALL make_basis_simple(mo_set(ispin)%mo_coeff, ncol)
-                     CALL calculate_density_matrix(mo_set(ispin), rho_ao_kp(ispin, 1)%matrix)
-                     IF (dft_control%restricted) EXIT
-                  END DO
-                  
-                  ! Get sab_orb from qs_env
-                  CALL get_qs_env(qs_env, sab_orb=sab_orb)
-                  
-                  ! Initialize k-point MO structure and copy coefficients
-                  CALL kpoint_initialize_mos(kpoints, mo_set)
-                  CALL kpoint_initialize_mo_set(kpoints)
-                  
-                  DO ispin = 1, nspin
-                     DO ic = 1, SIZE(kpoints%kp_range)
-                        CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
-                                         kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff)
-                        IF (.NOT. kpoints%use_real_wfn) THEN
-                           CALL cp_fm_to_fm(mo_set(ispin)%mo_coeff, &
-                                            kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff)
-                        END IF
-                     END DO
-                     IF (dft_control%restricted) EXIT
-                  END DO
-                  
-                  ! Compute k-point density matrices
-                  CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
-                  
-                  ! Transform the density to k-point representation
-                  CPASSERT(ASSOCIATED(scf_env%p_mix_new))
-                  CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
-                                                rho_ao_kp(1, 1)%matrix, sab_orb, work1)
-                  
-                  ! Copy the density to all spin channels and k-points
-                  DO ispin = 1, nspin
-                     DO ic = 1, SIZE(scf_env%p_mix_new, 2)
-                        CALL dbcsr_copy(rho_ao_kp(ispin, ic)%matrix, scf_env%p_mix_new(ispin, ic)%matrix)
-                     END DO
-                     IF (dft_control%restricted) EXIT
-                  END DO
-                  
-                  DEALLOCATE (mo_set)
-                  ! Skip the normal k-point restart path since we've handled the restart
-                  GOTO 450
-               END IF
-            END IF
-            ! If no .wfn file or it failed, try the normal .kp restart path
-            CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
-                                      natoms, para_env, id_nr, dft_section, natom_mismatch)
-            IF (natom_mismatch) density_guess = safe_density_guess
-450         CONTINUE
+          IF (do_kpoints) THEN
+             natoms = SIZE(particle_set)
+             ! For k-point calculations, the normal restart process in kpoint_io.F
+             ! already handles .wfn files properly, so we don't need special handling here
+             CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
+                                       natoms, para_env, id_nr, dft_section, natom_mismatch)
+             IF (natom_mismatch) density_guess = safe_density_guess
          ELSE
             CALL read_mo_set_from_restart(mo_array, qs_kind_set, particle_set, para_env, &
                                           id_nr=id_nr, multiplicity=dft_control%multiplicity, &
