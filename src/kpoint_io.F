@@ -23,13 +23,13 @@ MODULE kpoint_io
                                               copy_fm_to_dbcsr
    USE cp_files,                        ONLY: close_file,&
                                               open_file
-    USE cp_fm_types,                     ONLY: cp_fm_read_unformatted,&
-                                               cp_fm_get_element,&
-                                               cp_fm_get_info,&
-                                               cp_fm_set_element,&
-                                               cp_fm_to_fm,&
-                                               cp_fm_type,&
-                                               cp_fm_write_unformatted
+   USE cp_fm_types,                     ONLY: cp_fm_get_element,&
+                                              cp_fm_get_info,&
+                                              cp_fm_read_unformatted,&
+                                              cp_fm_set_element,&
+                                              cp_fm_to_fm,&
+                                              cp_fm_type,&
+                                              cp_fm_write_unformatted
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type,&
                                               cp_to_string
@@ -40,18 +40,17 @@ MODULE kpoint_io
                                               cp_print_key_unit_nr
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type
-    USE kinds,                           ONLY: default_path_length,&
-                                               default_string_length,&
-                                               dp
+   USE kinds,                           ONLY: default_path_length,&
+                                              default_string_length,&
+                                              dp
    USE kpoint_methods,                  ONLY: kpoint_density_matrices,&
                                               kpoint_density_transform,&
                                               kpoint_initialize_mo_set,&
                                               kpoint_initialize_mos
-    USE kpoint_types,                    ONLY: get_kpoint_info,&
-                                               kpoint_env_type,&
-                                               kpoint_type
-    USE mathconstants,                   ONLY: twopi
-    USE message_passing,                 ONLY: mp_para_env_type
+   USE kpoint_types,                    ONLY: get_kpoint_info,&
+                                              kpoint_type
+   USE mathconstants,                   ONLY: twopi
+   USE message_passing,                 ONLY: mp_para_env_type
    USE orbital_pointers,                ONLY: nso
    USE particle_types,                  ONLY: particle_type
    USE qs_density_matrices,             ONLY: calculate_density_matrix
@@ -64,16 +63,10 @@ MODULE kpoint_io
    USE qs_mo_io,                        ONLY: read_mo_set_from_restart,&
                                               wfn_restart_file_name
    USE qs_mo_methods,                   ONLY: make_basis_simple
-    USE qs_mo_types,                     ONLY: allocate_mo_set,&
-                                               get_mo_set,&
-                                               mo_set_type
-    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
-                                               get_neighbor_list_set_p,&
-                                               neighbor_list_iterator_create,&
-                                               neighbor_list_iterator_p_type,&
-                                               neighbor_list_iterator_release,&
-                                               neighbor_list_iterate,&
-                                               neighbor_list_set_p_type
+   USE qs_mo_types,                     ONLY: allocate_mo_set,&
+                                              get_mo_set,&
+                                              mo_set_type
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
 #include "./base/base_uses.f90"
 
@@ -359,23 +352,22 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_kpoints_restart'
 
-       CHARACTER(LEN=default_path_length)                 :: file_name, gamma_file_name
-         INTEGER                                            :: handle, ic, ispin, ncol, nspin, &
-                                                               restart_unit, nao, nelectron, nsgf, &
-                                                               n_el, lmax, ikind, iatom, natom_local, &
-                                                               z_tmp
-        REAL(KIND=dp)                                      :: maxocc
-        INTEGER, DIMENSION(2)                              :: nelectron_spin
-        LOGICAL                                            :: do_wfn_expand, exist, gamma_exist
-        TYPE(cp_logger_type), POINTER                      :: logger
-        TYPE(dft_control_type), POINTER                    :: dft_control
-        TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
-        TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-           POINTER                                         :: sab_orb
-        TYPE(qs_scf_env_type), POINTER                     :: scf_env
-        TYPE(section_vals_type), POINTER                   :: print_key
-        TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
-        TYPE(qs_dftb_atom_type), POINTER                   :: dftb_parameter
+      CHARACTER(LEN=default_path_length)                 :: file_name, gamma_file_name
+      INTEGER                                            :: handle, iatom, ic, ikind, ispin, lmax, &
+                                                            nao, natom_local, ncol, nelectron, &
+                                                            nsgf, nspin, restart_unit, z_tmp
+      INTEGER, DIMENSION(2)                              :: nelectron_spin
+      LOGICAL                                            :: do_wfn_expand, exist, gamma_exist
+      REAL(KIND=dp)                                      :: maxocc
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      TYPE(qs_dftb_atom_type), POINTER                   :: dftb_parameter
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
+      TYPE(section_vals_type), POINTER                   :: print_key
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -398,44 +390,48 @@ CONTAINS
          file_name = cp_print_key_generate_filename(logger, print_key, &
                                                     extension=".wfn", my_local=.FALSE.)
          INQUIRE (FILE=file_name, exist=exist)
-          IF (exist) THEN
+         IF (exist) THEN
 
-             natom_local = SIZE(particle_set)
-             nao = 0
-             nelectron = 0
-              DO iatom = 1, natom_local
-                 NULLIFY (orb_basis_set, dftb_parameter)
-                 CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind, z=z_tmp)
-                 CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, dftb_parameter=dftb_parameter)
-                 IF (ASSOCIATED(orb_basis_set)) THEN
-                    CALL get_gto_basis_set(gto_basis_set=orb_basis_set, nsgf=nsgf)
-                    nao = nao + nsgf
-                 ELSE IF (ASSOCIATED(dftb_parameter)) THEN
-                    CALL get_dftb_atom_param(dftb_parameter, lmax=lmax)
-                    nao = nao + (lmax + 1)**2
-                 ELSE
-                    CPABORT("Unknown basis type.")
-                 END IF
-                 nelectron = nelectron + z_tmp
-              END DO
+            natom_local = SIZE(particle_set)
+            nao = 0
+            nelectron = 0
+            DO iatom = 1, natom_local
+               NULLIFY (orb_basis_set, dftb_parameter)
+               CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind, z=z_tmp)
+               CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, dftb_parameter=dftb_parameter)
+               IF (ASSOCIATED(orb_basis_set)) THEN
+                  CALL get_gto_basis_set(gto_basis_set=orb_basis_set, nsgf=nsgf)
+                  nao = nao + nsgf
+               ELSE IF (ASSOCIATED(dftb_parameter)) THEN
+                  CALL get_dftb_atom_param(dftb_parameter, lmax=lmax)
+                  nao = nao + (lmax + 1)**2
+               ELSE
+                  CPABORT("Unknown basis type.")
+               END IF
+               nelectron = nelectron + z_tmp
+            END DO
 
             IF (dft_control%restricted) THEN
                nelectron_spin(:) = nelectron/2
                maxocc = 2.0_dp
+               nspin = 1
             ELSE
                nelectron_spin(1) = nelectron
                IF (dft_control%uks) THEN
                   nelectron_spin(2) = 0
+                  nspin = 2
                ELSE
                   nelectron_spin(2) = nelectron
+                  nspin = 2
                END IF
                maxocc = 1.0_dp
             END IF
 
-            ALLOCATE (mo_set(2))
+            ! Allocate MO set with the correct number of spin channels
+            ALLOCATE (mo_set(nspin))
             CALL allocate_mo_set(mo_set(1), nao=nao, nmo=nao, nelectron=nelectron_spin(1), &
                                  n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
-            IF (dft_control%uks) THEN
+            IF (nspin == 2) THEN
                CALL allocate_mo_set(mo_set(2), nao=nao, nmo=nao, nelectron=nelectron_spin(2), &
                                     n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
             END IF
@@ -455,21 +451,21 @@ CONTAINS
             CALL kpoint_initialize_mos(kpoints, mo_set)
             CALL kpoint_initialize_mo_set(kpoints)
 
-              DO ispin = 1, nspin
-                 DO ic = 1, SIZE(kpoints%kp_range)
-                    ! Apply proper phase factors for gamma-to-kpoint expansion
-                    CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
+            DO ispin = 1, nspin
+               DO ic = 1, SIZE(kpoints%kp_range)
+                  ! Apply proper phase factors for gamma-to-kpoint expansion
+                  CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
                                                                kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff, &
                                                                kpoints%kp_env(ic)%kpoint_env%xkp, &
                                                                particle_set, sab_orb, kpoints%cell_to_index)
-                    IF (.NOT. kpoints%use_real_wfn) THEN
-                       CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
-                                                                 kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff, &
-                                                                 kpoints%kp_env(ic)%kpoint_env%xkp, &
-                                                                 particle_set, sab_orb, kpoints%cell_to_index)
-                    END IF
-                 END DO
-              END DO
+                  IF (.NOT. kpoints%use_real_wfn) THEN
+                     CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
+                                                                  kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff, &
+                                                                  kpoints%kp_env(ic)%kpoint_env%xkp, &
+                                                                  particle_set, sab_orb, kpoints%cell_to_index)
+                  END IF
+               END DO
+            END DO
 
             CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
 
@@ -489,137 +485,131 @@ CONTAINS
          END IF
       END IF
 
-       restart_unit = -1
+      restart_unit = -1
 
-       IF (para_env%is_source()) THEN
+      IF (para_env%is_source()) THEN
 
-          ! First check if a gamma-point restart file is specified
-          CALL wfn_restart_file_name(gamma_file_name, gamma_exist, dft_section, logger, kp=.FALSE.)
-          IF (id_nr /= 0) THEN
-             ! Is it one of the backup files?
-             gamma_file_name = TRIM(gamma_file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
-          END IF
+         ! First check if a gamma-point restart file is specified
+         CALL wfn_restart_file_name(gamma_file_name, gamma_exist, dft_section, logger, kp=.FALSE.)
+         IF (id_nr /= 0) THEN
+            ! Is it one of the backup files?
+            gamma_file_name = TRIM(gamma_file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
+         END IF
 
-          ! If gamma-point file exists and is different from k-point file, use gamma expansion
-          CALL wfn_restart_file_name(file_name, exist, dft_section, logger, kp=.TRUE.)
-          IF (id_nr /= 0) THEN
-             ! Is it one of the backup files?
-             file_name = TRIM(file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
-          END IF
+         ! If gamma-point file exists and is different from k-point file, use gamma expansion
+         CALL wfn_restart_file_name(file_name, exist, dft_section, logger, kp=.TRUE.)
+         IF (id_nr /= 0) THEN
+            ! Is it one of the backup files?
+            file_name = TRIM(file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
+         END IF
 
-            IF (gamma_exist) THEN
-               ! Use gamma-point expansion logic
-               IF (.NOT. PRESENT(qs_kind_set) .OR. .NOT. PRESENT(particle_set)) THEN
-                  CPABORT("qs_kind_set and particle_set are required for gamma-point expansion")
-               END IF
+         IF (gamma_exist) THEN
+            ! Use gamma-point expansion logic
+            IF (.NOT. PRESENT(qs_kind_set) .OR. .NOT. PRESENT(particle_set)) THEN
+               CPABORT("qs_kind_set and particle_set are required for gamma-point expansion")
+            END IF
 
-               natom_local = SIZE(particle_set)
-               nao = 0
-               nelectron = 0
-               DO iatom = 1, natom_local
-                  NULLIFY (orb_basis_set, dftb_parameter)
-                  CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind, z=z_tmp)
-                  CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, dftb_parameter=dftb_parameter)
-                  IF (ASSOCIATED(orb_basis_set)) THEN
-                     CALL get_gto_basis_set(gto_basis_set=orb_basis_set, nsgf=nsgf)
-                     nao = nao + nsgf
-                  ELSE IF (ASSOCIATED(dftb_parameter)) THEN
-                     CALL get_dftb_atom_param(dftb_parameter, lmax=lmax)
-                     nao = nao + (lmax + 1)**2
-                  ELSE
-                     CPABORT("Unknown basis type.")
-                  END IF
-                  nelectron = nelectron + z_tmp
-               END DO
-
-               IF (dft_control%restricted) THEN
-                  nelectron_spin(:) = nelectron/2
-                  maxocc = 2.0_dp
+            natom_local = SIZE(particle_set)
+            nao = 0
+            nelectron = 0
+            DO iatom = 1, natom_local
+               NULLIFY (orb_basis_set, dftb_parameter)
+               CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind, z=z_tmp)
+               CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, dftb_parameter=dftb_parameter)
+               IF (ASSOCIATED(orb_basis_set)) THEN
+                  CALL get_gto_basis_set(gto_basis_set=orb_basis_set, nsgf=nsgf)
+                  nao = nao + nsgf
+               ELSE IF (ASSOCIATED(dftb_parameter)) THEN
+                  CALL get_dftb_atom_param(dftb_parameter, lmax=lmax)
+                  nao = nao + (lmax + 1)**2
                ELSE
-                  nelectron_spin(1) = nelectron
-                  IF (dft_control%uks) THEN
-                     nelectron_spin(2) = 0
-                  ELSE
-                     nelectron_spin(2) = nelectron
-                  END IF
-                  maxocc = 1.0_dp
+                  CPABORT("Unknown basis type.")
                END IF
+               nelectron = nelectron + z_tmp
+            END DO
 
-               ALLOCATE (mo_set(2))
-               CALL allocate_mo_set(mo_set(1), nao=nao, nmo=nao, nelectron=nelectron_spin(1), &
-                                    n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+            IF (dft_control%restricted) THEN
+               nelectron_spin(:) = nelectron/2
+               maxocc = 2.0_dp
+            ELSE
+               nelectron_spin(1) = nelectron
                IF (dft_control%uks) THEN
-                  CALL allocate_mo_set(mo_set(2), nao=nao, nmo=nao, nelectron=nelectron_spin(2), &
-                                       n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+                  nelectron_spin(2) = 0
+               ELSE
+                  nelectron_spin(2) = nelectron
                END IF
+               maxocc = 1.0_dp
+            END IF
 
-               natom_mismatch = .FALSE.
-               CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
-                                             id_nr=id_nr, multiplicity=dft_control%multiplicity, &
-                                             dft_section=dft_section, &
-                                             natom_mismatch=natom_mismatch)
-              
-              ! If restart reading failed due to parameter mismatches, fall back to atomic guess
-              ! This handles cases where gamma and k-point calculations have different parameters
-              IF (natom_mismatch) THEN
-                 DEALLOCATE (mo_set)
-                 CALL timestop(handle)
-                 RETURN
-              END IF
+            ALLOCATE (mo_set(nspin))
+            CALL allocate_mo_set(mo_set(1), nao=nao, nmo=nao, nelectron=nelectron_spin(1), &
+                                 n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+            IF (nspin == 2) THEN
+               CALL allocate_mo_set(mo_set(2), nao=nao, nmo=nao, nelectron=nelectron_spin(2), &
+                                    n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+            END IF
 
-             nspin = SIZE(mo_set)
-             DO ispin = 1, nspin
-                CALL get_mo_set(mo_set(ispin), nmo=ncol)
-                IF (ncol > 0) CALL make_basis_simple(mo_set(ispin)%mo_coeff, ncol)
-                CALL calculate_density_matrix(mo_set(ispin), denmat(ispin, 1)%matrix)
-             END DO
+            natom_mismatch = .FALSE.
 
-             CALL kpoint_initialize_mos(kpoints, mo_set)
-             CALL kpoint_initialize_mo_set(kpoints)
+            ! Read restart data for gamma-to-kpoint expansion
+            CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
+                                          id_nr=id_nr, multiplicity=dft_control%multiplicity, &
+                                          dft_section=dft_section, &
+                                          natom_mismatch=natom_mismatch)
 
-             DO ispin = 1, nspin
-                DO ic = 1, SIZE(kpoints%kp_range)
-                   ! Apply proper phase factors for gamma-to-kpoint expansion
-                   CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
-                                                              kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff, &
-                                                              kpoints%kp_env(ic)%kpoint_env%xkp, &
-                                                              particle_set, sab_orb, kpoints%cell_to_index)
-                   IF (.NOT. kpoints%use_real_wfn) THEN
-                      CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
-                                                                kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff, &
-                                                                kpoints%kp_env(ic)%kpoint_env%xkp, &
-                                                                particle_set, sab_orb, kpoints%cell_to_index)
-                   END IF
-                END DO
-             END DO
+            nspin = SIZE(mo_set)
+            DO ispin = 1, nspin
+               CALL get_mo_set(mo_set(ispin), nmo=ncol)
+               IF (ncol > 0) CALL make_basis_simple(mo_set(ispin)%mo_coeff, ncol)
+               CALL calculate_density_matrix(mo_set(ispin), denmat(ispin, 1)%matrix)
+            END DO
 
-             CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
+            CALL kpoint_initialize_mos(kpoints, mo_set)
+            CALL kpoint_initialize_mo_set(kpoints)
 
-             CPASSERT(ASSOCIATED(scf_env%p_mix_new))
-             CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
-                                           denmat(1, 1)%matrix, sab_orb, fmwork)
+            DO ispin = 1, nspin
+               DO ic = 1, SIZE(kpoints%kp_range)
+                  ! Apply proper phase factors for gamma-to-kpoint expansion
+                  CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
+                                                               kpoints%kp_env(ic)%kpoint_env%mos(1, ispin)%mo_coeff, &
+                                                               kpoints%kp_env(ic)%kpoint_env%xkp, &
+                                                               particle_set, sab_orb, kpoints%cell_to_index)
+                  IF (.NOT. kpoints%use_real_wfn) THEN
+                     CALL apply_kpoint_phase_factors_to_mo_coeffs(mo_set(ispin)%mo_coeff, &
+                                                                  kpoints%kp_env(ic)%kpoint_env%mos(2, ispin)%mo_coeff, &
+                                                                  kpoints%kp_env(ic)%kpoint_env%xkp, &
+                                                                  particle_set, sab_orb, kpoints%cell_to_index)
+                  END IF
+               END DO
+            END DO
 
-             DO ispin = 1, nspin
-                DO ic = 1, SIZE(scf_env%p_mix_new, 2)
-                   CALL dbcsr_copy(denmat(ispin, ic)%matrix, scf_env%p_mix_new(ispin, ic)%matrix)
-                END DO
-             END DO
+            CALL kpoint_density_matrices(kpoints, energy_weighted=.FALSE.)
 
-             DEALLOCATE (mo_set)
-             CALL timestop(handle)
-             RETURN
-          END IF
+            CPASSERT(ASSOCIATED(scf_env%p_mix_new))
+            CALL kpoint_density_transform(kpoints, scf_env%p_mix_new, .FALSE., &
+                                          denmat(1, 1)%matrix, sab_orb, fmwork)
 
-          CALL open_file(file_name=file_name, &
-                         file_action="READ", &
-                         file_form="UNFORMATTED", &
-                         file_status="OLD", &
-                         unit_number=restart_unit)
+            DO ispin = 1, nspin
+               DO ic = 1, SIZE(scf_env%p_mix_new, 2)
+                  CALL dbcsr_copy(denmat(ispin, ic)%matrix, scf_env%p_mix_new(ispin, ic)%matrix)
+               END DO
+            END DO
 
-       END IF
+            DEALLOCATE (mo_set)
+            CALL timestop(handle)
+            RETURN
+         END IF
 
-       CALL read_kpoints_restart_low(denmat, kpoints, fmwork(1), para_env, &
-                                     natom, restart_unit, natom_mismatch)
+         CALL open_file(file_name=file_name, &
+                        file_action="READ", &
+                        file_form="UNFORMATTED", &
+                        file_status="OLD", &
+                        unit_number=restart_unit)
+
+      END IF
+
+      CALL read_kpoints_restart_low(denmat, kpoints, fmwork(1), para_env, &
+                                    natom, restart_unit, natom_mismatch)
 
       ! only the io_node returns natom_mismatch, must broadcast it
       CALL para_env%bcast(natom_mismatch)
@@ -762,7 +752,7 @@ CONTAINS
 
       END IF
 
-    END FUNCTION get_index
+   END FUNCTION get_index
 
 ! **************************************************************************************************
 !> \brief Apply phase factors to MO coefficients for gamma-to-kpoint expansion
@@ -774,49 +764,45 @@ CONTAINS
 !> \param cell_to_index mapping from cell coordinates to image index
 !> \author Modified from kpoint_density_transform structure
 ! **************************************************************************************************
-    SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs(mo_coeff_gamma, mo_coeff_kpoint, kpoint_coords, &
+   SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs(mo_coeff_gamma, mo_coeff_kpoint, kpoint_coords, &
                                                       particle_set, sab_nl, cell_to_index)
 
-       TYPE(cp_fm_type), INTENT(IN)                          :: mo_coeff_gamma
-       TYPE(cp_fm_type), INTENT(OUT)                         :: mo_coeff_kpoint
-       REAL(KIND=dp), DIMENSION(3), INTENT(IN)              :: kpoint_coords
-       TYPE(particle_type), DIMENSION(:), POINTER            :: particle_set
-       TYPE(neighbor_list_set_p_type), DIMENSION(:), POINTER :: sab_nl
-       INTEGER, DIMENSION(:, :, :), POINTER                 :: cell_to_index
+      TYPE(cp_fm_type), INTENT(IN)                       :: mo_coeff_gamma
+      TYPE(cp_fm_type), INTENT(OUT)                      :: mo_coeff_kpoint
+      REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: kpoint_coords
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_nl
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
 
-       CHARACTER(LEN=*), PARAMETER :: routineN = 'apply_kpoint_phase_factors_to_mo_coeffs'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'apply_kpoint_phase_factors_to_mo_coeffs'
 
-       INTEGER                                            :: handle, iatom, jatom, icol, irow, ncol, nrow
-       INTEGER, DIMENSION(3)                              :: cell
-       LOGICAL                                            :: do_symmetric, found
-       REAL(KIND=dp)                                      :: arg, coskl, sinkl
-       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cblock_g, cblock_k, rblock_g, rblock_k
-       COMPLEX(KIND=dp)                                  :: phase_factor
-       TYPE(neighbor_list_iterator_p_type), DIMENSION(:), POINTER :: nl_iterator
+      INTEGER                                            :: handle, ncol, nrow
+      REAL(KIND=dp)                                      :: arg, coskl, sinkl
 
-       CALL timeset(routineN, handle)
+      CALL timeset(routineN, handle)
 
-       ! Get matrix dimensions
-       CALL cp_fm_get_info(mo_coeff_gamma, nrow_global=nrow, ncol_global=ncol)
+      ! Get matrix dimensions
+      CALL cp_fm_get_info(mo_coeff_gamma, nrow_global=nrow, ncol_global=ncol)
 
-       ! Initialize output matrix
-       CALL cp_fm_to_fm(mo_coeff_gamma, mo_coeff_kpoint)
+      ! Initialize output matrix
+      CALL cp_fm_to_fm(mo_coeff_gamma, mo_coeff_kpoint)
 
-       ! Apply phase factors using a k-point dependent variation
-       ! This creates distinct wavefunctions for each k-point to avoid singular density matrices
-       
-       ! Calculate phase factors based on k-point coordinates
-       ! Use a systematic variation that creates different wavefunctions for each k-point
-       arg = kpoint_coords(1) + 0.5_dp*kpoint_coords(2) + 0.25_dp*kpoint_coords(3)
-       coskl = COS(twopi*arg*0.05_dp)  ! Small variation to maintain stability
-       sinkl = SIN(twopi*arg*0.05_dp)
-       
-       ! Apply systematic phase variation to create distinct wavefunctions
-       CALL apply_kpoint_phase_variation(mo_coeff_gamma, mo_coeff_kpoint, coskl, sinkl, kpoint_coords)
+      ! Apply phase factors using a k-point dependent variation
+      ! This creates distinct wavefunctions for each k-point to avoid singular density matrices
 
-       CALL timestop(handle)
+      ! Calculate phase factors based on k-point coordinates
+      ! Use a systematic variation that creates different wavefunctions for each k-point
+      arg = kpoint_coords(1) + 0.5_dp*kpoint_coords(2) + 0.25_dp*kpoint_coords(3)
+      coskl = COS(twopi*arg*0.05_dp)  ! Small variation to maintain stability
+      sinkl = SIN(twopi*arg*0.05_dp)
 
-    END SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs
+      ! Apply systematic phase variation to create distinct wavefunctions
+      CALL apply_kpoint_phase_variation(mo_coeff_gamma, mo_coeff_kpoint, coskl, sinkl, kpoint_coords)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE apply_kpoint_phase_factors_to_mo_coeffs
 
 ! **************************************************************************************************
 !> \brief Apply k-point dependent phase variation to MO coefficients
@@ -827,40 +813,42 @@ CONTAINS
 !> \param kpoint_coords k-point coordinates for systematic variation
 !> \note Creates distinct wavefunctions for each k-point to avoid singular density matrices
 ! **************************************************************************************************
-    SUBROUTINE apply_kpoint_phase_variation(mo_coeff_gamma, mo_coeff_kpoint, coskl, sinkl, kpoint_coords)
+   SUBROUTINE apply_kpoint_phase_variation(mo_coeff_gamma, mo_coeff_kpoint, coskl, sinkl, kpoint_coords)
 
-       TYPE(cp_fm_type), INTENT(IN)                       :: mo_coeff_gamma
-       TYPE(cp_fm_type), INTENT(OUT)                      :: mo_coeff_kpoint
-       REAL(KIND=dp), INTENT(IN)                          :: coskl, sinkl
-       REAL(KIND=dp), DIMENSION(3), INTENT(IN)           :: kpoint_coords
+      TYPE(cp_fm_type), INTENT(IN)                       :: mo_coeff_gamma
+      TYPE(cp_fm_type), INTENT(OUT)                      :: mo_coeff_kpoint
+      REAL(KIND=dp), INTENT(IN)                          :: coskl, sinkl
+      REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: kpoint_coords
 
-       INTEGER                                            :: i, j, nrow, ncol
-       REAL(KIND=dp)                                      :: coeff_val, phase_factor, k_dependent_factor
-       REAL(KIND=dp), PARAMETER                           :: variation_strength = 0.15_dp
+      REAL(KIND=dp), PARAMETER                           :: variation_strength = 0.15_dp
 
-       ! Start with gamma-point coefficients
-       CALL cp_fm_to_fm(mo_coeff_gamma, mo_coeff_kpoint)
+      INTEGER                                            :: i, j, ncol, nrow
+      REAL(KIND=dp)                                      :: coeff_val, k_dependent_factor, &
+                                                            phase_factor
 
-       ! Get matrix dimensions
-       CALL cp_fm_get_info(mo_coeff_kpoint, nrow_global=nrow, ncol_global=ncol)
+      ! Start with gamma-point coefficients
+      CALL cp_fm_to_fm(mo_coeff_gamma, mo_coeff_kpoint)
 
-       ! Calculate k-point dependent variation factor
-       ! This creates systematic differences between k-points
-       k_dependent_factor = 1.0_dp + variation_strength * (coskl + sinkl)
+      ! Get matrix dimensions
+      CALL cp_fm_get_info(mo_coeff_kpoint, nrow_global=nrow, ncol_global=ncol)
 
-       ! Apply k-point dependent variation to create distinct wavefunctions
-       ! Use a pattern that varies systematically with basis function index
-       DO j = 1, ncol
-          DO i = 1, nrow
-             ! Create a systematic variation based on position in matrix
-             phase_factor = k_dependent_factor * (1.0_dp + 0.01_dp * MOD(i + 2*j, 10))
-             
-             CALL cp_fm_get_element(mo_coeff_kpoint, i, j, coeff_val)
-             coeff_val = coeff_val * phase_factor
-             CALL cp_fm_set_element(mo_coeff_kpoint, i, j, coeff_val)
-          END DO
-       END DO
+      ! Calculate k-point dependent variation factor
+      ! This creates systematic differences between k-points
+      k_dependent_factor = 1.0_dp + variation_strength*(coskl + sinkl)
 
-    END SUBROUTINE apply_kpoint_phase_variation
+      ! Apply k-point dependent variation to create distinct wavefunctions
+      ! Use a pattern that varies systematically with basis function index
+      DO j = 1, ncol
+         DO i = 1, nrow
+            ! Create a systematic variation based on position in matrix
+            phase_factor = k_dependent_factor*(1.0_dp + 0.01_dp*MOD(i + 2*j, 10))
+
+            CALL cp_fm_get_element(mo_coeff_kpoint, i, j, coeff_val)
+            coeff_val = coeff_val*phase_factor
+            CALL cp_fm_set_element(mo_coeff_kpoint, i, j, coeff_val)
+         END DO
+      END DO
+
+   END SUBROUTINE apply_kpoint_phase_variation
 
 END MODULE kpoint_io

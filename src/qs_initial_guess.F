@@ -58,15 +58,10 @@ MODULE qs_initial_guess
                                               section_vals_val_get
    USE kinds,                           ONLY: default_path_length,&
                                               dp
-    USE kpoint_io,                       ONLY: read_kpoints_restart
-    USE kpoint_methods,                  ONLY: kpoint_density_matrices, &
-                                               kpoint_density_transform, &
-                                               kpoint_initialize_mo_set, &
-                                               kpoint_initialize_mos
-    USE kpoint_types,                    ONLY: kpoint_type
-    USE message_passing,                 ONLY: mp_para_env_type
-    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
-    USE particle_methods,                ONLY: get_particle_set
+   USE kpoint_io,                       ONLY: read_kpoints_restart
+   USE kpoint_types,                    ONLY: kpoint_type
+   USE message_passing,                 ONLY: mp_para_env_type
+   USE particle_methods,                ONLY: get_particle_set
    USE particle_types,                  ONLY: particle_type
    USE qs_atomic_block,                 ONLY: calculate_atomic_block_dm
    USE qs_cneo_types,                   ONLY: cneo_potential_type
@@ -143,10 +138,10 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calculate_first_density_matrix'
 
       CHARACTER(LEN=default_path_length)                 :: file_name, filename
-       INTEGER :: atom_a, density_guess, handle, homo, i, iatom, ic, icol, id_nr, ikind, irow, &
-          iseed(4), ispin, istart_col, istart_row, j, last_read, n, n_cols, n_rows, nao, natom, &
-          natoms, natoms_tmp, nblocks, nelectron, nmo, nmo_tmp, ncol, not_read, nsgf, nspin, nvec, ounit, &
-          safe_density_guess, size_atomic_kind_set, z
+      INTEGER :: atom_a, density_guess, handle, homo, i, iatom, ic, icol, id_nr, ikind, irow, &
+         iseed(4), ispin, istart_col, istart_row, j, last_read, n, n_cols, n_rows, nao, natom, &
+         natoms, natoms_tmp, nblocks, ncol, nelectron, nmo, nmo_tmp, not_read, nsgf, nspin, nvec, &
+         ounit, safe_density_guess, size_atomic_kind_set, z
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: first_sgf, kind_of, last_sgf
       INTEGER, DIMENSION(2)                              :: nelectron_spin
       INTEGER, DIMENSION(:), POINTER                     :: atom_list, elec_conf, nelec_kind, &
@@ -177,10 +172,9 @@ CONTAINS
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
       TYPE(hfx_type), DIMENSION(:, :), POINTER           :: x_data
       TYPE(kpoint_type), POINTER                         :: kpoints
-       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_array, mos_last_converged, mo_set
-       TYPE(mp_para_env_type), POINTER                    :: para_env
-       TYPE(neighbor_list_set_p_type), DIMENSION(:), POINTER :: sab_orb
-       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_array, mo_set, mos_last_converged
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_kind_type), POINTER                        :: qs_kind
       TYPE(qs_rho_type), POINTER                         :: rho
@@ -188,10 +182,10 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: dft_section, input, subsys_section
 
       logger => cp_get_default_logger()
-       NULLIFY (atomic_kind, qs_kind, mo_coeff, orb_basis_set, atomic_kind_set, &
-                qs_kind_set, particle_set, ortho, work2, work1, mo_array, s_sparse, &
-                scf_control, dft_control, p_rmpv, para_env, h_core_sparse, matrix_ks, rho, &
-                mos_last_converged, mo_set, sab_orb)
+      NULLIFY (atomic_kind, qs_kind, mo_coeff, orb_basis_set, &
+               atomic_kind_set, qs_kind_set, particle_set, ortho, work2, work1, &
+               mo_array, s_sparse, scf_control, dft_control, p_rmpv, para_env, &
+               h_core_sparse, matrix_ks, rho, mos_last_converged, mo_set)
       NULLIFY (dft_section, input, subsys_section)
       NULLIFY (matrix_s_kp, matrix_h_kp, matrix_ks_kp, rho_ao_kp)
       NULLIFY (moa, mob)
@@ -397,14 +391,14 @@ CONTAINS
             WRITE (UNIT=ounit, FMT="(/,T2,A)") &
                "WFN_RESTART| Reading restart file"
          END IF
-            IF (do_kpoints) THEN
-               natoms = SIZE(particle_set)
-               ! For k-point calculations, first check if a gamma-point restart file is specified
-               ! If so, read it and expand to k-points
-               CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
-                                         natoms, para_env, id_nr, dft_section, natom_mismatch, &
-                                         qs_kind_set=qs_kind_set, particle_set=particle_set)
-             IF (natom_mismatch) density_guess = safe_density_guess
+         IF (do_kpoints) THEN
+            natoms = SIZE(particle_set)
+            ! For k-point calculations, first check if a gamma-point restart file is specified
+            ! If so, read it and expand to k-points
+            CALL read_kpoints_restart(rho_ao_kp, kpoints, work1, &
+                                      natoms, para_env, id_nr, dft_section, natom_mismatch, &
+                                      qs_kind_set=qs_kind_set, particle_set=particle_set)
+            IF (natom_mismatch) density_guess = safe_density_guess
          ELSE
             CALL read_mo_set_from_restart(mo_array, qs_kind_set, particle_set, para_env, &
                                           id_nr=id_nr, multiplicity=dft_control%multiplicity, &
