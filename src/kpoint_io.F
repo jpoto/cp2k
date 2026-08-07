@@ -64,8 +64,9 @@ MODULE kpoint_io
    USE qs_mo_io,                        ONLY: read_mo_set_from_restart,&
                                               wfn_restart_file_name
    USE qs_mo_methods,                   ONLY: make_basis_simple
-   USE qs_mo_types,                     ONLY: get_mo_set,&
-                                              mo_set_type
+    USE qs_mo_types,                     ONLY: allocate_mo_set,&
+                                               get_mo_set,&
+                                               mo_set_type
     USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
                                                get_neighbor_list_set_p,&
                                                neighbor_list_iterator_create,&
@@ -359,16 +360,22 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_kpoints_restart'
 
        CHARACTER(LEN=default_path_length)                 :: file_name, gamma_file_name
-       INTEGER                                            :: handle, ic, ispin, ncol, nspin, &
-                                                             restart_unit
-       LOGICAL                                            :: do_wfn_expand, exist, gamma_exist
-       TYPE(cp_logger_type), POINTER                      :: logger
-       TYPE(dft_control_type), POINTER                    :: dft_control
-       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
-       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-          POINTER                                         :: sab_orb
-       TYPE(qs_scf_env_type), POINTER                     :: scf_env
-       TYPE(section_vals_type), POINTER                   :: print_key
+         INTEGER                                            :: handle, ic, ispin, ncol, nspin, &
+                                                               restart_unit, nao, nelectron, nsgf, &
+                                                               n_el, lmax, ikind, iatom, natom_local, &
+                                                               z_tmp
+        REAL(KIND=dp)                                      :: maxocc
+        INTEGER, DIMENSION(2)                              :: nelectron_spin
+        LOGICAL                                            :: do_wfn_expand, exist, gamma_exist
+        TYPE(cp_logger_type), POINTER                      :: logger
+        TYPE(dft_control_type), POINTER                    :: dft_control
+        TYPE(mo_set_type), DIMENSION(:), POINTER           :: mo_set
+        TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+           POINTER                                         :: sab_orb
+        TYPE(qs_scf_env_type), POINTER                     :: scf_env
+        TYPE(section_vals_type), POINTER                   :: print_key
+        TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
+        TYPE(qs_dftb_atom_type), POINTER                   :: dftb_parameter
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -384,18 +391,54 @@ CONTAINS
             CALL get_qs_env(qs_env, scf_env=scf_env, sab_orb=sab_orb, &
                             dft_control=dft_control)
          ELSE
-            CALL get_qs_env(qs_env)
-            CALL get_qs_env(qs_env, scf_env=scf_env, sab_orb=sab_orb, &
-                            dft_control=dft_control)
+            CPABORT("qs_env is required when use_wfn=.TRUE.")
          END IF
 
-          print_key => section_vals_get_subs_vals(dft_section, "SCF%PRINT%RESTART")
-          file_name = cp_print_key_generate_filename(logger, print_key, &
-                                                     extension=".wfn", my_local=.FALSE.)
-          INQUIRE (FILE=file_name, exist=exist)
+         print_key => section_vals_get_subs_vals(dft_section, "SCF%PRINT%RESTART")
+         file_name = cp_print_key_generate_filename(logger, print_key, &
+                                                    extension=".wfn", my_local=.FALSE.)
+         INQUIRE (FILE=file_name, exist=exist)
           IF (exist) THEN
 
-             ALLOCATE (mo_set(2))
+             natom_local = SIZE(particle_set)
+             nao = 0
+             nelectron = 0
+              DO iatom = 1, natom_local
+                 NULLIFY (orb_basis_set, dftb_parameter)
+                 CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind, z=z_tmp)
+                 CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, dftb_parameter=dftb_parameter)
+                 IF (ASSOCIATED(orb_basis_set)) THEN
+                    CALL get_gto_basis_set(gto_basis_set=orb_basis_set, nsgf=nsgf)
+                    nao = nao + nsgf
+                 ELSE IF (ASSOCIATED(dftb_parameter)) THEN
+                    CALL get_dftb_atom_param(dftb_parameter, lmax=lmax)
+                    nao = nao + (lmax + 1)**2
+                 ELSE
+                    CPABORT("Unknown basis type.")
+                 END IF
+                 nelectron = nelectron + z_tmp
+              END DO
+
+            IF (dft_control%restricted) THEN
+               nelectron_spin(:) = nelectron/2
+               maxocc = 2.0_dp
+            ELSE
+               nelectron_spin(1) = nelectron
+               IF (dft_control%uks) THEN
+                  nelectron_spin(2) = 0
+               ELSE
+                  nelectron_spin(2) = nelectron
+               END IF
+               maxocc = 1.0_dp
+            END IF
+
+            ALLOCATE (mo_set(2))
+            CALL allocate_mo_set(mo_set(1), nao=nao, nmo=nao, nelectron=nelectron_spin(1), &
+                                 n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+            IF (dft_control%uks) THEN
+               CALL allocate_mo_set(mo_set(2), nao=nao, nmo=nao, nelectron=nelectron_spin(2), &
+                                    n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+            END IF
 
             CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
                                           id_nr=id_nr, multiplicity=dft_control%multiplicity, &
@@ -464,15 +507,65 @@ CONTAINS
              file_name = TRIM(file_name)//".bak-"//ADJUSTL(cp_to_string(id_nr))
           END IF
 
-           IF (gamma_exist) THEN
-              ! Use gamma-point expansion logic
-              IF (.NOT. PRESENT(qs_kind_set) .OR. .NOT. PRESENT(particle_set)) THEN
-                 CPABORT("qs_kind_set and particle_set are required for gamma-point expansion")
+            IF (gamma_exist) THEN
+               ! Use gamma-point expansion logic
+               IF (.NOT. PRESENT(qs_kind_set) .OR. .NOT. PRESENT(particle_set)) THEN
+                  CPABORT("qs_kind_set and particle_set are required for gamma-point expansion")
+               END IF
+
+               natom_local = SIZE(particle_set)
+               nao = 0
+               nelectron = 0
+               DO iatom = 1, natom_local
+                  NULLIFY (orb_basis_set, dftb_parameter)
+                  CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind, z=z_tmp)
+                  CALL get_qs_kind(qs_kind_set(ikind), basis_set=orb_basis_set, dftb_parameter=dftb_parameter)
+                  IF (ASSOCIATED(orb_basis_set)) THEN
+                     CALL get_gto_basis_set(gto_basis_set=orb_basis_set, nsgf=nsgf)
+                     nao = nao + nsgf
+                  ELSE IF (ASSOCIATED(dftb_parameter)) THEN
+                     CALL get_dftb_atom_param(dftb_parameter, lmax=lmax)
+                     nao = nao + (lmax + 1)**2
+                  ELSE
+                     CPABORT("Unknown basis type.")
+                  END IF
+                  nelectron = nelectron + z_tmp
+               END DO
+
+               IF (dft_control%restricted) THEN
+                  nelectron_spin(:) = nelectron/2
+                  maxocc = 2.0_dp
+               ELSE
+                  nelectron_spin(1) = nelectron
+                  IF (dft_control%uks) THEN
+                     nelectron_spin(2) = 0
+                  ELSE
+                     nelectron_spin(2) = nelectron
+                  END IF
+                  maxocc = 1.0_dp
+               END IF
+
+               ALLOCATE (mo_set(2))
+               CALL allocate_mo_set(mo_set(1), nao=nao, nmo=nao, nelectron=nelectron_spin(1), &
+                                    n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+               IF (dft_control%uks) THEN
+                  CALL allocate_mo_set(mo_set(2), nao=nao, nmo=nao, nelectron=nelectron_spin(2), &
+                                       n_el_f=0.0_dp, maxocc=maxocc, flexible_electron_count=0.0_dp)
+               END IF
+
+               natom_mismatch = .FALSE.
+               CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
+                                             id_nr=id_nr, multiplicity=dft_control%multiplicity, &
+                                             dft_section=dft_section, &
+                                             natom_mismatch=natom_mismatch)
+              
+              ! If restart reading failed due to parameter mismatches, fall back to atomic guess
+              ! This handles cases where gamma and k-point calculations have different parameters
+              IF (natom_mismatch) THEN
+                 DEALLOCATE (mo_set)
+                 CALL timestop(handle)
+                 RETURN
               END IF
-              ALLOCATE (mo_set(2))
-              CALL read_mo_set_from_restart(mo_set, qs_kind_set, particle_set, para_env, &
-                                            id_nr, dft_control%multiplicity, dft_section, &
-                                            natom_mismatch=natom_mismatch)
 
              nspin = SIZE(mo_set)
              DO ispin = 1, nspin
