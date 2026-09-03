@@ -107,12 +107,14 @@ MODULE xc_libxc
                             xc_libxc_wrap_library_reference, &
                             xc_libxc_wrap_functional_get_number, &
                             xc_libxc_wrap_info_needs_laplace, &
-                            xc_libxc_wrap_info_no_exc, &
-                            xc_libxc_wrap_set_thresholds, &
-                            xc_f03_func_set_ext_params, &
-                            xc_libxc_wrap_is_under_development, &
-                            xc_libxc_get_reference_length, &
-                            xc_libxc_check_functional
+                             xc_libxc_wrap_info_no_exc, &
+                             xc_libxc_wrap_set_thresholds, &
+                             xc_f03_func_set_ext_params, &
+                             xc_libxc_wrap_is_under_development, &
+                             xc_libxc_get_reference_length, &
+                              xc_libxc_check_functional, &
+                              libxc_func_init_wrapper, libxc_func_end_wrapper, &
+                              libxc_set_library, xc_libxc_wrap_init_cuda_safe
 #endif
 !$ USE OMP_LIB, ONLY: omp_get_max_threads, &
 !$                    omp_get_num_threads, &
@@ -190,8 +192,11 @@ MODULE xc_libxc
    ! output argument alias a read-only input. Grown on demand and kept for the
    ! run rather than allocated per evaluation, and like the cache above it is
    ! only ever touched from a serial region.
-   REAL(KIND=dp), DIMENSION(:), ALLOCATABLE, TARGET, PRIVATE, SAVE :: libxc_unused
+    REAL(KIND=dp), DIMENSION(:), ALLOCATABLE, TARGET, PRIVATE, SAVE :: libxc_unused
 #endif
+
+   ! Initialize libxc backend selection
+   LOGICAL, PRIVATE, SAVE :: libxc_initialized = .FALSE.
 
 CONTAINS
 
@@ -206,6 +211,11 @@ CONTAINS
       LOGICAL                                  :: exists
 
 #if defined (__LIBXC)
+      ! Initialize libxc backend on first call
+      IF (.NOT. libxc_initialized) THEN
+         CALL xc_libxc_wrap_init_cuda_safe()
+         libxc_initialized = .TRUE.
+      END IF
 
       exists = xc_libxc_check_functional(libxc_params%section%name)
 #else
@@ -239,17 +249,17 @@ CONTAINS
 
       func_name = libxc_params%section%name
 
-      func_id = xc_libxc_wrap_functional_get_number(func_name)
-      IF (lsd) THEN
-         CALL xc_f03_func_init(xc_func, func_id, XC_POLARIZED)
-      ELSE
-         CALL xc_f03_func_init(xc_func, func_id, XC_UNPOLARIZED)
-      END IF
-      xc_info = xc_f03_func_get_info(xc_func)
+       func_id = xc_libxc_wrap_functional_get_number(func_name)
+       IF (lsd) THEN
+          CALL libxc_func_init_wrapper(xc_func, func_id, XC_POLARIZED)
+       ELSE
+          CALL libxc_func_init_wrapper(xc_func, func_id, XC_UNPOLARIZED)
+       END IF
+       xc_info = xc_f03_func_get_info(xc_func)
 
-      length = xc_libxc_get_reference_length(xc_info)
+       length = xc_libxc_get_reference_length(xc_info)
 
-      CALL xc_f03_func_end(xc_func)
+       CALL xc_f03_func_end(xc_func)
 
       CALL timestop(handle)
 #else
@@ -298,10 +308,10 @@ CONTAINS
 
          func_id = func_ids(ii)
          IF (ii > 1) THEN
-            IF (func_id == func_ids(ii - 1)) CYCLE
-         END IF
-         CALL xc_f03_func_init(xc_func, func_id, XC_UNPOLARIZED)
-         xc_info = xc_f03_func_get_info(xc_func)
+          IF (func_id == func_ids(ii - 1)) CYCLE
+          END IF
+          CALL libxc_func_init_wrapper(xc_func, func_id, XC_UNPOLARIZED)
+          xc_info = xc_f03_func_get_info(xc_func)
 
          func_name = xc_f03_functional_get_name(func_id)
          description = xc_f03_func_info_get_name(xc_info)
@@ -403,7 +413,7 @@ CONTAINS
       IF (ABS(func_scale - 1.0_dp) < 1.0e-10_dp) func_scale = 1.0_dp
 
       func_id = xc_libxc_wrap_functional_get_number(func_name)
-      CALL xc_f03_func_init(xc_func, func_id, XC_UNPOLARIZED)
+      CALL libxc_func_init_wrapper(xc_func, func_id, XC_UNPOLARIZED)
       xc_info = xc_f03_func_get_info(xc_func)
 
       s1 = xc_f03_func_info_get_name(xc_info)
@@ -516,13 +526,13 @@ CONTAINS
 
       IF (ABS(func_scale - 1.0_dp) < 1.0e-10_dp) func_scale = 1.0_dp
 
-      func_id = xc_libxc_wrap_functional_get_number(func_name)
-      CALL xc_f03_func_init(xc_func, func_id, XC_POLARIZED)
-      xc_info = xc_f03_func_get_info(xc_func)
+       func_id = xc_libxc_wrap_functional_get_number(func_name)
+       CALL libxc_func_init_wrapper(xc_func, func_id, XC_POLARIZED)
+       xc_info = xc_f03_func_get_info(xc_func)
 
-      s1 = xc_f03_func_info_get_name(xc_info)
-      SELECT CASE (xc_f03_func_info_get_kind(xc_info))
-      CASE (XC_EXCHANGE); WRITE (s2, '(a)') "exchange"
+       s1 = xc_f03_func_info_get_name(xc_info)
+       SELECT CASE (xc_f03_func_info_get_kind(xc_info))
+       CASE (XC_EXCHANGE); WRITE (s2, '(a)') "exchange"
       CASE (XC_CORRELATION); WRITE (s2, '(a)') "correlation"
       CASE (XC_EXCHANGE_CORRELATION); WRITE (s2, '(a)') "exchange-correlation"
       CASE (XC_KINETIC); WRITE (s2, '(a)') "kinetic"
@@ -802,7 +812,7 @@ CONTAINS
             ALLOCATE (ws%worker(nthreads))
 
             DO ithread = 1, nthreads
-               CALL xc_f03_func_init(ws%worker(ithread)%func, func_id, nspin)
+               CALL libxc_func_init_wrapper(ws%worker(ithread)%func, func_id, nspin)
                ws%worker(ithread)%info = xc_f03_func_get_info(ws%worker(ithread)%func)
                ws%worker(ithread)%is_init = .TRUE.
             END DO
