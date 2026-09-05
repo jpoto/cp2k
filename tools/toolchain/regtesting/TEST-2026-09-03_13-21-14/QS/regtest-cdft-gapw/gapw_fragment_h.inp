@@ -1,6 +1,0 @@
-@SET PROJECT gapw_fragment_h
-@SET CHARGE 0
-@SET CDFT_ACTIVE FALSE
-@SET WRITE_CUBE TRUE
-@SET COORD_FILE H.xyz
-@INCLUDE fragment_common.inc
