@@ -1,0 +1,10 @@
+Generating SQLite file libxc_gpu_profile.sqlite from libxc_gpu_profile.nsys-rep
+Processing [libxc_gpu_profile.sqlite] with [/usr/lib/x86_64-linux-gnu/nsight-systems/target-linux-x64/reports/cuda_gpu_kern_sum.py]... 
+SKIPPED: libxc_gpu_profile.sqlite does not contain CUDA kernel data.
+
+Processing [libxc_gpu_profile.sqlite] with [/usr/lib/x86_64-linux-gnu/nsight-systems/target-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+SKIPPED: libxc_gpu_profile.sqlite does not contain GPU memory data.
+
+Processing [libxc_gpu_profile.sqlite] with [/usr/lib/x86_64-linux-gnu/nsight-systems/target-linux-x64/reports/cuda_api_sum.py]... 
+SKIPPED: libxc_gpu_profile.sqlite does not contain CUDA trace data.
+

@@ -1,0 +1,125 @@
+# runs are executed in the same order as in this file
+# the second field tells which test should be run in order to compare with the last available output
+# e.g. 0 means do not compare anything, running is enough
+#      1 compares the last total energy in the file
+#      for details see cp2k/tools/do_regtest
+# some tests of restricted
+"N3-1.inp"                              = [{matcher="E_total", tol=1e-13, ref=-29.598211761677990}]
+"N3-2.inp"                              = [{matcher="E_total", tol=1e-11, ref=-29.65939373138649}]
+# some tests of SIC needs restarting from N3-1 for stability
+# teo: no need anymore due to the new way of handling the restart
+#      file. it's not overwritten anymore..
+"N3-3.inp"                              = [{matcher="E_total", tol=3e-10, ref=-29.49122674036549}]
+"N3-4.inp"                              = [{matcher="E_total", tol=3e-11, ref=-29.21535560440269}]
+"N3-5.inp"                              = [{matcher="E_total", tol=5e-11, ref=-29.50709985381931}]
+"N3-6.inp"                              = [{matcher="E_total", tol=2e-10, ref=-29.47190049770736}]
+"N3-7.inp"                              = [{matcher="E_total", tol=4e-11, ref=-29.35328159461529}]
+"N3-8.inp"                              = [{matcher="E_total", tol=2e-11, ref=-27.52917558728047}]
+"N3-9.inp"                              = [{matcher="E_total", tol=8e-07, ref=-29.518552099878299}]
+"N3-10.inp"                             = [{matcher="E_total", tol=2e-12, ref=-29.768854965665940}]
+# further sics
+"H2O-sic-ad-1.inp"                      = [{matcher="E_total", tol=6e-14, ref=-16.09479367271414}]
+"H2O-sic-ad-2.inp"                      = [{matcher="E_total", tol=4e-14, ref=-16.19214132901788}]
+# running H LSD
+"H-1.inp"                               = [{matcher="E_total", tol=1e-13, ref=-0.48748052127266}]
+"H-2.inp"                               = [{matcher="E_total", tol=8e-14, ref=-0.48747588716604001}]
+# elec_conf
+"H2O-1.inp"                             = [{matcher="E_total", tol=5e-14, ref=-15.42239209735920}]
+# outer scf with FULL_ALL
+"H2O.inp"                               = [{matcher="E_total", tol=4e-13, ref=-17.1615063648948}]
+# different parallel distributions
+"H2O-dist-1.inp"                        = [{matcher="E_total", tol=8e-14, ref=-34.28553811389267}]
+"H2O-dist-2.inp"                        = [{matcher="E_total", tol=8e-14, ref=-34.28553811389267}]
+"H2O-dist-3.inp"                        = [{matcher="E_total", tol=8e-14, ref=-34.28553811389267}]
+"H2O-dist-4.inp"                        = [{matcher="E_total", tol=8e-14, ref=-34.28553811389267}]
+"H2O-dist-8.inp"                        = [{matcher="E_total", tol=9e-14, ref=-33.47012389900991}]
+"H2_trip.inp"                           = [{matcher="E_total", tol=2e-12, ref=-0.71740623265306}]
+"C-sic-1.inp"                           = [{matcher="E_total", tol=5e-13, ref=-5.30145304131208}]
+"C-sic-2.inp"                           = [{matcher="E_total", tol=1e-13, ref=-5.32760575352303}]
+"C-sic-lbfgs.inp"                       = [{matcher="E_total", tol=1e-12, ref=-5.30618470274937}]
+# ot with fractional occupations
+"C_ot.inp"                              = [{matcher="E_total", tol=1e-13, ref=-5.33746454516253}]
+# use of the fermi distribution
+"C_fermi.inp"                           = [{matcher="E_total", tol=1e-13, ref=-5.34109284627944}]
+"Al_fermi.inp"                          = [{matcher="E_total", tol=5e-14, ref=-8.17296838715160}]
+# OT%ENERGIES without an explicit KPOINTS section uses the complex Gamma-point Mermin path
+"Al-gamma-mermin-smoke.inp"             = [{matcher="E_total", tol=1e-9, ref=-3.106695789848826},
+                                           {matcher="M095", tol=1e-6, ref=-0.27461042739180}]
+# fixed-N Mermin OT at symmetry-reduced complex K points and its diagonalization reference
+"Al-kpoint-diag-reference.inp"          = [{matcher="E_total", tol=1e-9, ref=-2.903015361392054}]
+"Al-kpoint-otdiag.inp"                  = [
+  {matcher="E_total", tol=1e-8, ref=-2.975637282434870},
+  {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+  {matcher="NO_TEXT", text="K-point smearing includes the last band"},
+]
+"Al-kpoint-otdiag-strict-full-all.inp"  = [
+  {matcher="E_total", tol=1e-8, ref=-2.171132526114770},
+  {matcher="NO_TEXT", text="Complex STRICT tangent metric is not positive definite"},
+  {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+  {matcher="NO_TEXT", text="K-point smearing includes the last band"},
+]
+"Al-kpoint-mermin-smoke.inp"            = [{matcher="E_total", tol=1e-9, ref=-2.903015358408708},
+                                           {matcher="M072", tol=1e-8, ref=0.0},
+                                           {matcher="M031", tol=1e-6, ref=-1.03113798553E+08}]
+"Al-kpoint-mermin-gaussian.inp"         = [{matcher="E_total", tol=1e-9, ref=-2.977126996245875},
+                                           {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+                                           {matcher="NO_TEXT", text="K-point smearing includes the last band"}]
+"Al-kpoint-mermin-methfessel-paxton.inp" = [{matcher="E_total", tol=1e-9, ref=-2.975935843898080},
+                                             {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+                                             {matcher="NO_TEXT", text="K-point smearing includes the last band"}]
+"Al-kpoint-mermin-marzari-vanderbilt.inp" = [{matcher="E_total", tol=1e-9, ref=-2.976427997093175},
+                                              {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+                                              {matcher="NO_TEXT", text="K-point smearing includes the last band"}]
+"Na-kpoint-mermin-uks-sd.inp"           = [
+  {matcher="E_total", tol=1e-9, ref=-0.280830319393730},
+  {matcher="OT_kpoint_ref_refresh"},
+]
+"Al-kpoint-mermin-response.inp"         = [
+  {matcher="E_total", tol=1e-9, ref=-3.990589661043425},
+  {matcher="OT_mermin_response_update"},
+]
+"Al-kpoint-mermin-lbfgs.inp"            = [{matcher="E_total", tol=1e-8, ref=-8.17199206567539}]
+"Al-kpoint-mermin-lbfgs-occ.inp"        = [{matcher="E_total", tol=1e-9, ref=-2.903015358383124}]
+"Al-kpoint-mermin-broyden-occ.inp"      = [{matcher="E_total", tol=1e-9, ref=-2.903015358436246}]
+"Al-kpoint-mermin-diis-occ.inp"           = [{matcher="E_total", tol=1e-6, ref=-8.15734061513311}]
+"Al-kpoint-mermin-auto.inp"             = [
+  {matcher="E_total", tol=1e-9, ref=-3.004207460676986},
+  {matcher="OT_added_mos_auto_grow"},
+]
+"H3-kpoint-roks.inp"                    = [{matcher="E_total", tol=1e-9, ref=-1.487967452903754},
+                                           {matcher="M072", tol=1e-6, ref=6.74684454E-02},
+                                           {matcher="M031", tol=1e-6, ref=-1.52540610981E+04}]
+"Al-kpoint-mermin-roks.inp"             = [
+  {matcher="E_total", tol=1e-6, ref=-2.181856403160713},
+  {matcher="Electronic_entropic_energy", tol=1e-4, ref=-0.00007019578175},
+  {matcher="Integrated_spin_density", tol=1e-7, ref=0.9999998274},
+  {matcher="N_kpoints_per_group", tol=0.0, ref=1},
+  {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+  {matcher="NO_TEXT", text="K-point smearing includes the last band"},
+]
+"Al-kpoint-mermin-roks-restart.inp"     = [
+  {matcher="E_total", tol=1e-6, ref=-2.181856717255157},
+  {matcher="Electronic_entropic_energy", tol=1e-4, ref=-0.00007212901683},
+  {matcher="Integrated_spin_density", tol=1e-7, ref=0.9999998274},
+  {matcher="NO_TEXT", text="K-point smearing includes the first band"},
+  {matcher="NO_TEXT", text="K-point smearing includes the last band"},
+]
+# go through planned FFTs, but don't check results, they will depend on the selected plan
+"H2O-plan-2.inp"                        = []
+"H2O-plan-3.inp"                        = []
+#broyden minimization
+"H2O-broy.inp"                          = [{matcher="E_total", tol=5.0E-14, ref=-15.92280592863554}]
+#BASIC_SPATIAL_DISTRIBUTION test
+"H2O-dist-17.inp"                       = [{matcher="E_total", tol=9e-14, ref=-33.47012389900991}]
+#CG ADAPT/DIIS tests
+"CH4-1.inp"                             = [{matcher="E_total", tol=1e-13, ref=-7.94506870641918}]
+"CH4-2.inp"                             = [{matcher="E_total", tol=1e-13, ref=-7.94506870642183}]
+"CH4-3.inp"                             = [{matcher="E_total", tol=1e-13, ref=-7.94506870642185}]
+"CH4-chebyshev.inp"                     = [{matcher="E_total", tol=1e-10, ref=-7.94506870641358}]
+"CH4-lbfgs.inp"                         = [{matcher="E_total", tol=1e-11, ref=-7.94507201394430}]
+"CH4-lbfgs-rejected-update.inp"         = [{matcher="E_total", tol=1e-11, ref=-7.94507201394040},
+                                             {matcher="OT_lbfgs_skipped_update"}]
+"CH4-lbfgs-diis.inp"                      = [{matcher="E_total", tol=1e-11, ref=-7.94507201394648},
+                                             {matcher="OT_lbfgs_update"},
+                                             {matcher="OT_diis_update"}]
+#EOF

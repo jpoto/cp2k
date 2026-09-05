@@ -1,0 +1,63 @@
+&GLOBAL
+  PRINT_LEVEL LOW
+  PROJECT water
+  RUN_TYPE MD
+&END GLOBAL
+
+&MOTION
+  &MD
+    ENSEMBLE NVT
+    STEPS 0
+    TEMPERATURE 300
+    TIMESTEP 0.5
+    &THERMOSTAT
+      &CSVR
+        TIMECON 10
+      &END CSVR
+    &END THERMOSTAT
+  &END MD
+&END MOTION
+
+&FORCE_EVAL
+  METHOD FIST
+  STRESS_TENSOR ANALYTICAL
+  &MM
+    &FORCEFIELD
+      &NONBONDED
+        &NEQUIP
+          ATOMS H O
+          MODEL_TYPE ALLEGRO
+          POT_FILE_NAME Allegro/waterscan-allegro0.8.0.nequip.pth
+          UNIT_ENERGY eV
+          UNIT_FORCES eV*angstrom^-1
+          UNIT_LENGTH angstrom
+        &END NEQUIP
+      &END NONBONDED
+    &END FORCEFIELD
+    &POISSON
+      &EWALD
+        EWALD_TYPE none
+      &END EWALD
+    &END POISSON
+  &END MM
+  &PRINT
+    &FORCES
+    &END FORCES
+    &STRESS_TENSOR
+      &EACH
+        MD 1
+      &END EACH
+    &END STRESS_TENSOR
+  &END PRINT
+  &SUBSYS
+    &CELL
+      A 9.8528 0.0 0.0
+      B 0.0 9.8528 0.0
+      C 0.0 0.0 9.8528
+    &END CELL
+    &TOPOLOGY
+      COORD_FILE_FORMAT XYZ
+      COORD_FILE_NAME ../regtest-nequip/water-bulk.xyz
+    &END TOPOLOGY
+  &END SUBSYS
+&END FORCE_EVAL

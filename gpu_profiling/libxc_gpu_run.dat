@@ -1,0 +1,98 @@
+Generating SQLite file libxc_gpu_profile.sqlite from libxc_gpu_profile.nsys-rep
+Processing [libxc_gpu_profile.sqlite] with [/usr/lib/x86_64-linux-gnu/nsight-systems/target-linux-x64/reports/cuda_gpu_kern_sum.py]... 
+
+ ** CUDA GPU Kernel Summary (cuda_gpu_kern_sum):
+
+ Time (%)  Total Time (ns)  Instances   Avg (ns)    Med (ns)   Min (ns)  Max (ns)   StdDev (ns)                                                  Name                                                
+ --------  ---------------  ---------  -----------  ---------  --------  ---------  -----------  ----------------------------------------------------------------------------------------------------
+     41.9        9,289,858          9  1,032,206.4  802,589.0   349,439  2,326,201    606,652.4  void rocm_backend::integrate_kernel<double, double3, (bool)0, (bool)1, (int)20>(rocm_backend::kerne…
+     29.1        6,455,916          9    717,324.0  597,182.0   445,087  1,109,885    301,105.1  void rocm_backend::collocate_kernel<double, double3, (bool)0, (bool)1>(rocm_backend::kernel_params) 
+      8.9        1,971,739         72     27,385.3   27,296.0    27,104     28,160        221.0  void regular_fft<(unsigned int)60, EPT<(unsigned int)6, (unsigned int)10>, (unsigned int)16, (unsig…
+      7.3        1,615,354         36     44,870.9   44,768.0    44,672     45,152        166.8  void regular_fft<(unsigned int)60, EPT<(unsigned int)6, (unsigned int)10>, (unsigned int)8, (unsign…
+      2.2          498,175          1    498,175.0  498,175.0   498,175    498,175          0.0  void rocm_backend::compute_hab_forces<double, double3, (bool)0>(rocm_backend::kernel_params)        
+      2.2          492,639          3    164,213.0  164,319.0   163,968    164,352        212.8  void rocm_backend::calculate_coefficients<double, (bool)1>(rocm_backend::kernel_params)             
+      1.6          352,446          2    176,223.0  176,223.0   176,063    176,383        226.3  void rocm_backend::compute_hab<double, (bool)0>(rocm_backend::kernel_params)                        
+      1.4          300,896         27     11,144.3   15,136.0     1,440     16,288      6,196.8  pw_scatter(double *, const double *, double, int, int, const int *)                                 
+      1.2          274,847         28      9,816.0   11,680.0     1,600     41,695      7,716.4  pw_gather(double *, const double *, double, int, const int *)                                       
+      0.8          181,855         28      6,494.8    5,872.0     1,792     29,600      5,358.6  pw_real_to_complex(const double *, double *, int)                                                   
+      0.7          157,087          2     78,543.5   78,543.5    77,696     79,391      1,198.5  void regular_fft<(unsigned int)81, EPT<(unsigned int)9>, (unsigned int)32, (unsigned int)2, (paddin…
+      0.5          120,928         12     10,077.3   10,064.0     9,952     10,240         90.0  void regular_fft<(unsigned int)36, EPT<(unsigned int)6>, (unsigned int)32, (unsigned int)5, (paddin…
+      0.4           82,496          1     82,496.0   82,496.0    82,496     82,496          0.0  void vector_fft<(unsigned int)81, EPT<(unsigned int)9>, (unsigned int)8, (unsigned int)12, (padding…
+      0.4           82,432         27      3,053.0    3,744.0     1,536      3,872      1,028.3  pw_complex_to_real(const double *, double *, int)                                                   
+      0.3           73,312         12      6,109.3    6,096.0     5,952      6,176         66.1  void regular_fft<(unsigned int)20, EPT<(unsigned int)4, (unsigned int)5>, (unsigned int)32, (unsign…
+      0.2           50,272         12      4,189.3    4,224.0     3,936      4,256         88.9  void regular_fft<(unsigned int)12, EPT<(unsigned int)3, (unsigned int)4>, (unsigned int)32, (unsign…
+      0.2           37,119          6      6,186.5    6,191.5     6,144      6,208         26.0  void vector_fft<(unsigned int)36, EPT<(unsigned int)6>, (unsigned int)16, (unsigned int)10, (paddin…
+      0.1           31,104          6      5,184.0    5,216.0     5,024      5,248         85.9  void regular_fft<(unsigned int)20, EPT<(unsigned int)4, (unsigned int)5>, (unsigned int)16, (unsign…
+      0.1           26,848          6      4,474.7    4,480.0     4,448      4,512         24.1  void regular_fft<(unsigned int)12, EPT<(unsigned int)3, (unsigned int)4>, (unsigned int)32, (unsign…
+      0.1           22,976          4      5,744.0    3,456.0     3,072     12,992      4,835.4  void smm_acc_dnt_medium<(int)14, (int)14, (int)5, (int)7, (int)1, (int)96, (int)13, (int)13>(const …
+      0.1           17,632          2      8,816.0    8,816.0     8,672      8,960        203.6  void cutlass::Kernel2<cutlass_80_tensorop_d884gemm_32x32_16x5_nn_align1>(T1::Params)                
+      0.1           16,096          4      4,024.0    2,912.0     2,080      8,192      2,807.3  void smm_acc_dnt_medium<(int)14, (int)5, (int)5, (int)1, (int)3, (int)96, (int)15, (int)16>(const i…
+      0.1           15,648          4      3,912.0    2,944.0     2,496      7,264      2,244.6  void smm_acc_dnt_medium<(int)5, (int)14, (int)5, (int)3, (int)1, (int)32, (int)8, (int)11>(const in…
+      0.1           14,143          4      3,535.8    3,263.5     2,848      4,768        844.9  void smm_acc_dnt_medium<(int)5, (int)5, (int)5, (int)1, (int)1, (int)32, (int)10, (int)8>(const int…
+      0.0            8,000          4      2,000.0    1,968.0     1,952      2,112         76.2  void transpose_d<(int)5, (int)5>(int *, double *)                                                   
+      0.0            6,656          4      1,664.0    1,680.0     1,472      1,824        186.6  void transpose_d<(int)5, (int)14>(int *, double *)                                                  
+
+Processing [libxc_gpu_profile.sqlite] with [/usr/lib/x86_64-linux-gnu/nsight-systems/target-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+
+ ** CUDA GPU MemOps Summary (by Time) (cuda_gpu_mem_time_sum):
+
+ Time (%)  Total Time (ns)  Count  Avg (ns)   Med (ns)  Min (ns)  Max (ns)   StdDev (ns)           Operation          
+ --------  ---------------  -----  ---------  --------  --------  ---------  -----------  ----------------------------
+     74.5       23,442,840     82  285,888.3  72,304.0     1,088  9,523,588  1,083,238.4  [CUDA memcpy Device-to-Host]
+     25.1        7,888,074    193   40,870.8   6,624.0       448    600,126     72,278.6  [CUDA memcpy Host-to-Device]
+      0.4          129,952     53    2,451.9   1,856.0       576      4,768      1,242.6  [CUDA memset]               
+
+Processing [libxc_gpu_profile.sqlite] with [/usr/lib/x86_64-linux-gnu/nsight-systems/target-linux-x64/reports/cuda_api_sum.py]... 
+
+ ** CUDA API Summary (cuda_api_sum):
+
+ Time (%)  Total Time (ns)  Num Calls   Avg (ns)     Med (ns)    Min (ns)    Max (ns)   StdDev (ns)                Name               
+ --------  ---------------  ---------  -----------  -----------  ---------  ----------  -----------  ---------------------------------
+     46.1       52,821,862        218    242,302.1     13,484.5      3,071  10,757,370    825,199.5  cudaMemcpyAsync                  
+      8.4        9,673,721         15    644,914.7    658,021.0    201,160   1,162,210    274,140.0  cuLibraryLoadData                
+      8.2        9,424,021         91    103,560.7      3,050.0      1,331   2,308,760    366,360.7  cudaStreamSynchronize            
+      7.2        8,302,731         12    691,894.3     10,844.5      3,701   2,347,291  1,015,482.2  cudaMallocHost                   
+      4.7        5,396,511         28    192,732.5     10,029.5      4,610   1,137,471    366,742.2  cudaFreeHost                     
+      3.9        4,463,300          2  2,231,650.0  2,231,650.0  2,153,690   2,309,610    110,252.1  cudaGetDeviceProperties_v2_v12000
+      3.3        3,813,109        324     11,768.9        330.5        240   2,100,220    118,993.6  cudaFree                         
+      3.1        3,537,170         16    221,073.1      6,279.5      3,530   1,806,929    584,243.1  cudaHostAlloc                    
+      2.6        3,035,883         15    202,392.2    188,040.0    130,500     348,501     58,244.7  cuModuleLoadData                 
+      2.0        2,328,535         92     25,310.2      4,665.5        240     365,000     54,931.9  cudaMalloc                       
+      1.5        1,704,225        134     12,718.1      6,535.5      3,070     177,499     21,817.1  cudaLaunchKernel                 
+      1.2        1,427,830          6    237,971.7    244,690.0    160,840     304,210     48,667.1  cuModuleLoadDataEx               
+      1.1        1,269,712        191      6,647.7      5,619.0      2,899      40,600      4,512.2  cuLaunchKernel                   
+      1.0        1,139,588          4    284,897.0    188,589.5      7,680     754,729    356,606.6  cudaMemcpyToSymbol               
+      1.0        1,107,431          2    553,715.5    553,715.5        720   1,106,711    782,053.7  cuKernelGetFunction              
+      0.8          905,417         16     56,588.6      6,494.5      5,640     764,620    188,976.6  cuMemcpyHtoD_v2                  
+      0.7          808,370         49     16,497.3     13,030.0      3,671      49,341     10,756.9  cudaMemsetAsync                  
+      0.5          620,027         31     20,000.9     13,620.0      4,120      81,901     17,447.8  cudaMemcpy                       
+      0.5          521,335         15     34,755.7     31,631.0     25,710      63,680      9,578.1  cuModuleUnload                   
+      0.3          373,878          3    124,626.0    130,680.0     37,629     205,569     84,133.5  cudaHostRegister                 
+      0.3          369,290      1,219        302.9        150.0         80      19,300        600.8  cuGetProcAddress_v2              
+      0.2          211,056          9     23,450.7      7,449.0      3,710     124,720     38,806.1  cudaStreamCreate                 
+      0.2          178,771          3     59,590.3     60,771.0     28,040      89,960     30,976.9  cudaHostUnregister               
+      0.1          158,995         46      3,456.4      2,604.0        709      11,020      2,197.8  cudaEventRecord                  
+      0.1          144,189          6     24,031.5      5,159.5      3,560     120,350     47,198.1  cuMemAlloc_v2                    
+      0.1          112,739          6     18,789.8      5,209.5      4,880      84,480     32,203.9  cuMemFree_v2                     
+      0.1          103,138          5     20,627.6     20,069.0     16,020      25,730      4,640.4  cuMemGetInfo_v2                  
+      0.1           87,581          4     21,895.3     25,020.0      7,360      30,181     10,320.7  cudaMemset                       
+      0.1           85,038         17      5,002.2      4,230.0      1,749      10,480      3,270.9  cudaDeviceSynchronize            
+      0.1           84,471         92        918.2        550.5        249      11,230      1,406.3  cudaEventDestroy                 
+      0.1           79,289         62      1,278.9        685.0        250      25,740      3,317.6  cudaEventCreateWithFlags         
+      0.1           78,901          6     13,150.2      8,681.0      4,421      36,819     12,357.4  cudaMemcpy2DAsync                
+      0.1           72,982          7     10,426.0     10,250.0      5,190      17,331      5,040.9  cudaStreamDestroy                
+      0.0           41,011         14      2,929.4      2,870.0        800       5,569      1,428.6  cudaEventQuery                   
+      0.0           39,623         22      1,801.0      1,440.5        541       5,071      1,216.2  cudaStreamWaitEvent              
+      0.0           36,320          3     12,106.7      6,400.0      5,120      24,800     11,011.4  cudaStreamCreateWithFlags        
+      0.0           36,244         30      1,208.1        764.5        410       5,530      1,113.7  cudaEventCreate                  
+      0.0           28,089         15      1,872.6      2,059.0      1,009       2,550        472.5  cuLibraryGetKernel               
+      0.0           20,340          3      6,780.0      7,290.0      3,240       9,810      3,314.6  cudaEventSynchronize             
+      0.0           18,740          7      2,677.1      1,790.0      1,040       5,010      1,711.0  cuInit                           
+      0.0           16,375         12      1,364.6      1,035.0        240       3,379      1,195.2  cuEventCreate                    
+      0.0           14,340         55        260.7        259.0        160         500         74.6  cuStreamIsCapturing              
+      0.0            7,797         12        649.8        694.5        200       1,379        409.4  cuEventDestroy_v2                
+      0.0            1,300          3        433.3        140.0        120       1,040        525.5  cuModuleGetLoadingMode           
+      0.0            1,019          1      1,019.0      1,019.0      1,019       1,019          0.0  cuDevicePrimaryCtxRelease_v2     
+      0.0              770          2        385.0        385.0        270         500        162.6  cudaGetDriverEntryPoint_v11030   
+      0.0              578          5        115.6        111.0        109         129          8.8  cuCtxSetCurrent                  
+

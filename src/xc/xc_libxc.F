@@ -113,8 +113,10 @@ MODULE xc_libxc
                              xc_libxc_wrap_is_under_development, &
                              xc_libxc_get_reference_length, &
                               xc_libxc_check_functional, &
-                              libxc_func_init_wrapper, libxc_func_end_wrapper, &
-                              libxc_set_library, xc_libxc_wrap_init_cuda_safe
+                               libxc_func_init_wrapper, libxc_func_end_wrapper, &
+                               libxc_set_library, xc_libxc_wrap_init_cuda_safe, &
+                               libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
+                               libxc_lda_exc_vxc_wrapper, libxc_lda_exc_wrapper
 #endif
 !$ USE OMP_LIB, ONLY: omp_get_max_threads, &
 !$                    omp_get_num_threads, &
@@ -1833,76 +1835,77 @@ CONTAINS
             nb = MIN(bsize, npoints - i0)
             np = INT(nb, KIND=C_SIZE_T)
 
-            ! stage this block's inputs in LibXC's layout
-            DO i = 1, nb
-               w%rho(1, i) = rho(i0 + i)
-            END DO
-            IF (is_gga) THEN
-               DO i = 1, nb
-                  w%sigma(1, i) = norm_drho(i0 + i)**2
-               END DO
-            END IF
-            IF (is_mgga) THEN
-               DO i = 1, nb
-                  ii = i0 + i
-                  w%lapl(1, i) = laplace_rho(ii)
-                  w%tau(1, i) = tau(ii)
-               END DO
-               ! Meta-GGAs are screened on the kinetic energy density as well as on the
-               ! density, and LibXC only screens on the latter. A point failing the tau
-               ! test is handed over with zero density, which makes LibXC screen it out
-               ! and leave its outputs at zero: what skipping it used to achieve. The
-               ! Fermi hole curvature bound tau >= sigma/(8*rho) follows in the same pass,
-               ! with the denominator floored at the cutoff so the division stays defined
-               ! for the points that are about to be screened.
-               DO i = 1, nb
-                  IF (w%tau(1, i) <= eps_tau) w%rho(1, i) = 0.0_dp
-                  w%tau(1, i) = MAX(w%tau(1, i), &
-                                    w%sigma(1, i)/(8.0_dp*MAX(w%rho(1, i), eps_rho)))
-               END DO
-            END IF
+             ! stage this block's inputs in LibXC's layout
+             DO i = 1, nb
+                w%rho(1, i) = rho(i0 + i)
+             END DO
+             IF (is_gga) THEN
+                DO i = 1, nb
+                   w%sigma(1, i) = norm_drho(i0 + i)**2
+                END DO
+             END IF
+             IF (is_mgga) THEN
+                DO i = 1, nb
+                   ii = i0 + i
+                   w%lapl(1, i) = laplace_rho(ii)
+                   w%tau(1, i) = tau(ii)
+                END DO
+                ! Meta-GGAs are screened on the kinetic energy density as well as on the
+                ! density, and LibXC only screens on the latter. A point failing the tau
+                ! test is handed over with zero density, which makes LibXC screen it out
+                ! and leave its outputs at zero: what skipping it used to achieve. The
+                ! Fermi hole curvature bound tau >= sigma/(8*rho) follows in the same pass,
+                ! with the denominator floored at the cutoff so the division stays defined
+                ! for the points that are about to be screened.
+                DO i = 1, nb
+                   IF (w%tau(1, i) <= eps_tau) w%rho(1, i) = 0.0_dp
+                   w%tau(1, i) = MAX(w%tau(1, i), &
+                                     w%sigma(1, i)/(8.0_dp*MAX(w%rho(1, i), eps_rho)))
+                END DO
+             END IF
 
-            ! one LibXC call for the whole block
-            IF (is_mgga) THEN
-               SELECT CASE (grad_deriv)
-               CASE (0)
-                  CALL xc_f03_mgga_exc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
-               CASE (1)
-                  IF (no_exc) THEN
-                     CALL xc_f03_mgga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                          w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
-                     w%exc(1:nb) = 0.0_dp
-                  ELSE
-                     CALL xc_f03_mgga_exc_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                              w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
-                  END IF
-               CASE (2)
-                  IF (no_exc) THEN
-                     CALL xc_f03_mgga_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                              w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                              w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                              w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                              w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
-                     w%exc(1:nb) = 0.0_dp
-                  ELSE
-                     CALL xc_f03_mgga(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                      w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                      w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                      w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                      w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
-                  END IF
-               END SELECT
-            ELSE IF (is_gga) THEN
-               SELECT CASE (grad_deriv)
-               CASE (0)
-                  CALL xc_f03_gga_exc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%exc(1))
-               CASE (1)
-                  IF (no_exc) THEN
-                     CALL xc_f03_gga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%vrho(1, 1), w%vsigma(1, 1))
-                     w%exc(1:nb) = 0.0_dp
-                  ELSE
-                     CALL xc_f03_gga_exc_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                             w%exc(1), w%vrho(1, 1), w%vsigma(1, 1))
+              ! one LibXC call for the whole block
+              ! Use GPU-aware wrapper functions
+              IF (is_mgga) THEN
+                SELECT CASE (grad_deriv)
+                CASE (0)
+                   CALL xc_f03_mgga_exc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
+                CASE (1)
+                   IF (no_exc) THEN
+                      CALL xc_f03_mgga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                           w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                      w%exc(1:nb) = 0.0_dp
+                   ELSE
+                      CALL xc_f03_mgga_exc_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                               w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                   END IF
+                CASE (2)
+                   IF (no_exc) THEN
+                      CALL xc_f03_mgga_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                               w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
+                                               w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
+                                               w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
+                                               w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
+                      w%exc(1:nb) = 0.0_dp
+                   ELSE
+                      CALL xc_f03_mgga(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                       w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
+                                       w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
+                                       w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
+                                       w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
+                   END IF
+                END SELECT
+             ELSE IF (is_gga) THEN
+                SELECT CASE (grad_deriv)
+                CASE (0)
+                   CALL libxc_gga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%exc(1))
+                CASE (1)
+                   IF (no_exc) THEN
+                      CALL xc_f03_gga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%vrho(1, 1), w%vsigma(1, 1))
+                      w%exc(1:nb) = 0.0_dp
+                   ELSE
+                      CALL libxc_gga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
+                                              w%exc(1), w%vrho(1, 1), w%vsigma(1, 1))
                   END IF
                CASE (2)
                   IF (no_exc) THEN
@@ -1916,12 +1919,12 @@ CONTAINS
                                                  w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1))
                   END IF
                END SELECT
-            ELSE
-               SELECT CASE (grad_deriv)
-               CASE (0)
-                  CALL xc_f03_lda_exc(w%func, np, w%rho(1, 1), w%exc(1))
-               CASE (1)
-                  CALL xc_f03_lda_exc_vxc(w%func, np, w%rho(1, 1), w%exc(1), w%vrho(1, 1))
+             ELSE
+                SELECT CASE (grad_deriv)
+                CASE (0)
+                   CALL libxc_lda_exc_wrapper(w%func, np, w%rho(1, 1), w%exc(1))
+                CASE (1)
+                    CALL libxc_lda_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%exc(1), w%vrho(1, 1))
                CASE (2)
                   CALL xc_f03_lda_exc_vxc_fxc(w%func, np, w%rho(1, 1), &
                                               w%exc(1), w%vrho(1, 1), w%v2rho2(1, 1))
@@ -2251,17 +2254,17 @@ CONTAINS
                                       w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
                   END IF
                END SELECT
-            ELSE IF (is_gga) THEN
-               SELECT CASE (grad_deriv)
-               CASE (0)
-                  CALL xc_f03_gga_exc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%exc(1))
-               CASE (1)
-                  IF (no_exc) THEN
-                     CALL xc_f03_gga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%vrho(1, 1), w%vsigma(1, 1))
-                     w%exc(1:nb) = 0.0_dp
-                  ELSE
-                     CALL xc_f03_gga_exc_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                             w%exc(1), w%vrho(1, 1), w%vsigma(1, 1))
+             ELSE IF (is_gga) THEN
+                SELECT CASE (grad_deriv)
+                CASE (0)
+                   CALL libxc_gga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%exc(1))
+                CASE (1)
+                   IF (no_exc) THEN
+                      CALL xc_f03_gga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%vrho(1, 1), w%vsigma(1, 1))
+                      w%exc(1:nb) = 0.0_dp
+                   ELSE
+                      CALL libxc_gga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
+                                              w%exc(1), w%vrho(1, 1), w%vsigma(1, 1))
                   END IF
                CASE (2)
                   IF (no_exc) THEN
