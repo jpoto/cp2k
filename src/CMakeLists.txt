@@ -1500,7 +1500,7 @@ list(
 list(APPEND CP2K_SRCS_F grpp/libgrpp.F)
 
 set(CP2K_FPGA_SRC_C fft/fpga/fft_fpga.c fft/fpga/opencl_utils.c)
-set(CP2K_PW_SRCS_C fft/gpu/fft_gpu_internal.c)
+set(CP2K_PW_SRCS_C fft/gpu/fft_gpu.c)
 set(CP2K_SRCS_CPP torch_c_api.cpp ace_c_api.cpp)
 
 list(APPEND CP2K_SRCS_C "${CP2K_OFFLOAD_SRCS_C}" "${CP2K_MPIWRAP_SRCS_C}")
@@ -1540,6 +1540,10 @@ set(CP2K_PROGS_F
 if(CP2K_USE_CUDA
    OR CP2K_USE_HIP
    OR CP2K_USE_OPENCL)
+  # Set CP2K_ENABLE_FFT_GPU based on CP2K_ENABLE_PW_GPU if not already set
+  if(NOT DEFINED CP2K_ENABLE_FFT_GPU AND DEFINED CP2K_ENABLE_PW_GPU)
+    set(CP2K_ENABLE_FFT_GPU ${CP2K_ENABLE_PW_GPU})
+  endif()
   if(CP2K_ENABLE_FFT_GPU)
     list(APPEND CP2K_SRCS_GPU "fft/gpu/fft_gpu_kernels.cu")
     list(APPEND CP2K_SRCS_C ${CP2K_PW_SRCS_C})
@@ -1990,7 +1994,7 @@ foreach(__app fft_perftest fft_unittest)
     ${__app}
     "fft/${__app}.c"
     ${CP2K_FFT_SRCS_C}
-    $<$<OR:$<BOOL:${CP2K_USE_CUDA}>,$<BOOL:${CP2K_USE_HIP}>>:${CP2K_FFT_SRCS_GPU}>
+    $<$<OR:$<BOOL:${CP2K_USE_CUDA}>,$<BOOL:${CP2K_USE_HIP}>>:${CP2K_PW_SRCS_GPU}>
     $<$<BOOL:${CP2K_USE_HIP}>:${CP2K_GRID_SRCS_HIP}>
     ${CP2K_MPIWRAP_SRCS_C}
     ${CP2K_OFFLOAD_SRCS_C})
