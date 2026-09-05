@@ -162,10 +162,12 @@ MODULE xc_libxc_wrap
                libxc_set_backend, libxc_get_backend, &
                libxc_func_init_wrapper, libxc_func_end_wrapper, &
                libxc_set_library, &
-               libxc_buffer_create, libxc_buffer_free, &
-               libxc_buffer_h2d, libxc_buffer_d2h, &
-               libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
-               libxc_lda_exc_vxc_wrapper, libxc_lda_exc_wrapper
+                libxc_buffer_create, libxc_buffer_free, &
+                libxc_buffer_h2d, libxc_buffer_d2h, &
+                libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
+                libxc_lda_exc_vxc_wrapper, libxc_lda_exc_wrapper, &
+                libxc_mgga_exc_vxc_wrapper, libxc_mgga_exc_wrapper, &
+                libxc_mgga_vxc_wrapper
 
    ! Backend selection for CPU vs GPU Libxc
    INTEGER, PARAMETER :: LIBXC_BACKEND_CPU = 1
@@ -758,20 +760,74 @@ CONTAINS
       END IF
    END SUBROUTINE libxc_lda_exc_vxc_wrapper
 
-   SUBROUTINE libxc_lda_exc_wrapper(func, np, rho, exc)
-      USE ISO_C_BINDING, ONLY: C_SIZE_T
-      TYPE(xc_f03_func_t), INTENT(IN) :: func
-      INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
-      REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: rho
-      REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: exc
+    SUBROUTINE libxc_lda_exc_wrapper(func, np, rho, exc)
+       USE ISO_C_BINDING, ONLY: C_SIZE_T
+       TYPE(xc_f03_func_t), INTENT(IN) :: func
+       INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+       REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: rho
+       REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: exc
 
-      IF (libxc_current_backend == LIBXC_BACKEND_GPU) THEN
-         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
-         CALL xc_f03_lda_exc(func, np, rho, exc)
-         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
-      ELSE
-         CALL xc_f03_lda_exc(func, np, rho, exc)
-      END IF
-   END SUBROUTINE libxc_lda_exc_wrapper
+       IF (libxc_current_backend == LIBXC_BACKEND_GPU) THEN
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+          CALL xc_f03_lda_exc(func, np, rho, exc)
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       ELSE
+          CALL xc_f03_lda_exc(func, np, rho, exc)
+       END IF
+    END SUBROUTINE libxc_lda_exc_wrapper
+
+    SUBROUTINE libxc_mgga_exc_vxc_wrapper(func, np, rho, sigma, lapl, tau, exc, vrho, vsigma, vlapl, vtau)
+       USE ISO_C_BINDING, ONLY: C_SIZE_T
+       TYPE(xc_f03_func_t), INTENT(IN) :: func
+       INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+       REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: rho, sigma, lapl, tau
+       REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: exc, vrho, vsigma, vlapl, vtau
+
+       IF (libxc_current_backend == LIBXC_BACKEND_GPU) THEN
+          WRITE(*,*) "MGGA exc_vxc: Using GPU backend, np =", np
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+          CALL xc_f03_mgga_exc_vxc(func, np, rho, sigma, lapl, tau, exc, vrho, vsigma, vlapl, vtau)
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       ELSE
+          WRITE(*,*) "MGGA exc_vxc: Using CPU backend, np =", np
+          CALL xc_f03_mgga_exc_vxc(func, np, rho, sigma, lapl, tau, exc, vrho, vsigma, vlapl, vtau)
+       END IF
+    END SUBROUTINE libxc_mgga_exc_vxc_wrapper
+
+    SUBROUTINE libxc_mgga_exc_wrapper(func, np, rho, sigma, lapl, tau, exc)
+       USE ISO_C_BINDING, ONLY: C_SIZE_T
+       TYPE(xc_f03_func_t), INTENT(IN) :: func
+       INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+       REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: rho, sigma, lapl, tau
+       REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: exc
+
+       IF (libxc_current_backend == LIBXC_BACKEND_GPU) THEN
+          WRITE(*,*) "MGGA exc: Using GPU backend, np =", np
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+          CALL xc_f03_mgga_exc(func, np, rho, sigma, lapl, tau, exc)
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       ELSE
+          WRITE(*,*) "MGGA exc: Using CPU backend, np =", np
+          CALL xc_f03_mgga_exc(func, np, rho, sigma, lapl, tau, exc)
+       END IF
+    END SUBROUTINE libxc_mgga_exc_wrapper
+
+    SUBROUTINE libxc_mgga_vxc_wrapper(func, np, rho, sigma, lapl, tau, vrho, vsigma, vlapl, vtau)
+       USE ISO_C_BINDING, ONLY: C_SIZE_T
+       TYPE(xc_f03_func_t), INTENT(IN) :: func
+       INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+       REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: rho, sigma, lapl, tau
+       REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: vrho, vsigma, vlapl, vtau
+
+       IF (libxc_current_backend == LIBXC_BACKEND_GPU) THEN
+          WRITE(*,*) "MGGA vxc: Using GPU backend, np =", np
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+          CALL xc_f03_mgga_vxc(func, np, rho, sigma, lapl, tau, vrho, vsigma, vlapl, vtau)
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       ELSE
+          WRITE(*,*) "MGGA vxc: Using CPU backend, np =", np
+          CALL xc_f03_mgga_vxc(func, np, rho, sigma, lapl, tau, vrho, vsigma, vlapl, vtau)
+       END IF
+    END SUBROUTINE libxc_mgga_vxc_wrapper
 
 END MODULE xc_libxc_wrap

@@ -54,69 +54,72 @@ MODULE xc_libxc
       deriv_rho, deriv_rhoa, deriv_rhob, &
       deriv_norm_drhoa, deriv_norm_drhob, deriv_norm_drho, deriv_tau_a, deriv_tau_b, deriv_tau, &
       deriv_laplace_rho, deriv_laplace_rhoa, deriv_laplace_rhob
-   USE xc_libxc_wrap, ONLY: xc_f03_func_t, &
-                            xc_f03_func_init, &
-                            xc_f03_func_end, &
-                            xc_f03_func_info_t, &
-                            xc_f03_functional_get_name, &
-                            xc_f03_func_get_info, &
-                            xc_f03_func_info_get_family, &
-                            xc_f03_func_info_get_kind, &
-                            xc_f03_func_info_get_n_ext_params, &
-                            xc_f03_func_info_get_name, &
-                            xc_f03_available_functional_numbers, &
-                            xc_f03_available_functional_names, &
-                            xc_f03_maximum_name_length, &
-                            xc_f03_number_of_functionals, &
-                            xc_f03_func_info_get_ext_params_name, &
-                            xc_f03_func_info_get_ext_params_description, &
-                            xc_f03_func_info_get_ext_params_default_value, &
-                            xc_f03_gga_exc, &
-                            xc_f03_gga_exc_vxc, &
-                            xc_f03_gga_exc_vxc_fxc, &
-                            xc_f03_gga_fxc, &
-                            xc_f03_gga_vxc, &
-                            xc_f03_gga_vxc_fxc, &
-                            xc_f03_lda, &
-                            xc_f03_lda_exc, &
-                            xc_f03_lda_exc_vxc, &
-                            xc_f03_lda_exc_vxc_fxc, &
-                            xc_f03_lda_fxc, &
-                            xc_f03_lda_kxc, &
-                            xc_f03_lda_vxc, &
-                            xc_f03_mgga, &
-                            xc_f03_mgga_exc, &
-                            xc_f03_mgga_exc_vxc, &
-                            xc_f03_mgga_fxc, &
-                            xc_f03_mgga_vxc, &
-                            xc_f03_mgga_vxc_fxc, &
-                            XC_POLARIZED, &
-                            XC_UNPOLARIZED, &
-                            XC_FAMILY_LDA, &
-                            XC_FAMILY_GGA, &
-                            XC_FAMILY_MGGA, &
-                            XC_FAMILY_HYB_LDA, &
-                            XC_FAMILY_HYB_GGA, &
-                            XC_FAMILY_HYB_MGGA, &
-                            XC_CORRELATION, &
-                            XC_EXCHANGE, &
-                            XC_EXCHANGE_CORRELATION, &
-                            XC_KINETIC, &
-                            xc_libxc_wrap_info_refs, &
-                            xc_libxc_wrap_version, &
-                            xc_libxc_wrap_library_reference, &
-                            xc_libxc_wrap_functional_get_number, &
-                            xc_libxc_wrap_info_needs_laplace, &
-                             xc_libxc_wrap_info_no_exc, &
-                             xc_libxc_wrap_set_thresholds, &
-                             xc_f03_func_set_ext_params, &
-                             xc_libxc_wrap_is_under_development, &
-                             xc_libxc_get_reference_length, &
+    USE xc_libxc_wrap, ONLY: xc_f03_func_t, &
+                             xc_f03_func_init, &
+                             xc_f03_func_end, &
+                             xc_f03_func_info_t, &
+                             xc_f03_functional_get_name, &
+                             xc_f03_func_get_info, &
+                             xc_f03_func_info_get_family, &
+                             xc_f03_func_info_get_kind, &
+                             xc_f03_func_info_get_n_ext_params, &
+                             xc_f03_func_info_get_name, &
+                             xc_f03_available_functional_numbers, &
+                             xc_f03_available_functional_names, &
+                             xc_f03_maximum_name_length, &
+                             xc_f03_number_of_functionals, &
+                             xc_f03_func_info_get_ext_params_name, &
+                             xc_f03_func_info_get_ext_params_description, &
+                             xc_f03_func_info_get_ext_params_default_value, &
+                             xc_f03_gga_exc, &
+                             xc_f03_gga_exc_vxc, &
+                             xc_f03_gga_exc_vxc_fxc, &
+                             xc_f03_gga_fxc, &
+                             xc_f03_gga_vxc, &
+                             xc_f03_gga_vxc_fxc, &
+                             xc_f03_lda, &
+                             xc_f03_lda_exc, &
+                             xc_f03_lda_exc_vxc, &
+                             xc_f03_lda_exc_vxc_fxc, &
+                             xc_f03_lda_fxc, &
+                             xc_f03_lda_kxc, &
+                             xc_f03_lda_vxc, &
+                             xc_f03_mgga, &
+                             xc_f03_mgga_exc, &
+                             xc_f03_mgga_exc_vxc, &
+                             xc_f03_mgga_fxc, &
+                             xc_f03_mgga_vxc, &
+                             xc_f03_mgga_vxc_fxc, &
+                             XC_POLARIZED, &
+                             XC_UNPOLARIZED, &
+                             XC_FAMILY_LDA, &
+                             XC_FAMILY_GGA, &
+                             XC_FAMILY_MGGA, &
+                             XC_FAMILY_HYB_LDA, &
+                             XC_FAMILY_HYB_GGA, &
+                             XC_FAMILY_HYB_MGGA, &
+                              libxc_set_backend, libxc_get_backend, &
+                              libxc_func_init_wrapper, libxc_func_end_wrapper, &
+                              libxc_set_library, &
+                              libxc_buffer_create, libxc_buffer_free, &
+                              libxc_buffer_h2d, libxc_buffer_d2h, &
+                              libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
+                              libxc_lda_exc_vxc_wrapper, libxc_lda_exc_wrapper, &
+                              libxc_mgga_exc_vxc_wrapper, libxc_mgga_exc_wrapper, &
+                              libxc_mgga_vxc_wrapper, &
+                              xc_libxc_wrap_functional_get_number, &
+                              xc_libxc_wrap_info_needs_laplace, &
+                              xc_libxc_wrap_info_no_exc, &
+                              xc_libxc_wrap_is_under_development, &
                               xc_libxc_check_functional, &
-                               libxc_func_init_wrapper, libxc_func_end_wrapper, &
-                               libxc_set_library, xc_libxc_wrap_init_cuda_safe, &
-                               libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
-                               libxc_lda_exc_vxc_wrapper, libxc_lda_exc_wrapper
+                              xc_libxc_get_reference_length, &
+                              xc_libxc_wrap_init_cuda_safe, &
+                              xc_libxc_wrap_library_reference, &
+                              xc_libxc_wrap_version, &
+                              xc_libxc_wrap_set_thresholds, &
+                              xc_libxc_wrap_info_refs, &
+                              xc_f03_func_set_ext_params, &
+                              XC_EXCHANGE, XC_CORRELATION, XC_EXCHANGE_CORRELATION, XC_KINETIC
 #endif
 !$ USE OMP_LIB, ONLY: omp_get_max_threads, &
 !$                    omp_get_num_threads, &
@@ -1869,15 +1872,15 @@ CONTAINS
               IF (is_mgga) THEN
                 SELECT CASE (grad_deriv)
                 CASE (0)
-                   CALL xc_f03_mgga_exc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
+                   CALL libxc_mgga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
                 CASE (1)
                    IF (no_exc) THEN
-                      CALL xc_f03_mgga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                           w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                       CALL libxc_mgga_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                            w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
                       w%exc(1:nb) = 0.0_dp
                    ELSE
-                      CALL xc_f03_mgga_exc_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                               w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                       CALL libxc_mgga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                                w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
                    END IF
                 CASE (2)
                    IF (no_exc) THEN
@@ -2228,15 +2231,15 @@ CONTAINS
             IF (is_mgga) THEN
                SELECT CASE (grad_deriv)
                CASE (0)
-                  CALL xc_f03_mgga_exc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
+                  CALL libxc_mgga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
                CASE (1)
                   IF (no_exc) THEN
                      CALL xc_f03_mgga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
                                           w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL xc_f03_mgga_exc_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                              w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                      CALL libxc_mgga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
+                                               w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
                   END IF
                CASE (2)
                   IF (no_exc) THEN
