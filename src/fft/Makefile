@@ -5,9 +5,18 @@ all: fft_unittest.x fft_perftest.x
 clean:
 	rm -fv *.o */*.o *.x ../offload/*.o
 
-CFLAGS := -fopenmp -g -O3 -march=native -Wall -Wextra -Wno-vla-parameter -D__FFTW3 -D__FFTW3_MPI -I${FFTW3_ROOT}/include -L${FFTW3_ROOT}/lib -I${OPENBLAS_ROOT}/include -L${OPENBLAS_ROOT}/lib
+CFLAGS := -fopenmp -no-pie -g -O3 -march=native -Wall -Wextra -Wno-vla-parameter -D__FFTW3 -I${FFTW3_ROOT}/include -L${FFTW3_ROOT}/lib -I${OPENBLAS_ROOT}/include -L${OPENBLAS_ROOT}/lib
 NVFLAGS := -g -O3 -lineinfo -arch sm_70 -Wno-deprecated-gpu-targets -Xcompiler "$(CFLAGS)" -D__OFFLOAD
-LIBS := -lfftw3_mpi -lfftw3 -lfftw3_omp -lm -lopenblas
+LIBS := -lopenblas
+
+MPICC_PATH := $(shell which mpicc)
+ifeq ($(MPICC_PATH),)
+  LIBS += -lfftw3 -lfftw3_omp -lm
+else
+  CC = mpicc
+  CFLAGS += -D__FFTW3_MPI
+  LIBS += -lfftw3_mpi -lfftw3 -lfftw3_omp -lm
+endif
 
 ALL_HEADERS := $(shell find . -name "*.h") $(shell find ../offload/ -name "*.h") $(shell find ../mpiwrap/ -name "*.h")
 ALL_OBJECTS := ../offload/offload_mempool.o \
