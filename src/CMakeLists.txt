@@ -1825,6 +1825,7 @@ target_link_libraries(
     $<$<BOOL:${CP2K_USE_SPGLIB}>:Spglib::symspg>
     $<$<BOOL:${CP2K_USE_LIBSMEAGOL}>:cp2k::libsmeagol::smeagol>
     $<$<BOOL:${CP2K_USE_LIBXC}>:Libxc::xcf03>
+    $<$<AND:$<BOOL:${CP2K_USE_LIBXC}>,$<BOOL:${CP2K_LIBXC_CUDA_SUPPORT}>,$<BOOL:${CP2K_USE_CUDA}>>:Libxc::xc_cuda>
     $<$<BOOL:${CP2K_USE_GAUXC}>:gauxc::gauxc>
     $<$<BOOL:${CP2K_USE_ELPA}>:cp2k::ELPA::elpa>
     $<$<BOOL:${CP2K_USE_PLUMED}>:cp2k::plumed::plumed>
@@ -1873,6 +1874,10 @@ if(CP2K_DATA_DIR STREQUAL "default")
 endif()
 
 target_link_libraries(cp2k PUBLIC cp2k_link_libs)
+
+if(CP2K_USE_ACCEL MATCHES "CUDA" AND CP2K_LIBXC_CUDA_SUPPORT)
+  target_compile_definitions(cp2k PUBLIC __LIBXC_CUDA)
+endif()
 target_compile_definitions(
   cp2k
   PUBLIC
@@ -2066,6 +2071,10 @@ foreach(_app ${__CP2K_APPS})
   if(CP2K_USE_ACCEL MATCHES HIP)
     set_property(TARGET ${_app} PROPERTY HIP_ARCHITECTURES
                                          "${CMAKE_HIP_ARCHITECTURES}")
+  endif()
+
+  if(CP2K_USE_ACCEL MATCHES "CUDA" AND CP2K_LIBXC_CUDA_SUPPORT)
+    target_compile_definitions(${_app} PUBLIC __LIBXC_CUDA)
   endif()
 
   target_link_libraries(${_app} PUBLIC cp2k)
