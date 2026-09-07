@@ -333,10 +333,10 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   run_test_c2c((const int[3]){100, 100, 100}, 10);
   run_test_c2c((const int[3]){125, 125, 125}, 10);
   run_test_c2c((const int[3]){160, 160, 160}, 10);
-  //run_test_c2c((const int[3]){200, 200, 200}, 10);
-  // run_test_c2c((const int[3]){256, 256, 256}, 10);
-  //  run_test_c2c((const int[3]){315, 315, 315}, 10);
-  //  run_test_c2c((const int[3]){400, 400, 400}, 10);
+  run_test_c2c((const int[3]){200, 200, 200}, 10);
+  run_test_c2c((const int[3]){256, 256, 256}, 10);
+  run_test_c2c((const int[3]){315, 315, 315}, 10);
+  run_test_c2c((const int[3]){400, 400, 400}, 10);
   //  run_test_c2c((const int[3]){500, 500, 500}, 10);
   //  run_test_c2c((const int[3]){630, 630, 630}, 10);
   //   QS_low_scaling_GW
@@ -346,10 +346,10 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   run_test_r2c((const int[3]){100, 100, 100}, 10, false);
   run_test_r2c((const int[3]){125, 125, 125}, 10, false);
   run_test_r2c((const int[3]){160, 160, 160}, 10, false);
-  //run_test_r2c((const int[3]){200, 200, 200}, 10, false);
-  // run_test_r2c((const int[3]){256, 256, 256}, 10, false);
-  //  run_test_r2c((const int[3]){315, 315, 315}, 10, false);
-  //  run_test_r2c((const int[3]){400, 400, 400}, 10, false);
+  run_test_r2c((const int[3]){200, 200, 200}, 10, false);
+  run_test_r2c((const int[3]){256, 256, 256}, 10, false);
+  run_test_r2c((const int[3]){315, 315, 315}, 10, false);
+  run_test_r2c((const int[3]){400, 400, 400}, 10, false);
   //   run_test_r2c((const int[3]){500, 500, 500}, 10, false);
   //   run_test_r2c((const int[3]){630, 630, 630}, 10, false);
   //    QS_low_scaling_GW
@@ -359,10 +359,10 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   run_test_r2c((const int[3]){100, 100, 100}, 10, true);
   run_test_r2c((const int[3]){125, 125, 125}, 10, true);
   run_test_r2c((const int[3]){160, 160, 160}, 10, true);
-  //run_test_r2c((const int[3]){200, 200, 200}, 10, true);
-  // run_test_r2c((const int[3]){256, 256, 256}, 10, true);
-  //  run_test_r2c((const int[3]){315, 315, 315}, 10, true);
-  //  run_test_r2c((const int[3]){400, 400, 400}, 10, true);
+  run_test_r2c((const int[3]){200, 200, 200}, 10, true);
+  run_test_r2c((const int[3]){256, 256, 256}, 10, true);
+  run_test_r2c((const int[3]){315, 315, 315}, 10, true);
+  run_test_r2c((const int[3]){400, 400, 400}, 10, true);
   //   run_test_r2c((const int[3]){500, 500, 500}, 10, true);
   //   run_test_r2c((const int[3]){630, 630, 630}, 10, true);
   //    QS_low_scaling_GW
@@ -375,10 +375,10 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   run_test_ray_c2c((const int[3]){100, 100, 100}, 10);
   run_test_ray_c2c((const int[3]){125, 125, 125}, 10);
   run_test_ray_c2c((const int[3]){160, 160, 160}, 10);
-  //run_test_ray_c2c((const int[3]){200, 200, 200}, 10);
-  //  run_test_ray_c2c((const int[3]){256, 256, 256}, 10);
-  //   run_test_ray_c2c((const int[3]){315, 315, 315}, 10);
-  //   run_test_ray_c2c((const int[3]){400, 400, 400}, 10);
+  run_test_ray_c2c((const int[3]){200, 200, 200}, 10);
+  run_test_ray_c2c((const int[3]){256, 256, 256}, 10);
+  run_test_ray_c2c((const int[3]){315, 315, 315}, 10);
+  run_test_ray_c2c((const int[3]){400, 400, 400}, 10);
   //   run_test_ray_c2c((const int[3]){500, 500, 500}, 10);
   //   run_test_ray_c2c((const int[3]){630, 630, 630}, 10);
   //    QS_low_scaling_GW
@@ -388,10 +388,10 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   run_test_ray_r2c((const int[3]){100, 100, 100}, 10, false);
   run_test_ray_r2c((const int[3]){125, 125, 125}, 10, false);
   run_test_ray_r2c((const int[3]){160, 160, 160}, 10, false);
-  //run_test_ray_r2c((const int[3]){200, 200, 200}, 10, false);
-  //  run_test_ray_r2c((const int[3]){256, 256, 256}, 10, false);
-  //   run_test_ray_r2c((const int[3]){315, 315, 315}, 10, false);
-  //   run_test_ray_r2c((const int[3]){400, 400, 400}, 10, false);
+  run_test_ray_r2c((const int[3]){200, 200, 200}, 10, false);
+  run_test_ray_r2c((const int[3]){256, 256, 256}, 10, false);
+  run_test_ray_r2c((const int[3]){315, 315, 315}, 10, false);
+  run_test_ray_r2c((const int[3]){400, 400, 400}, 10, false);
   //    run_test_ray_r2c((const int[3]){500, 500, 500}, 10, false);
   //    run_test_ray_r2c((const int[3]){630, 630, 630}, 10, false);
   //     QS_low_scaling_GW
@@ -401,10 +401,10 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   run_test_ray_r2c((const int[3]){100, 100, 100}, 10, true);
   run_test_ray_r2c((const int[3]){125, 125, 125}, 10, true);
   run_test_ray_r2c((const int[3]){160, 160, 160}, 10, true);
-  //run_test_ray_r2c((const int[3]){200, 200, 200}, 10, true);
-  //  run_test_ray_r2c((const int[3]){256, 256, 256}, 10, true);
-  //   run_test_ray_r2c((const int[3]){315, 315, 315}, 10, true);
-  //   run_test_ray_r2c((const int[3]){400, 400, 400}, 10, true);
+  run_test_ray_r2c((const int[3]){200, 200, 200}, 10, true);
+  run_test_ray_r2c((const int[3]){256, 256, 256}, 10, true);
+  run_test_ray_r2c((const int[3]){315, 315, 315}, 10, true);
+  run_test_ray_r2c((const int[3]){400, 400, 400}, 10, true);
   //    run_test_ray_r2c((const int[3]){500, 500, 500}, 10, true);
   //    run_test_ray_r2c((const int[3]){630, 630, 630}, 10, true);
   //     QS_low_scaling_GW

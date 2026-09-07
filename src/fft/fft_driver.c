@@ -238,7 +238,6 @@ void fft_3d_fw_blocked(
     }
   } else {
     if (is_complex) {
-      printf("Copying %i complex numbers\n", product3(fft_sizes_rs));
       memcpy(grid_buffer_1, grid_rs,
              product3(fft_sizes_rs) * sizeof(double complex));
     } else {

@@ -526,7 +526,7 @@ void setup_proc2local(fft_grid_layout *my_fft_grid, const int *external_local_bo
                             my_fft_grid->npts_global_gspace[2]);
   my_fft_grid->buffer_size = buffer_size;
 
-  if (true && my_process == 0) {
+  if (false && my_process == 0) {
     printf("Proc2local RS\n");
     for (int process = 0; process < number_of_processes; process++) {
       printf("%i: %i %i / %i %i / %i %i\n", process,
