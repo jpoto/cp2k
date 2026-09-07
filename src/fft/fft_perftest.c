@@ -106,11 +106,7 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
       grid_layout->proc2local_rs[cp_mpi_comm_rank(grid_layout->comm)];
   const int(*my_bound_gs)[2] =
       grid_layout->proc2local_gs[cp_mpi_comm_rank(grid_layout->comm)];
-  printf("Buffer size: %i\n", grid_layout->buffer_size);
-  printf("Size real buffer: %i %i %i\n", my_bound_rs[0][1], my_bound_rs[1][1],
-         my_bound_rs[2][1]);
-  printf("Size g-space buffer: %i %i %i\n", my_bound_gs[0][1], my_bound_gs[1][1], my_bound_gs[2][1]);
-  fflush(stdout);
+  
   double *grid_rs = NULL;
   fft_allocate_double(my_bound_rs[0][1] * my_bound_rs[1][1] * my_bound_rs[2][1],
                       &grid_rs);
