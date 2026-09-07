@@ -86,6 +86,7 @@ static void run_test_c2c(const int fft_size[3], const int number_of_runs) {
            max_time, sum_time / number_of_runs,
            sqrt((sum_time_squared - sum_time * sum_time / number_of_runs) /
                 (number_of_runs - 1)));
+    fflush(stdout);
   }
 }
 
@@ -161,6 +162,7 @@ static void run_test_r2c(const int fft_size[3], const int number_of_runs,
            sum_time / number_of_runs,
            sqrt((sum_time_squared - sum_time * sum_time / number_of_runs) /
                 (number_of_runs - 1)));
+    fflush(stdout);
   }
 }
 
@@ -236,6 +238,7 @@ static void run_test_ray_c2c(const int fft_size[3], const int number_of_runs) {
            max_time, sum_time / number_of_runs,
            sqrt((sum_time_squared - sum_time * sum_time / number_of_runs) /
                 (number_of_runs - 1)));
+    fflush(stdout);
   }
 }
 
@@ -313,6 +316,7 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
            sum_time / number_of_runs,
            sqrt((sum_time_squared - sum_time * sum_time / number_of_runs) /
                 (number_of_runs - 1)));
+    fflush(stdout);
   }
 }
 
