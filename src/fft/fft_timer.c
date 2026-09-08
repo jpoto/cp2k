@@ -6,6 +6,7 @@
 /*----------------------------------------------------------------------------*/
 
 #include "fft_timer.h"
+#include "../offload/offload_library.h"
 
 #include <assert.h>
 #include <omp.h>
@@ -360,6 +361,7 @@ void fft_finalize_timer() {
  * \author Frederick Stein
  ******************************************************************************/
 int fft_start_timer(const char *routine_name) {
+  offload_timeset(routine_name);
   if (omp_get_thread_num() == 0) {
     const int handle = get_routine_handle(routine_name);
     push_on_stack(handle);
@@ -379,6 +381,7 @@ int fft_start_timer(const char *routine_name) {
  * \author Frederick Stein
  ******************************************************************************/
 void fft_stop_timer(const int handle) {
+  offload_timestop();
   if (timers_initialized) {
     if (omp_get_thread_num() == 0) {
       assert(stack != NULL && "Stack is empty!\n");
