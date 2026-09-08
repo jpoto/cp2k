@@ -173,6 +173,7 @@ MODULE xc_libxc_wrap
              libxc_device_buffer_alloc, libxc_device_buffer_free, &
              libxc_host_to_device, libxc_device_to_host, &
              libxc_assert_device_buffer, &
+             libxc_device_buffer_get_ptr, &
              libxc_buffer_create, libxc_buffer_free, &
              libxc_buffer_h2d, libxc_buffer_d2h, &
              libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
@@ -787,10 +788,19 @@ CONTAINS
         IF (buffer%size <= 0) THEN
            CPABORT("Device buffer size is invalid")
            libxc_assert_device_buffer = .FALSE.
-        END IF
-     END FUNCTION libxc_assert_device_buffer
+         END IF
+      END FUNCTION libxc_assert_device_buffer
 
-    SUBROUTINE libxc_buffer_create(buffer, length)
+      ! Function to get the actual device pointer from a libxc_device_buffer_type
+      FUNCTION libxc_device_buffer_get_ptr(buffer) RESULT(ptr)
+         USE ISO_C_BINDING, ONLY: C_PTR
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
+         TYPE(C_PTR) :: ptr
+
+         ptr = buffer%ptr
+      END FUNCTION libxc_device_buffer_get_ptr
+
+     SUBROUTINE libxc_buffer_create(buffer, length)
        USE offload_api, ONLY: offload_buffer_type, offload_create_buffer
        TYPE(offload_buffer_type), INTENT(OUT) :: buffer
        INTEGER, INTENT(IN) :: length
@@ -881,190 +891,287 @@ CONTAINS
         END IF
      END SUBROUTINE libxc_lda_exc_wrapper
 
-     ! Device-aware LDA wrapper functions
-     ! These functions accept libxc_device_buffer_type and handle the H2D/D2H transfers
-     SUBROUTINE libxc_lda_exc_vxc_device(func, rho_d, exc_d, vrho_d, np)
-        USE ISO_C_BINDING, ONLY: C_SIZE_T
-        TYPE(xc_f03_func_t), INTENT(IN) :: func
-        TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d
-        TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d
-        INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+      ! Device-aware LDA wrapper functions
+      ! These functions accept libxc_device_buffer_type and call CUDA Libxc directly
+      SUBROUTINE libxc_lda_exc_vxc_device(func, rho_d, exc_d, vrho_d, np)
+         USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+         TYPE(xc_f03_func_t), INTENT(IN) :: func
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d
+         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d
+         INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
 
-        REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, exc_host, vrho_host
+         REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, exc_ptr, vrho_ptr
+         TYPE(C_PTR) :: c_rho_ptr, c_exc_ptr, c_vrho_ptr
 
-        ! Copy input from device to host
-        CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-        
-        ! Call regular Libxc function on host
-        CALL xc_f03_lda_exc_vxc(func, np, rho_host, exc_host, vrho_host)
-        
-        ! Copy results back to device
-        CALL libxc_host_to_device(exc_d, exc_host, INT(np))
-        CALL libxc_host_to_device(vrho_d, vrho_host, INT(np))
-     END SUBROUTINE libxc_lda_exc_vxc_device
+         ! Get actual device pointers
+         c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+         c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
+         c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
 
-     SUBROUTINE libxc_lda_exc_device(func, rho_d, exc_d, np)
-        USE ISO_C_BINDING, ONLY: C_SIZE_T
-        TYPE(xc_f03_func_t), INTENT(IN) :: func
-        TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d
-        TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d
-        INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+         ! Convert C pointers to Fortran pointers for array interface
+         CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
 
-        REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, exc_host
+         ! Set device execution flags for CUDA
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
 
-        ! Copy input from device to host
-        CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-        
-        ! Call regular Libxc function on host
-        CALL xc_f03_lda_exc(func, np, rho_host, exc_host)
-        
-         ! Copy results back to device
-         CALL libxc_host_to_device(exc_d, exc_host, INT(np))
-      END SUBROUTINE libxc_lda_exc_device
+         ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+         CALL xc_f03_lda_exc_vxc(func, np, rho_ptr, exc_ptr, vrho_ptr)
+
+         ! Reset to host flags
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       END SUBROUTINE libxc_lda_exc_vxc_device
+
+       SUBROUTINE libxc_lda_exc_device(func, rho_d, exc_d, np)
+         USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+         TYPE(xc_f03_func_t), INTENT(IN) :: func
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d
+         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d
+         INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+
+         REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, exc_ptr
+         TYPE(C_PTR) :: c_rho_ptr, c_exc_ptr
+
+         ! Get actual device pointers
+         c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+         c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
+
+         ! Convert C pointers to Fortran pointers for array interface
+         CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
+
+         ! Set device execution flags for CUDA
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+
+         ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+         CALL xc_f03_lda_exc(func, np, rho_ptr, exc_ptr)
+
+         ! Reset to host flags
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+        END SUBROUTINE libxc_lda_exc_device
 
      ! Device-aware GGA wrapper functions
-     SUBROUTINE libxc_gga_exc_device(func, rho_d, sigma_d, exc_d, np)
-        USE ISO_C_BINDING, ONLY: C_SIZE_T
-        TYPE(xc_f03_func_t), INTENT(IN) :: func
-        TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
-        TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d
-        INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
-
-        REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, sigma_host, exc_host
-
-        ! Copy input from device to host
-        CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-        CALL libxc_device_to_host(sigma_host, sigma_d, INT(np))
-        
-        ! Call regular Libxc function on host
-        CALL xc_f03_gga_exc(func, np, rho_host, sigma_host, exc_host)
-        
-        ! Copy results back to device
-        CALL libxc_host_to_device(exc_d, exc_host, INT(np))
-     END SUBROUTINE libxc_gga_exc_device
-
-      SUBROUTINE libxc_gga_exc_vxc_device(func, rho_d, sigma_d, exc_d, vrho_d, vsigma_d, np)
-         USE ISO_C_BINDING, ONLY: C_SIZE_T
+      SUBROUTINE libxc_gga_exc_device(func, rho_d, sigma_d, exc_d, np)
+         USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
          TYPE(xc_f03_func_t), INTENT(IN) :: func
          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
-         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d
+         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d
          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
 
-         REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, sigma_host, exc_host, vrho_host, vsigma_host
+         REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, exc_ptr
+         TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_exc_ptr
 
-         ! Copy input from device to host
-         CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-         CALL libxc_device_to_host(sigma_host, sigma_d, INT(np))
-         
-         ! Call regular Libxc function on host
-         CALL xc_f03_gga_exc_vxc(func, np, rho_host, sigma_host, exc_host, vrho_host, vsigma_host)
-         
-         ! Copy results back to device
-         CALL libxc_host_to_device(exc_d, exc_host, INT(np))
-         CALL libxc_host_to_device(vrho_d, vrho_host, INT(np))
-         CALL libxc_host_to_device(vsigma_d, vsigma_host, INT(np))
-      END SUBROUTINE libxc_gga_exc_vxc_device
+         ! Get actual device pointers
+         c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+         c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+         c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
 
-      ! Device-aware GGA vxc wrapper function (without exc)
-      SUBROUTINE libxc_gga_vxc_device(func, rho_d, sigma_d, vrho_d, vsigma_d, np)
-         USE ISO_C_BINDING, ONLY: C_SIZE_T
-         TYPE(xc_f03_func_t), INTENT(IN) :: func
-         TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
-         TYPE(libxc_device_buffer_type), INTENT(OUT) :: vrho_d, vsigma_d
-         INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+         ! Convert C pointers to Fortran pointers for array interface
+         CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+         CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
 
-         REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, sigma_host, vrho_host, vsigma_host
+         ! Set device execution flags for CUDA
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
 
-         ! Copy input from device to host
-         CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-         CALL libxc_device_to_host(sigma_host, sigma_d, INT(np))
-         
-         ! Call regular Libxc function on host
-         CALL xc_f03_gga_vxc(func, np, rho_host, sigma_host, vrho_host, vsigma_host)
-         
-         ! Copy results back to device
-         CALL libxc_host_to_device(vrho_d, vrho_host, INT(np))
-         CALL libxc_host_to_device(vsigma_d, vsigma_host, INT(np))
-      END SUBROUTINE libxc_gga_vxc_device
+         ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+         CALL xc_f03_gga_exc(func, np, rho_ptr, sigma_ptr, exc_ptr)
 
-     ! Device-aware MGGA wrapper functions
-     SUBROUTINE libxc_mgga_exc_device(func, rho_d, sigma_d, lapl_d, tau_d, exc_d, np)
-        USE ISO_C_BINDING, ONLY: C_SIZE_T
-        TYPE(xc_f03_func_t), INTENT(IN) :: func
-        TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
-        TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d
-        INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+         ! Reset to host flags
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+      END SUBROUTINE libxc_gga_exc_device
 
-        REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, sigma_host, lapl_host, tau_host, exc_host
+       SUBROUTINE libxc_gga_exc_vxc_device(func, rho_d, sigma_d, exc_d, vrho_d, vsigma_d, np)
+          USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+          TYPE(xc_f03_func_t), INTENT(IN) :: func
+          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
+          TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d
+          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
 
-        ! Copy input from device to host
-        CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-        CALL libxc_device_to_host(sigma_host, sigma_d, INT(np))
-        CALL libxc_device_to_host(lapl_host, lapl_d, INT(np))
-        CALL libxc_device_to_host(tau_host, tau_d, INT(np))
-        
-        ! Call regular Libxc function on host
-        CALL xc_f03_mgga_exc(func, np, rho_host, sigma_host, lapl_host, tau_host, exc_host)
-        
-        ! Copy results back to device
-        CALL libxc_host_to_device(exc_d, exc_host, INT(np))
-     END SUBROUTINE libxc_mgga_exc_device
+          REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, exc_ptr, vrho_ptr, vsigma_ptr
+          TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_exc_ptr, c_vrho_ptr, c_vsigma_ptr
 
-      SUBROUTINE libxc_mgga_exc_vxc_device(func, rho_d, sigma_d, lapl_d, tau_d, exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d, np)
-         USE ISO_C_BINDING, ONLY: C_SIZE_T
+          ! Get actual device pointers
+          c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+          c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+          c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
+          c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
+          c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
+
+          ! Convert C pointers to Fortran pointers for array interface
+          CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+          CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
+
+          ! Set device execution flags for CUDA
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+
+          ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+          CALL xc_f03_gga_exc_vxc(func, np, rho_ptr, sigma_ptr, exc_ptr, vrho_ptr, vsigma_ptr)
+
+          ! Reset to host flags
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       END SUBROUTINE libxc_gga_exc_vxc_device
+
+       ! Device-aware GGA vxc wrapper function (without exc)
+       SUBROUTINE libxc_gga_vxc_device(func, rho_d, sigma_d, vrho_d, vsigma_d, np)
+          USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+          TYPE(xc_f03_func_t), INTENT(IN) :: func
+          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
+          TYPE(libxc_device_buffer_type), INTENT(OUT) :: vrho_d, vsigma_d
+          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+
+          REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, vrho_ptr, vsigma_ptr
+          TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_vrho_ptr, c_vsigma_ptr
+
+          ! Get actual device pointers
+          c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+          c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+          c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
+          c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
+
+          ! Convert C pointers to Fortran pointers for array interface
+          CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
+
+          ! Set device execution flags for CUDA
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+
+          ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+          CALL xc_f03_gga_vxc(func, np, rho_ptr, sigma_ptr, vrho_ptr, vsigma_ptr)
+
+          ! Reset to host flags
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       END SUBROUTINE libxc_gga_vxc_device
+
+      ! Device-aware MGGA wrapper functions
+      SUBROUTINE libxc_mgga_exc_device(func, rho_d, sigma_d, lapl_d, tau_d, exc_d, np)
+         USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
          TYPE(xc_f03_func_t), INTENT(IN) :: func
          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
-         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d
+         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d
          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
 
-         REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, sigma_host, lapl_host, tau_host, exc_host
-         REAL(KIND=dp), DIMENSION(INT(np)) :: vrho_host, vsigma_host, vlapl_host, vtau_host
+         REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, exc_ptr
+         TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_lapl_ptr, c_tau_ptr, c_exc_ptr
 
-         ! Copy input from device to host
-         CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-         CALL libxc_device_to_host(sigma_host, sigma_d, INT(np))
-         CALL libxc_device_to_host(lapl_host, lapl_d, INT(np))
-         CALL libxc_device_to_host(tau_host, tau_d, INT(np))
-         
-         ! Call regular Libxc function on host
-         CALL xc_f03_mgga_exc_vxc(func, np, rho_host, sigma_host, lapl_host, tau_host, &
-                                    exc_host, vrho_host, vsigma_host, vlapl_host, vtau_host)
-         
-         ! Copy results back to device
-         CALL libxc_host_to_device(exc_d, exc_host, INT(np))
-         CALL libxc_host_to_device(vrho_d, vrho_host, INT(np))
-         CALL libxc_host_to_device(vsigma_d, vsigma_host, INT(np))
-         CALL libxc_host_to_device(vlapl_d, vlapl_host, INT(np))
-         CALL libxc_host_to_device(vtau_d, vtau_host, INT(np))
-      END SUBROUTINE libxc_mgga_exc_vxc_device
+         ! Get actual device pointers
+         c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+         c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+         c_lapl_ptr = libxc_device_buffer_get_ptr(lapl_d)
+         c_tau_ptr = libxc_device_buffer_get_ptr(tau_d)
+         c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
 
-      ! Device-aware MGGA vxc wrapper function (without exc)
-      SUBROUTINE libxc_mgga_vxc_device(func, rho_d, sigma_d, lapl_d, tau_d, vrho_d, vsigma_d, vlapl_d, vtau_d, np)
-         USE ISO_C_BINDING, ONLY: C_SIZE_T
-         TYPE(xc_f03_func_t), INTENT(IN) :: func
-         TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
-         TYPE(libxc_device_buffer_type), INTENT(OUT) :: vrho_d, vsigma_d, vlapl_d, vtau_d
-         INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+         ! Convert C pointers to Fortran pointers for array interface
+         CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+         CALL C_F_POINTER(c_lapl_ptr, lapl_ptr, [INT(np)])
+         CALL C_F_POINTER(c_tau_ptr, tau_ptr, [INT(np)])
+         CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
 
-         REAL(KIND=dp), DIMENSION(INT(np)) :: rho_host, sigma_host, lapl_host, tau_host
-         REAL(KIND=dp), DIMENSION(INT(np)) :: vrho_host, vsigma_host, vlapl_host, vtau_host
+         ! Set device execution flags for CUDA
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
 
-         ! Copy input from device to host
-         CALL libxc_device_to_host(rho_host, rho_d, INT(np))
-         CALL libxc_device_to_host(sigma_host, sigma_d, INT(np))
-         CALL libxc_device_to_host(lapl_host, lapl_d, INT(np))
-         CALL libxc_device_to_host(tau_host, tau_d, INT(np))
-         
-         ! Call regular Libxc function on host
-         CALL xc_f03_mgga_vxc(func, np, rho_host, sigma_host, lapl_host, tau_host, &
-                               vrho_host, vsigma_host, vlapl_host, vtau_host)
-         
-         ! Copy results back to device
-         CALL libxc_host_to_device(vrho_d, vrho_host, INT(np))
-         CALL libxc_host_to_device(vsigma_d, vsigma_host, INT(np))
-         CALL libxc_host_to_device(vlapl_d, vlapl_host, INT(np))
-         CALL libxc_host_to_device(vtau_d, vtau_host, INT(np))
-      END SUBROUTINE libxc_mgga_vxc_device
+         ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+         CALL xc_f03_mgga_exc(func, np, rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, exc_ptr)
+
+         ! Reset to host flags
+         CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+      END SUBROUTINE libxc_mgga_exc_device
+
+       SUBROUTINE libxc_mgga_exc_vxc_device(func, rho_d, sigma_d, lapl_d, tau_d, exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d, np)
+          USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+          TYPE(xc_f03_func_t), INTENT(IN) :: func
+          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
+          TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d
+          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+
+          REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, exc_ptr
+          REAL(KIND=dp), DIMENSION(:), POINTER :: vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr
+          TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_lapl_ptr, c_tau_ptr, c_exc_ptr
+          TYPE(C_PTR) :: c_vrho_ptr, c_vsigma_ptr, c_vlapl_ptr, c_vtau_ptr
+
+          ! Get actual device pointers
+          c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+          c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+          c_lapl_ptr = libxc_device_buffer_get_ptr(lapl_d)
+          c_tau_ptr = libxc_device_buffer_get_ptr(tau_d)
+          c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
+          c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
+          c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
+          c_vlapl_ptr = libxc_device_buffer_get_ptr(vlapl_d)
+          c_vtau_ptr = libxc_device_buffer_get_ptr(vtau_d)
+
+          ! Convert C pointers to Fortran pointers for array interface
+          CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+          CALL C_F_POINTER(c_lapl_ptr, lapl_ptr, [INT(np)])
+          CALL C_F_POINTER(c_tau_ptr, tau_ptr, [INT(np)])
+          CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vlapl_ptr, vlapl_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vtau_ptr, vtau_ptr, [INT(np)])
+
+          ! Set device execution flags for CUDA
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+
+          ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+          CALL xc_f03_mgga_exc_vxc(func, np, rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, &
+                                     exc_ptr, vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr)
+
+          ! Reset to host flags
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       END SUBROUTINE libxc_mgga_exc_vxc_device
+
+       ! Device-aware MGGA vxc wrapper function (without exc)
+       SUBROUTINE libxc_mgga_vxc_device(func, rho_d, sigma_d, lapl_d, tau_d, vrho_d, vsigma_d, vlapl_d, vtau_d, np)
+          USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+          TYPE(xc_f03_func_t), INTENT(IN) :: func
+          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
+          TYPE(libxc_device_buffer_type), INTENT(OUT) :: vrho_d, vsigma_d, vlapl_d, vtau_d
+          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+
+          REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, lapl_ptr, tau_ptr
+          REAL(KIND=dp), DIMENSION(:), POINTER :: vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr
+          TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_lapl_ptr, c_tau_ptr
+          TYPE(C_PTR) :: c_vrho_ptr, c_vsigma_ptr, c_vlapl_ptr, c_vtau_ptr
+
+          ! Get actual device pointers
+          c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+          c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+          c_lapl_ptr = libxc_device_buffer_get_ptr(lapl_d)
+          c_tau_ptr = libxc_device_buffer_get_ptr(tau_d)
+          c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
+          c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
+          c_vlapl_ptr = libxc_device_buffer_get_ptr(vlapl_d)
+          c_vtau_ptr = libxc_device_buffer_get_ptr(vtau_d)
+
+          ! Convert C pointers to Fortran pointers for array interface
+          CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+          CALL C_F_POINTER(c_lapl_ptr, lapl_ptr, [INT(np)])
+          CALL C_F_POINTER(c_tau_ptr, tau_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vlapl_ptr, vlapl_ptr, [INT(np)])
+          CALL C_F_POINTER(c_vtau_ptr, vtau_ptr, [INT(np)])
+
+          ! Set device execution flags for CUDA
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
+
+          ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+          CALL xc_f03_mgga_vxc(func, np, rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, &
+                                vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr)
+
+          ! Reset to host flags
+          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+       END SUBROUTINE libxc_mgga_vxc_device
 
     SUBROUTINE libxc_mgga_exc_vxc_wrapper(func, np, rho, sigma, lapl, tau, exc, vrho, vsigma, vlapl, vtau)
        USE ISO_C_BINDING, ONLY: C_SIZE_T
