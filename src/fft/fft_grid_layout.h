@@ -75,8 +75,9 @@ typedef struct {
   cp_mpi_comm_t comm;
   cp_mpi_comm_t sub_comm[2];
   int proc_grid[2];
-  int periodic[2];
   int proc_coords[2];
+  int proc_grid_internal[4];
+  int proc_coords_internal[4];
   // distributions for each FFT step (real space/mixed-space 1 (rs), mixed space
   // 1/mixed space 2 (ms), mixed-space 2/g-space (gs)) first index is for the
   // process, the second for the coordinate, the third for start (0) / end(1)

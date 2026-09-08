@@ -622,6 +622,8 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
   my_fft_grid->cell_info.dvolume = my_fft_grid->cell_info.volume / ((double)npts_global[0] * (double)npts_global[1] * (double)npts_global[2]);
   my_fft_grid->cutoff = cutoff;
 
+  int periodic[2] = {1, 1};
+
   if (external_local_bounds != NULL) {
     // Check whether the externally provided bounds are valid
     // First, collect the bounds
@@ -714,22 +716,18 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
       // We need to create a new communicator with the correct order without
       assert(false && "Nontrivial mapping NYI");
 
-      my_fft_grid->periodic[0] = 1;
-      my_fft_grid->periodic[1] = 1;
       my_fft_grid->comm = cp_mpi_cart_create(comm, 2, my_fft_grid->proc_grid,
-                                            my_fft_grid->periodic, true);
+                                            periodic, true);
     } else {
-      my_fft_grid->periodic[0] = 1;
-      my_fft_grid->periodic[1] = 1;
       my_fft_grid->comm = cp_mpi_cart_create(comm, 2, my_fft_grid->proc_grid,
-                                            my_fft_grid->periodic, true);
+                                            periodic, true);
     }
 
     free(starts_first_dimension);
     free(starts_second_dimension);
 
     cp_mpi_cart_get(my_fft_grid->comm, 2, my_fft_grid->proc_grid,
-                    my_fft_grid->periodic, my_fft_grid->proc_coords);
+                    periodic, my_fft_grid->proc_coords);
 
     my_fft_grid->sub_comm[0] =
         cp_mpi_cart_sub(my_fft_grid->comm, (const int[2]){1, 0});
@@ -788,13 +786,11 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
     }
     assert(my_fft_grid->proc_grid[0] && my_fft_grid->proc_grid[1] && my_fft_grid->proc_grid[0]*my_fft_grid->proc_grid[1] == number_of_processes);
 
-    my_fft_grid->periodic[0] = 1;
-    my_fft_grid->periodic[1] = 1;
     my_fft_grid->comm = cp_mpi_cart_create(comm, 2, my_fft_grid->proc_grid,
-                                          my_fft_grid->periodic, true);
+                                          periodic, true);
 
     cp_mpi_cart_get(my_fft_grid->comm, 2, my_fft_grid->proc_grid,
-                    my_fft_grid->periodic, my_fft_grid->proc_coords);
+                    periodic, my_fft_grid->proc_coords);
 
     my_fft_grid->sub_comm[0] =
         cp_mpi_cart_sub(my_fft_grid->comm, (const int[2]){1, 0});
@@ -805,7 +801,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
     assert(cp_mpi_comm_size(my_fft_grid->sub_comm[1]) ==
           my_fft_grid->proc_grid[1]);
 
-  setup_proc2local(my_fft_grid, NULL);
+    setup_proc2local(my_fft_grid, NULL);
   }
 
   const int(*bounds_gs)[2] = my_fft_grid->proc2local_gs[my_process];
@@ -1086,14 +1082,13 @@ void grid_create_fft_grid_layout_from_reference(
   }
   my_fft_grid->cutoff = cutoff ? cutoff : fft_grid_ref->cutoff;
 
-  my_fft_grid->periodic[0] = 1;
-  my_fft_grid->periodic[1] = 1;
+  int periodic[2] = {1, 1};
   my_fft_grid->comm =
       cp_mpi_cart_create(fft_grid_ref->comm, 2, my_fft_grid->proc_grid,
-                         my_fft_grid->periodic, false);
+                         periodic, false);
 
   cp_mpi_cart_get(my_fft_grid->comm, 2, my_fft_grid->proc_grid,
-                  my_fft_grid->periodic, my_fft_grid->proc_coords);
+                  periodic, my_fft_grid->proc_coords);
 
   my_fft_grid->sub_comm[0] =
       cp_mpi_cart_sub(my_fft_grid->comm, (const int[2]){1, 0});
