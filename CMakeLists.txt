@@ -581,6 +581,7 @@ if(CP2K_USE_ACCEL MATCHES "CUDA")
   endif()
 
   message(STATUS "CUDA compiler and libraries found")
+  message(STATUS "Using cuFFT for GPU-accelerated FFT")
 
 elseif(CP2K_USE_ACCEL MATCHES "HIP")
   message("\n------------------------------------------------------------")
