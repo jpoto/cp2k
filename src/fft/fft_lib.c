@@ -51,6 +51,9 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
   case FFT_LIB_FFTW:
     printf("Using FFTW library.\n");
     break;
+  case FFT_LIB_GPU:
+    printf("Using cuFFT library.\n");
+    break;
   default:
     assert(0 && "Unknown FFT library.");
   }
