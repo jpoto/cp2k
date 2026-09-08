@@ -7,6 +7,7 @@
 
 #include "fft_lib.h"
 #include "../common/cp_data_dir.h"
+#include "../offload/offload_runtime.h"
 #include "fft_lib_fftw.h"
 #include "fft_timer.h"
 #include "fpga/fft_fpga.h"
