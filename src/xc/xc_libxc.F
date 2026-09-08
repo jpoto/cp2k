@@ -163,25 +163,30 @@ MODULE xc_libxc
 !>        grid points. One of these is kept per OpenMP thread so that neither the
 !>        functional object nor the buffers are rebuilt between batches.
 ! **************************************************************************************************
-    TYPE libxc_worker_type
-       TYPE(xc_f03_func_t)                                :: func = xc_f03_func_t()
-       TYPE(xc_f03_func_info_t)                           :: info = xc_f03_func_info_t()
-       LOGICAL                                            :: is_init = .FALSE.
-       ! staging buffers, dimensioned (component, point)
-       REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: rho, sigma, lapl, tau
-       ! the floored gradient norms the spin-polarized chain rule is written in
-       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE           :: nd, nda, ndb
-       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE           :: exc
-       REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: vrho, vsigma, vlapl, vtau
-       REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: v2rho2, v2rhosigma, v2sigma2, &
-                                                             v2rholapl, v2rhotau, v2sigmalapl, &
-                                                             v2sigmatau, v2lapl2, v2lapltau, v2tau2
-       REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: v3rho3
-       ! CUDA device buffers
-       TYPE(libxc_device_buffer_type)                     :: rho_d, sigma_d, lapl_d, tau_d
-       TYPE(libxc_device_buffer_type)                     :: exc_d
-       TYPE(libxc_device_buffer_type)                     :: vrho_d, vsigma_d, vlapl_d, vtau_d
-    END TYPE libxc_worker_type
+     TYPE libxc_worker_type
+        TYPE(xc_f03_func_t)                                :: func = xc_f03_func_t()
+        TYPE(xc_f03_func_info_t)                           :: info = xc_f03_func_info_t()
+        LOGICAL                                            :: is_init = .FALSE.
+        ! Component counts for device buffer management
+        INTEGER                                            :: n_rho_comp = 0
+        INTEGER                                            :: n_sigma_comp = 0
+        INTEGER                                            :: n_lapl_comp = 0
+        INTEGER                                            :: n_tau_comp = 0
+        ! staging buffers, dimensioned (component, point)
+        REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: rho, sigma, lapl, tau
+        ! the floored gradient norms the spin-polarized chain rule is written in
+        REAL(KIND=dp), DIMENSION(:), ALLOCATABLE           :: nd, nda, ndb
+        REAL(KIND=dp), DIMENSION(:), ALLOCATABLE           :: exc
+        REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: vrho, vsigma, vlapl, vtau
+        REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: v2rho2, v2rhosigma, v2sigma2, &
+                                                              v2rholapl, v2rhotau, v2sigmalapl, &
+                                                              v2sigmatau, v2lapl2, v2lapltau, v2tau2
+        REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: v3rho3
+        ! CUDA device buffers
+        TYPE(libxc_device_buffer_type)                     :: rho_d, sigma_d, lapl_d, tau_d
+        TYPE(libxc_device_buffer_type)                     :: exc_d
+        TYPE(libxc_device_buffer_type)                     :: vrho_d, vsigma_d, vlapl_d, vtau_d
+     END TYPE libxc_worker_type
 
 ! **************************************************************************************************
 !> \brief All threads' workers for one distinct functional setup, together with
@@ -687,82 +692,88 @@ CONTAINS
 !>       number of components of the quantity and the points run along the second
 !>       dimension. They are allocated once per worker and reused for every batch.
 ! **************************************************************************************************
-    SUBROUTINE libxc_worker_alloc(worker, family, nspin)
-       TYPE(libxc_worker_type), INTENT(INOUT)             :: worker
-       INTEGER, INTENT(IN)                                :: family, nspin
+     SUBROUTINE libxc_worker_alloc(worker, family, nspin)
+        TYPE(libxc_worker_type), INTENT(INOUT)             :: worker
+        INTEGER, INTENT(IN)                                :: family, nspin
 
-       INTEGER                                            :: nb, nl, np, ns
+        INTEGER                                            :: nb, nl, np, ns
 
-       nb = libxc_block_size
-       ! number of components per point, cf. the LibXC manual
-       IF (nspin == XC_POLARIZED) THEN
-          np = 2   ! rho, vrho, lapl, tau, vlapl, vtau
-          ns = 3   ! sigma, vsigma, v2rho2, v2lapl2, v2tau2
-          nl = 4   ! v2rholapl, v2rhotau, v2lapltau, v3rho3
-       ELSE
-          np = 1
-          ns = 1
-          nl = 1
-       END IF
+        nb = libxc_block_size
+        ! number of components per point, cf. the LibXC manual
+        IF (nspin == XC_POLARIZED) THEN
+           np = 2   ! rho, vrho, lapl, tau, vlapl, vtau
+           ns = 3   ! sigma, vsigma, v2rho2, v2lapl2, v2tau2
+           nl = 4   ! v2rholapl, v2rhotau, v2lapltau, v3rho3
+        ELSE
+           np = 1
+           ns = 1
+           nl = 1
+        END IF
 
-       ALLOCATE (worker%rho(np, nb))
-       ALLOCATE (worker%exc(nb))
-       ALLOCATE (worker%vrho(np, nb))
-       ALLOCATE (worker%v2rho2(ns, nb))
-       ALLOCATE (worker%v3rho3(nl, nb))
+        ! Store component counts in worker for device transfer operations
+        worker%n_rho_comp = np
+        worker%n_sigma_comp = ns
+        worker%n_lapl_comp = np
+        worker%n_tau_comp = np
 
-       SELECT CASE (family)
-       CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-          ALLOCATE (worker%sigma(ns, nb))
-          ALLOCATE (worker%vsigma(ns, nb))
-          IF (nspin == XC_POLARIZED) THEN
-             ALLOCATE (worker%nd(nb), worker%nda(nb), worker%ndb(nb))
-          END IF
-          ALLOCATE (worker%v2rhosigma(MERGE(6, 1, nspin == XC_POLARIZED), nb))
-          ALLOCATE (worker%v2sigma2(MERGE(6, 1, nspin == XC_POLARIZED), nb))
-       END SELECT
+        ALLOCATE (worker%rho(np, nb))
+        ALLOCATE (worker%exc(nb))
+        ALLOCATE (worker%vrho(np, nb))
+        ALLOCATE (worker%v2rho2(ns, nb))
+        ALLOCATE (worker%v3rho3(nl, nb))
 
-       SELECT CASE (family)
-       CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-          ALLOCATE (worker%lapl(np, nb))
-          ALLOCATE (worker%tau(np, nb))
-          ALLOCATE (worker%vlapl(np, nb))
-          ALLOCATE (worker%vtau(np, nb))
-          ALLOCATE (worker%v2rholapl(nl, nb))
-          ALLOCATE (worker%v2rhotau(nl, nb))
-          ALLOCATE (worker%v2sigmalapl(MERGE(6, 1, nspin == XC_POLARIZED), nb))
-          ALLOCATE (worker%v2sigmatau(MERGE(6, 1, nspin == XC_POLARIZED), nb))
-          ALLOCATE (worker%v2lapl2(ns, nb))
-          ALLOCATE (worker%v2lapltau(nl, nb))
-          ALLOCATE (worker%v2tau2(ns, nb))
-          ! LibXC leaves vlapl untouched for functionals that do not use the
-          ! Laplacian, and CP2K then ignores it; zero it once so it never holds
-          ! uninitialized memory.
-          worker%vlapl = 0.0_dp
-       END SELECT
+        SELECT CASE (family)
+        CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+           ALLOCATE (worker%sigma(ns, nb))
+           ALLOCATE (worker%vsigma(ns, nb))
+           IF (nspin == XC_POLARIZED) THEN
+              ALLOCATE (worker%nd(nb), worker%nda(nb), worker%ndb(nb))
+           END IF
+           ALLOCATE (worker%v2rhosigma(MERGE(6, 1, nspin == XC_POLARIZED), nb))
+           ALLOCATE (worker%v2sigma2(MERGE(6, 1, nspin == XC_POLARIZED), nb))
+        END SELECT
 
-       ! Allocate CUDA device buffers if CUDA backend is available
-       IF (libxc_is_cuda()) THEN
-          CALL libxc_device_buffer_alloc(worker%rho_d, np * nb)
-          CALL libxc_device_buffer_alloc(worker%exc_d, nb)
-          CALL libxc_device_buffer_alloc(worker%vrho_d, np * nb)
+        SELECT CASE (family)
+        CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+           ALLOCATE (worker%lapl(np, nb))
+           ALLOCATE (worker%tau(np, nb))
+           ALLOCATE (worker%vlapl(np, nb))
+           ALLOCATE (worker%vtau(np, nb))
+           ALLOCATE (worker%v2rholapl(nl, nb))
+           ALLOCATE (worker%v2rhotau(nl, nb))
+           ALLOCATE (worker%v2sigmalapl(MERGE(6, 1, nspin == XC_POLARIZED), nb))
+           ALLOCATE (worker%v2sigmatau(MERGE(6, 1, nspin == XC_POLARIZED), nb))
+           ALLOCATE (worker%v2lapl2(ns, nb))
+           ALLOCATE (worker%v2lapltau(nl, nb))
+           ALLOCATE (worker%v2tau2(ns, nb))
+           ! LibXC leaves vlapl untouched for functionals that do not use the
+           ! Laplacian, and CP2K then ignores it; zero it once so it never holds
+           ! uninitialized memory.
+           worker%vlapl = 0.0_dp
+        END SELECT
 
-          SELECT CASE (family)
-          CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-             CALL libxc_device_buffer_alloc(worker%sigma_d, ns * nb)
-             CALL libxc_device_buffer_alloc(worker%vsigma_d, ns * nb)
-          END SELECT
+        ! Allocate CUDA device buffers if CUDA backend is available
+        IF (libxc_is_cuda()) THEN
+           CALL libxc_device_buffer_alloc(worker%rho_d, np * nb)
+           CALL libxc_device_buffer_alloc(worker%exc_d, nb)
+           CALL libxc_device_buffer_alloc(worker%vrho_d, np * nb)
 
-          SELECT CASE (family)
-          CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-             CALL libxc_device_buffer_alloc(worker%lapl_d, np * nb)
-             CALL libxc_device_buffer_alloc(worker%tau_d, np * nb)
-             CALL libxc_device_buffer_alloc(worker%vlapl_d, np * nb)
-             CALL libxc_device_buffer_alloc(worker%vtau_d, np * nb)
-          END SELECT
-       END IF
+           SELECT CASE (family)
+           CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+              CALL libxc_device_buffer_alloc(worker%sigma_d, ns * nb)
+              CALL libxc_device_buffer_alloc(worker%vsigma_d, ns * nb)
+           END SELECT
 
-    END SUBROUTINE libxc_worker_alloc
+           SELECT CASE (family)
+           CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+              CALL libxc_device_buffer_alloc(worker%lapl_d, np * nb)
+              CALL libxc_device_buffer_alloc(worker%tau_d, np * nb)
+              CALL libxc_device_buffer_alloc(worker%vlapl_d, np * nb)
+              CALL libxc_device_buffer_alloc(worker%vtau_d, np * nb)
+           END SELECT
+        END IF
+
+     END SUBROUTINE libxc_worker_alloc
 
 ! **************************************************************************************************
 !> \brief Makes sure the placeholder for unproduced derivatives holds npoints values.
@@ -1916,33 +1927,33 @@ CONTAINS
                 END DO
              END IF
 
-              ! one LibXC call for the whole block
-              ! Use explicit H2D/D2H path for CUDA backend
-              IF (libxc_is_cuda()) THEN
-                  ! Copy data to device
-                  CALL libxc_host_to_device(w%rho_d, w%rho(1, 1), INT(np))
-                  IF (is_gga) THEN
-                     CALL libxc_host_to_device(w%sigma_d, w%sigma(1, 1), INT(ns*np))
-                  END IF
-                  IF (is_mgga) THEN
-                     CALL libxc_host_to_device(w%lapl_d, w%lapl(1, 1), INT(np))
-                     CALL libxc_host_to_device(w%tau_d, w%tau(1, 1), INT(np))
-                  END IF
+               ! one LibXC call for the whole block
+               ! Use explicit H2D/D2H path for CUDA backend
+               IF (libxc_is_cuda()) THEN
+                   ! Copy data to device - use specialized 2D transfer functions
+                   CALL libxc_host_to_device_2d(w%rho_d, w%rho, w%n_rho_comp, nb)
+                   IF (is_gga) THEN
+                      CALL libxc_host_to_device_2d(w%sigma_d, w%sigma, w%n_sigma_comp, nb)
+                   END IF
+                   IF (is_mgga) THEN
+                      CALL libxc_host_to_device_2d(w%lapl_d, w%lapl, w%n_lapl_comp, nb)
+                      CALL libxc_host_to_device_2d(w%tau_d, w%tau, w%n_tau_comp, nb)
+                   END IF
 
-                 ! Call device-aware Libxc functions
-                  IF (is_mgga) THEN
-                     SELECT CASE (grad_deriv)
-                     CASE (0)
-                        CALL libxc_mgga_exc_device(w%func, w%rho_d, w%sigma_d, w%lapl_d, w%tau_d, w%exc_d, np)
-                     CASE (1)
-                        IF (no_exc) THEN
-                            CALL libxc_mgga_vxc_device(w%func, w%rho_d, w%sigma_d, w%lapl_d, w%tau_d, &
-                                                         w%vrho_d, w%vsigma_d, w%vlapl_d, w%vtau_d, np)
-                           w%exc(1:nb) = 0.0_dp
-                        ELSE
-                            CALL libxc_mgga_exc_vxc_device(w%func, w%rho_d, w%sigma_d, w%lapl_d, w%tau_d, &
-                                                     w%exc_d, w%vrho_d, w%vsigma_d, w%vlapl_d, w%vtau_d, np)
-                        END IF
+                  ! Call device-aware Libxc functions
+                   IF (is_mgga) THEN
+                      SELECT CASE (grad_deriv)
+                      CASE (0)
+                         CALL libxc_mgga_exc_device(w%func, w%rho_d, w%sigma_d, w%lapl_d, w%tau_d, w%exc_d, INT(nb, C_SIZE_T))
+                      CASE (1)
+                         IF (no_exc) THEN
+                             CALL libxc_mgga_vxc_device(w%func, w%rho_d, w%sigma_d, w%lapl_d, w%tau_d, &
+                                                          w%vrho_d, w%vsigma_d, w%vlapl_d, w%vtau_d, INT(nb, C_SIZE_T))
+                            w%exc(1:nb) = 0.0_dp
+                         ELSE
+                             CALL libxc_mgga_exc_vxc_device(w%func, w%rho_d, w%sigma_d, w%lapl_d, w%tau_d, &
+                                                      w%exc_d, w%vrho_d, w%vsigma_d, w%vlapl_d, w%vtau_d, INT(nb, C_SIZE_T))
+                         END IF
                     CASE (2)
                        ! For second derivatives, fall back to CPU implementation for now
                        CALL xc_f03_mgga(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
@@ -1951,29 +1962,30 @@ CONTAINS
                                         w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
                                         w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
                     END SELECT
-                  ELSE IF (is_gga) THEN
-                     SELECT CASE (grad_deriv)
-                     CASE (0)
-                        CALL libxc_gga_exc_device(w%func, w%rho_d, w%sigma_d, w%exc_d, np)
-                     CASE (1)
-                         IF (no_exc) THEN
-                            CALL libxc_gga_vxc_device(w%func, w%rho_d, w%sigma_d, w%vrho_d, w%vsigma_d, np)
-                            w%exc(1:nb) = 0.0_dp
-                        ELSE
-                           CALL libxc_gga_exc_vxc_device(w%func, w%rho_d, w%sigma_d, w%exc_d, w%vrho_d, w%vsigma_d, np)
-                        END IF
+                   ELSE IF (is_gga) THEN
+                      SELECT CASE (grad_deriv)
+                      CASE (0)
+                         CALL libxc_gga_exc_device(w%func, w%rho_d, w%sigma_d, w%exc_d, INT(nb, C_SIZE_T))
+                      CASE (1)
+                          IF (no_exc) THEN
+                             CALL libxc_gga_vxc_device(w%func, w%rho_d, w%sigma_d, w%vrho_d, w%vsigma_d, INT(nb, C_SIZE_T))
+                             w%exc(1:nb) = 0.0_dp
+                         ELSE
+                             CALL libxc_gga_exc_vxc_device(w%func, w%rho_d, w%sigma_d, w%exc_d, w%vrho_d, w%vsigma_d, &
+                                          INT(nb, C_SIZE_T))
+                         END IF
                    CASE (2)
                       ! For second derivatives, fall back to CPU implementation for now
                       CALL xc_f03_gga_exc_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
                                                   w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), &
                                                   w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1))
                    END SELECT
-                 ELSE
-                     SELECT CASE (grad_deriv)
-                     CASE (0)
-                        CALL libxc_lda_exc_device(w%func, w%rho_d, w%exc_d, np)
-                     CASE (1)
-                         CALL libxc_lda_exc_vxc_device(w%func, w%rho_d, w%exc_d, w%vrho_d, np)
+                  ELSE
+                      SELECT CASE (grad_deriv)
+                      CASE (0)
+                         CALL libxc_lda_exc_device(w%func, w%rho_d, w%exc_d, INT(nb, C_SIZE_T))
+                      CASE (1)
+                          CALL libxc_lda_exc_vxc_device(w%func, w%rho_d, w%exc_d, w%vrho_d, INT(nb, C_SIZE_T))
                    CASE (2)
                       ! For second derivatives, fall back to CPU implementation for now
                       CALL xc_f03_lda_exc_vxc_fxc(w%func, np, w%rho(1, 1), &
@@ -1985,18 +1997,18 @@ CONTAINS
                    END SELECT
                  END IF
 
-                  ! Copy results back to host
-                  CALL libxc_device_to_host(w%exc(1:nb), w%exc_d, INT(nb))
-                  IF (grad_deriv >= 1) THEN
-                     CALL libxc_device_to_host(w%vrho(1, 1:nb), w%vrho_d, INT(np*nb))
-                     IF (is_gga) THEN
-                        CALL libxc_device_to_host(w%vsigma(1, 1:nb), w%vsigma_d, INT(ns*nb))
-                     END IF
-                     IF (is_mgga) THEN
-                        CALL libxc_device_to_host(w%vlapl(1, 1:nb), w%vlapl_d, INT(np*nb))
-                        CALL libxc_device_to_host(w%vtau(1, 1:nb), w%vtau_d, INT(np*nb))
-                     END IF
-                  END IF
+                   ! Copy results back to host
+                   CALL libxc_device_to_host(w%exc(1:nb), w%exc_d, INT(nb))
+                   IF (grad_deriv >= 1) THEN
+                      CALL libxc_device_to_host_2d(w%vrho, w%vrho_d, w%n_rho_comp, nb)
+                      IF (is_gga) THEN
+                         CALL libxc_device_to_host_2d(w%vsigma, w%vsigma_d, w%n_sigma_comp, nb)
+                      END IF
+                      IF (is_mgga) THEN
+                         CALL libxc_device_to_host_2d(w%vlapl, w%vlapl_d, w%n_lapl_comp, nb)
+                         CALL libxc_device_to_host_2d(w%vtau, w%vtau_d, w%n_tau_comp, nb)
+                      END IF
+                   END IF
               ELSE
                  ! Use CPU path (existing implementation)
                  IF (is_mgga) THEN

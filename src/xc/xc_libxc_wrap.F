@@ -174,10 +174,11 @@ MODULE xc_libxc_wrap
              libxc_func_init_wrapper, libxc_func_end_wrapper, &
              libxc_set_library, &
              libxc_is_cuda, &
-             libxc_device_buffer_alloc, libxc_device_buffer_free, &
-             libxc_host_to_device, libxc_device_to_host, &
-             libxc_assert_device_buffer, &
-             libxc_device_buffer_get_ptr, &
+              libxc_device_buffer_alloc, libxc_device_buffer_free, &
+              libxc_host_to_device, libxc_device_to_host, &
+              libxc_host_to_device_2d, libxc_device_to_host_2d, &
+              libxc_assert_device_buffer, &
+              libxc_device_buffer_get_ptr, &
              libxc_buffer_create, libxc_buffer_free, &
              libxc_buffer_h2d, libxc_buffer_d2h, &
              libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
@@ -764,43 +765,99 @@ CONTAINS
         buffer%size = 0
      END SUBROUTINE libxc_device_buffer_free
 
-      SUBROUTINE libxc_host_to_device(buffer, host, n)
-        USE ISO_C_BINDING, ONLY: C_PTR, C_LOC
-        USE offload_api, ONLY: offload_buffer_type, offload_buffer_h2d
-        TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
-        REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: host
-        INTEGER, INTENT(IN) :: n
-        TYPE(offload_buffer_type) :: offload_buffer
-        REAL(KIND=dp), DIMENSION(n), TARGET :: temp_host
+       SUBROUTINE libxc_host_to_device(buffer, host, n)
+         USE ISO_C_BINDING, ONLY: C_PTR, C_LOC
+         USE offload_api, ONLY: offload_buffer_type, offload_buffer_h2d
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
+         REAL(KIND=dp), DIMENSION(*), INTENT(IN) :: host
+         INTEGER, INTENT(IN) :: n
+         TYPE(offload_buffer_type) :: offload_buffer
+         REAL(KIND=dp), DIMENSION(n), TARGET :: temp_host
 
-        ! Copy host data to a temporary array with proper bounds
-        temp_host(:) = host(1:n)
-        
-        ! Create a temporary offload buffer with the device pointer
-        offload_buffer%c_ptr = buffer%ptr
-        offload_buffer%host_buffer => temp_host
-        
-        CALL offload_buffer_h2d(offload_buffer, n)
-     END SUBROUTINE libxc_host_to_device
+         ! Copy host data to a temporary array with proper bounds
+         temp_host(:) = host(1:n)
+         
+         ! Create a temporary offload buffer with the device pointer
+         offload_buffer%c_ptr = buffer%ptr
+         offload_buffer%host_buffer => temp_host
+         
+         CALL offload_buffer_h2d(offload_buffer, n)
+      END SUBROUTINE libxc_host_to_device
 
-      SUBROUTINE libxc_device_to_host(host, buffer, n)
-        USE ISO_C_BINDING, ONLY: C_PTR, C_LOC
-        USE offload_api, ONLY: offload_buffer_type, offload_buffer_d2h
-        REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: host
-        TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
-        INTEGER, INTENT(IN) :: n
-        TYPE(offload_buffer_type) :: offload_buffer
-        REAL(KIND=dp), DIMENSION(n), TARGET :: temp_host
+      ! Specialized transfer function for 2D host arrays (component, point) to 1D device buffers
+      ! This handles the data layout conversion from CP2K format to Libxc format
+      SUBROUTINE libxc_host_to_device_2d(buffer, host_2d, ncomp, npoints)
+         USE ISO_C_BINDING, ONLY: C_PTR, C_LOC
+         USE offload_api, ONLY: offload_buffer_type, offload_buffer_h2d
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
+         REAL(KIND=dp), DIMENSION(:, :), INTENT(IN) :: host_2d
+         INTEGER, INTENT(IN) :: ncomp, npoints
+         TYPE(offload_buffer_type) :: offload_buffer
+         REAL(KIND=dp), DIMENSION(ncomp * npoints), TARGET :: temp_host
+         INTEGER :: i, j, idx
 
-        ! Create a temporary offload buffer with the device pointer
-        offload_buffer%c_ptr = buffer%ptr
-        offload_buffer%host_buffer => temp_host
-        
-        CALL offload_buffer_d2h(offload_buffer, n)
-        
-        ! Copy data from temporary array to output
-        host(1:n) = temp_host(:)
-     END SUBROUTINE libxc_device_to_host
+         ! Transpose from CP2K layout (component, point) to Libxc layout (interleaved)
+         idx = 1
+         DO i = 1, npoints
+            DO j = 1, ncomp
+               temp_host(idx) = host_2d(j, i)
+               idx = idx + 1
+            END DO
+         END DO
+         
+         ! Create a temporary offload buffer with the device pointer
+         offload_buffer%c_ptr = buffer%ptr
+         offload_buffer%host_buffer => temp_host
+         
+         CALL offload_buffer_h2d(offload_buffer, ncomp * npoints)
+      END SUBROUTINE libxc_host_to_device_2d
+
+       SUBROUTINE libxc_device_to_host(host, buffer, n)
+         USE ISO_C_BINDING, ONLY: C_PTR, C_LOC
+         USE offload_api, ONLY: offload_buffer_type, offload_buffer_d2h
+         REAL(KIND=dp), DIMENSION(*), INTENT(OUT) :: host
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
+         INTEGER, INTENT(IN) :: n
+         TYPE(offload_buffer_type) :: offload_buffer
+         REAL(KIND=dp), DIMENSION(n), TARGET :: temp_host
+
+         ! Create a temporary offload buffer with the device pointer
+         offload_buffer%c_ptr = buffer%ptr
+         offload_buffer%host_buffer => temp_host
+         
+         CALL offload_buffer_d2h(offload_buffer, n)
+         
+         ! Copy data from temporary array to output
+         host(1:n) = temp_host(:)
+      END SUBROUTINE libxc_device_to_host
+
+      ! Specialized transfer function for 1D device buffers to 2D host arrays (component, point)
+      ! This handles the data layout conversion from Libxc format to CP2K format
+      SUBROUTINE libxc_device_to_host_2d(host_2d, buffer, ncomp, npoints)
+         USE ISO_C_BINDING, ONLY: C_PTR, C_LOC
+         USE offload_api, ONLY: offload_buffer_type, offload_buffer_d2h
+         REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT) :: host_2d
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: buffer
+         INTEGER, INTENT(IN) :: ncomp, npoints
+         TYPE(offload_buffer_type) :: offload_buffer
+         REAL(KIND=dp), DIMENSION(ncomp * npoints), TARGET :: temp_host
+         INTEGER :: i, j, idx
+
+         ! Create a temporary offload buffer with the device pointer
+         offload_buffer%c_ptr = buffer%ptr
+         offload_buffer%host_buffer => temp_host
+         
+         CALL offload_buffer_d2h(offload_buffer, ncomp * npoints)
+         
+         ! Transpose from Libxc layout (interleaved) to CP2K layout (component, point)
+         idx = 1
+         DO i = 1, npoints
+            DO j = 1, ncomp
+               host_2d(j, i) = temp_host(idx)
+               idx = idx + 1
+            END DO
+         END DO
+      END SUBROUTINE libxc_device_to_host_2d
 
      LOGICAL FUNCTION libxc_assert_device_buffer(buffer)
         USE ISO_C_BINDING, ONLY: C_PTR, C_NULL_PTR, C_ASSOCIATED
