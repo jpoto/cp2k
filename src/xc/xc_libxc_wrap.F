@@ -143,10 +143,11 @@ MODULE xc_libxc_wrap
 
     ! Create aliases for backward compatibility with LibXC 5.x interface
     PUBLIC :: xc_f03_lda, xc_f03_mgga
-
+ 
     ! Backend selection constants (similar to SPLA)
     INTEGER, PARAMETER, PUBLIC :: do_libxc_cpu = 1, &
-                               do_libxc_gpu = 2
+                               do_libxc_gpu = 2, &
+                               do_libxc_safe = 3
 
      ! Device buffer type for CUDA memory management
      TYPE, PUBLIC :: libxc_device_buffer_type
@@ -155,17 +156,20 @@ MODULE xc_libxc_wrap
      END TYPE libxc_device_buffer_type
 
 ! wrappers for routines
-   PUBLIC :: xc_libxc_wrap_info_refs, &
-             xc_libxc_wrap_version, &
-             xc_libxc_wrap_library_reference, &
-             xc_libxc_wrap_info_needs_laplace, &
-             xc_libxc_wrap_info_no_exc, &
-             xc_libxc_wrap_set_thresholds, &
-             xc_libxc_wrap_functional_get_number, &
-             xc_libxc_wrap_is_under_development, &
-             xc_libxc_get_reference_length, &
-             xc_libxc_check_functional, &
-             xc_libxc_wrap_init_cuda_safe, &
+    PUBLIC :: xc_libxc_wrap_info_refs, &
+              xc_libxc_wrap_version, &
+              xc_libxc_wrap_library_reference, &
+              xc_libxc_wrap_info_needs_laplace, &
+              xc_libxc_wrap_info_no_exc, &
+              xc_libxc_wrap_set_thresholds, &
+               xc_libxc_wrap_functional_get_number, &
+               xc_cuda_wrapper_init, &
+               xc_cuda_wrapper_cleanup, &
+               xc_cuda_wrapper_is_available, &
+               xc_libxc_wrap_init_cuda_safe, &
+              xc_libxc_wrap_is_under_development, &
+              xc_libxc_get_reference_length, &
+              xc_libxc_check_functional, &
              libxc_set_backend, libxc_get_backend, &
              libxc_func_init_wrapper, libxc_func_end_wrapper, &
              libxc_set_library, &
@@ -192,9 +196,25 @@ MODULE xc_libxc_wrap
     INTEGER :: libxc_current_backend = LIBXC_BACKEND_CPU
     INTEGER :: libxc_selected_library = do_libxc_cpu
 
-   ! Alias definitions for backward compatibility
-   PROCEDURE(xc_f03_lda_exc_vxc_fxc_kxc), POINTER :: xc_f03_lda => xc_f03_lda_exc_vxc_fxc_kxc
-   PROCEDURE(xc_f03_mgga_exc_vxc_fxc), POINTER :: xc_f03_mgga => xc_f03_mgga_exc_vxc_fxc
+    ! Alias definitions for backward compatibility
+    PROCEDURE(xc_f03_lda_exc_vxc_fxc_kxc), POINTER :: xc_f03_lda => xc_f03_lda_exc_vxc_fxc_kxc
+    PROCEDURE(xc_f03_mgga_exc_vxc_fxc), POINTER :: xc_f03_mgga => xc_f03_mgga_exc_vxc_fxc
+
+    ! Interface declarations for CUDA wrapper functions
+    INTERFACE
+       FUNCTION xc_cuda_wrapper_init() BIND(C, name="xc_cuda_wrapper_init")
+         USE ISO_C_BINDING, ONLY: C_INT
+         INTEGER(KIND=C_INT) :: xc_cuda_wrapper_init
+       END FUNCTION xc_cuda_wrapper_init
+
+       SUBROUTINE xc_cuda_wrapper_cleanup() BIND(C, name="xc_cuda_wrapper_cleanup")
+       END SUBROUTINE xc_cuda_wrapper_cleanup
+
+       FUNCTION xc_cuda_wrapper_is_available() BIND(C, name="xc_cuda_wrapper_is_available")
+         USE ISO_C_BINDING, ONLY: C_INT
+         INTEGER(KIND=C_INT) :: xc_cuda_wrapper_is_available
+       END FUNCTION xc_cuda_wrapper_is_available
+    END INTERFACE
 
 CONTAINS
 
@@ -228,25 +248,31 @@ CONTAINS
        INTEGER, INTENT(IN)                                :: library
 
        SELECT CASE (library)
-       CASE (do_libxc_cpu)
-          libxc_selected_library = do_libxc_cpu
+        CASE (do_libxc_cpu)
+           libxc_selected_library = do_libxc_cpu
 #if defined (__LIBXC_CUDA)
-       CASE (do_libxc_gpu)
-          libxc_selected_library = do_libxc_gpu
+        CASE (do_libxc_gpu)
+           libxc_selected_library = do_libxc_gpu
+        CASE (do_libxc_safe)
+           libxc_selected_library = do_libxc_safe
 #else
-       CASE (do_libxc_gpu)
-          CPABORT("GPU library requested but CUDA Libxc not available")
+        CASE (do_libxc_gpu)
+           CPABORT("GPU library requested but CUDA Libxc not available")
+        CASE (do_libxc_safe)
+           libxc_selected_library = do_libxc_safe
 #endif
-       CASE DEFAULT
-          CPABORT("Invalid Libxc library specified")
+        CASE DEFAULT
+           CPABORT("Invalid Libxc library specified")
        END SELECT
 
-       ! Automatically set the backend based on library selection
-       IF (libxc_selected_library == do_libxc_gpu) THEN
-          libxc_current_backend = LIBXC_BACKEND_GPU
-       ELSE
-          libxc_current_backend = LIBXC_BACKEND_CPU
-       END IF
+        ! Automatically set the backend based on library selection
+        IF (libxc_selected_library == do_libxc_gpu) THEN
+           libxc_current_backend = LIBXC_BACKEND_GPU
+        ELSE IF (libxc_selected_library == do_libxc_safe) THEN
+           libxc_current_backend = LIBXC_BACKEND_CPU
+        ELSE
+           libxc_current_backend = LIBXC_BACKEND_CPU
+        END IF
     END SUBROUTINE libxc_set_library
 
 ! **************************************************************************************************
@@ -982,38 +1008,32 @@ CONTAINS
          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
       END SUBROUTINE libxc_gga_exc_device
 
-       SUBROUTINE libxc_gga_exc_vxc_device(func, rho_d, sigma_d, exc_d, vrho_d, vsigma_d, np)
-          USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
-          TYPE(xc_f03_func_t), INTENT(IN) :: func
-          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
-          TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d
-          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+      SUBROUTINE libxc_gga_exc_vxc_device(func, rho_d, sigma_d, exc_d, vrho_d, vsigma_d, np)
+         USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+         TYPE(xc_f03_func_t), INTENT(IN) :: func
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d
+         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d
+         INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
 
-          REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, exc_ptr, vrho_ptr, vsigma_ptr
-          TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_exc_ptr, c_vrho_ptr, c_vsigma_ptr
+         REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, exc_ptr, vrho_ptr, vsigma_ptr
+         TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_exc_ptr, c_vrho_ptr, c_vsigma_ptr
 
-          ! Get actual device pointers
-          c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
-          c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
-          c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
-          c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
-          c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
+         ! Get actual device pointers
+         c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+         c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+         c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
+         c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
+         c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
 
-          ! Convert C pointers to Fortran pointers for array interface
-          CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
-          CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
-          CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
-          CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
-          CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
+         ! Convert C pointers to Fortran pointers for array interface
+         CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+         CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
 
-          ! Set device execution flags for CUDA
-          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
-
-          ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
-          CALL xc_f03_gga_exc_vxc(func, np, rho_ptr, sigma_ptr, exc_ptr, vrho_ptr, vsigma_ptr)
-
-          ! Reset to host flags
-          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
+         ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+         CALL xc_f03_gga_exc_vxc(func, np, rho_ptr, sigma_ptr, exc_ptr, vrho_ptr, vsigma_ptr)
        END SUBROUTINE libxc_gga_exc_vxc_device
 
        ! Device-aware GGA vxc wrapper function (without exc)
@@ -1084,49 +1104,43 @@ CONTAINS
          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
       END SUBROUTINE libxc_mgga_exc_device
 
-       SUBROUTINE libxc_mgga_exc_vxc_device(func, rho_d, sigma_d, lapl_d, tau_d, exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d, np)
-          USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
-          TYPE(xc_f03_func_t), INTENT(IN) :: func
-          TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
-          TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d
-          INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
+      SUBROUTINE libxc_mgga_exc_vxc_device(func, rho_d, sigma_d, lapl_d, tau_d, exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d, np)
+         USE ISO_C_BINDING, ONLY: C_SIZE_T, C_PTR, C_F_POINTER
+         TYPE(xc_f03_func_t), INTENT(IN) :: func
+         TYPE(libxc_device_buffer_type), INTENT(IN) :: rho_d, sigma_d, lapl_d, tau_d
+         TYPE(libxc_device_buffer_type), INTENT(OUT) :: exc_d, vrho_d, vsigma_d, vlapl_d, vtau_d
+         INTEGER(KIND=C_SIZE_T), INTENT(IN) :: np
 
-          REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, exc_ptr
-          REAL(KIND=dp), DIMENSION(:), POINTER :: vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr
-          TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_lapl_ptr, c_tau_ptr, c_exc_ptr
-          TYPE(C_PTR) :: c_vrho_ptr, c_vsigma_ptr, c_vlapl_ptr, c_vtau_ptr
+         REAL(KIND=dp), DIMENSION(:), POINTER :: rho_ptr, sigma_ptr, lapl_ptr, tau_ptr
+         REAL(KIND=dp), DIMENSION(:), POINTER :: exc_ptr, vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr
+         TYPE(C_PTR) :: c_rho_ptr, c_sigma_ptr, c_lapl_ptr, c_tau_ptr
+         TYPE(C_PTR) :: c_exc_ptr, c_vrho_ptr, c_vsigma_ptr, c_vlapl_ptr, c_vtau_ptr
 
-          ! Get actual device pointers
-          c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
-          c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
-          c_lapl_ptr = libxc_device_buffer_get_ptr(lapl_d)
-          c_tau_ptr = libxc_device_buffer_get_ptr(tau_d)
-          c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
-          c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
-          c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
-          c_vlapl_ptr = libxc_device_buffer_get_ptr(vlapl_d)
-          c_vtau_ptr = libxc_device_buffer_get_ptr(vtau_d)
+         ! Get actual device pointers
+         c_rho_ptr = libxc_device_buffer_get_ptr(rho_d)
+         c_sigma_ptr = libxc_device_buffer_get_ptr(sigma_d)
+         c_lapl_ptr = libxc_device_buffer_get_ptr(lapl_d)
+         c_tau_ptr = libxc_device_buffer_get_ptr(tau_d)
+         c_exc_ptr = libxc_device_buffer_get_ptr(exc_d)
+         c_vrho_ptr = libxc_device_buffer_get_ptr(vrho_d)
+         c_vsigma_ptr = libxc_device_buffer_get_ptr(vsigma_d)
+         c_vlapl_ptr = libxc_device_buffer_get_ptr(vlapl_d)
+         c_vtau_ptr = libxc_device_buffer_get_ptr(vtau_d)
 
-          ! Convert C pointers to Fortran pointers for array interface
-          CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
-          CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
-          CALL C_F_POINTER(c_lapl_ptr, lapl_ptr, [INT(np)])
-          CALL C_F_POINTER(c_tau_ptr, tau_ptr, [INT(np)])
-          CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
-          CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
-          CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
-          CALL C_F_POINTER(c_vlapl_ptr, vlapl_ptr, [INT(np)])
-          CALL C_F_POINTER(c_vtau_ptr, vtau_ptr, [INT(np)])
+         ! Convert C pointers to Fortran pointers for array interface
+         CALL C_F_POINTER(c_rho_ptr, rho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_sigma_ptr, sigma_ptr, [INT(np)])
+         CALL C_F_POINTER(c_lapl_ptr, lapl_ptr, [INT(np)])
+         CALL C_F_POINTER(c_tau_ptr, tau_ptr, [INT(np)])
+         CALL C_F_POINTER(c_exc_ptr, exc_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vrho_ptr, vrho_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vsigma_ptr, vsigma_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vlapl_ptr, vlapl_ptr, [INT(np)])
+         CALL C_F_POINTER(c_vtau_ptr, vtau_ptr, [INT(np)])
 
-          ! Set device execution flags for CUDA
-          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_DEVICE)
-
-          ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
-          CALL xc_f03_mgga_exc_vxc(func, np, rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, &
+         ! Call CUDA Libxc directly with device pointers (as Fortran arrays)
+         CALL xc_f03_mgga_exc_vxc(func, np, rho_ptr, sigma_ptr, lapl_ptr, tau_ptr, &
                                      exc_ptr, vrho_ptr, vsigma_ptr, vlapl_ptr, vtau_ptr)
-
-          ! Reset to host flags
-          CALL xc_f03_func_info_set_default_flags(XC_FLAGS_ON_HOST)
        END SUBROUTINE libxc_mgga_exc_vxc_device
 
        ! Device-aware MGGA vxc wrapper function (without exc)
