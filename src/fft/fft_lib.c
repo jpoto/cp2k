@@ -7,6 +7,7 @@
 
 #include "fft_lib.h"
 #include "../common/cp_data_dir.h"
+#include "../offload/offload_runtime.h"
 #include "fft_lib_fftw.h"
 #include "fft_timer.h"
 #include "fpga/fft_fpga.h"
@@ -50,6 +51,9 @@ void fft_init_lib(const fft_lib lib, const int fftw_planning_flag,
   switch (fft_lib_choice) {
   case FFT_LIB_FFTW:
     printf("Using FFTW library.\n");
+    break;
+  case FFT_LIB_GPU:
+    printf("Using GPU-FFT library.\n");
     break;
   default:
     assert(0 && "Unknown FFT library.");
