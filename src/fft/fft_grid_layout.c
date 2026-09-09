@@ -181,6 +181,7 @@ void grid_free_fft_grid_layout(fft_grid_layout *fft_grid) {
       free(fft_grid->index_to_ray);
       free(fft_grid->index_to_ray_neg);
       free(fft_grid->index_to_ray_pos);
+      free(fft_grid->index_to_gsquared);
       free(fft_grid);
     }
   }
