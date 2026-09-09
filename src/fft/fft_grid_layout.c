@@ -814,11 +814,13 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
     // half index in x-direction, we need to subtract the number of related
     // elements
     int number_of_x_elements = bounds_gs[0][1];
-    if (bounds_gs[0][0] == 0)
-      number_of_x_elements--;
-    if (npts_global[0] % 2 == 0 &&
-        bounds_gs[0][0] + bounds_gs[0][1] - 1 == npts_global[0] / 2)
-      number_of_x_elements--;
+    if (bounds_gs[0][1] > 0) {
+      if (bounds_gs[0][0] == 0)
+        number_of_x_elements--;
+      if (npts_global[0] % 2 == 0 &&
+          bounds_gs[0][0] + bounds_gs[0][1] - 1 == npts_global[0] / 2)
+        number_of_x_elements--;
+    }
     number_of_negative_gs_points =
         number_of_x_elements * bounds_gs[1][1] * bounds_gs[2][1];
   }
@@ -1493,7 +1495,7 @@ void fft_3d_fw_with_layout(const double complex *restrict grid_rs,
 }
 
 /*******************************************************************************
- * \brief Performs a forward 3D-FFT to the sorted format.
+ * \brief Performs a forward 3D-FFT to the blocked format.
  * \param grid_rs complex-valued data in real space.
  * \param grid_gs complex data in reciprocal space.
  * \author Frederick Stein

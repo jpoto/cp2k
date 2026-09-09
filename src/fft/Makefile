@@ -14,7 +14,7 @@ ifeq ($(MPICC_PATH),)
   LIBS += -lfftw3 -lfftw3_omp -lm
 else
   CC = mpicc
-  CFLAGS += -D__FFTW3_MPI
+  CFLAGS += -D__FFTW3_MPI -D__parallel
   LIBS += -lfftw3_mpi -lfftw3 -lfftw3_omp -lm
 endif
 

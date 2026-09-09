@@ -196,6 +196,8 @@ void fft_3d_fw_blocked(
                                 fft_sizes_gs[1] * fft_sizes_gs[2],
                                 fft_sizes_gs[0],
                                 fft_sizes_gs[1] * fft_sizes_gs[2]);
+        zdscal_(&number_of_points_to_scale, &scaling_factor, grid_gs,
+                &stride_size);
       }
     } else {
       if (is_complex) {
@@ -533,9 +535,6 @@ void fft_3d_fw_r2c_blocked(
     shared(number_of_negative_points, index_to_cart_neg, grid_gs,              \
                grid_buffer_2, scaling_factor, stderr)
         for (int index = 0; index < number_of_negative_points; index++) {
-          fprintf(stderr, "%i %i %i\n", index, index_to_cart_neg[index][0],
-                  index_to_cart_neg[index][1]);
-          fflush(stderr);
           grid_gs[index_to_cart_neg[index][0]] =
               scaling_factor * conj(grid_buffer_2[index_to_cart_neg[index][1]]);
         }

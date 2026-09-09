@@ -48,8 +48,7 @@ int fft_test_3d_cartesian(const int npts_global[3], const int test_every) {
   int my_sizes_gs[3];
   for (int dir = 0; dir < 3; dir++)
     my_sizes_gs[dir] = my_bounds_gs[dir][1];
-  const int my_number_of_elements_gs =
-      imax(product3(my_sizes_gs), fft_grid_layout->npts_gs_local);
+  const int my_number_of_elements_gs = product3(my_sizes_gs);
 
   const double scale = 1.0 / ((double)npts_global[0]) /
                        ((double)npts_global[1]) / ((double)npts_global[2]);
@@ -250,34 +249,31 @@ int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
           rs_data[((nx - my_bounds_rs[0][0]) * my_sizes_rs[1] + ny -
                    my_bounds_rs[1][0]) *
                       my_sizes_rs[2] +
-                  (nz - my_bounds_rs[2][0])] = 1.0;
+                  (nz - my_bounds_rs[2][0])] = CMPLX(1.0, 0.0);
 
         fft_3d_fw_with_layout_to_cart(rs_data, gs_data, fft_grid_layout);
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, my_bounds_gs, my_sizes_gs, nx, ny, nz, npts_global,        \
-               my_number_of_elements_gs, scale) reduction(max : max_error)
-        for (int index = 0; index < my_number_of_elements_gs; index++) {
-          const int mx =
-              my_number_of_elements_gs / my_sizes_gs[1] / my_sizes_gs[2] +
-              my_bounds_gs[0][0];
-          const int my =
-              my_number_of_elements_gs / my_sizes_gs[2] % my_sizes_gs[1] +
-              my_bounds_gs[1][0];
-          const int mz =
-              my_number_of_elements_gs % my_sizes_gs[2] + my_bounds_gs[0][0];
-          const double complex my_value = gs_data[index];
-          const double complex ref_value =
-              scale * cexp(-2.0 * I * pi *
-                           (((double)mx) * nx / npts_global[0] +
-                            ((double)my) * ny / npts_global[1] +
-                            ((double)mz) * nz / npts_global[2]));
-          double current_error = cabs(my_value - ref_value);
-          if (current_error > 1e-12)
-            printf("ERROR %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", mx, my,
-                   mz, nx, ny, nz, index, creal(my_value), cimag(my_value),
-                   creal(ref_value), cimag(ref_value));
-          max_error = fmax(max_error, current_error);
+    shared(gs_data, my_bounds_gs, nx, ny, nz, npts_global,        \
+               scale) reduction(max : max_error)
+        for (int mx = 0; mx < my_bounds_gs[0][1]; mx++) {
+          for (int my = 0; my < my_bounds_gs[1][1]; my++) {
+            for (int mz = 0; mz < my_bounds_gs[2][1]; mz++) {
+              const int index = (mx*my_bounds_gs[1][1]+my)*my_bounds_gs[2][1]+mz;
+              const double complex my_value = gs_data[index];
+              const double complex ref_value =
+                  scale * cexp(-2.0 * I * pi *
+                              (((double)(mx+my_bounds_gs[0][0])* nx / npts_global[0] +
+                                ((double)(my+my_bounds_gs[1][0])) * ny / npts_global[1] +
+                                ((double)(mz+my_bounds_gs[2][0])) * nz / npts_global[2])));
+              double current_error = cabs(my_value - ref_value);
+              if (current_error > 1e-12)
+                printf("ERROR FW %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", mx, my,
+                      mz, nx, ny, nz, index, creal(my_value), cimag(my_value),
+                      creal(ref_value), cimag(ref_value));
+              max_error = fmax(max_error, current_error);
+            }    
+          }
         }
       }
     }
@@ -306,21 +302,16 @@ int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
         memset(gs_data, 0, my_number_of_elements_gs * sizeof(double complex));
 
 #pragma omp parallel for default(none)                                         \
-    shared(gs_data, my_sizes_gs, my_bounds_gs, my_number_of_elements_gs, nx,   \
-               ny, nz, npts_global) reduction(max : max_error)
-        for (int index = 0; index < my_number_of_elements_gs; index++) {
-          const int mx =
-              my_number_of_elements_gs / my_sizes_gs[1] / my_sizes_gs[2] +
-              my_bounds_gs[0][0];
-          const int my =
-              my_number_of_elements_gs / my_sizes_gs[2] % my_sizes_gs[1] +
-              my_bounds_gs[1][0];
-          const int mz =
-              my_number_of_elements_gs % my_sizes_gs[2] + my_bounds_gs[0][0];
-          gs_data[index] = cexp(-2.0 * I * pi *
-                                (((double)mx) * nx / npts_global[0] +
-                                 ((double)my) * ny / npts_global[1] +
-                                 ((double)mz) * nz / npts_global[2]));
+    shared(gs_data, nx, ny, nz, npts_global, my_bounds_gs, scale)
+        for (int index_x = 0; index_x < my_bounds_gs[0][1]; index_x++) {
+          for (int index_y = 0; index_y < my_bounds_gs[1][1]; index_y++) {
+            for (int index_z = 0; index_z < my_bounds_gs[2][1]; index_z++) {
+              gs_data[(index_x*my_bounds_gs[1][1]+index_y)*my_bounds_gs[2][1]+index_z] = scale * cexp(-2.0 * I * pi *
+                                    (((double)(index_x+my_bounds_gs[0][0])) * nx / npts_global[0] +
+                                    ((double)(index_y+my_bounds_gs[1][0])) * ny / npts_global[1] +
+                                    ((double)(index_z+my_bounds_gs[2][0])) * nz / npts_global[2]));
+            }
+          }
         }
 
         fft_3d_bw_with_layout_from_cart(gs_data, rs_data, fft_grid_layout);
@@ -330,16 +321,16 @@ int fft_test_3d_cartesian_cart(const int npts_global[3], const int test_every) {
                my_bounds_rs) reduction(max : max_error)
         for (int index = 0; index < my_number_of_elements_rs; index++) {
           const double complex my_value = rs_data[index];
-          const int index_x = index % my_sizes_rs[2] + my_bounds_rs[2][0];
+          const int index_x =
+              index / my_sizes_rs[2] / my_sizes_rs[1] + my_bounds_rs[0][0];
           const int index_y =
               index / my_sizes_rs[2] % my_sizes_rs[1] + my_bounds_rs[1][0];
-          const int index_z =
-              index / my_sizes_rs[2] / my_sizes_rs[1] + my_bounds_rs[0][0];
+          const int index_z = index % my_sizes_rs[2] + my_bounds_rs[2][0];
           const double complex ref_value =
               index_x == nx && index_y == ny && index_z == nz ? 1.0 : 0.0;
           double current_error = cabs(my_value - ref_value);
           if (current_error > 1e-12)
-            printf("ERROR %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", index_x,
+            printf("ERROR BW %i %i %i/%i %i %i (%i): (%f %f) (%f %f)\n", index_x,
                    index_y, index_z, nx, ny, nz, index, creal(my_value),
                    cimag(my_value), creal(ref_value), cimag(ref_value));
           max_error = fmax(max_error, current_error);
@@ -1298,11 +1289,17 @@ int fft_test_3d() {
   const int npts_global_small_reverse[3] = {5, 3, 2};
 
   clock_t begin = clock();
-  // Check the cartesian layout
+  // Check the cartesian to sorted layout
   errors += fft_test_3d_cartesian(npts_global, 5);
   errors += fft_test_3d_cartesian(npts_global_small, 13);
   errors += fft_test_3d_cartesian(npts_global_reverse, 11);
   errors += fft_test_3d_cartesian(npts_global_small_reverse, 7);
+
+  // Check the cartesian to cartesian layout
+  errors += fft_test_3d_cartesian_cart(npts_global, 5);
+  errors += fft_test_3d_cartesian_cart(npts_global_small, 13);
+  errors += fft_test_3d_cartesian_cart(npts_global_reverse, 11);
+  errors += fft_test_3d_cartesian_cart(npts_global_small_reverse, 7);
 
   // Check the cartesian layout
   errors += fft_test_3d_r2c_cartesian(npts_global, 13);
