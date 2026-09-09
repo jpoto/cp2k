@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
 
 #include "../mpiwrap/cp_mpi.h"
 #include "../offload/offload_library.h"
@@ -47,6 +48,21 @@ int main(int argc, char *argv[]) {
   const bool debug = false;
   const int backend = FFT_LIB_FFTW;
   const int planning_mode = FFT_MEASURE;
+
+  if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
+    printf("Number of MPI ranks: %i\n", cp_mpi_comm_size(cp_mpi_get_comm_world()));
+    int number_of_threads = 1;
+    #pragma omp parallel default(none) shared(number_of_threads)
+    {
+    #pragma omp single
+    {
+    number_of_threads = omp_get_num_threads();
+    }
+  }
+    printf("Number of OpenMP threads: %i\n", number_of_threads);
+    fflush(stdout);
+  }
+  cp_mpi_barrier(cp_mpi_get_comm_world());
 
   int errors = run_unittests(debug, backend, planning_mode, true, true, 0.01);
 

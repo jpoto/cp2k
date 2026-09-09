@@ -775,7 +775,7 @@ void grid_create_fft_grid_layout(fft_grid_layout **fft_grid,
         // dimension
         if ((npts_global[2] - npts_global[1]) *
                 (my_fft_grid->proc_grid[0] - my_fft_grid->proc_grid[1]) <
-            0) {
+            0 && my_fft_grid->proc_grid[1] > 1) {
           const int proc_grid_0 = my_fft_grid->proc_grid[0];
           my_fft_grid->proc_grid[0] = my_fft_grid->proc_grid[1];
           my_fft_grid->proc_grid[1] = proc_grid_0;
@@ -1060,7 +1060,7 @@ void grid_create_fft_grid_layout_from_reference(
     // dimension
     if ((npts_global[2] - npts_global[1]) *
             (my_fft_grid->proc_grid[0] - my_fft_grid->proc_grid[1]) <
-        0) {
+        0 && my_fft_grid->proc_grid[1] > 1) {
       const int proc_grid_0 = my_fft_grid->proc_grid[0];
       my_fft_grid->proc_grid[0] = my_fft_grid->proc_grid[1];
       my_fft_grid->proc_grid[1] = proc_grid_0;
