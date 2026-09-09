@@ -1152,7 +1152,7 @@ void fft_3d_fw_ray(const double complex *restrict grid_rs,
       // (x_d,y,z_d) -> (z,xy_d)
 
     // but we need to redistribute to rays (x_d,y,z_d) -> (z,xy_d)
-    collect_z_and_distribute_xy_ray_pack_transposed(grid_buffer_2, grid_buffer_1,
+    collect_z_and_distribute_xy_ray_pack(grid_buffer_2, grid_buffer_1,
                                     redistribution);
     collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
                                     redistribution, comm);
@@ -1337,7 +1337,7 @@ void fft_3d_fw_r2c_ray(
       // (x_d,y,z_d) -> (z,xy_d)
 
     // but we need to redistribute to rays (x_d,y,z_d) -> (z,xy_d)
-    collect_z_and_distribute_xy_ray_pack_transposed(grid_buffer_2, grid_buffer_1,
+    collect_z_and_distribute_xy_ray_pack(grid_buffer_2, grid_buffer_1,
                                     redistribution);
     collect_z_and_distribute_xy_ray_comm(grid_buffer_1, grid_buffer_2,
                                     redistribution, comm);
@@ -1564,7 +1564,7 @@ void fft_3d_bw_ray(const double complex *restrict grid_gs,
                                     redistribution);
     collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
                                     redistribution, comm);
-    collect_xy_and_distribute_z_ray_unpack_transposed(grid_buffer_2, grid_buffer_1,
+    collect_xy_and_distribute_z_ray_unpack(grid_buffer_2, grid_buffer_1,
                                     redistribution);
 
       if (fft_sizes_rs[2] > 0) {
@@ -1760,7 +1760,7 @@ void fft_3d_bw_c2r_ray(
                                     redistribution);
     collect_xy_and_distribute_z_ray_comm(grid_buffer_1, grid_buffer_2,
                                     redistribution, comm);
-    collect_xy_and_distribute_z_ray_unpack_transposed(grid_buffer_2, grid_buffer_1,
+    collect_xy_and_distribute_z_ray_unpack(grid_buffer_2, grid_buffer_1,
                                     redistribution);
 
       if (fft_sizes_rs[2] > 0) {
