@@ -62,14 +62,16 @@ int main(int argc, char *argv[]) {
 
   if (fft_lib_has_guru_interface()) {
 
-    int errors = run_unittests(debug, backend, planning_mode, true, false, 0.01);
+     int errors_guru = run_unittests(debug, backend, planning_mode, true, false, 0.01);
+     errors += errors_guru;
 
-    // Test also the reference backend and without distributed FFTs from the
-    // library
-    if (fft_lib_use_mpi()) {
-      errors += run_unittests(debug, backend, planning_mode, false, false, 0.01);
-    }
-  }
+     // Test also the reference backend and without distributed FFTs from the
+     // library
+     if (fft_lib_use_mpi()) {
+       int errors_no_mpi = run_unittests(debug, backend, planning_mode, false, false, 0.01);
+       errors += errors_no_mpi;
+     }
+   }
 
   fft_finalize_lib(NULL);
   fft_finalize_timer();

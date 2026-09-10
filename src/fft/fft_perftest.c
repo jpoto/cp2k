@@ -413,6 +413,7 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
   //  run_test_ray_r2c((const int[3]){600, 180, 120}, 10, true);
 
   fft_print_timing_report(threshold);
+  fft_finalize_acc_lib();
 }
 
 int main(int argc, char *argv[]) {
