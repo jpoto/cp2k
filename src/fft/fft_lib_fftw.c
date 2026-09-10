@@ -1568,8 +1568,11 @@ void fft_fftw_3d_fw_local(const int fft_size[3], double complex *grid_in,
     bool has_plan_for_last_thread[3] = {false, false, false};
     {
       const int number_of_ffts = fft_size[1] * fft_size[2];
-      block_sizes[0] =
-          (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      block_sizes[0] = (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      // Ensure we don't overshoot the total number of FFTs
+      if (block_sizes[0] * number_of_threads > number_of_ffts) {
+          block_sizes[0] = number_of_ffts / number_of_threads;
+      }
       fft_iodim dim = {
           .n = fft_size[0], .is = number_of_ffts, .os = number_of_ffts};
       fft_iodim howmany_dim = {.n = block_sizes[0], .is = 1, .os = 1};
@@ -1588,8 +1591,11 @@ void fft_fftw_3d_fw_local(const int fft_size[3], double complex *grid_in,
     }
     {
       const int number_of_ffts = fft_size[0];
-      block_sizes[1] =
-          (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      block_sizes[1] = (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      // Ensure we don't overshoot the total number of FFTs
+      if (block_sizes[1] * number_of_threads > number_of_ffts) {
+          block_sizes[1] = number_of_ffts / number_of_threads;
+      }
       fft_iodim dim = {.n = fft_size[1], .is = fft_size[2], .os = fft_size[2]};
       fft_iodim howmany_dims[2] = {{.n = block_sizes[1],
                                     .is = fft_size[1] * fft_size[2],
@@ -1613,8 +1619,11 @@ void fft_fftw_3d_fw_local(const int fft_size[3], double complex *grid_in,
     }
     {
       const int number_of_ffts = fft_size[0] * fft_size[1];
-      block_sizes[2] =
-          (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      block_sizes[2] = (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      // Ensure we don't overshoot the total number of FFTs
+      if (block_sizes[2] * number_of_threads > number_of_ffts) {
+          block_sizes[2] = number_of_ffts / number_of_threads;
+      }
       fft_iodim dim = {.n = fft_size[2], .is = 1, .os = 1};
       fft_iodim howmany_dim = {
           .n = block_sizes[2], .is = fft_size[2], .os = fft_size[2]};
@@ -1867,8 +1876,11 @@ void fft_fftw_3d_bw_local(const int fft_size[3], double complex *grid_in,
     bool has_plan_for_last_thread[3] = {false, false, false};
     {
       const int number_of_ffts = fft_size[1] * fft_size[2];
-      block_sizes[0] =
-          (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      block_sizes[0] = (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      // Ensure we don't overshoot the total number of FFTs
+      if (block_sizes[0] * number_of_threads > number_of_ffts) {
+          block_sizes[0] = number_of_ffts / number_of_threads;
+      }
       fft_iodim dim = {
           .n = fft_size[0], .is = number_of_ffts, .os = number_of_ffts};
       fft_iodim howmany_dim = {.n = block_sizes[0], .is = 1, .os = 1};
@@ -1887,8 +1899,11 @@ void fft_fftw_3d_bw_local(const int fft_size[3], double complex *grid_in,
     }
     {
       const int number_of_ffts = fft_size[0];
-      block_sizes[1] =
-          (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      block_sizes[1] = (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      // Ensure we don't overshoot the total number of FFTs
+      if (block_sizes[1] * number_of_threads > number_of_ffts) {
+          block_sizes[1] = number_of_ffts / number_of_threads;
+      }
       fft_iodim dim = {.n = fft_size[1], .is = fft_size[2], .os = fft_size[2]};
       fft_iodim howmany_dims[2] = {{.n = block_sizes[1],
                                     .is = fft_size[1] * fft_size[2],
@@ -1912,8 +1927,11 @@ void fft_fftw_3d_bw_local(const int fft_size[3], double complex *grid_in,
     }
     {
       const int number_of_ffts = fft_size[0] * fft_size[1];
-      block_sizes[2] =
-          (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      block_sizes[2] = (number_of_ffts + number_of_threads - 1) / number_of_threads;
+      // Ensure we don't overshoot the total number of FFTs
+      if (block_sizes[2] * number_of_threads > number_of_ffts) {
+          block_sizes[2] = number_of_ffts / number_of_threads;
+      }
       fft_iodim dim = {.n = fft_size[2], .is = 1, .os = 1};
       fft_iodim howmany_dim = {
           .n = block_sizes[2], .is = fft_size[2], .os = fft_size[2]};
