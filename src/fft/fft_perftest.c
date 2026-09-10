@@ -323,10 +323,11 @@ static void run_test_ray_r2c(const int fft_size[3], const int number_of_runs,
 void run_perftests(const bool debug, const int backend, const int planning_mode,
                const bool use_mpi, const bool use_guru,
                const double threshold) {
-  fft_finalize_timer();
-  fft_finalize_lib(NULL);
-  fft_init_timer(debug);
-  fft_init_lib(backend, planning_mode, use_mpi, use_guru, NULL);
+   fft_finalize_timer();
+   fft_finalize_lib(NULL);
+   fft_init_timer(debug);
+   fft_init_acc_lib();
+   fft_init_lib(backend, planning_mode, use_mpi, use_guru, NULL);
 
   // These are approximate grid sizes of the finest grid level for the
   // standard benchmark systems in benchmarks/QS
@@ -414,19 +415,21 @@ void run_perftests(const bool debug, const int backend, const int planning_mode,
 }
 
 int main(int argc, char *argv[]) {
-  cp_mpi_init(&argc, &argv);
+   cp_mpi_init(&argc, &argv);
 
-  if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
-    printf("Number of processes: %i\n",
-           cp_mpi_comm_size(cp_mpi_get_comm_world()));
-    printf("Number of threads per process: %i\n", omp_get_max_threads());
-    fflush(stdout);
-  }
+   if (cp_mpi_comm_rank(cp_mpi_get_comm_world()) == 0) {
+     printf("Number of processes: %i\n",
+            cp_mpi_comm_size(cp_mpi_get_comm_world()));
+     printf("Number of threads per process: %i\n", omp_get_max_threads());
+     fflush(stdout);
+   }
 
-  const bool debug = false;
-  const int backend = FFT_LIB_FFTW;
-  const int planning_mode = FFT_ESTIMATE;
-  const double threshold = 0.01;
+   offload_set_chosen_device(0);
+
+   const bool debug = false;
+   const int backend = FFT_LIB_GPU;
+   const int planning_mode = FFT_ESTIMATE;
+   const double threshold = 0.01;
 
   // Test with Guru and MPI backend turned on
   run_perftests(debug, backend, planning_mode, true, true, threshold);
