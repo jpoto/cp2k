@@ -6,6 +6,7 @@
 /*----------------------------------------------------------------------------*/
 
 #include "../mpiwrap/cp_mpi.h"
+#include "../offload/offload_library.h"
 #include "fft_grid_layout.h"
 #include "fft_lib.h"
 #include "fft_timer.h"
