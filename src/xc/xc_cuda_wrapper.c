@@ -393,19 +393,14 @@ int xc_cuda_wrapper_mgga_exc_vxc(xc_func_type *func, int np, const double *rho,
     // Set CUDA execution flags
     xc_func_set_dens_threshold(func, 1e-12);
 
-    // Call CUDA Libxc with validated pointers
-    int result = xc_mgga_exc_vxc(
+    // Call CUDA Libxc with validated pointers (returns void in current libxc)
+    xc_mgga_exc_vxc(
         func, np, (const double *)ctx.rho_ctx.cuda_ptr,
         (const double *)ctx.sigma_ctx.cuda_ptr,
         (const double *)ctx.lapl_ctx.cuda_ptr,
         (const double *)ctx.tau_ctx.cuda_ptr, (double *)ctx.exc_ctx.cuda_ptr,
         (double *)ctx.vrho_ctx.cuda_ptr, (double *)ctx.vsigma_ctx.cuda_ptr,
         (double *)ctx.vlapl_ctx.cuda_ptr, (double *)ctx.vtau_ctx.cuda_ptr);
-
-    if (result != 0) {
-      LOG_ERROR("CUDA MGGA operation failed, falling back to CPU");
-      ctx.fallback_to_cpu = 1;
-    }
   }
 
   // Fallback to CPU if CUDA failed or is not available

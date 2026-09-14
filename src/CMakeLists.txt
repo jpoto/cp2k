@@ -1443,7 +1443,8 @@ list(
   base/machine_cpuid.c
   base/openmp_trace.c
   base/openmp_trace.c
-  common/cp_data_dir.c)
+  common/cp_data_dir.c
+  xc/xc_cuda_wrapper.c)
 
 set(CP2K_OFFLOAD_SRCS_C offload/offload_buffer.c offload/offload_library.c
                         offload/offload_mempool.c)
