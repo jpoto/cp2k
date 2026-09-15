@@ -1883,6 +1883,8 @@ endif()
 target_link_libraries(cp2k PUBLIC cp2k_link_libs)
 
 if(CP2K_USE_ACCEL MATCHES "CUDA" AND CP2K_LIBXC_CUDA_SUPPORT)
+  # __LIBXC_GPU: LibXC device backend enabled (CUDA libxc serves as both the
+  # CUDA and the CPU backend).
   target_compile_definitions(cp2k PUBLIC __LIBXC_GPU)
 endif()
 target_compile_definitions(

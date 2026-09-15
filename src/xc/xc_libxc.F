@@ -150,14 +150,16 @@ MODULE xc_libxc
              libxc_check_existence_in_libxc, libxc_release_workers
 
 #if defined (__LIBXC)
-   ! Number of grid points handed to LibXC in a single call. LibXC amortizes its
-   ! per-call work (argument checks, output initialization and, for functionals
-   ! built by mixing components, a full allocate/free cycle of the component
-   ! buffers) over the points in the call, so evaluating point by point paid that
-   ! cost once per point. Blocking rather than passing the whole grid keeps the
-   ! staging buffers inside the cache; the timing is flat between roughly 128 and
-   ! 2048 points, so the exact value is not critical.
-   INTEGER, PARAMETER, PRIVATE :: libxc_block_size = 4096
+   ! CPU/OpenMP staging-buffer budget, taken from master. The number of doubles
+   ! a single grid point occupies spans a factor of twenty over the families,
+   ! spin cases and derivative orders, so the block length is derived from the
+   ! per-point footprint rather than fixed: it is cut to libxc_block_bytes and
+   ! clamped to [libxc_block_min, libxc_block_max]. This block sizing bounds the
+   ! CPU/OpenMP path only; the GPU path evaluates the whole grid in a single
+   ! call and is not subject to it.
+   INTEGER, PARAMETER, PRIVATE :: libxc_block_bytes = 256*1024
+   INTEGER, PARAMETER, PRIVATE :: libxc_block_min = 64
+   INTEGER, PARAMETER, PRIVATE :: libxc_block_max = 512
 
 ! **************************************************************************************************
 !> \brief One LibXC functional object plus the buffers used to hand it a block of
@@ -168,6 +170,9 @@ MODULE xc_libxc
       TYPE(xc_f03_func_t)                                :: func = xc_f03_func_t()
       TYPE(xc_f03_func_info_t)                           :: info = xc_f03_func_info_t()
       LOGICAL                                            :: is_init = .FALSE.
+      ! number of points the staging buffers were allocated for; the CPU/OpenMP
+      ! blocking in the calc routines is derived from this, matching master
+      INTEGER                                            :: nb = 0
       ! staging buffers, dimensioned (component, point)
       REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: rho, sigma, lapl, tau
       ! the floored gradient norms the spin-polarized chain rule is written in
@@ -692,9 +697,24 @@ CONTAINS
       TYPE(libxc_worker_type), INTENT(INOUT)             :: worker
       INTEGER, INTENT(IN)                                :: family, nspin
 
-      INTEGER                                            :: nb, nl, np, ns
+      INTEGER                                            :: nb, nl, np, ns, ncomp
 
-      nb = libxc_block_size
+      ! Size the CPU block from the per-point staging footprint, as master does:
+      ! the number of doubles a single point occupies spans a factor of twenty
+      ! over families and spin cases, so a fixed length in points would size the
+      ! buffers anywhere between tens and hundreds of KiB. Build a one-point
+      ! probe worker, count its components, and cut the real block to the byte
+      ! budget. This keeps the CPU/OpenMP blocking identical to master. The CUDA
+      ! path is not capped by this: it grows the buffers to the whole grid via
+      ! libxc_worker_resize_cuda.
+      BLOCK
+         TYPE(libxc_worker_type)                         :: probe
+         CALL libxc_worker_alloc_probe(probe, family, nspin)
+         ncomp = libxc_worker_ncomp(probe)
+      END BLOCK
+      nb = MIN(libxc_block_max, &
+               MAX(libxc_block_min, libxc_block_bytes/(ncomp*(STORAGE_SIZE(0.0_dp)/8))))
+
       ! number of components per point, cf. the LibXC manual
       IF (nspin == XC_POLARIZED) THEN
          np = 2   ! rho, vrho, lapl, tau, vlapl, vtau
@@ -742,7 +762,10 @@ CONTAINS
          worker%vlapl = 0.0_dp
       END SELECT
 
-      ! Allocate CUDA device buffers if CUDA backend is available
+      ! Allocate CUDA device buffers if CUDA backend is available. They are
+      ! sized to the CPU block here, but the CUDA path grows them on demand to
+      ! the full point set of the grid via libxc_worker_resize_cuda; this block
+      ! size is not a cap for CUDA.
       IF (libxc_is_cuda()) THEN
          CALL libxc_device_buffer_alloc(worker%rho_d, np*nb)
          CALL libxc_device_buffer_alloc(worker%exc_d, nb)
@@ -763,7 +786,261 @@ CONTAINS
          END SELECT
       END IF
 
+      worker%nb = nb
+
    END SUBROUTINE libxc_worker_alloc
+
+! **************************************************************************************************
+!> \brief Number of buffer components a single grid point occupies in a worker.
+!> \param worker the worker
+!> \return components per point, summed over the buffers it actually carries
+!> \author S. Lehtola
+! **************************************************************************************************
+   FUNCTION libxc_worker_ncomp(worker) RESULT(ncomp)
+      TYPE(libxc_worker_type), INTENT(IN)                :: worker
+      INTEGER                                            :: ncomp
+
+      ncomp = SIZE(worker%rho, 1) + SIZE(worker%exc) + SIZE(worker%vrho, 1) + &
+              SIZE(worker%v2rho2, 1) + SIZE(worker%v3rho3, 1)
+      IF (ALLOCATED(worker%sigma)) THEN
+         ncomp = ncomp + SIZE(worker%sigma, 1) + SIZE(worker%vsigma, 1) + &
+                 SIZE(worker%v2rhosigma, 1) + SIZE(worker%v2sigma2, 1)
+      END IF
+      IF (ALLOCATED(worker%lapl)) THEN
+         ncomp = ncomp + SIZE(worker%lapl, 1) + SIZE(worker%tau, 1) + &
+                 SIZE(worker%vlapl, 1) + SIZE(worker%vtau, 1) + &
+                 SIZE(worker%v2rholapl, 1) + SIZE(worker%v2rhotau, 1) + &
+                 SIZE(worker%v2sigmalapl, 1) + SIZE(worker%v2sigmatau, 1) + &
+                 SIZE(worker%v2lapl2, 1) + SIZE(worker%v2lapltau, 1) + &
+                 SIZE(worker%v2tau2, 1)
+      END IF
+   END FUNCTION libxc_worker_ncomp
+
+! **************************************************************************************************
+!> \brief Allocates the staging buffers of a probe worker for a single point, so
+!>        that the per-point footprint can be measured before the real block
+!>        length is chosen (see libxc_worker_alloc).
+!> \param worker the worker
+!> \param family LibXC functional family
+!> \param nspin XC_UNPOLARIZED or XC_POLARIZED
+!> \author libxc-bibek
+! **************************************************************************************************
+   SUBROUTINE libxc_worker_alloc_probe(worker, family, nspin)
+      TYPE(libxc_worker_type), INTENT(INOUT)             :: worker
+      INTEGER, INTENT(IN)                                :: family, nspin
+
+      INTEGER                                            :: nl, np, ns
+
+      IF (nspin == XC_POLARIZED) THEN
+         np = 2
+         ns = 3
+         nl = 4
+      ELSE
+         np = 1
+         ns = 1
+         nl = 1
+      END IF
+
+      ALLOCATE (worker%rho(np, 1))
+      ALLOCATE (worker%exc(1))
+      ALLOCATE (worker%vrho(np, 1))
+      ALLOCATE (worker%v2rho2(ns, 1))
+      ALLOCATE (worker%v3rho3(nl, 1))
+
+      SELECT CASE (family)
+      CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+         ALLOCATE (worker%sigma(ns, 1))
+         ALLOCATE (worker%vsigma(ns, 1))
+         ALLOCATE (worker%v2rhosigma(MERGE(6, 1, nspin == XC_POLARIZED), 1))
+         ALLOCATE (worker%v2sigma2(MERGE(6, 1, nspin == XC_POLARIZED), 1))
+      END SELECT
+
+      SELECT CASE (family)
+      CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+         ALLOCATE (worker%lapl(np, 1))
+         ALLOCATE (worker%tau(np, 1))
+         ALLOCATE (worker%vlapl(np, 1))
+         ALLOCATE (worker%vtau(np, 1))
+         ALLOCATE (worker%v2rholapl(nl, 1))
+         ALLOCATE (worker%v2rhotau(nl, 1))
+         ALLOCATE (worker%v2sigmalapl(MERGE(6, 1, nspin == XC_POLARIZED), 1))
+         ALLOCATE (worker%v2sigmatau(MERGE(6, 1, nspin == XC_POLARIZED), 1))
+         ALLOCATE (worker%v2lapl2(ns, 1))
+         ALLOCATE (worker%v2lapltau(nl, 1))
+         ALLOCATE (worker%v2tau2(ns, 1))
+      END SELECT
+
+      worker%nb = 1
+   END SUBROUTINE libxc_worker_alloc_probe
+
+! **************************************************************************************************
+!> \brief Grows a worker's staging and CUDA device buffers to hold at least npoints
+!>        grid points. On the CUDA path the whole grid is evaluated in a single
+!>        LibXC call (no block cap), so both the host staging buffers
+!>        and the device buffers must hold the entire grid on demand. They grow to
+!>        the largest point count seen and are reused (never shrunk) for the run.
+!> \param worker the worker
+!> \param family LibXC functional family
+!> \param nspin XC_UNPOLARIZED or XC_POLARIZED
+!> \param npoints number of grid points the buffers must hold
+!> \note Called only on the CUDA path; the CPU/OpenMP path keeps the fixed
+!>       per-footprint CPU block staging buffers.
+!> \author libxc-bibek
+! **************************************************************************************************
+   SUBROUTINE libxc_worker_resize_cuda(worker, family, nspin, npoints)
+      TYPE(libxc_worker_type), INTENT(INOUT)             :: worker
+      INTEGER, INTENT(IN)                                :: family, nspin, npoints
+
+      INTEGER                                            :: nl, np, ns
+
+      ! number of components per point, cf. the LibXC manual
+      IF (nspin == XC_POLARIZED) THEN
+         np = 2
+         ns = 3
+         nl = 4
+      ELSE
+         np = 1
+         ns = 1
+         nl = 1
+      END IF
+
+      ! grow host staging buffers
+      IF (SIZE(worker%rho, 2) < npoints) THEN
+         DEALLOCATE (worker%rho)
+         ALLOCATE (worker%rho(np, npoints))
+      END IF
+      IF (SIZE(worker%exc) < npoints) THEN
+         DEALLOCATE (worker%exc)
+         ALLOCATE (worker%exc(npoints))
+      END IF
+      IF (SIZE(worker%vrho, 2) < npoints) THEN
+         DEALLOCATE (worker%vrho)
+         ALLOCATE (worker%vrho(np, npoints))
+      END IF
+      IF (SIZE(worker%v2rho2, 2) < npoints) THEN
+         DEALLOCATE (worker%v2rho2)
+         ALLOCATE (worker%v2rho2(ns, npoints))
+      END IF
+      IF (SIZE(worker%v3rho3, 2) < npoints) THEN
+         DEALLOCATE (worker%v3rho3)
+         ALLOCATE (worker%v3rho3(nl, npoints))
+      END IF
+
+      SELECT CASE (family)
+      CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+         IF (SIZE(worker%sigma, 2) < npoints) THEN
+            DEALLOCATE (worker%sigma)
+            ALLOCATE (worker%sigma(ns, npoints))
+         END IF
+         IF (SIZE(worker%vsigma, 2) < npoints) THEN
+            DEALLOCATE (worker%vsigma)
+            ALLOCATE (worker%vsigma(ns, npoints))
+         END IF
+         IF (nspin == XC_POLARIZED) THEN
+            IF (SIZE(worker%nd) < npoints) THEN
+               DEALLOCATE (worker%nd)
+               DEALLOCATE (worker%nda)
+               DEALLOCATE (worker%ndb)
+               ALLOCATE (worker%nd(npoints), worker%nda(npoints), worker%ndb(npoints))
+            END IF
+         END IF
+         IF (SIZE(worker%v2rhosigma, 2) < npoints) THEN
+            DEALLOCATE (worker%v2rhosigma)
+            ALLOCATE (worker%v2rhosigma(MERGE(6, 1, nspin == XC_POLARIZED), npoints))
+         END IF
+         IF (SIZE(worker%v2sigma2, 2) < npoints) THEN
+            DEALLOCATE (worker%v2sigma2)
+            ALLOCATE (worker%v2sigma2(MERGE(6, 1, nspin == XC_POLARIZED), npoints))
+         END IF
+      END SELECT
+
+      SELECT CASE (family)
+      CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+         IF (SIZE(worker%lapl, 2) < npoints) THEN
+            DEALLOCATE (worker%lapl)
+            ALLOCATE (worker%lapl(np, npoints))
+         END IF
+         IF (SIZE(worker%tau, 2) < npoints) THEN
+            DEALLOCATE (worker%tau)
+            ALLOCATE (worker%tau(np, npoints))
+         END IF
+         IF (SIZE(worker%vlapl, 2) < npoints) THEN
+            DEALLOCATE (worker%vlapl)
+            ALLOCATE (worker%vlapl(np, npoints))
+            worker%vlapl = 0.0_dp
+         END IF
+         IF (SIZE(worker%vtau, 2) < npoints) THEN
+            DEALLOCATE (worker%vtau)
+            ALLOCATE (worker%vtau(np, npoints))
+         END IF
+         IF (SIZE(worker%v2rholapl, 2) < npoints) THEN
+            DEALLOCATE (worker%v2rholapl)
+            ALLOCATE (worker%v2rholapl(nl, npoints))
+         END IF
+         IF (SIZE(worker%v2rhotau, 2) < npoints) THEN
+            DEALLOCATE (worker%v2rhotau)
+            ALLOCATE (worker%v2rhotau(nl, npoints))
+         END IF
+         IF (SIZE(worker%v2sigmalapl, 2) < npoints) THEN
+            DEALLOCATE (worker%v2sigmalapl)
+            ALLOCATE (worker%v2sigmalapl(MERGE(6, 1, nspin == XC_POLARIZED), npoints))
+         END IF
+         IF (SIZE(worker%v2sigmatau, 2) < npoints) THEN
+            DEALLOCATE (worker%v2sigmatau)
+            ALLOCATE (worker%v2sigmatau(MERGE(6, 1, nspin == XC_POLARIZED), npoints))
+         END IF
+         IF (SIZE(worker%v2lapl2, 2) < npoints) THEN
+            DEALLOCATE (worker%v2lapl2)
+            ALLOCATE (worker%v2lapl2(ns, npoints))
+         END IF
+         IF (SIZE(worker%v2lapltau, 2) < npoints) THEN
+            DEALLOCATE (worker%v2lapltau)
+            ALLOCATE (worker%v2lapltau(nl, npoints))
+         END IF
+         IF (SIZE(worker%v2tau2, 2) < npoints) THEN
+            DEALLOCATE (worker%v2tau2)
+            ALLOCATE (worker%v2tau2(ns, npoints))
+         END IF
+      END SELECT
+
+      ! grow CUDA device buffers
+      IF (INT(worker%rho_d%size) < np*npoints) THEN
+         CALL libxc_device_buffer_alloc(worker%rho_d, np*npoints)
+      END IF
+      IF (INT(worker%exc_d%size) < npoints) THEN
+         CALL libxc_device_buffer_alloc(worker%exc_d, npoints)
+      END IF
+      IF (INT(worker%vrho_d%size) < np*npoints) THEN
+         CALL libxc_device_buffer_alloc(worker%vrho_d, np*npoints)
+      END IF
+
+      SELECT CASE (family)
+      CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+         IF (INT(worker%sigma_d%size) < ns*npoints) THEN
+            CALL libxc_device_buffer_alloc(worker%sigma_d, ns*npoints)
+         END IF
+         IF (INT(worker%vsigma_d%size) < ns*npoints) THEN
+            CALL libxc_device_buffer_alloc(worker%vsigma_d, ns*npoints)
+         END IF
+      END SELECT
+
+      SELECT CASE (family)
+      CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
+         IF (INT(worker%lapl_d%size) < np*npoints) THEN
+            CALL libxc_device_buffer_alloc(worker%lapl_d, np*npoints)
+         END IF
+         IF (INT(worker%tau_d%size) < np*npoints) THEN
+            CALL libxc_device_buffer_alloc(worker%tau_d, np*npoints)
+         END IF
+         IF (INT(worker%vlapl_d%size) < np*npoints) THEN
+            CALL libxc_device_buffer_alloc(worker%vlapl_d, np*npoints)
+         END IF
+         IF (INT(worker%vtau_d%size) < np*npoints) THEN
+            CALL libxc_device_buffer_alloc(worker%vtau_d, np*npoints)
+         END IF
+      END SELECT
+
+   END SUBROUTINE libxc_worker_resize_cuda
 
 ! **************************************************************************************************
 !> \brief Makes sure the placeholder for unproduced derivatives holds npoints values.
@@ -1849,11 +2126,16 @@ CONTAINS
 !$    nthreads = omp_get_num_threads()
       CPASSERT(ithread < SIZE(workers%worker))
 
-      ! Blocks are capped by libxc_block_size, which is what the staging buffers
-      ! were allocated for, but shrunk when there are too few points to give every
-      ! thread a block of its own: small atomic grids would otherwise all be
-      ! evaluated by thread 0.
-      bsize = MAX(1, MIN(libxc_block_size, (npoints + nthreads - 1)/nthreads))
+      ! The CPU block length is taken from the worker buffers (workers%worker(1)%nb),
+      ! which libxc_worker_alloc sized from the per-point footprint, matching
+      ! master; it is capped here so that small atomic grids still give every
+      ! thread a block of its own. On the CUDA path the whole grid is handed to
+      ! LibXC in a single call (no blocking) so the GPU sees one large work item.
+      IF (libxc_is_cuda()) THEN
+         bsize = npoints
+      ELSE
+         bsize = MAX(1, MIN(workers%worker(1)%nb, (npoints + nthreads - 1)/nthreads))
+      END IF
       nblocks = (npoints + bsize - 1)/bsize
       IF (ithread == 0) WRITE (*, *) "DIAG bsize=", bsize, "npoints=", npoints, "nthreads=", nthreads, "nblocks=", nblocks
 
@@ -1883,6 +2165,13 @@ CONTAINS
       ASSOCIATE (w => workers%worker(ithread + 1), has_laplace => workers%has_laplace, &
                  no_exc => workers%no_exc, eps_rho => workers%epsilon_rho, &
                  eps_tau => workers%epsilon_tau)
+         ! On the CUDA path the whole grid is evaluated in a single call, so the
+         ! host staging and device buffers must hold npoints on demand. The resize
+         ! is done here (before any staging write below) and only when the buffers
+         ! are too small; it is a no-op once the buffers have reached full size.
+         IF (libxc_is_cuda()) THEN
+            CALL libxc_worker_resize_cuda(w, workers%family, workers%nspin, npoints)
+         END IF
          !$OMP    DO
          DO ib = 1, nblocks
             i0 = (ib - 1)*bsize
@@ -2318,7 +2607,14 @@ CONTAINS
 !$    nthreads = omp_get_num_threads()
       CPASSERT(ithread < SIZE(workers%worker))
 
-      bsize = MAX(1, MIN(libxc_block_size, (npoints + nthreads - 1)/nthreads))
+      ! As in the spin-unpolarized routine: the CPU block length is taken from
+      ! the worker buffers (workers%worker(1)%nb) matching master; on the CUDA
+      ! path the whole grid is handed to LibXC in a single call.
+      IF (libxc_is_cuda()) THEN
+         bsize = npoints
+      ELSE
+         bsize = MAX(1, MIN(workers%worker(1)%nb, (npoints + nthreads - 1)/nthreads))
+      END IF
       nblocks = (npoints + bsize - 1)/bsize
       IF (ithread == 0) WRITE (*, *) "DIAG bsize=", bsize, "npoints=", npoints, "nthreads=", nthreads, "nblocks=", nblocks
 
@@ -2344,6 +2640,13 @@ CONTAINS
       ASSOCIATE (w => workers%worker(ithread + 1), has_laplace => workers%has_laplace, &
                  no_exc => workers%no_exc, eps_rho => workers%epsilon_rho, &
                  eps_tau => workers%epsilon_tau)
+         ! On the CUDA path the whole grid is evaluated in a single call, so the
+         ! host staging and device buffers must hold npoints on demand. The resize
+         ! is done here (before any staging write below) and only when the buffers
+         ! are too small; it is a no-op once the buffers have reached full size.
+         IF (libxc_is_cuda()) THEN
+            CALL libxc_worker_resize_cuda(w, workers%family, workers%nspin, npoints)
+         END IF
 !$OMP    DO
          DO ib = 1, nblocks
             i0 = (ib - 1)*bsize

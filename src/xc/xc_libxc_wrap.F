@@ -652,12 +652,21 @@ CONTAINS
 !> \param n ...
 ! **************************************************************************************************
    SUBROUTINE libxc_device_buffer_alloc(buffer, n)
-      USE ISO_C_BINDING, ONLY: C_PTR, C_NULL_PTR, C_INT64_T
-      USE offload_api, ONLY: offload_create_buffer, offload_buffer_type
+      USE ISO_C_BINDING, ONLY: C_INT64_T
+      USE offload_api, ONLY: offload_free_buffer, offload_buffer_type, &
+                             offload_create_buffer
       TYPE(libxc_device_buffer_type), INTENT(INOUT)      :: buffer
       INTEGER, INTENT(IN)                                :: n
 
       TYPE(offload_buffer_type)                          :: offload_buffer
+
+      ! Free any previously allocated buffer so grown/reallocated buffers do not
+      ! leak device and host memory (used by libxc_worker_resize_cuda).
+      IF (C_ASSOCIATED(buffer%ptr)) THEN
+         offload_buffer%c_ptr = buffer%ptr
+         offload_buffer%host_buffer => NULL()
+         CALL offload_free_buffer(offload_buffer)
+      END IF
 
       buffer%size = INT(n, KIND=C_INT64_T)
       CALL offload_create_buffer(n, offload_buffer)
