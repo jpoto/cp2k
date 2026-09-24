@@ -150,7 +150,8 @@ MODULE xc_libxc
                             xc_libxc_wrap_info_refs, &
                             xc_f03_func_set_ext_params, &
                             XC_EXCHANGE, XC_CORRELATION, XC_EXCHANGE_CORRELATION, XC_KINETIC
-   USE offload_api, ONLY: offload_activate_chosen_device, offload_device_synchronize
+   USE offload_api, ONLY: offload_activate_chosen_device, offload_get_chosen_device, &
+                          offload_device_synchronize
 #endif
 !$ USE OMP_LIB, ONLY: omp_get_max_threads, &
 !$                    omp_get_num_threads, &
@@ -201,6 +202,7 @@ MODULE xc_libxc
       LOGICAL                                            :: is_init = .FALSE.
       ! number of points the staging buffers below were allocated for
       INTEGER                                            :: nb = 0
+      INTEGER                                            :: active_device = -1
       ! staging buffers, dimensioned (component, point)
       REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: rho, sigma, lapl, tau
       ! the floored gradient norms the spin-polarized chain rule is written in
@@ -2464,7 +2466,8 @@ CONTAINS
    ! e.g. when an OpenMP worker thread's current device defaults to GPU 0
    ! while the buffers were allocated on the rank's own GPU. Only the GPU
    ! backend needs this: on a CPU/HOST run it is a per-call CUDA-roundtrip.
-   IF (libxc_is_gpu()) CALL offload_activate_chosen_device()
+   ! The worker caches the device it activated so the idempotent call is not
+   ! repeated on every evaluation.
 
    ! On the GPU path the whole grid is handed to LibXC in a single call (no
    ! block cap), so the per-thread staging and device buffers are grown to
@@ -2507,6 +2510,10 @@ CONTAINS
       !$OMP    DO
       DO ib = 1, nblocks
          IF (libxc_is_gpu()) THEN
+            IF (w%active_device /= offload_get_chosen_device()) THEN
+               CALL offload_activate_chosen_device()
+               w%active_device = offload_get_chosen_device()
+            END IF
             CALL libxc_worker_resize_cuda(w, workers%family, workers%nspin, grad_deriv, npoints)
          END IF
          i0 = (ib - 1)*bsize
@@ -3126,7 +3133,8 @@ CPASSERT(ithread < SIZE(workers%worker))
 ! See the spin-unpolarized calc: CUDA's current device is thread-local,
 ! so activate the rank's chosen device on every thread. Only the GPU
 ! backend needs this; on a CPU/HOST run it is a per-call CUDA-roundtrip.
-IF (libxc_is_gpu()) CALL offload_activate_chosen_device()
+! The worker caches the device it activated so the idempotent call is not
+! repeated on every evaluation.
 
 ! See the spin-unpolarized calc: on the GPU path the whole grid is evaluated
 ! in a single LibXC call, while the CPU/OpenMP path keeps its per-footprint
@@ -3163,6 +3171,10 @@ ASSOCIATE (w => workers%worker(ithread + 1), has_laplace => workers%has_laplace,
 !$OMP    DO
    DO ib = 1, nblocks
       IF (libxc_is_gpu()) THEN
+         IF (w%active_device /= offload_get_chosen_device()) THEN
+            CALL offload_activate_chosen_device()
+            w%active_device = offload_get_chosen_device()
+         END IF
          CALL libxc_worker_resize_cuda(w, workers%family, workers%nspin, grad_deriv, npoints)
       END IF
       i0 = (ib - 1)*bsize
