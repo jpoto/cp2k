@@ -124,8 +124,9 @@ MODULE xc_libxc
                             libxc_mgga_vxc_wrapper, &
                             libxc_is_gpu, &
                             libxc_device_buffer_alloc, libxc_device_buffer_free, &
-                            libxc_host_to_device, libxc_device_to_host, &
-                            libxc_d2h_issue, libxc_d2h_read, &
+                            libxc_device_buffer_h2d, &
+                            libxc_device_buffer_host_view_1d, libxc_device_buffer_host_view_2d, &
+                            libxc_d2h_issue, &
                             libxc_lda_exc_vxc_device, libxc_lda_exc_device, &
                             libxc_lda_vxc_fxc_device, &
                             libxc_lda_exc_vxc_fxc_device, libxc_lda_exc_vxc_fxc_kxc_device, &
@@ -203,19 +204,28 @@ MODULE xc_libxc
       ! number of points the staging buffers below were allocated for
       INTEGER                                            :: nb = 0
       INTEGER                                            :: active_device = -1
-      ! staging buffers, dimensioned (component, point)
-      REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: rho, sigma, lapl, tau
-      ! the floored gradient norms the spin-polarized chain rule is written in
+      ! True when the staged buffers below are views of the pinned host side of
+      ! the device buffers (GPU path). They must then not be DEALLOCATEd, only
+      ! NULLIFYed: the device buffer owns the memory.
+      LOGICAL                                            :: staged_on_device = .FALSE.
+      ! the floored gradient norms the spin-polarized chain rule is written in;
+      ! host-only scratch, never handed to the device
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE           :: nd, nda, ndb
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE           :: exc
-      REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: vrho, vsigma, vlapl, vtau
-      REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: v2rho2, v2rhosigma, v2sigma2, &
-                                                            v2rholapl, v2rhotau, v2sigmalapl, &
-                                                            v2sigmatau, v2lapl2, v2lapltau, v2tau2
-      REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: v3rho3, v3rho2sigma, &
-                                                            v3rhosigma2, v3sigma3
+      ! staging buffers, dimensioned (component, point)
+      REAL(KIND=dp), DIMENSION(:), CONTIGUOUS, POINTER    :: exc => NULL()
+      REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: rho => NULL(), sigma => NULL(), &
+                                                             lapl => NULL(), tau => NULL()
+      REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: vrho => NULL(), vsigma => NULL(), &
+                                                             vlapl => NULL(), vtau => NULL()
+      REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: v2rho2 => NULL(), v2rhosigma => NULL(), &
+                                                             v2sigma2 => NULL(), v2rholapl => NULL(), &
+                                                             v2rhotau => NULL(), v2sigmalapl => NULL(), &
+                                                             v2sigmatau => NULL(), v2lapl2 => NULL(), &
+                                                             v2lapltau => NULL(), v2tau2 => NULL()
+      REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: v3rho3 => NULL(), v3rho2sigma => NULL(), &
+                                                             v3rhosigma2 => NULL(), v3sigma3 => NULL()
       #:for arr in v3_new
-         REAL(KIND=dp), DIMENSION(:, :), ALLOCATABLE        :: ${arr}$
+         REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: ${arr}$ => NULL()
       #:endfor
       ! GPU device buffers for the active backend
       TYPE(libxc_device_buffer_type)                     :: rho_d, sigma_d, lapl_d, tau_d
@@ -777,14 +787,90 @@ CONTAINS
       INTEGER                                            :: ncomp
 
       ncomp = 0
-      #:for arr in worker_1d
-         IF (ALLOCATED(worker%${arr}$)) ncomp = ncomp + 1
-      #:endfor
+      IF (ASSOCIATED(worker%exc)) ncomp = ncomp + 1
+      IF (ALLOCATED(worker%nd)) ncomp = ncomp + 1
+      IF (ALLOCATED(worker%nda)) ncomp = ncomp + 1
+      IF (ALLOCATED(worker%ndb)) ncomp = ncomp + 1
       #:for arr in worker_2d
-         IF (ALLOCATED(worker%${arr}$)) ncomp = ncomp + SIZE(worker%${arr}$, 1)
+         IF (ASSOCIATED(worker%${arr}$)) ncomp = ncomp + SIZE(worker%${arr}$, 1)
       #:endfor
 
    END FUNCTION libxc_worker_ncomp
+
+! **************************************************************************************************
+!> \brief Allocate a staged 1-D buffer: own host storage on the CPU path, or a
+!>        view of the pinned host side of the device buffer on the GPU path.
+!> \param dev device buffer
+!> \param view host view
+!> \param n length
+!> \param gpu whether the GPU backend is active
+! **************************************************************************************************
+   SUBROUTINE libxc_stage_alloc_1d(dev, view, n, gpu)
+      TYPE(libxc_device_buffer_type), INTENT(INOUT)      :: dev
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: view
+      INTEGER, INTENT(IN)                                :: n
+      LOGICAL, INTENT(IN)                                :: gpu
+
+      IF (gpu) THEN
+         CALL libxc_device_buffer_alloc(dev, n)
+         CALL libxc_device_buffer_host_view_1d(dev, n, view)
+      ELSE
+         ALLOCATE (view(n))
+      END IF
+   END SUBROUTINE libxc_stage_alloc_1d
+
+! **************************************************************************************************
+!> \brief Allocate a staged 2-D buffer (see libxc_stage_alloc_1d).
+!> \param dev device buffer
+!> \param view host view
+!> \param n1 leading dimension
+!> \param n2 number of points
+!> \param gpu whether the GPU backend is active
+! **************************************************************************************************
+   SUBROUTINE libxc_stage_alloc_2d(dev, view, n1, n2, gpu)
+      TYPE(libxc_device_buffer_type), INTENT(INOUT)      :: dev
+      REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: view
+      INTEGER, INTENT(IN)                                :: n1, n2
+      LOGICAL, INTENT(IN)                                :: gpu
+
+      IF (gpu) THEN
+         CALL libxc_device_buffer_alloc(dev, n1*n2)
+         CALL libxc_device_buffer_host_view_2d(dev, n1, n2, view)
+      ELSE
+         ALLOCATE (view(n1, n2))
+      END IF
+   END SUBROUTINE libxc_stage_alloc_2d
+
+! **************************************************************************************************
+!> \brief Release a staged 1-D buffer. On the GPU path the memory belongs to the
+!>        device buffer, so only the view is dropped.
+!> \param view host view
+!> \param gpu whether the GPU backend is active
+! **************************************************************************************************
+   SUBROUTINE libxc_stage_free_1d(view, gpu)
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: view
+      LOGICAL, INTENT(IN)                                :: gpu
+
+      IF (.NOT. gpu) THEN
+         IF (ASSOCIATED(view)) DEALLOCATE (view)
+      END IF
+      NULLIFY (view)
+   END SUBROUTINE libxc_stage_free_1d
+
+! **************************************************************************************************
+!> \brief Release a staged 2-D buffer (see libxc_stage_free_1d).
+!> \param view host view
+!> \param gpu whether the GPU backend is active
+! **************************************************************************************************
+   SUBROUTINE libxc_stage_free_2d(view, gpu)
+      REAL(KIND=dp), DIMENSION(:, :), CONTIGUOUS, POINTER :: view
+      LOGICAL, INTENT(IN)                                :: gpu
+
+      IF (.NOT. gpu) THEN
+         IF (ASSOCIATED(view)) DEALLOCATE (view)
+      END IF
+      NULLIFY (view)
+   END SUBROUTINE libxc_stage_free_2d
 
 ! **************************************************************************************************
 !> \brief Allocates the staging buffers of a single worker for a given block length.
@@ -825,51 +911,64 @@ CONTAINS
       END IF
 
       worker%nb = nb
+      worker%staged_on_device = want_device .AND. libxc_is_gpu()
 
       ! The energy density and the first derivatives are always staged: LibXC
       ! writes them whatever higher order was asked for.
-      ALLOCATE (worker%rho(np, nb))
-      ALLOCATE (worker%exc(nb))
-      ALLOCATE (worker%vrho(np, nb))
-      IF (grad_deriv >= 2) ALLOCATE (worker%v2rho2(ns, nb))
-      IF (grad_deriv >= 3) ALLOCATE (worker%v3rho3(nl, nb))
+      CALL libxc_stage_alloc_2d(worker%rho_d, worker%rho, np, nb, worker%staged_on_device)
+      CALL libxc_stage_alloc_1d(worker%exc_d, worker%exc, nb, worker%staged_on_device)
+      CALL libxc_stage_alloc_2d(worker%vrho_d, worker%vrho, np, nb, worker%staged_on_device)
+      IF (grad_deriv >= 2) THEN
+         CALL libxc_stage_alloc_2d(worker%v2rho2_d, worker%v2rho2, ns, nb, worker%staged_on_device)
+      END IF
+      IF (grad_deriv >= 3) THEN
+         CALL libxc_stage_alloc_2d(worker%v3rho3_d, worker%v3rho3, nl, nb, worker%staged_on_device)
+      END IF
 
       SELECT CASE (family)
       CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-         ALLOCATE (worker%sigma(ns, nb))
-         ALLOCATE (worker%vsigma(ns, nb))
+         CALL libxc_stage_alloc_2d(worker%sigma_d, worker%sigma, ns, nb, worker%staged_on_device)
+         CALL libxc_stage_alloc_2d(worker%vsigma_d, worker%vsigma, ns, nb, worker%staged_on_device)
          IF (pol) THEN
             ALLOCATE (worker%nd(nb), worker%nda(nb), worker%ndb(nb))
          END IF
          IF (grad_deriv >= 2) THEN
-            ALLOCATE (worker%v2rhosigma(MERGE(6, 1, pol), nb))
-            ALLOCATE (worker%v2sigma2(MERGE(6, 1, pol), nb))
+            CALL libxc_stage_alloc_2d(worker%v2rhosigma_d, worker%v2rhosigma, MERGE(6, 1, pol), nb, &
+                                      worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2sigma2_d, worker%v2sigma2, MERGE(6, 1, pol), nb, &
+                                      worker%staged_on_device)
          END IF
          IF (grad_deriv >= 3) THEN
-            ALLOCATE (worker%v3rho2sigma(MERGE(9, 1, pol), nb))
-            ALLOCATE (worker%v3rhosigma2(MERGE(12, 1, pol), nb))
-            ALLOCATE (worker%v3sigma3(MERGE(10, 1, pol), nb))
+            CALL libxc_stage_alloc_2d(worker%v3rho2sigma_d, worker%v3rho2sigma, MERGE(9, 1, pol), nb, &
+                                      worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v3rhosigma2_d, worker%v3rhosigma2, MERGE(12, 1, pol), nb, &
+                                      worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v3sigma3_d, worker%v3sigma3, MERGE(10, 1, pol), nb, &
+                                      worker%staged_on_device)
          END IF
       END SELECT
 
       SELECT CASE (family)
       CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-         ALLOCATE (worker%lapl(np, nb))
-         ALLOCATE (worker%tau(np, nb))
-         ALLOCATE (worker%vlapl(np, nb))
-         ALLOCATE (worker%vtau(np, nb))
+         CALL libxc_stage_alloc_2d(worker%lapl_d, worker%lapl, np, nb, worker%staged_on_device)
+         CALL libxc_stage_alloc_2d(worker%tau_d, worker%tau, np, nb, worker%staged_on_device)
+         CALL libxc_stage_alloc_2d(worker%vlapl_d, worker%vlapl, np, nb, worker%staged_on_device)
+         CALL libxc_stage_alloc_2d(worker%vtau_d, worker%vtau, np, nb, worker%staged_on_device)
          IF (grad_deriv >= 2) THEN
-            ALLOCATE (worker%v2rholapl(nl, nb))
-            ALLOCATE (worker%v2rhotau(nl, nb))
-            ALLOCATE (worker%v2sigmalapl(MERGE(6, 1, pol), nb))
-            ALLOCATE (worker%v2sigmatau(MERGE(6, 1, pol), nb))
-            ALLOCATE (worker%v2lapl2(ns, nb))
-            ALLOCATE (worker%v2lapltau(nl, nb))
-            ALLOCATE (worker%v2tau2(ns, nb))
+            CALL libxc_stage_alloc_2d(worker%v2rholapl_d, worker%v2rholapl, nl, nb, worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2rhotau_d, worker%v2rhotau, nl, nb, worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2sigmalapl_d, worker%v2sigmalapl, MERGE(6, 1, pol), nb, &
+                                      worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2sigmatau_d, worker%v2sigmatau, MERGE(6, 1, pol), nb, &
+                                      worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2lapl2_d, worker%v2lapl2, ns, nb, worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2lapltau_d, worker%v2lapltau, nl, nb, worker%staged_on_device)
+            CALL libxc_stage_alloc_2d(worker%v2tau2_d, worker%v2tau2, ns, nb, worker%staged_on_device)
          END IF
          IF (grad_deriv >= 3) THEN
             #:for arr in v3_new
-               ALLOCATE (worker%${arr}$ (MERGE(${mgga_ncomp[arr]}$, 1, pol), nb))
+               CALL libxc_stage_alloc_2d(worker%${arr}$_d, worker%${arr}$, MERGE(${mgga_ncomp[arr]}$, 1, pol), &
+                                         nb, worker%staged_on_device)
             #:endfor
          END IF
          ! LibXC leaves vlapl untouched for functionals that do not use the
@@ -877,53 +976,6 @@ CONTAINS
          ! uninitialized memory.
          worker%vlapl = 0.0_dp
       END SELECT
-
-      ! Allocate GPU device buffers when the GPU backend is active. They follow
-      ! the host staging buffers, so the same derivative-order guards apply.
-      IF (want_device .AND. libxc_is_gpu()) THEN
-         CALL libxc_device_buffer_alloc(worker%rho_d, np*nb)
-         CALL libxc_device_buffer_alloc(worker%exc_d, nb)
-         CALL libxc_device_buffer_alloc(worker%vrho_d, np*nb)
-         IF (grad_deriv >= 2) CALL libxc_device_buffer_alloc(worker%v2rho2_d, ns*nb)
-         IF (grad_deriv >= 3) CALL libxc_device_buffer_alloc(worker%v3rho3_d, nl*nb)
-
-         SELECT CASE (family)
-         CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-            CALL libxc_device_buffer_alloc(worker%sigma_d, ns*nb)
-            CALL libxc_device_buffer_alloc(worker%vsigma_d, ns*nb)
-            IF (grad_deriv >= 2) THEN
-               CALL libxc_device_buffer_alloc(worker%v2rhosigma_d, MERGE(6, 1, pol)*nb)
-               CALL libxc_device_buffer_alloc(worker%v2sigma2_d, MERGE(6, 1, pol)*nb)
-            END IF
-            IF (grad_deriv >= 3) THEN
-               CALL libxc_device_buffer_alloc(worker%v3rho2sigma_d, MERGE(9, 1, pol)*nb)
-               CALL libxc_device_buffer_alloc(worker%v3rhosigma2_d, MERGE(12, 1, pol)*nb)
-               CALL libxc_device_buffer_alloc(worker%v3sigma3_d, MERGE(10, 1, pol)*nb)
-            END IF
-         END SELECT
-
-         SELECT CASE (family)
-         CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-            CALL libxc_device_buffer_alloc(worker%lapl_d, np*nb)
-            CALL libxc_device_buffer_alloc(worker%tau_d, np*nb)
-            CALL libxc_device_buffer_alloc(worker%vlapl_d, np*nb)
-            CALL libxc_device_buffer_alloc(worker%vtau_d, np*nb)
-            IF (grad_deriv >= 2) THEN
-               CALL libxc_device_buffer_alloc(worker%v2rholapl_d, nl*nb)
-               CALL libxc_device_buffer_alloc(worker%v2rhotau_d, nl*nb)
-               CALL libxc_device_buffer_alloc(worker%v2sigmalapl_d, MERGE(6, 1, pol)*nb)
-               CALL libxc_device_buffer_alloc(worker%v2sigmatau_d, MERGE(6, 1, pol)*nb)
-               CALL libxc_device_buffer_alloc(worker%v2lapl2_d, ns*nb)
-               CALL libxc_device_buffer_alloc(worker%v2lapltau_d, nl*nb)
-               CALL libxc_device_buffer_alloc(worker%v2tau2_d, ns*nb)
-            END IF
-            IF (grad_deriv >= 3) THEN
-               #:for arr in v3_new
-                  CALL libxc_device_buffer_alloc(worker%${arr}$_d, MERGE(${mgga_ncomp[arr]}$, 1, pol)*nb)
-               #:endfor
-            END IF
-         END SELECT
-      END IF
 
    END SUBROUTINE libxc_worker_alloc_buffers
 
@@ -937,10 +989,18 @@ CONTAINS
    SUBROUTINE libxc_worker_free_buffers(worker)
       TYPE(libxc_worker_type), INTENT(INOUT)             :: worker
 
-      #:for arr in worker_1d + worker_2d
-         IF (ALLOCATED(worker%${arr}$)) DEALLOCATE (worker%${arr}$)
+      LOGICAL                                            :: gpu
+
+      gpu = worker%staged_on_device
+      CALL libxc_stage_free_1d(worker%exc, gpu)
+      IF (ALLOCATED(worker%nd)) DEALLOCATE (worker%nd)
+      IF (ALLOCATED(worker%nda)) DEALLOCATE (worker%nda)
+      IF (ALLOCATED(worker%ndb)) DEALLOCATE (worker%ndb)
+      #:for arr in worker_2d
+         CALL libxc_stage_free_2d(worker%${arr}$, gpu)
       #:endfor
       worker%nb = 0
+      worker%staged_on_device = .FALSE.
 
       ! Freeing a buffer that was never allocated is a no-op, so this is done
       ! unconditionally rather than gating on the currently active backend.
@@ -1007,189 +1067,64 @@ CONTAINS
          nl = 1
       END IF
 
-      ! grow the host staging buffers that are actually allocated
-      IF (ALLOCATED(worker%rho)) THEN
-         IF (SIZE(worker%rho, 2) < npoints) THEN
-            DEALLOCATE (worker%rho)
-            ALLOCATE (worker%rho(np, npoints))
-         END IF
+      ! Grow the staged buffers and their device buffers to npoints. The host
+      ! arrays are views of the pinned device memory on this path, so both are
+      ! regrown together. Only components the worker actually carries are
+      ! touched, mirroring libxc_worker_alloc_buffers.
+      IF (ASSOCIATED(worker%rho) .AND. SIZE(worker%rho, 2) < npoints) THEN
+         CALL libxc_stage_alloc_2d(worker%rho_d, worker%rho, np, npoints, .TRUE.)
       END IF
-      IF (ALLOCATED(worker%exc)) THEN
-         IF (SIZE(worker%exc) < npoints) THEN
-            DEALLOCATE (worker%exc)
-            ALLOCATE (worker%exc(npoints))
-         END IF
+      IF (ASSOCIATED(worker%exc) .AND. SIZE(worker%exc) < npoints) THEN
+         CALL libxc_stage_alloc_1d(worker%exc_d, worker%exc, npoints, .TRUE.)
       END IF
-      IF (ALLOCATED(worker%vrho)) THEN
-         IF (SIZE(worker%vrho, 2) < npoints) THEN
-            DEALLOCATE (worker%vrho)
-            ALLOCATE (worker%vrho(np, npoints))
-         END IF
+      IF (ASSOCIATED(worker%vrho) .AND. SIZE(worker%vrho, 2) < npoints) THEN
+         CALL libxc_stage_alloc_2d(worker%vrho_d, worker%vrho, np, npoints, .TRUE.)
       END IF
-      IF (ALLOCATED(worker%v2rho2)) THEN
-         IF (SIZE(worker%v2rho2, 2) < npoints) THEN
-            DEALLOCATE (worker%v2rho2)
-            ALLOCATE (worker%v2rho2(ns, npoints))
-         END IF
+      IF (ASSOCIATED(worker%v2rho2) .AND. SIZE(worker%v2rho2, 2) < npoints) THEN
+         CALL libxc_stage_alloc_2d(worker%v2rho2_d, worker%v2rho2, ns, npoints, .TRUE.)
       END IF
-      IF (ALLOCATED(worker%v3rho3)) THEN
-         IF (SIZE(worker%v3rho3, 2) < npoints) THEN
-            DEALLOCATE (worker%v3rho3)
-            ALLOCATE (worker%v3rho3(nl, npoints))
-         END IF
+      IF (ASSOCIATED(worker%v3rho3) .AND. SIZE(worker%v3rho3, 2) < npoints) THEN
+         CALL libxc_stage_alloc_2d(worker%v3rho3_d, worker%v3rho3, nl, npoints, .TRUE.)
       END IF
 
       SELECT CASE (family)
       CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-         IF (ALLOCATED(worker%sigma)) THEN
-            IF (SIZE(worker%sigma, 2) < npoints) THEN
-               DEALLOCATE (worker%sigma)
-               ALLOCATE (worker%sigma(ns, npoints))
+         #:for arr, dim in [("sigma", "ns"), ("vsigma", "ns"), &
+            ("v2rhosigma", "MERGE(6, 1, pol)"), ("v2sigma2", "MERGE(6, 1, pol)"), &
+            ("v3rho2sigma", "MERGE(9, 1, pol)"), ("v3rhosigma2", "MERGE(12, 1, pol)"), &
+            ("v3sigma3", "MERGE(10, 1, pol)")]
+            IF (ASSOCIATED(worker%${arr}$) .AND. SIZE(worker%${arr}$, 2) < npoints) THEN
+               CALL libxc_stage_alloc_2d(worker%${arr}$_d, worker%${arr}$, ${dim}$, npoints, .TRUE.)
             END IF
-         END IF
-         IF (ALLOCATED(worker%vsigma)) THEN
-            IF (SIZE(worker%vsigma, 2) < npoints) THEN
-               DEALLOCATE (worker%vsigma)
-               ALLOCATE (worker%vsigma(ns, npoints))
-            END IF
-         END IF
+         #:endfor
          IF (pol) THEN
             IF (ALLOCATED(worker%nd) .AND. SIZE(worker%nd) < npoints) THEN
                DEALLOCATE (worker%nd, worker%nda, worker%ndb)
                ALLOCATE (worker%nd(npoints), worker%nda(npoints), worker%ndb(npoints))
             END IF
          END IF
-         IF (ALLOCATED(worker%v2rhosigma)) THEN
-            IF (SIZE(worker%v2rhosigma, 2) < npoints) THEN
-               DEALLOCATE (worker%v2rhosigma)
-               ALLOCATE (worker%v2rhosigma(MERGE(6, 1, pol), npoints))
-            END IF
-         END IF
-         IF (ALLOCATED(worker%v2sigma2)) THEN
-            IF (SIZE(worker%v2sigma2, 2) < npoints) THEN
-               DEALLOCATE (worker%v2sigma2)
-               ALLOCATE (worker%v2sigma2(MERGE(6, 1, pol), npoints))
-            END IF
-         END IF
-         #:for arr, dim in [("v3rho2sigma", "MERGE(9, 1, pol)"), &
-            ("v3rhosigma2", "MERGE(12, 1, pol)"), &
-            ("v3sigma3", "MERGE(10, 1, pol)")]
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (SIZE(worker%${arr}$, 2) < npoints) THEN
-                  DEALLOCATE (worker%${arr}$)
-                  ALLOCATE (worker%${arr}$ (${dim}$, npoints))
-               END IF
-            END IF
-         #:endfor
       END SELECT
 
       SELECT CASE (family)
       CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-         #:for arr, dim in [("lapl", "np"), ("tau", "np"), ("vlapl", "np"), ("vtau", "np")]
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (SIZE(worker%${arr}$, 2) < npoints) THEN
-                  DEALLOCATE (worker%${arr}$)
-                  ALLOCATE (worker%${arr}$ (${dim}$, npoints))
-               END IF
+         #:for arr, dim in [("lapl", "np"), ("tau", "np"), ("vlapl", "np"), ("vtau", "np"), &
+            ("v2rholapl", "nl"), ("v2rhotau", "nl"), &
+            ("v2sigmalapl", "MERGE(6, 1, pol)"), &
+            ("v2sigmatau", "MERGE(6, 1, pol)"), &
+            ("v2lapl2", "ns"), ("v2lapltau", "nl"), ("v2tau2", "ns")]
+            IF (ASSOCIATED(worker%${arr}$) .AND. SIZE(worker%${arr}$, 2) < npoints) THEN
+               CALL libxc_stage_alloc_2d(worker%${arr}$_d, worker%${arr}$, ${dim}$, npoints, .TRUE.)
+            END IF
+         #:endfor
+         #:for arr in v3_new
+            IF (ASSOCIATED(worker%${arr}$) .AND. SIZE(worker%${arr}$, 2) < npoints) THEN
+               CALL libxc_stage_alloc_2d(worker%${arr}$_d, worker%${arr}$, &
+                                         MERGE(${mgga_ncomp[arr]}$, 1, pol), npoints, .TRUE.)
             END IF
          #:endfor
          ! LibXC leaves vlapl untouched for functionals that do not use the
          ! Laplacian; re-zero a freshly grown buffer as in the initial alloc.
-         IF (ALLOCATED(worker%vlapl)) worker%vlapl = 0.0_dp
-         #:for arr, dim in [("v2rholapl", "nl"), ("v2rhotau", "nl"), &
-            ("v2sigmalapl", "MERGE(6, 1, pol)"), &
-            ("v2sigmatau", "MERGE(6, 1, pol)"), &
-            ("v2lapl2", "ns"), ("v2lapltau", "nl"), ("v2tau2", "ns")]
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (SIZE(worker%${arr}$, 2) < npoints) THEN
-                  DEALLOCATE (worker%${arr}$)
-                  ALLOCATE (worker%${arr}$ (${dim}$, npoints))
-               END IF
-            END IF
-         #:endfor
-         #:for arr in v3_new
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (SIZE(worker%${arr}$, 2) < npoints) THEN
-                  DEALLOCATE (worker%${arr}$)
-                  ALLOCATE (worker%${arr}$ (MERGE(${mgga_ncomp[arr]}$, 1, pol), npoints))
-               END IF
-            END IF
-         #:endfor
-      END SELECT
-
-      ! grow the CUDA device buffers that are actually allocated. Device buffer
-      ! sizes are tracked in doubles, matching the element count. Each is grown
-      ! only when the matching host staging buffer exists, so the derivative
-      ! order guards of libxc_worker_alloc_buffers are respected.
-      #:for arr, dim in [("rho_d", "np"), ("exc_d", "1"), ("vrho_d", "np")]
-         IF (INT(worker%${arr}$%size) < ${dim}$*npoints) THEN
-            CALL libxc_device_buffer_alloc(worker%${arr}$, ${dim}$*npoints)
-         END IF
-      #:endfor
-      IF (ALLOCATED(worker%v2rho2)) THEN
-         IF (INT(worker%v2rho2_d%size) < ns*npoints) THEN
-            CALL libxc_device_buffer_alloc(worker%v2rho2_d, ns*npoints)
-         END IF
-      END IF
-      IF (ALLOCATED(worker%v3rho3)) THEN
-         IF (INT(worker%v3rho3_d%size) < nl*npoints) THEN
-            CALL libxc_device_buffer_alloc(worker%v3rho3_d, nl*npoints)
-         END IF
-      END IF
-
-      SELECT CASE (family)
-      CASE (XC_FAMILY_GGA, XC_FAMILY_HYB_GGA, XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-         IF (INT(worker%sigma_d%size) < ns*npoints) THEN
-            CALL libxc_device_buffer_alloc(worker%sigma_d, ns*npoints)
-         END IF
-         IF (INT(worker%vsigma_d%size) < ns*npoints) THEN
-            CALL libxc_device_buffer_alloc(worker%vsigma_d, ns*npoints)
-         END IF
-         IF (ALLOCATED(worker%v2rhosigma)) THEN
-            IF (INT(worker%v2rhosigma_d%size) < MERGE(6, 1, pol)*npoints) THEN
-               CALL libxc_device_buffer_alloc(worker%v2rhosigma_d, MERGE(6, 1, pol)*npoints)
-            END IF
-         END IF
-         IF (ALLOCATED(worker%v2sigma2)) THEN
-            IF (INT(worker%v2sigma2_d%size) < MERGE(6, 1, pol)*npoints) THEN
-               CALL libxc_device_buffer_alloc(worker%v2sigma2_d, MERGE(6, 1, pol)*npoints)
-            END IF
-         END IF
-         #:for arr, dim in [("v3rho2sigma", "MERGE(9, 1, pol)"), &
-            ("v3rhosigma2", "MERGE(12, 1, pol)"), &
-            ("v3sigma3", "MERGE(10, 1, pol)")]
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (INT(worker%${arr}$_d%size) < ${dim}$*npoints) THEN
-                  CALL libxc_device_buffer_alloc(worker%${arr}$_d, ${dim}$*npoints)
-               END IF
-            END IF
-         #:endfor
-      END SELECT
-
-      SELECT CASE (family)
-      CASE (XC_FAMILY_MGGA, XC_FAMILY_HYB_MGGA)
-         #:for arr, dim in [("lapl", "np"), ("tau", "np"), ("vlapl", "np"), ("vtau", "np")]
-            IF (INT(worker%${arr}$_d%size) < ${dim}$*npoints) THEN
-               CALL libxc_device_buffer_alloc(worker%${arr}$_d, ${dim}$*npoints)
-            END IF
-         #:endfor
-         #:for arr, dim in [("v2rholapl", "nl"), ("v2rhotau", "nl"), &
-            ("v2sigmalapl", "MERGE(6, 1, pol)"), &
-            ("v2sigmatau", "MERGE(6, 1, pol)"), &
-            ("v2lapl2", "ns"), ("v2lapltau", "nl"), ("v2tau2", "ns")]
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (INT(worker%${arr}$_d%size) < ${dim}$*npoints) THEN
-                  CALL libxc_device_buffer_alloc(worker%${arr}$_d, ${dim}$*npoints)
-               END IF
-            END IF
-         #:endfor
-         #:for arr in v3_new
-            IF (ALLOCATED(worker%${arr}$)) THEN
-               IF (INT(worker%${arr}$_d%size) < MERGE(${mgga_ncomp[arr]}$, 1, pol)*npoints) THEN
-                  CALL libxc_device_buffer_alloc(worker%${arr}$_d, MERGE(${mgga_ncomp[arr]}$, 1, pol)*npoints)
-               END IF
-            END IF
-         #:endfor
+         IF (ASSOCIATED(worker%vlapl)) worker%vlapl = 0.0_dp
       END SELECT
 
    END SUBROUTINE libxc_worker_resize_cuda
@@ -2548,13 +2483,13 @@ CONTAINS
          ! one LibXC call for the whole block
          IF (libxc_is_gpu()) THEN
             ! Copy data to device
-            CALL libxc_host_to_device(w%rho_d, w%rho(1, 1), INT(np))
+            CALL libxc_device_buffer_h2d(w%rho_d, INT(np))
             IF (is_gga) THEN
-               CALL libxc_host_to_device(w%sigma_d, w%sigma(1, 1), INT(ns*np))
+               CALL libxc_device_buffer_h2d(w%sigma_d, INT(ns*np))
             END IF
             IF (is_mgga) THEN
-               CALL libxc_host_to_device(w%lapl_d, w%lapl(1, 1), INT(np))
-               CALL libxc_host_to_device(w%tau_d, w%tau(1, 1), INT(np))
+               CALL libxc_device_buffer_h2d(w%lapl_d, INT(np))
+               CALL libxc_device_buffer_h2d(w%tau_d, INT(np))
             END IF
 
             ! Device-aware library call
@@ -2710,47 +2645,24 @@ CONTAINS
             CALL offload_device_synchronize()
 
             IF (.NOT. no_exc) THEN
-               CALL libxc_d2h_read(w%exc(1:nb), w%exc_d, INT(nb))
             END IF
             IF (grad_deriv >= 1) THEN
-               CALL libxc_d2h_read(w%vrho(1, 1), w%vrho_d, INT(nb))
                IF (is_gga) THEN
-                  CALL libxc_d2h_read(w%vsigma(1, 1), w%vsigma_d, INT(ns*nb))
                END IF
                IF (is_mgga) THEN
-                  CALL libxc_d2h_read(w%vlapl(1, 1), w%vlapl_d, INT(nb))
-                  CALL libxc_d2h_read(w%vtau(1, 1), w%vtau_d, INT(nb))
                END IF
             END IF
             IF (grad_deriv >= 2) THEN
-               CALL libxc_d2h_read(w%v2rho2(1, 1), w%v2rho2_d, INT(ns*nb))
                IF (is_gga) THEN
-                  CALL libxc_d2h_read(w%v2rhosigma(1, 1), w%v2rhosigma_d, INT(MERGE(6, 1, workers%nspin == XC_POLARIZED)*nb))
-                  CALL libxc_d2h_read(w%v2sigma2(1, 1), w%v2sigma2_d, INT(MERGE(6, 1, workers%nspin == XC_POLARIZED)*nb))
                END IF
                IF (is_mgga) THEN
-                  CALL libxc_d2h_read(w%v2rholapl(1, 1), w%v2rholapl_d, INT(nl*nb))
-                  CALL libxc_d2h_read(w%v2rhotau(1, 1), w%v2rhotau_d, INT(nl*nb))
-                  CALL libxc_d2h_read(w%v2sigmalapl(1, 1), w%v2sigmalapl_d, INT(MERGE(6, 1, workers%nspin == XC_POLARIZED)*nb))
-                  CALL libxc_d2h_read(w%v2sigmatau(1, 1), w%v2sigmatau_d, INT(MERGE(6, 1, workers%nspin == XC_POLARIZED)*nb))
-                  CALL libxc_d2h_read(w%v2lapl2(1, 1), w%v2lapl2_d, INT(ns*nb))
-                  CALL libxc_d2h_read(w%v2lapltau(1, 1), w%v2lapltau_d, INT(nl*nb))
-                  CALL libxc_d2h_read(w%v2tau2(1, 1), w%v2tau2_d, INT(ns*nb))
                END IF
             END IF
             IF (grad_deriv >= 3) THEN
-               CALL libxc_d2h_read(w%v3rho3(1, 1), w%v3rho3_d, INT(nl*nb))
                IF (is_gga) THEN
-                  CALL libxc_d2h_read(w%v3rho2sigma(1, 1), w%v3rho2sigma_d, &
-                                      INT(MERGE(9, 1, workers%nspin == XC_POLARIZED)*nb))
-                  CALL libxc_d2h_read(w%v3rhosigma2(1, 1), w%v3rhosigma2_d, &
-                                      INT(MERGE(12, 1, workers%nspin == XC_POLARIZED)*nb))
-                  CALL libxc_d2h_read(w%v3sigma3(1, 1), w%v3sigma3_d, &
-                                      INT(MERGE(10, 1, workers%nspin == XC_POLARIZED)*nb))
                END IF
                #:for arr in v3_new
                   IF (is_mgga) THEN
-            CALL libxc_d2h_read(w%${arr}$ (1, 1), w%${arr}$_d, INT(MERGE(${mgga_ncomp[arr]}$, 1, workers%nspin == XC_POLARIZED)*nb))
                   END IF
                #:endfor
             END IF
@@ -2768,114 +2680,114 @@ CONTAINS
             IF (is_mgga) THEN
                SELECT CASE (grad_deriv)
                CASE (0)
-                  CALL libxc_mgga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
+                  CALL libxc_mgga_exc_wrapper(w%func, np, w%rho, w%sigma, w%lapl, w%tau, w%exc)
                CASE (1)
                   IF (no_exc) THEN
-                     CALL libxc_mgga_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                                 w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                     CALL libxc_mgga_vxc_wrapper(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                                 w%vrho, w%vsigma, w%vlapl, w%vtau)
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL libxc_mgga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                                     w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                     CALL libxc_mgga_exc_vxc_wrapper(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                                     w%exc, w%vrho, w%vsigma, w%vlapl, w%vtau)
                   END IF
                CASE (2)
                   IF (no_exc) THEN
-                     CALL xc_f03_mgga_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                              w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                              w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                              w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                              w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
+                     CALL xc_f03_mgga_vxc_fxc(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                              w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                              w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                              w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                              w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2)
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL xc_f03_mgga(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                      w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                      w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                      w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                      w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
+                     CALL xc_f03_mgga(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                      w%exc, w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                      w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                      w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                      w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2)
                   END IF
                CASE (3)
                   IF (no_exc) THEN
-                     CALL xc_f03_mgga_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                  w%lapl(1, 1), w%tau(1, 1), &
-                                                  w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                                  w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                                  w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                                  w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1), &
-                                                  w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                                  w%v3rho2lapl(1, 1), w%v3rho2tau(1, 1), &
-                                                  w%v3rhosigma2(1, 1), w%v3rhosigmalapl(1, 1), w%v3rhosigmatau(1, 1), &
-                                                  w%v3rholapl2(1, 1), w%v3rholapltau(1, 1), w%v3rhotau2(1, 1), &
-                                                  w%v3sigma3(1, 1), w%v3sigma2lapl(1, 1), w%v3sigma2tau(1, 1), &
-                                                  w%v3sigmalapl2(1, 1), w%v3sigmalapltau(1, 1), w%v3sigmatau2(1, 1), &
-                                                  w%v3lapl3(1, 1), w%v3lapl2tau(1, 1), w%v3lapltau2(1, 1), w%v3tau3(1, 1))
+                     CALL xc_f03_mgga_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                                  w%lapl, w%tau, &
+                                                  w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                                  w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                                  w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                                  w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2, &
+                                                  w%v3rho3, w%v3rho2sigma, &
+                                                  w%v3rho2lapl, w%v3rho2tau, &
+                                                  w%v3rhosigma2, w%v3rhosigmalapl, w%v3rhosigmatau, &
+                                                  w%v3rholapl2, w%v3rholapltau, w%v3rhotau2, &
+                                                  w%v3sigma3, w%v3sigma2lapl, w%v3sigma2tau, &
+                                                  w%v3sigmalapl2, w%v3sigmalapltau, w%v3sigmatau2, &
+                                                  w%v3lapl3, w%v3lapl2tau, w%v3lapltau2, w%v3tau3)
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL xc_f03_mgga_exc_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                      w%lapl(1, 1), w%tau(1, 1), w%exc(1), &
-                                                      w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                                      w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                                      w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                                      w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1), &
-                                                      w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                                      w%v3rho2lapl(1, 1), w%v3rho2tau(1, 1), &
-                                                      w%v3rhosigma2(1, 1), w%v3rhosigmalapl(1, 1), w%v3rhosigmatau(1, 1), &
-                                                      w%v3rholapl2(1, 1), w%v3rholapltau(1, 1), w%v3rhotau2(1, 1), &
-                                                      w%v3sigma3(1, 1), w%v3sigma2lapl(1, 1), w%v3sigma2tau(1, 1), &
-                                                      w%v3sigmalapl2(1, 1), w%v3sigmalapltau(1, 1), w%v3sigmatau2(1, 1), &
-                                                      w%v3lapl3(1, 1), w%v3lapl2tau(1, 1), w%v3lapltau2(1, 1), w%v3tau3(1, 1))
+                     CALL xc_f03_mgga_exc_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                                      w%lapl, w%tau, w%exc, &
+                                                      w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                                      w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                                      w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                                      w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2, &
+                                                      w%v3rho3, w%v3rho2sigma, &
+                                                      w%v3rho2lapl, w%v3rho2tau, &
+                                                      w%v3rhosigma2, w%v3rhosigmalapl, w%v3rhosigmatau, &
+                                                      w%v3rholapl2, w%v3rholapltau, w%v3rhotau2, &
+                                                      w%v3sigma3, w%v3sigma2lapl, w%v3sigma2tau, &
+                                                      w%v3sigmalapl2, w%v3sigmalapltau, w%v3sigmatau2, &
+                                                      w%v3lapl3, w%v3lapl2tau, w%v3lapltau2, w%v3tau3)
                   END IF
                END SELECT
             ELSE IF (is_gga) THEN
                SELECT CASE (grad_deriv)
                CASE (0)
-                  CALL libxc_gga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%exc(1))
+                  CALL libxc_gga_exc_wrapper(w%func, np, w%rho, w%sigma, w%exc)
                CASE (1)
                   IF (no_exc) THEN
-                     CALL xc_f03_gga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%vrho(1, 1), w%vsigma(1, 1))
+                     CALL xc_f03_gga_vxc(w%func, np, w%rho, w%sigma, w%vrho, w%vsigma)
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL libxc_gga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                    w%exc(1), w%vrho(1, 1), w%vsigma(1, 1))
+                     CALL libxc_gga_exc_vxc_wrapper(w%func, np, w%rho, w%sigma, &
+                                                    w%exc, w%vrho, w%vsigma)
                   END IF
                CASE (2)
                   IF (no_exc) THEN
-                     CALL xc_f03_gga_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                             w%vrho(1, 1), w%vsigma(1, 1), &
-                                             w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1))
+                     CALL xc_f03_gga_vxc_fxc(w%func, np, w%rho, w%sigma, &
+                                             w%vrho, w%vsigma, &
+                                             w%v2rho2, w%v2rhosigma, w%v2sigma2)
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL xc_f03_gga_exc_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                 w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), &
-                                                 w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1))
+                     CALL xc_f03_gga_exc_vxc_fxc(w%func, np, w%rho, w%sigma, &
+                                                 w%exc, w%vrho, w%vsigma, &
+                                                 w%v2rho2, w%v2rhosigma, w%v2sigma2)
                   END IF
                CASE (3)
                   IF (no_exc) THEN
-                     CALL xc_f03_gga_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                 w%vrho(1, 1), w%vsigma(1, 1), &
-                                                 w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1), &
-                                                 w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                                 w%v3rhosigma2(1, 1), w%v3sigma3(1, 1))
+                     CALL xc_f03_gga_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                                 w%vrho, w%vsigma, &
+                                                 w%v2rho2, w%v2rhosigma, w%v2sigma2, &
+                                                 w%v3rho3, w%v3rho2sigma, &
+                                                 w%v3rhosigma2, w%v3sigma3)
                      w%exc(1:nb) = 0.0_dp
                   ELSE
-                     CALL xc_f03_gga_exc_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                     w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), &
-                                                     w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1), &
-                                                     w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                                     w%v3rhosigma2(1, 1), w%v3sigma3(1, 1))
+                     CALL xc_f03_gga_exc_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                                     w%exc, w%vrho, w%vsigma, &
+                                                     w%v2rho2, w%v2rhosigma, w%v2sigma2, &
+                                                     w%v3rho3, w%v3rho2sigma, &
+                                                     w%v3rhosigma2, w%v3sigma3)
                   END IF
                END SELECT
             ELSE
                SELECT CASE (grad_deriv)
                CASE (0)
-                  CALL libxc_lda_exc_wrapper(w%func, np, w%rho(1, 1), w%exc(1))
+                  CALL libxc_lda_exc_wrapper(w%func, np, w%rho, w%exc)
                CASE (1)
-                  CALL libxc_lda_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%exc(1), w%vrho(1, 1))
+                  CALL libxc_lda_exc_vxc_wrapper(w%func, np, w%rho, w%exc, w%vrho)
                CASE (2)
-                  CALL xc_f03_lda_exc_vxc_fxc(w%func, np, w%rho(1, 1), &
-                                              w%exc(1), w%vrho(1, 1), w%v2rho2(1, 1))
+                  CALL xc_f03_lda_exc_vxc_fxc(w%func, np, w%rho, &
+                                              w%exc, w%vrho, w%v2rho2)
                CASE (3)
-                  CALL xc_f03_lda(w%func, np, w%rho(1, 1), &
-                                  w%exc(1), w%vrho(1, 1), w%v2rho2(1, 1), w%v3rho3(1, 1))
+                  CALL xc_f03_lda(w%func, np, w%rho, &
+                                  w%exc, w%vrho, w%v2rho2, w%v3rho3)
                END SELECT
             END IF
          END IF
@@ -3225,13 +3137,13 @@ ASSOCIATE (w => workers%worker(ithread + 1), has_laplace => workers%has_laplace,
       ! one LibXC call for the whole block
 
       IF (libxc_is_gpu()) THEN
-         CALL libxc_host_to_device(w%rho_d, w%rho(1, 1), INT(2*np))
+         CALL libxc_device_buffer_h2d(w%rho_d, INT(2*np))
          IF (is_gga) THEN
-            CALL libxc_host_to_device(w%sigma_d, w%sigma(1, 1), INT(3*np))
+            CALL libxc_device_buffer_h2d(w%sigma_d, INT(3*np))
          END IF
          IF (is_mgga) THEN
-            CALL libxc_host_to_device(w%lapl_d, w%lapl(1, 1), INT(2*np))
-            CALL libxc_host_to_device(w%tau_d, w%tau(1, 1), INT(2*np))
+            CALL libxc_device_buffer_h2d(w%lapl_d, INT(2*np))
+            CALL libxc_device_buffer_h2d(w%tau_d, INT(2*np))
          END IF
 
          IF (is_mgga) THEN
@@ -3386,44 +3298,24 @@ ASSOCIATE (w => workers%worker(ithread + 1), has_laplace => workers%has_laplace,
          CALL offload_device_synchronize()
 
          IF (.NOT. no_exc) THEN
-            CALL libxc_d2h_read(w%exc(1:nb), w%exc_d, INT(nb))
          END IF
          IF (grad_deriv >= 1) THEN
-            CALL libxc_d2h_read(w%vrho(1, 1), w%vrho_d, INT(2*nb))
             IF (is_gga) THEN
-               CALL libxc_d2h_read(w%vsigma(1, 1), w%vsigma_d, INT(3*nb))
             END IF
             IF (is_mgga) THEN
-               CALL libxc_d2h_read(w%vlapl(1, 1), w%vlapl_d, INT(2*nb))
-               CALL libxc_d2h_read(w%vtau(1, 1), w%vtau_d, INT(2*nb))
             END IF
          END IF
          IF (grad_deriv >= 2) THEN
-            CALL libxc_d2h_read(w%v2rho2(1, 1), w%v2rho2_d, INT(3*nb))
             IF (is_gga) THEN
-               CALL libxc_d2h_read(w%v2rhosigma(1, 1), w%v2rhosigma_d, INT(6*nb))
-               CALL libxc_d2h_read(w%v2sigma2(1, 1), w%v2sigma2_d, INT(6*nb))
             END IF
             IF (is_mgga) THEN
-               CALL libxc_d2h_read(w%v2rholapl(1, 1), w%v2rholapl_d, INT(4*nb))
-               CALL libxc_d2h_read(w%v2rhotau(1, 1), w%v2rhotau_d, INT(4*nb))
-               CALL libxc_d2h_read(w%v2sigmalapl(1, 1), w%v2sigmalapl_d, INT(6*nb))
-               CALL libxc_d2h_read(w%v2sigmatau(1, 1), w%v2sigmatau_d, INT(6*nb))
-               CALL libxc_d2h_read(w%v2lapl2(1, 1), w%v2lapl2_d, INT(3*nb))
-               CALL libxc_d2h_read(w%v2lapltau(1, 1), w%v2lapltau_d, INT(4*nb))
-               CALL libxc_d2h_read(w%v2tau2(1, 1), w%v2tau2_d, INT(3*nb))
             END IF
          END IF
          IF (grad_deriv >= 3) THEN
-            CALL libxc_d2h_read(w%v3rho3(1, 1), w%v3rho3_d, INT(4*nb))
             IF (is_gga) THEN
-               CALL libxc_d2h_read(w%v3rho2sigma(1, 1), w%v3rho2sigma_d, INT(9*nb))
-               CALL libxc_d2h_read(w%v3rhosigma2(1, 1), w%v3rhosigma2_d, INT(12*nb))
-               CALL libxc_d2h_read(w%v3sigma3(1, 1), w%v3sigma3_d, INT(10*nb))
             END IF
             #:for arr in v3_new
                IF (is_mgga) THEN
-                  CALL libxc_d2h_read(w%${arr}$ (1, 1), w%${arr}$_d, INT(${mgga_ncomp[arr]}$*nb))
                END IF
             #:endfor
          END IF
@@ -3442,113 +3334,113 @@ ASSOCIATE (w => workers%worker(ithread + 1), has_laplace => workers%has_laplace,
          IF (is_mgga) THEN
             SELECT CASE (grad_deriv)
             CASE (0)
-               CALL libxc_mgga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), w%exc(1))
+               CALL libxc_mgga_exc_wrapper(w%func, np, w%rho, w%sigma, w%lapl, w%tau, w%exc)
             CASE (1)
                IF (no_exc) THEN
-                  CALL xc_f03_mgga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                       w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                  CALL xc_f03_mgga_vxc(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                       w%vrho, w%vsigma, w%vlapl, w%vtau)
                   w%exc(1:nb) = 0.0_dp
                ELSE
-                  CALL libxc_mgga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                                  w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1))
+                  CALL libxc_mgga_exc_vxc_wrapper(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                                  w%exc, w%vrho, w%vsigma, w%vlapl, w%vtau)
                END IF
             CASE (2)
                IF (no_exc) THEN
-                  CALL xc_f03_mgga_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                           w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                           w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                           w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                           w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
+                  CALL xc_f03_mgga_vxc_fxc(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                           w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                           w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                           w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                           w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2)
                   w%exc(1:nb) = 0.0_dp
                ELSE
-                  CALL xc_f03_mgga(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%lapl(1, 1), w%tau(1, 1), &
-                                   w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                   w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                   w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                   w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1))
+                  CALL xc_f03_mgga(w%func, np, w%rho, w%sigma, w%lapl, w%tau, &
+                                   w%exc, w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                   w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                   w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                   w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2)
                END IF
             CASE (3)
                IF (no_exc) THEN
-                  CALL xc_f03_mgga_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                               w%lapl(1, 1), w%tau(1, 1), &
-                                               w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                               w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                               w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                               w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1), &
-                                               w%v3rho3(1, 1), w%v3rho2sigma(1, 1), w%v3rho2lapl(1, 1), w%v3rho2tau(1, 1), &
-                                               w%v3rhosigma2(1, 1), w%v3rhosigmalapl(1, 1), w%v3rhosigmatau(1, 1), &
-                                               w%v3rholapl2(1, 1), w%v3rholapltau(1, 1), w%v3rhotau2(1, 1), &
-                                               w%v3sigma3(1, 1), w%v3sigma2lapl(1, 1), w%v3sigma2tau(1, 1), &
-                                               w%v3sigmalapl2(1, 1), w%v3sigmalapltau(1, 1), w%v3sigmatau2(1, 1), &
-                                               w%v3lapl3(1, 1), w%v3lapl2tau(1, 1), w%v3lapltau2(1, 1), w%v3tau3(1, 1))
+                  CALL xc_f03_mgga_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                               w%lapl, w%tau, &
+                                               w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                               w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                               w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                               w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2, &
+                                               w%v3rho3, w%v3rho2sigma, w%v3rho2lapl, w%v3rho2tau, &
+                                               w%v3rhosigma2, w%v3rhosigmalapl, w%v3rhosigmatau, &
+                                               w%v3rholapl2, w%v3rholapltau, w%v3rhotau2, &
+                                               w%v3sigma3, w%v3sigma2lapl, w%v3sigma2tau, &
+                                               w%v3sigmalapl2, w%v3sigmalapltau, w%v3sigmatau2, &
+                                               w%v3lapl3, w%v3lapl2tau, w%v3lapltau2, w%v3tau3)
                   w%exc(1:nb) = 0.0_dp
                ELSE
-                  CALL xc_f03_mgga_exc_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                   w%lapl(1, 1), w%tau(1, 1), w%exc(1), &
-                                                   w%vrho(1, 1), w%vsigma(1, 1), w%vlapl(1, 1), w%vtau(1, 1), &
-                                                   w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2rholapl(1, 1), &
-                                                   w%v2rhotau(1, 1), w%v2sigma2(1, 1), w%v2sigmalapl(1, 1), &
-                                                   w%v2sigmatau(1, 1), w%v2lapl2(1, 1), w%v2lapltau(1, 1), w%v2tau2(1, 1), &
-                                                   w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                                   w%v3rho2lapl(1, 1), w%v3rho2tau(1, 1), &
-                                                   w%v3rhosigma2(1, 1), w%v3rhosigmalapl(1, 1), w%v3rhosigmatau(1, 1), &
-                                                   w%v3rholapl2(1, 1), w%v3rholapltau(1, 1), w%v3rhotau2(1, 1), &
-                                                   w%v3sigma3(1, 1), w%v3sigma2lapl(1, 1), w%v3sigma2tau(1, 1), &
-                                                   w%v3sigmalapl2(1, 1), w%v3sigmalapltau(1, 1), w%v3sigmatau2(1, 1), &
-                                                   w%v3lapl3(1, 1), w%v3lapl2tau(1, 1), w%v3lapltau2(1, 1), w%v3tau3(1, 1))
+                  CALL xc_f03_mgga_exc_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                                   w%lapl, w%tau, w%exc, &
+                                                   w%vrho, w%vsigma, w%vlapl, w%vtau, &
+                                                   w%v2rho2, w%v2rhosigma, w%v2rholapl, &
+                                                   w%v2rhotau, w%v2sigma2, w%v2sigmalapl, &
+                                                   w%v2sigmatau, w%v2lapl2, w%v2lapltau, w%v2tau2, &
+                                                   w%v3rho3, w%v3rho2sigma, &
+                                                   w%v3rho2lapl, w%v3rho2tau, &
+                                                   w%v3rhosigma2, w%v3rhosigmalapl, w%v3rhosigmatau, &
+                                                   w%v3rholapl2, w%v3rholapltau, w%v3rhotau2, &
+                                                   w%v3sigma3, w%v3sigma2lapl, w%v3sigma2tau, &
+                                                   w%v3sigmalapl2, w%v3sigmalapltau, w%v3sigmatau2, &
+                                                   w%v3lapl3, w%v3lapl2tau, w%v3lapltau2, w%v3tau3)
                END IF
             END SELECT
          ELSE IF (is_gga) THEN
             SELECT CASE (grad_deriv)
             CASE (0)
-               CALL libxc_gga_exc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%exc(1))
+               CALL libxc_gga_exc_wrapper(w%func, np, w%rho, w%sigma, w%exc)
             CASE (1)
                IF (no_exc) THEN
-                  CALL xc_f03_gga_vxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), w%vrho(1, 1), w%vsigma(1, 1))
+                  CALL xc_f03_gga_vxc(w%func, np, w%rho, w%sigma, w%vrho, w%vsigma)
                   w%exc(1:nb) = 0.0_dp
                ELSE
-                  CALL libxc_gga_exc_vxc_wrapper(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                 w%exc(1), w%vrho(1, 1), w%vsigma(1, 1))
+                  CALL libxc_gga_exc_vxc_wrapper(w%func, np, w%rho, w%sigma, &
+                                                 w%exc, w%vrho, w%vsigma)
                END IF
             CASE (2)
                IF (no_exc) THEN
-                  CALL xc_f03_gga_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                          w%vrho(1, 1), w%vsigma(1, 1), &
-                                          w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1))
+                  CALL xc_f03_gga_vxc_fxc(w%func, np, w%rho, w%sigma, &
+                                          w%vrho, w%vsigma, &
+                                          w%v2rho2, w%v2rhosigma, w%v2sigma2)
                   w%exc(1:nb) = 0.0_dp
                ELSE
-                  CALL xc_f03_gga_exc_vxc_fxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                              w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), &
-                                              w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1))
+                  CALL xc_f03_gga_exc_vxc_fxc(w%func, np, w%rho, w%sigma, &
+                                              w%exc, w%vrho, w%vsigma, &
+                                              w%v2rho2, w%v2rhosigma, w%v2sigma2)
                END IF
             CASE (3)
                IF (no_exc) THEN
-                  CALL xc_f03_gga_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                              w%vrho(1, 1), w%vsigma(1, 1), &
-                                              w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1), &
-                                              w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                              w%v3rhosigma2(1, 1), w%v3sigma3(1, 1))
+                  CALL xc_f03_gga_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                              w%vrho, w%vsigma, &
+                                              w%v2rho2, w%v2rhosigma, w%v2sigma2, &
+                                              w%v3rho3, w%v3rho2sigma, &
+                                              w%v3rhosigma2, w%v3sigma3)
                   w%exc(1:nb) = 0.0_dp
                ELSE
-                  CALL xc_f03_gga_exc_vxc_fxc_kxc(w%func, np, w%rho(1, 1), w%sigma(1, 1), &
-                                                  w%exc(1), w%vrho(1, 1), w%vsigma(1, 1), &
-                                                  w%v2rho2(1, 1), w%v2rhosigma(1, 1), w%v2sigma2(1, 1), &
-                                                  w%v3rho3(1, 1), w%v3rho2sigma(1, 1), &
-                                                  w%v3rhosigma2(1, 1), w%v3sigma3(1, 1))
+                  CALL xc_f03_gga_exc_vxc_fxc_kxc(w%func, np, w%rho, w%sigma, &
+                                                  w%exc, w%vrho, w%vsigma, &
+                                                  w%v2rho2, w%v2rhosigma, w%v2sigma2, &
+                                                  w%v3rho3, w%v3rho2sigma, &
+                                                  w%v3rhosigma2, w%v3sigma3)
                END IF
             END SELECT
          ELSE
             SELECT CASE (grad_deriv)
             CASE (0)
-               CALL xc_f03_lda_exc(w%func, np, w%rho(1, 1), w%exc(1))
+               CALL xc_f03_lda_exc(w%func, np, w%rho, w%exc)
             CASE (1)
-               CALL xc_f03_lda_exc_vxc(w%func, np, w%rho(1, 1), w%exc(1), w%vrho(1, 1))
+               CALL xc_f03_lda_exc_vxc(w%func, np, w%rho, w%exc, w%vrho)
             CASE (2)
-               CALL xc_f03_lda_exc_vxc_fxc(w%func, np, w%rho(1, 1), &
-                                           w%exc(1), w%vrho(1, 1), w%v2rho2(1, 1))
+               CALL xc_f03_lda_exc_vxc_fxc(w%func, np, w%rho, &
+                                           w%exc, w%vrho, w%v2rho2)
             CASE (3)
-               CALL xc_f03_lda(w%func, np, w%rho(1, 1), &
-                               w%exc(1), w%vrho(1, 1), w%v2rho2(1, 1), w%v3rho3(1, 1))
+               CALL xc_f03_lda(w%func, np, w%rho, &
+                               w%exc, w%vrho, w%v2rho2, w%v3rho3)
             END SELECT
          END IF
       END IF

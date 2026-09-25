@@ -190,6 +190,8 @@ MODULE xc_libxc_wrap
              libxc_device_buffer_alloc, libxc_device_buffer_free, &
              libxc_host_to_device, libxc_device_to_host, &
              libxc_d2h_issue, libxc_d2h_read, &
+             libxc_device_buffer_host_view_1d, libxc_device_buffer_host_view_2d, &
+             libxc_device_buffer_h2d, &
              libxc_gga_exc_vxc_wrapper, libxc_gga_exc_wrapper, &
              libxc_lda_exc_vxc_wrapper, libxc_lda_exc_wrapper, &
              libxc_mgga_exc_vxc_wrapper, libxc_mgga_exc_wrapper, &
@@ -823,6 +825,63 @@ CONTAINS
       dptr = offload_get_buffer_device_pointer(buffer%buffer)
       CALL C_F_POINTER(dptr, fptr, [n])
    END SUBROUTINE libxc_device_buffer_get_ptr
+
+! **************************************************************************************************
+!> \brief View a device buffer's pinned host memory as a 1-D Fortran array.
+!> \param buffer ...
+!> \param n ...
+!> \param fptr ...
+! **************************************************************************************************
+   SUBROUTINE libxc_device_buffer_host_view_1d(buffer, n, fptr)
+      USE ISO_C_BINDING, ONLY: C_ASSOCIATED, C_F_POINTER, C_PTR
+      USE offload_api, ONLY: offload_get_buffer_host_pointer
+      TYPE(libxc_device_buffer_type), INTENT(IN)         :: buffer
+      INTEGER, INTENT(IN)                                :: n
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT), POINTER  :: fptr
+
+      TYPE(C_PTR)                                        :: hptr
+
+      hptr = offload_get_buffer_host_pointer(buffer%buffer)
+      CPASSERT(C_ASSOCIATED(hptr))
+      CALL C_F_POINTER(hptr, fptr, [n])
+   END SUBROUTINE libxc_device_buffer_host_view_1d
+
+! **************************************************************************************************
+!> \brief View a device buffer's pinned host memory as a 2-D Fortran array.
+!> \param buffer ...
+!> \param n1 ...
+!> \param n2 ...
+!> \param fptr ...
+! **************************************************************************************************
+   SUBROUTINE libxc_device_buffer_host_view_2d(buffer, n1, n2, fptr)
+      USE ISO_C_BINDING, ONLY: C_ASSOCIATED, C_F_POINTER, C_PTR
+      USE offload_api, ONLY: offload_get_buffer_host_pointer
+      TYPE(libxc_device_buffer_type), INTENT(IN)         :: buffer
+      INTEGER, INTENT(IN)                                :: n1, n2
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT), &
+         POINTER                                         :: fptr
+
+      TYPE(C_PTR)                                        :: hptr
+
+      hptr = offload_get_buffer_host_pointer(buffer%buffer)
+      CPASSERT(C_ASSOCIATED(hptr))
+      CALL C_F_POINTER(hptr, fptr, [n1, n2])
+   END SUBROUTINE libxc_device_buffer_host_view_2d
+
+! **************************************************************************************************
+!> \brief Copy the pinned host side of a device buffer to the device. Used when
+!>        the host staging array already aliases that memory, so no separate
+!>        host-side copy into the buffer is needed.
+!> \param buffer ...
+!> \param n ...
+! **************************************************************************************************
+   SUBROUTINE libxc_device_buffer_h2d(buffer, n)
+      USE offload_api, ONLY: offload_buffer_h2d
+      TYPE(libxc_device_buffer_type), INTENT(INOUT)      :: buffer
+      INTEGER, INTENT(IN)                                :: n
+
+      CALL offload_buffer_h2d(buffer%buffer, n)
+   END SUBROUTINE libxc_device_buffer_h2d
 
 ! **************************************************************************************************
 !> \brief LDA exc and vxc on device buffers.
