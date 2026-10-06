@@ -306,9 +306,9 @@ Specific options of --with-PKG:
   --with-libtorch         Enable libtorch as a machine learning framework.
                           This package is required for NequIP and Allegro, and
                           also for installing DeePMD-kit.
-                          "install" builds a CUDA-enabled libtorch from the
-                          PyTorch sources with only the features needed by CP2K
-                          (this requires CUDA and a CUDA toolkit).
+                          "install" builds libtorch from the PyTorch sources
+                          with only the features needed by CP2K (CUDA if
+                          --enable-cuda=yes, CPU otherwise).
                           Default = no
   --with-plumed           Enable interface to the PLUMED library for enhanced
                           sampling methods.
@@ -1180,17 +1180,17 @@ if [ "${with_skala_ftorch}" = "__INSTALL__" ]; then
   [ "${with_libtorch}" = "__DONTUSE__" ] && with_libtorch="__INSTALL__"
 fi
 
-# libtorch is built from the PyTorch sources. Validate the hard requirements
-# up front (after the automatic enabling above).
+# libtorch is built from source; a CUDA build additionally needs nvcc.
 if [ "${with_libtorch}" = "__INSTALL__" ]; then
-  for __tool in git nvcc python3 cmake ninja; do
+  __libtorch_tools="git python3 cmake ninja"
+  if [ "${enable_cuda}" = "__TRUE__" ]; then
+    __libtorch_tools="${__libtorch_tools} nvcc"
+  fi
+  for __tool in ${__libtorch_tools}; do
     if ! command -v "${__tool}" > /dev/null 2>&1; then
       report_error ${LINENO} "Building libtorch from source requires '${__tool}', which was not found in PATH."
     fi
   done
-  if [ "${enable_cuda}" != "__TRUE__" ]; then
-    report_error ${LINENO} "Building libtorch from source without CUDA (--with-libtorch=install) is not supported. Enable CUDA or provide an existing installation via --with-libtorch=system or --with-libtorch=<path>."
-  fi
 fi
 
 # MKL may provide the FFTW3 interface and ScaLAPACK/BLACS. Resolve these

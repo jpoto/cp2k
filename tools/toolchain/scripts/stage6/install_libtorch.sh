@@ -7,9 +7,7 @@
 [ "${BASH_SOURCE[0]}" ] && SCRIPT_NAME="${BASH_SOURCE[0]}" || SCRIPT_NAME=$0
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_NAME")/.." && pwd -P)"
 
-# libtorch is built from the PyTorch sources with only the features needed by
-# CP2K/FTorch/SKALA. 2.6.0 is the last PyTorch release officially paired with
-# CUDA 12.4, which matches the system CUDA toolkit used by this toolchain.
+# 2.6.0 is the last PyTorch release paired with CUDA 12.4.
 libtorch_ver="2.6.0"
 libtorch_rev="v${libtorch_ver}"
 
@@ -31,23 +29,47 @@ case "${with_libtorch}" in
     pkg_install_dir="${INSTALLDIR}/libtorch-${libtorch_ver}"
     install_lock_file="${pkg_install_dir}/install_successful"
 
-    if [ -z "${ARCH_NUM:-}" ] || [ "${ARCH_NUM}" = "no" ]; then
-      report_error ${LINENO} "ARCH_NUM is not set; building libtorch needs a target GPU architecture (see --gpu-ver)."
-    fi
-    # TORCH_CUDA_ARCH_LIST wants a decimal form (e.g. 8.6, 8.0, 9.0).
-    if [[ "${ARCH_NUM}" == *.* ]]; then
-      torch_cuda_arch="${ARCH_NUM}"
+    # LAPACK-capable BLAS is required for CPU linear algebra (at::linalg_eigh).
+    if [ -n "${OPENBLAS_ROOT:-}" ]; then
+      export OpenBLAS_HOME="${OPENBLAS_ROOT}"
+      torch_blas_flags=(-DBLAS=OpenBLAS)
     else
-      torch_cuda_arch="${ARCH_NUM:0:1}.${ARCH_NUM:1}"
+      torch_blas_flags=()
+    fi
+
+    torch_cmake_flags=()
+    if [ "${ENABLE_CUDA}" = "__TRUE__" ]; then
+      if [ -z "${ARCH_NUM:-}" ] || [ "${ARCH_NUM}" = "no" ]; then
+        report_error ${LINENO} "ARCH_NUM is not set; building a CUDA libtorch needs a target GPU architecture (see --gpu-ver)."
+      fi
+      # TORCH_CUDA_ARCH_LIST wants a decimal form (e.g. 8.6).
+      if [[ "${ARCH_NUM}" == *.* ]]; then
+        torch_cuda_arch="${ARCH_NUM}"
+      else
+        torch_cuda_arch="${ARCH_NUM:0:1}.${ARCH_NUM:1}"
+      fi
+      export TORCH_CUDA_ARCH_LIST="${torch_cuda_arch}"
+      torch_build_kind="CUDA arch ${torch_cuda_arch}"
+      torch_cmake_flags+=(
+        -DUSE_CUDA=ON
+        -DUSE_CUDNN=OFF
+        -DUSE_CUSPARSELT=OFF
+        -DUSE_CUDSS=OFF
+        -DUSE_CUFILE=OFF
+        -DUSE_CUDA_STATIC_LINK=OFF
+      )
+    else
+      torch_build_kind="CPU only"
+      torch_cmake_flags+=(
+        -DUSE_CUDA=OFF
+      )
     fi
     torch_build_jobs="${NPROCS_OVERWRITE:-$(get_nprocs)}"
 
     if verify_checksums "${install_lock_file}"; then
       echo "libtorch-${libtorch_ver} is already installed, skipping it."
     else
-      # Python build dependencies required by the PyTorch build system are
-      # installed into a dedicated virtual environment to avoid clashing with
-      # the (possibly externally-managed) system Python.
+      # Dedicated venv avoids clashing with an externally-managed system Python.
       torch_venv="${BUILDDIR}/pytorch-venv"
       if [ ! -x "${torch_venv}/bin/python3" ]; then
         python3 -m venv "${torch_venv}" > /dev/null 2>&1 ||
@@ -59,9 +81,7 @@ case "${with_libtorch}" in
         report_error ${LINENO} "Failed to install the Python build dependencies of PyTorch."
       torch_python="${torch_venv}/bin/python3"
 
-      # Fetch PyTorch sources with submodules. A full (non-shallow) submodule
-      # checkout is used because some submodules are nested and would otherwise
-      # be left empty, breaking the CMake configure step.
+      # Full submodule checkout; nested submodules are left empty otherwise.
       src_dir="${BUILDDIR}/pytorch-${libtorch_ver}"
       if [ ! -d "${src_dir}/.git" ]; then
         rm -rf "${src_dir}"
@@ -73,27 +93,16 @@ case "${with_libtorch}" in
       git -C "${src_dir}" submodule update --init --recursive --force >> git.log 2>&1 ||
         report_error ${LINENO} "Failed to update PyTorch submodules; see ${BUILDDIR}/git.log"
 
-      # Reduce the build to the features CP2K/FTorch/SKALA actually use:
-      # no Python bindings, no distributed/NCCL/GLOO/MPI, no quantized kernels,
-      # no MKLDNN/NNPACK, no tests, no cuDNN (the model uses no convolution),
-      # single CUDA architecture. The operator set is kept complete so the JIT
-      # can load arbitrary TorchScript models without "unknown builtin op".
+      # Minimal build for CP2K/FTorch/SKALA; the full ATen operator set is kept
+      # so any TorchScript model loads.
       build_dir="${BUILDDIR}/pytorch-build-${libtorch_ver}"
       rm -rf "${build_dir}"
       mkdir -p "${build_dir}"
       cd "${build_dir}"
 
-      echo "Building libtorch ${libtorch_ver} from source (CUDA arch ${torch_cuda_arch})"
-      # Configure with CMake directly (BUILD_PYTHON=OFF), then build the
-      # 'install' target. This installs into CMAKE_INSTALL_PREFIX so the
-      # headers, libraries and CMake package files land next to the other
-      # toolchain packages, which is what CP2K and FTorch consume.
-      # Put the build venv first on PATH so CMake finds its Python, and pass
-      # the interpreter explicitly. Environment variables are NOT forwarded to
-      # CMake by the 2.6.0 build system, so every toggle is a -D option.
+      echo "Building libtorch ${libtorch_ver} from source (${torch_build_kind})"
       export PATH="${torch_venv}/bin:${PATH}"
       export MAX_JOBS="${torch_build_jobs}"
-      export TORCH_CUDA_ARCH_LIST="${torch_cuda_arch}"
       export CFLAGS="" CXXFLAGS=""
       cmake -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
@@ -102,11 +111,8 @@ case "${with_libtorch}" in
         -DPython_EXECUTABLE="${torch_python}" \
         -DBUILD_PYTHON=OFF \
         -DBUILD_TEST=OFF \
-        -DUSE_CUDA=ON \
-        -DUSE_CUDNN=OFF \
-        -DUSE_CUSPARSELT=OFF \
-        -DUSE_CUDSS=OFF \
-        -DUSE_CUFILE=OFF \
+        "${torch_blas_flags[@]}" \
+        "${torch_cmake_flags[@]}" \
         -DUSE_DISTRIBUTED=OFF \
         -DUSE_NCCL=OFF \
         -DUSE_GLOO=OFF \
@@ -120,7 +126,6 @@ case "${with_libtorch}" in
         -DUSE_NUMA=OFF \
         -DUSE_ITT=OFF \
         -DUSE_OPENMP=ON \
-        -DUSE_CUDA_STATIC_LINK=OFF \
         -DREL_WITH_DEB_INFO=OFF \
         "${src_dir}" > configure.log 2>&1 || {
         tail_excerpt configure.log
@@ -137,8 +142,6 @@ case "${with_libtorch}" in
 
       write_checksums "${install_lock_file}" "${SCRIPT_DIR}/stage6/$(basename "${SCRIPT_NAME}")"
 
-      # Remove the PyTorch sources and build tree now that libtorch is
-      # installed; they are large and no longer needed.
       echo "Deleting PyTorch build directory and sources ..."
       cd "${BUILDDIR}"
       rm -rf "${build_dir}" "${src_dir}"
