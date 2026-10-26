@@ -30,11 +30,12 @@ MODULE hfx_ri_kp
                                               cp_blacs_env_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_add, dbcsr_clear, dbcsr_copy, dbcsr_create, dbcsr_distribution_get, &
-        dbcsr_distribution_new, dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_filter, &
-        dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, &
-        dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_p_type, dbcsr_put_block, dbcsr_release, dbcsr_transposed, dbcsr_type, &
+        dbcsr_add, dbcsr_clear, dbcsr_copy, dbcsr_create, dbcsr_distribute, &
+        dbcsr_distribution_get, dbcsr_distribution_new, dbcsr_distribution_release, &
+        dbcsr_distribution_type, dbcsr_filter, dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, &
+        dbcsr_get_stored_coordinates, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
+        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, &
+        dbcsr_put_block, dbcsr_release, dbcsr_replicate_all, dbcsr_transposed, dbcsr_type, &
         dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cholesky,               ONLY: cp_dbcsr_cholesky_decompose,&
                                               cp_dbcsr_cholesky_invert
@@ -485,9 +486,10 @@ CONTAINS
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env_sub
       TYPE(dbcsr_type)                                   :: ks_desymm, rho_desymm, sym_full, &
-                                                            sym_tmp, sym_work, tmp
+                                                            sym_template, sym_tmp, sym_work, tmp
       TYPE(dbcsr_type), ALLOCATABLE, DIMENSION(:)        :: mat_2c_pot
       TYPE(dbcsr_type), POINTER                          :: dbcsr_template
+      TYPE(dbt_type)                                     :: sym_atom
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:)          :: ks_t_split, t_2c_ao_tmp, t_2c_work, &
                                                             t_3c_int, t_3c_work_2, t_3c_work_3
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:, :)       :: ks_t, ks_t_sub, t_3c_apc, t_3c_apc_sub
@@ -533,25 +535,17 @@ CONTAINS
       img_op(:) = 0
       img_inv(:) = .FALSE.
       IF (use_image_sym) THEN
-         IF (para_env%num_pe /= 1) THEN
+         CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
+                                       img_rep, img_op, img_inv)
+         IF (.NOT. image_sym_usable) THEN
             IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: multi-rank not supported; full image sum")
+               CPWARN("KP_IMAGE_SYMMETRY: no pure-rotation symmetry; full image sum")
                image_sym_warned = .TRUE.
             END IF
             use_image_sym = .FALSE.
-         ELSE
-            CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
-                                          img_rep, img_op, img_inv)
-            IF (.NOT. image_sym_usable) THEN
-               IF (.NOT. image_sym_warned) THEN
-                  CPWARN("KP_IMAGE_SYMMETRY: no pure-rotation symmetry; full image sum")
-                  image_sym_warned = .TRUE.
-               END IF
-               use_image_sym = .FALSE.
-               img_rep(:) = [(b_img, b_img=1, nimg)]
-               img_op(:) = 0
-               img_inv(:) = .FALSE.
-            END IF
+            img_rep(:) = [(b_img, b_img=1, nimg)]
+            img_op(:) = 0
+            img_inv(:) = .FALSE.
          END IF
       END IF
       img_computed(:) = (img_rep(:) == [(b_img, b_img=1, nimg)])
@@ -562,6 +556,9 @@ CONTAINS
                            matrix_type=dbcsr_type_no_symmetry)
          CALL dbcsr_create(sym_tmp, template=ks_matrix(1, 1)%matrix, &
                            matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_template, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbt_create(sym_template, sym_atom)
          ! The Hermitian completion of a representative needs its opposite image.
          DO b_img = 1, nimg
             IF (img_rep(b_img) /= b_img) CYCLE
@@ -859,21 +856,22 @@ CONTAINS
       CALL get_pmat_images(ri_data%rho_ao_t, rho_ao, 0.0_dp, ri_data, qs_env)
       IF (use_image_sym) THEN
          ! Reconstruct the full (both orientations) exchange matrix of each
-         ! representative from its opposite image, then generate the remaining
-         ! images by AO block rotations.
+         ! representative from its opposite image, replicate it so every rank
+         ! can build its local target blocks, then rotate the remaining images.
          DO i_spin = 1, nspins
             DO b_img = 1, nimg
-               CALL hfx_full_image_matrix(ks_t, i_spin, img_rep(b_img), nimg, qs_env, &
+               IF (img_rep(b_img) /= b_img) CYCLE
+               CALL hfx_full_image_matrix(ks_t, i_spin, b_img, nimg, qs_env, &
                                           sym_full, sym_tmp, sym_work)
-               IF (img_rep(b_img) == b_img) THEN
-                  CALL dbt_copy_matrix_to_tensor(sym_full, ri_data%ks_t(i_spin, b_img), &
-                                                 summation=.TRUE.)
-               ELSE
-                  CALL hfx_rotate_dcsr(kpoints, dft_control%do_admm, img_op(b_img), &
-                                       sym_full, sym_work, img_inv(b_img))
-                  CALL dbt_copy_matrix_to_tensor(sym_work, ri_data%ks_t(i_spin, b_img), &
-                                                 summation=.TRUE.)
-               END IF
+               CALL dbcsr_replicate_all(sym_full)
+               DO i_img = 1, nimg
+                  IF (img_rep(i_img) /= b_img) CYCLE
+                  CALL hfx_rotate_dcsr(kpoints, dft_control%do_admm, img_op(i_img), &
+                                       sym_full, sym_work, img_inv(i_img))
+                  CALL dbt_copy_matrix_to_tensor(sym_work, sym_atom)
+                  CALL dbt_copy(sym_atom, ri_data%ks_t(i_spin, i_img), summation=.TRUE.)
+               END DO
+               CALL dbcsr_distribute(sym_full)
             END DO
          END DO
       ELSE
@@ -890,7 +888,9 @@ CONTAINS
          END DO
       END IF
       IF (use_image_sym) THEN
+         CALL dbt_destroy(sym_atom)
          CALL dbcsr_release(sym_full)
+         CALL dbcsr_release(sym_template)
          CALL dbcsr_release(sym_tmp)
          CALL dbcsr_release(sym_work)
       END IF
@@ -5754,12 +5754,15 @@ CONTAINS
       TYPE(dbcsr_type), INTENT(INOUT)                    :: src, tgt
       LOGICAL, INTENT(IN)                                :: invert
 
-      INTEGER                                            :: icol, irow, kind_i, kind_j
-      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rblock, work
+      INTEGER                                            :: icol, irow, kind_i, kind_j, mynode, &
+                                                            owner, ti, tj
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rblock, tblock, work
       REAL(dp), DIMENSION(:, :), POINTER                 :: block, left_rot, right_rot
+      TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_iterator_type)                          :: iter
-      TYPE(dbcsr_type)                                   :: tmp
 
+      CALL dbcsr_get_info(tgt, distribution=dist)
+      CALL dbcsr_distribution_get(dist, mynode=mynode)
       CALL dbcsr_clear(tgt)
       CALL dbcsr_iterator_start(iter, src)
       DO WHILE (dbcsr_iterator_blocks_left(iter))
@@ -5783,17 +5786,23 @@ CONTAINS
             ALLOCATE (rblock(SIZE(block, 1), SIZE(block, 2)))
             rblock(:, :) = block
          END IF
-         CALL dbcsr_put_block(tgt, irow, icol, rblock)
-         DEALLOCATE (rblock)
+         IF (invert) THEN
+            ti = icol
+            tj = irow
+            ALLOCATE (tblock(SIZE(rblock, 2), SIZE(rblock, 1)))
+            tblock(:, :) = TRANSPOSE(rblock)
+         ELSE
+            ti = irow
+            tj = icol
+            ALLOCATE (tblock(SIZE(rblock, 1), SIZE(rblock, 2)))
+            tblock(:, :) = rblock
+         END IF
+         CALL dbcsr_get_stored_coordinates(tgt, ti, tj, owner)
+         IF (owner == mynode) CALL dbcsr_put_block(tgt, ti, tj, tblock)
+         DEALLOCATE (rblock, tblock)
       END DO
       CALL dbcsr_iterator_stop(iter)
       CALL dbcsr_finalize(tgt)
-      IF (invert) THEN
-         CALL dbcsr_create(tmp, template=tgt, matrix_type=dbcsr_type_no_symmetry)
-         CALL dbcsr_transposed(tmp, tgt)
-         CALL dbcsr_copy(tgt, tmp)
-         CALL dbcsr_release(tmp)
-      END IF
    END SUBROUTINE hfx_rotate_dcsr
 
 END MODULE hfx_ri_kp
