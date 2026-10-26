@@ -599,6 +599,17 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="KP_IMAGE_SYMMETRY", &
+                          description="Use the crystal point group to reduce the number of real-space "// &
+                          "image cells in the K-point RI-HFX exchange matrix build. Only image cells "// &
+                          "that are symmetry equivalent are generated from one representative by "// &
+                          "rotating the corresponding AO blocks. This is an experimental feature.", &
+                          usage="KP_IMAGE_SYMMETRY {logical}", &
+                          repeats=.FALSE., &
+                          default_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, __LOCATION__, name="KP_USE_DELTA_P", &
                           description="This kweyword controls whether the KS matrix at each SCF cycle "// &
                           "is built by adding the contribution of the denisty difference (wrt to previous step) "// &
