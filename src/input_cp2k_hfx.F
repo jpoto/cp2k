@@ -603,10 +603,11 @@ CONTAINS
                           description="Use the crystal point group to reduce the number of real-space "// &
                           "image cells in the K-point RI-HFX exchange matrix build. Only image cells "// &
                           "that are symmetry equivalent are generated from one representative by "// &
-                          "rotating the corresponding AO blocks. This is an experimental feature.", &
+                          "rotating the corresponding AO blocks. Disable this for testing or if the "// &
+                          "symmetry detection is not trusted.", &
                           usage="KP_IMAGE_SYMMETRY {logical}", &
                           repeats=.FALSE., &
-                          default_l_val=.FALSE.)
+                          default_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

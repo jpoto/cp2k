@@ -34,8 +34,8 @@ MODULE hfx_ri_kp
         dbcsr_distribution_new, dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_filter, &
         dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, &
         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_p_type, dbcsr_put_block, dbcsr_release, dbcsr_type, dbcsr_type_no_symmetry, &
-        dbcsr_type_symmetric
+        dbcsr_p_type, dbcsr_put_block, dbcsr_release, dbcsr_transposed, dbcsr_type, &
+        dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cholesky,               ONLY: cp_dbcsr_cholesky_decompose,&
                                               cp_dbcsr_cholesky_invert
    USE cp_dbcsr_contrib,                ONLY: dbcsr_dot
@@ -123,6 +123,8 @@ MODULE hfx_ri_kp
    PUBLIC :: hfx_ri_update_ks_kp, hfx_ri_update_forces_kp
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'hfx_ri_kp'
+
+   LOGICAL, SAVE, PRIVATE :: image_sym_warned = .FALSE.
 CONTAINS
 
 ! **************************************************************************************************
@@ -482,10 +484,10 @@ CONTAINS
                                                             t4
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env_sub
-      TYPE(dbcsr_type)                                   :: ks_desymm, rho_desymm, tmp
+      TYPE(dbcsr_type)                                   :: ks_desymm, rho_desymm, sym_full, &
+                                                            sym_tmp, sym_work, tmp
       TYPE(dbcsr_type), ALLOCATABLE, DIMENSION(:)        :: mat_2c_pot
       TYPE(dbcsr_type), POINTER                          :: dbcsr_template
-      TYPE(dbt_type)                                     :: sym_delta, sym_rot, sym_src
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:)          :: ks_t_split, t_2c_ao_tmp, t_2c_work, &
                                                             t_3c_int, t_3c_work_2, t_3c_work_3
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:, :)       :: ks_t, ks_t_sub, t_3c_apc, t_3c_apc_sub
@@ -532,13 +534,19 @@ CONTAINS
       img_inv(:) = .FALSE.
       IF (use_image_sym) THEN
          IF (para_env%num_pe /= 1) THEN
-            CPWARN("KP_IMAGE_SYMMETRY currently requires a single MPI rank; disabled.")
+            IF (.NOT. image_sym_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: multi-rank not supported; full image sum")
+               image_sym_warned = .TRUE.
+            END IF
             use_image_sym = .FALSE.
          ELSE
             CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
                                           img_rep, img_op, img_inv)
             IF (.NOT. image_sym_usable) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: no pure-rotation image symmetry available; disabled.")
+               IF (.NOT. image_sym_warned) THEN
+                  CPWARN("KP_IMAGE_SYMMETRY: no pure-rotation symmetry; full image sum")
+                  image_sym_warned = .TRUE.
+               END IF
                use_image_sym = .FALSE.
                img_rep(:) = [(b_img, b_img=1, nimg)]
                img_op(:) = 0
@@ -548,9 +556,12 @@ CONTAINS
       END IF
       img_computed(:) = (img_rep(:) == [(b_img, b_img=1, nimg)])
       IF (use_image_sym) THEN
-         CALL dbt_create(ks_matrix(1, 1)%matrix, sym_src)
-         CALL dbt_create(ks_matrix(1, 1)%matrix, sym_rot)
-         CALL dbt_create(ri_data%ks_t(1, 1), sym_delta)
+         CALL dbcsr_create(sym_full, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_work, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_tmp, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
          ! The Hermitian completion of a representative needs its opposite image.
          DO b_img = 1, nimg
             IF (img_rep(b_img) /= b_img) CYCLE
@@ -847,25 +858,21 @@ CONTAINS
       !We need the full thing for the energy, on the next SCF step
       CALL get_pmat_images(ri_data%rho_ao_t, rho_ao, 0.0_dp, ri_data, qs_env)
       IF (use_image_sym) THEN
-         ! Build the Hermitian completion of each representative, then generate the
-         ! equivalent images by AO block rotations.
+         ! Reconstruct the full (both orientations) exchange matrix of each
+         ! representative from its opposite image, then generate the remaining
+         ! images by AO block rotations.
          DO i_spin = 1, nspins
             DO b_img = 1, nimg
+               CALL hfx_full_image_matrix(ks_t, i_spin, img_rep(b_img), nimg, qs_env, &
+                                          sym_full, sym_tmp, sym_work)
                IF (img_rep(b_img) == b_img) THEN
-                  CALL dbt_copy(ks_t(i_spin, b_img), sym_delta)
-                  mb_img = get_opp_index(b_img, qs_env)
-                  IF (mb_img > 0 .AND. mb_img <= nimg) &
-                     CALL dbt_copy(ks_t(i_spin, mb_img), sym_delta, order=[2, 1], summation=.TRUE.)
-                  CALL dbt_copy(sym_delta, ri_data%ks_t(i_spin, b_img), summation=.TRUE.)
+                  CALL dbt_copy_matrix_to_tensor(sym_full, ri_data%ks_t(i_spin, b_img), &
+                                                 summation=.TRUE.)
                ELSE
-                  CALL dbt_copy(ks_t(i_spin, img_rep(b_img)), sym_delta)
-                  mb_img = get_opp_index(img_rep(b_img), qs_env)
-                  IF (mb_img > 0 .AND. mb_img <= nimg) &
-                     CALL dbt_copy(ks_t(i_spin, mb_img), sym_delta, order=[2, 1], summation=.TRUE.)
-                  CALL dbt_copy(sym_delta, sym_src)
-                  CALL hfx_rotate_atom_tensor(kpoints, dft_control%do_admm, img_op(b_img), &
-                                              sym_src, sym_rot, img_inv(b_img))
-                  CALL dbt_copy(sym_rot, ri_data%ks_t(i_spin, b_img), summation=.TRUE.)
+                  CALL hfx_rotate_dcsr(kpoints, dft_control%do_admm, img_op(b_img), &
+                                       sym_full, sym_work, img_inv(b_img))
+                  CALL dbt_copy_matrix_to_tensor(sym_work, ri_data%ks_t(i_spin, b_img), &
+                                                 summation=.TRUE.)
                END IF
             END DO
          END DO
@@ -883,9 +890,9 @@ CONTAINS
          END DO
       END IF
       IF (use_image_sym) THEN
-         CALL dbt_destroy(sym_delta)
-         CALL dbt_destroy(sym_src)
-         CALL dbt_destroy(sym_rot)
+         CALL dbcsr_release(sym_full)
+         CALL dbcsr_release(sym_tmp)
+         CALL dbcsr_release(sym_work)
       END IF
       DO b_img = 1, nimg
          DO i_spin = 1, nspins
@@ -5490,12 +5497,10 @@ CONTAINS
       inv(:) = .FALSE.
 
       IF (.NOT. ASSOCIATED(kpoints)) THEN
-         CPWARN("KP_IMAGE_SYMMETRY: no k-point environment")
          RETURN
       END IF
       IF (.NOT. ASSOCIATED(kpoints%ibrot) .OR. .NOT. ASSOCIATED(kpoints%atype) .OR. &
           .NOT. ASSOCIATED(kpoints%cell_to_index) .OR. .NOT. ASSOCIATED(kpoints%index_to_cell)) THEN
-         CPWARN("KP_IMAGE_SYMMETRY: symmetry metadata not available")
          RETURN
       END IF
       IF (kpoints%nkp <= 0) RETURN
@@ -5518,15 +5523,12 @@ CONTAINS
          DO is = 1, SIZE(kpsym%rotp)
             ! Pure image rotations only: atoms must map onto themselves in the same cell.
             IF (ANY(kpsym%f0(:, is) /= [(i, i=1, natom)])) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: non-identity atom map")
                RETURN
             END IF
             IF (ANY(kpsym%fcell(:, :, is) /= 0)) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: non-zero atom cell shift")
                RETURN
             END IF
             IF (ANY(kpsym%fcell_gauge(:, :, is) /= 0)) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: non-zero gauge cell shift")
                RETURN
             END IF
 
@@ -5547,14 +5549,12 @@ CONTAINS
          END DO
       END DO
       IF (nops <= 1) THEN
-         CPWARN("KP_IMAGE_SYMMETRY: fewer than two unique rotations")
          RETURN
       END IF
 
       ! verify that the collected rotations form a closed group
       DO g = 1, nops
          IF (determinant3(op_frac(:, :, g)) == 0) THEN
-            CPWARN("KP_IMAGE_SYMMETRY: singular rotation matrix")
             RETURN
          END IF
       END DO
@@ -5569,7 +5569,6 @@ CONTAINS
                END IF
             END DO
             IF (.NOT. duplicate) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: rotation set is not closed")
                RETURN
             END IF
          END DO
@@ -5590,7 +5589,6 @@ CONTAINS
                   op(img) = op_slot(g)
                   inv(img) = .FALSE.
                ELSE IF (rep(img) /= b) THEN
-                  CPWARN("KP_IMAGE_SYMMETRY: overlapping orbits (rotation)")
                   RETURN
                END IF
             END IF
@@ -5603,7 +5601,6 @@ CONTAINS
                   op(img) = op_slot(g)
                   inv(img) = .TRUE.
                ELSE IF (rep(img) /= b) THEN
-                  CPWARN("KP_IMAGE_SYMMETRY: overlapping orbits (inversion)")
                   RETURN
                END IF
             END IF
@@ -5724,5 +5721,79 @@ CONTAINS
             mat(1, 2)*(mat(2, 1)*mat(3, 3) - mat(2, 3)*mat(3, 1)) + &
             mat(1, 3)*(mat(2, 1)*mat(3, 2) - mat(2, 2)*mat(3, 1))
    END FUNCTION determinant3
+
+! **************************************************************************************************
+!> \brief Build the full (both block orientations) exchange matrix of one image from the
+!>        stored half matrices of the image and its opposite.
+! **************************************************************************************************
+   SUBROUTINE hfx_full_image_matrix(ks_t, ispin, image, nimg, qs_env, full, tmp, work)
+      TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: ks_t
+      INTEGER, INTENT(IN)                                :: ispin, image, nimg
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: full, tmp, work
+
+      INTEGER                                            :: mb_img
+
+      CALL dbt_copy_tensor_to_matrix(ks_t(ispin, image), full)
+      mb_img = get_opp_index(image, qs_env)
+      IF (mb_img > 0 .AND. mb_img <= nimg) THEN
+         CALL dbt_copy_tensor_to_matrix(ks_t(ispin, mb_img), tmp)
+         CALL dbcsr_transposed(work, tmp)
+         CALL dbcsr_add(full, work, 1.0_dp, 1.0_dp)
+         CALL dbcsr_transposed(work, tmp)
+      END IF
+   END SUBROUTINE hfx_full_image_matrix
+
+! **************************************************************************************************
+!> \brief Rotate a full per-image AO matrix under a crystal operation.
+! **************************************************************************************************
+   SUBROUTINE hfx_rotate_dcsr(kpoints, aux_fit, rot_slot, src, tgt, invert)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      LOGICAL, INTENT(IN)                                :: aux_fit
+      INTEGER, INTENT(IN)                                :: rot_slot
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: src, tgt
+      LOGICAL, INTENT(IN)                                :: invert
+
+      INTEGER                                            :: icol, irow, kind_i, kind_j
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rblock, work
+      REAL(dp), DIMENSION(:, :), POINTER                 :: block, left_rot, right_rot
+      TYPE(dbcsr_iterator_type)                          :: iter
+      TYPE(dbcsr_type)                                   :: tmp
+
+      CALL dbcsr_clear(tgt)
+      CALL dbcsr_iterator_start(iter, src)
+      DO WHILE (dbcsr_iterator_blocks_left(iter))
+         CALL dbcsr_iterator_next_block(iter, irow, icol, block)
+         kind_i = kpoints%atype(irow)
+         kind_j = kpoints%atype(icol)
+         IF (rot_slot > 0) THEN
+            IF (aux_fit) THEN
+               left_rot => kpoints%kind_rotmat_aux(rot_slot, kind_i)%rmat
+               right_rot => kpoints%kind_rotmat_aux(rot_slot, kind_j)%rmat
+            ELSE
+               left_rot => kpoints%kind_rotmat(rot_slot, kind_i)%rmat
+               right_rot => kpoints%kind_rotmat(rot_slot, kind_j)%rmat
+            END IF
+            ALLOCATE (rblock(SIZE(block, 1), SIZE(block, 2)), &
+                      work(SIZE(block, 1), SIZE(block, 2)))
+            work(:, :) = MATMUL(TRANSPOSE(left_rot), block)
+            rblock(:, :) = MATMUL(work, right_rot)
+            DEALLOCATE (work)
+         ELSE
+            ALLOCATE (rblock(SIZE(block, 1), SIZE(block, 2)))
+            rblock(:, :) = block
+         END IF
+         CALL dbcsr_put_block(tgt, irow, icol, rblock)
+         DEALLOCATE (rblock)
+      END DO
+      CALL dbcsr_iterator_stop(iter)
+      CALL dbcsr_finalize(tgt)
+      IF (invert) THEN
+         CALL dbcsr_create(tmp, template=tgt, matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_transposed(tmp, tgt)
+         CALL dbcsr_copy(tgt, tmp)
+         CALL dbcsr_release(tmp)
+      END IF
+   END SUBROUTINE hfx_rotate_dcsr
 
 END MODULE hfx_ri_kp
