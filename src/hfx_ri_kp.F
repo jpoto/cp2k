@@ -555,28 +555,6 @@ CONTAINS
       END IF
       img_computed(:) = (img_rep(:) == [(b_img, b_img=1, nimg)])
       IF (use_image_sym) THEN
-         CALL dbcsr_create(sym_full, template=ks_matrix(1, 1)%matrix, &
-                           matrix_type=dbcsr_type_no_symmetry)
-         CALL dbcsr_create(sym_work, template=ks_matrix(1, 1)%matrix, &
-                           matrix_type=dbcsr_type_no_symmetry)
-         CALL dbcsr_create(sym_tmp, template=ks_matrix(1, 1)%matrix, &
-                           matrix_type=dbcsr_type_no_symmetry)
-         CALL dbcsr_create(sym_template, template=ks_matrix(1, 1)%matrix, &
-                           matrix_type=dbcsr_type_no_symmetry)
-         CALL dbt_create(sym_template, sym_atom)
-         ALLOCATE (ks_full(nimg))
-         DO b_img = 1, nimg
-            CALL dbcsr_create(ks_full(b_img), template=ks_matrix(1, 1)%matrix, &
-                              matrix_type=dbcsr_type_no_symmetry)
-         END DO
-         ALLOCATE (filled(natom, natom, nimg))
-         ALLOCATE (ident_map(natom), ident_frac(3, 3), zero_shift(3, natom))
-         ident_map(:) = [(i, i=1, natom)]
-         ident_frac(:, :) = 0
-         ident_frac(1, 1) = 1
-         ident_frac(2, 2) = 1
-         ident_frac(3, 3) = 1
-         zero_shift(:, :) = 0
          ! The Hermitian completion of a representative needs its opposite image.
          DO b_img = 1, nimg
             IF (img_rep(b_img) /= b_img) CYCLE
@@ -667,6 +645,19 @@ CONTAINS
       ALLOCATE (sparsity_pattern(natom, natom, nimg))
       CALL get_sparsity_pattern(sparsity_pattern, ri_data, qs_env)
       CALL get_sub_dist(sparsity_pattern, ngroups, ri_data)
+
+      IF (use_image_sym) THEN
+         CALL hfx_check_block_coverage(qs_env, kpoints, sparsity_pattern, nimg, natom, img_rep, &
+                                       img_op, img_inv, op_frac, op_map, op_shift, usable=image_sym_usable)
+         IF (.NOT. image_sym_usable) THEN
+            IF (.NOT. image_sym_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: representative orbits do not cover all blocks; full image sum")
+               image_sym_warned = .TRUE.
+            END IF
+            use_image_sym = .FALSE.
+            img_computed(:) = .TRUE.
+         END IF
+      END IF
 
       !Get all the required tensors in the subgroups
       ALLOCATE (mat_2c_pot(nimg), ks_t_sub(nspins, nimg), t_2c_ao_tmp(1), ks_t_split(2), t_2c_work(3))
@@ -873,6 +864,28 @@ CONTAINS
       !We need the full thing for the energy, on the next SCF step
       CALL get_pmat_images(ri_data%rho_ao_t, rho_ao, 0.0_dp, ri_data, qs_env)
       IF (use_image_sym) THEN
+         CALL dbcsr_create(sym_full, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_work, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_tmp, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_template, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbt_create(sym_template, sym_atom)
+         ALLOCATE (ks_full(nimg))
+         DO b_img = 1, nimg
+            CALL dbcsr_create(ks_full(b_img), template=ks_matrix(1, 1)%matrix, &
+                              matrix_type=dbcsr_type_no_symmetry)
+         END DO
+         ALLOCATE (filled(natom, natom, nimg))
+         ALLOCATE (ident_map(natom), ident_frac(3, 3), zero_shift(3, natom))
+         ident_map(:) = [(i, i=1, natom)]
+         ident_frac(:, :) = 0
+         ident_frac(1, 1) = 1
+         ident_frac(2, 2) = 1
+         ident_frac(3, 3) = 1
+         zero_shift(:, :) = 0
          ! Expand representative images block by block over the full space-group
          ! orbit, including atom permutations and cell shifts.
          DO i_spin = 1, nspins
@@ -5843,5 +5856,71 @@ CONTAINS
       END DO
       CALL dbcsr_iterator_stop(iter)
    END SUBROUTINE hfx_expand_image_blocks
+
+! **************************************************************************************************
+!> \brief Check that expanding the representative blocks covers every present block.
+! **************************************************************************************************
+   SUBROUTINE hfx_check_block_coverage(qs_env, kpoints, sparsity_pattern, nimg, natom, img_rep, &
+                                       img_op, img_inv, op_frac, op_map, op_shift, usable)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, INTENT(IN)                                :: sparsity_pattern(:, :, :), nimg, natom, &
+                                                            img_rep(:), img_op(:)
+      LOGICAL, INTENT(IN)                                :: img_inv(:)
+      INTEGER, INTENT(IN)                                :: op_frac(:, :, :), op_map(:, :), &
+                                                            op_shift(:, :, :)
+      LOGICAL, INTENT(OUT)                               :: usable
+
+      INTEGER                                            :: b, g, i, ip, j, jp, mb_img, r, ximg
+      INTEGER, DIMENSION(3)                              :: bcell, xcell
+      LOGICAL                                            :: found
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: covered, present
+
+      usable = .FALSE.
+      ALLOCATE (PRESENT(natom, natom, nimg), covered(natom, natom, nimg))
+      PRESENT(:, :, :) = .FALSE.
+      covered(:, :, :) = .FALSE.
+      DO b = 1, nimg
+         mb_img = get_opp_index(b, qs_env)
+         DO j = 1, natom
+            DO i = 1, natom
+               PRESENT(i, j, b) = sparsity_pattern(i, j, b) >= 0
+               IF (mb_img > 0 .AND. mb_img <= nimg) &
+                  PRESENT(i, j, b) = PRESENT(i, j, b) .OR. sparsity_pattern(j, i, mb_img) >= 0
+            END DO
+         END DO
+      END DO
+
+      DO r = 1, nimg
+         IF (img_rep(r) /= r) CYCLE
+         bcell = kpoints%index_to_cell(:, r)
+         DO b = 1, nimg
+            IF (img_rep(b) /= r) CYCLE
+            IF (b == r) THEN
+               covered(:, :, r) = covered(:, :, r) .OR. PRESENT(:, :, r)
+               CYCLE
+            END IF
+            g = img_op(b)
+            DO j = 1, natom
+               DO i = 1, natom
+                  IF (.NOT. PRESENT(i, j, r)) CYCLE
+                  xcell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + op_shift(:, j, g) - op_shift(:, i, g)
+                  IF (img_inv(b)) THEN
+                     ip = op_map(j, g)
+                     jp = op_map(i, g)
+                     xcell = -xcell
+                  ELSE
+                     ip = op_map(i, g)
+                     jp = op_map(j, g)
+                  END IF
+                  CALL hfx_image_from_cell(kpoints, xcell, ximg, found)
+                  IF (found .AND. ximg >= 1 .AND. ximg <= nimg) covered(ip, jp, ximg) = .TRUE.
+               END DO
+            END DO
+         END DO
+      END DO
+      usable = ALL(covered .OR. .NOT. present)
+      DEALLOCATE (present, covered)
+   END SUBROUTINE hfx_check_block_coverage
 
 END MODULE hfx_ri_kp
