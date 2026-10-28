@@ -2956,8 +2956,7 @@ CONTAINS
 
       CLASS(mp_comm_type), INTENT(IN)                    :: group
 
-      INTEGER                                            :: cuda_device_count, iw, pe, selected_device
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: selected_devices
+      INTEGER                                            :: cuda_device_count, iw, selected_device
 
       selected_device = -1
 
@@ -2984,39 +2983,23 @@ CONTAINS
                        "Check CUDA_VISIBLE_DEVICES and the offload device selection.")
       END IF
 
-      ALLOCATE (selected_devices(group%num_pe))
-      CALL group%allgather(selected_device, selected_devices)
-
-      IF (group%mepos /= 0) THEN
-         DEALLOCATE (selected_devices)
-         RETURN
-      END IF
+      ! This routine is called from the local atom loop in qs_vxc_atom, so the
+      ! number of calls can differ between MPI ranks. Do not use collectives
+      ! here; the device choice is local and the log is written by the I/O rank.
+      IF (group%mepos /= 0) RETURN
       IF (selected_device == logged_cuda_device .AND. &
           cuda_device_count == logged_cuda_device_count .AND. &
-          group%num_pe == logged_cuda_nproc) THEN
-         DEALLOCATE (selected_devices)
-         RETURN
-      END IF
+          group%num_pe == logged_cuda_nproc) RETURN
 
       iw = cp_logger_get_default_io_unit()
-      IF (iw <= 0) THEN
-         DEALLOCATE (selected_devices)
-         RETURN
-      END IF
+      IF (iw <= 0) RETURN
       WRITE (UNIT=iw, FMT="(/,T2,A,1X,I0,1X,A,1X,I0)") &
          "SKALA_GPW| Native grid Torch CUDA device", selected_device, &
          "of", cuda_device_count
-      WRITE (UNIT=iw, FMT="(T2,A)", ADVANCE="NO") &
-         "SKALA_GPW| Native grid Torch CUDA rank devices"
-      DO pe = 1, group%num_pe
-         WRITE (UNIT=iw, FMT="(1X,I0,A,I0)", ADVANCE="NO") pe - 1, ":", selected_devices(pe)
-      END DO
-      WRITE (UNIT=iw, FMT=*)
 
       logged_cuda_device = selected_device
       logged_cuda_device_count = cuda_device_count
       logged_cuda_nproc = group%num_pe
-      DEALLOCATE (selected_devices)
 
    END FUNCTION configure_native_grid_cuda
 

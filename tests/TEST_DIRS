@@ -407,6 +407,7 @@ QS/regtest-nlmo
 QS/regtest-gapw-2
 TMC/regtest_ana_post_proc                                   parallel mpiranks>1
 QS/regtest-skala-native-gapw-ae-kp                          skala
+QS/regtest-skala-native-gapw-mpi                            skala mpiranks%2==0
 QS/regtest-double-hybrid-grad-meta                          libxc
 QS/regtest-rtp-4
 xTB/regtest-gfn0-d                                          libdftd4
