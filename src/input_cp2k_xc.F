@@ -1699,7 +1699,8 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="ATOM_PARTITION", &
                           description="Atom partition used to build the experimental CP2K-native "// &
                           "SKALA COMMON_GRID feature block. HARD assigns each native grid point to "// &
-                          "the nearest periodic atom and is intended for legacy energy/VXC-only runs. "// &
+                          "the nearest periodic atom and is intended for legacy energy/VXC-only runs; "// &
+                          "CP2K aborts if forces or the virial are requested with HARD. "// &
                           "SMOOTH uses a Becke-like fuzzy-cell partition on the native grid and creates "// &
                           "weighted atom rows. Internal atom-grid weights vanish through a smooth taper "// &
                           "when sparse rows reach the partition cutoff. Analytical atom forces and stress "// &

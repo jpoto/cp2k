@@ -517,7 +517,9 @@ CONTAINS
       END IF
       IF (needs_atom_force .OR. compute_virial) THEN
          IF (native_grid_atom_partition == skala_gpw_atom_partition_hard) THEN
-            native_grid_atom_partition = skala_gpw_atom_partition_smooth
+            CALL cp_abort(__LOCATION__, &
+                          "SKALA_NATIVE%ATOM_PARTITION HARD supports energy/VXC only. "// &
+                          "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
          END IF
          native_grid_atom_chunk_routing = .FALSE.
          native_grid_atom_chunks = .FALSE.
@@ -796,7 +798,9 @@ CONTAINS
                        "Unknown SKALA_NATIVE%ATOM_PARTITION value.")
       END SELECT
       IF (native_grid_atom_partition == skala_gpw_atom_partition_hard) THEN
-         native_grid_atom_partition = skala_gpw_atom_partition_smooth
+         CALL cp_abort(__LOCATION__, &
+                       "SKALA_NATIVE%ATOM_PARTITION HARD supports energy/VXC only. "// &
+                       "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
       END IF
 
       entry_torch_use_cuda = torch_get_use_cuda()
