@@ -550,15 +550,16 @@ CONTAINS
       CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
                              xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
 
+      CALL section_vals_val_get(gauxc_section, "DIAGNOSTICS", l_val=native_grid_diagnostics)
       CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                    requires_grad=(.NOT. my_just_energy), weights=weights, &
                                    requires_coordinate_grad=(needs_atom_force .OR. compute_virial), &
                                    requires_stress_grad=compute_virial, &
                                    use_atom_chunks=native_grid_atom_chunks, &
                                    route_atom_chunks=native_grid_atom_chunk_routing, &
+                                   compute_diagnostics=native_grid_diagnostics, &
                                    atom_partition=native_grid_atom_partition, &
                                    cuda_device=selected_cuda_device)
-      CALL section_vals_val_get(gauxc_section, "DIAGNOSTICS", l_val=native_grid_diagnostics)
       IF (native_grid_diagnostics) THEN
          CALL print_native_grid_diagnostics(features, rho_r(1)%pw_grid%para%group%mepos == 0)
       END IF

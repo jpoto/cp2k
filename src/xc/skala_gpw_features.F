@@ -197,13 +197,14 @@ CONTAINS
 !> \param requires_stress_grad ...
 !> \param use_atom_chunks ...
 !> \param route_atom_chunks ...
+!> \param compute_diagnostics ...
 !> \param atom_partition ...
 !> \param cuda_device selected Torch device (-1 for CPU, >=0 for CUDA)
 ! **************************************************************************************************
    SUBROUTINE skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                       requires_grad, weights, requires_coordinate_grad, &
                                       requires_stress_grad, use_atom_chunks, route_atom_chunks, &
-                                      atom_partition, cuda_device)
+                                      compute_diagnostics, atom_partition, cuda_device)
       TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
       TYPE(xc_rho_set_type), INTENT(IN)                  :: rho_set
       TYPE(pw_r3d_rs_type), DIMENSION(:), INTENT(IN)     :: rho_r
@@ -213,15 +214,15 @@ CONTAINS
       TYPE(pw_r3d_rs_type), OPTIONAL, POINTER            :: weights
       LOGICAL, INTENT(IN), OPTIONAL                      :: requires_coordinate_grad, &
                                                             requires_stress_grad, use_atom_chunks, &
-                                                            route_atom_chunks
+                                                            route_atom_chunks, compute_diagnostics
       INTEGER, INTENT(IN), OPTIONAL                      :: atom_partition
       INTEGER, INTENT(IN)                                :: cuda_device
 
       INTEGER :: handle, i, ipt, ispin, j, k, local_row, my_atom_partition, &
          ndynamic_local_per_point, nflat, nflat_local, nspins, phase_handle, real_base, row
       INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL :: collapse_spin_dynamics, my_requires_coordinate_grad, my_requires_grad, &
-         my_requires_stress_grad, my_route_atom_chunks, my_use_atom_chunks, &
+      LOGICAL :: collapse_spin_dynamics, my_compute_diagnostics, my_requires_coordinate_grad, &
+         my_requires_grad, my_requires_stress_grad, my_route_atom_chunks, my_use_atom_chunks, &
          use_atom_chunk_protocol, use_atom_chunk_routing
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: global_dynamic, local_dynamic
       REAL(KIND=dp), DIMENSION(3)                        :: integrals
@@ -243,6 +244,8 @@ CONTAINS
       IF (PRESENT(use_atom_chunks)) my_use_atom_chunks = use_atom_chunks
       my_route_atom_chunks = .FALSE.
       IF (PRESENT(route_atom_chunks)) my_route_atom_chunks = route_atom_chunks
+      my_compute_diagnostics = .FALSE.
+      IF (PRESENT(compute_diagnostics)) my_compute_diagnostics = compute_diagnostics
       my_atom_partition = skala_gpw_atom_partition_hard
       IF (PRESENT(atom_partition)) my_atom_partition = atom_partition
       IF (my_atom_partition /= skala_gpw_atom_partition_hard .AND. &
@@ -375,48 +378,50 @@ CONTAINS
          CALL timestop(phase_handle)
       END IF
 
-      CALL timeset("skala_gpw_feature_sums", phase_handle)
-      IF (features%uses_atom_chunks) THEN
-         features%electron_count = 0.0_dp
-         features%kinetic_integral = 0.0_dp
-         features%spin_moment = 0.0_dp
-         IF (features%chunk_feature_count > 0) THEN
-            IF (features%uses_collapsed_rks_dynamic) THEN
-               features%electron_count = SUM(2.0_dp*features%chunk_density(:, 1)* &
-                                             cached_layout%chunk_grid_weights)
-               features%kinetic_integral = SUM(2.0_dp*features%chunk_kin(:, 1)* &
-                                               cached_layout%chunk_grid_weights)
-            ELSE
-               features%electron_count = SUM((features%chunk_density(:, 1) + &
+      IF (my_compute_diagnostics) THEN
+         CALL timeset("skala_gpw_feature_sums", phase_handle)
+         IF (features%uses_atom_chunks) THEN
+            features%electron_count = 0.0_dp
+            features%kinetic_integral = 0.0_dp
+            features%spin_moment = 0.0_dp
+            IF (features%chunk_feature_count > 0) THEN
+               IF (features%uses_collapsed_rks_dynamic) THEN
+                  features%electron_count = SUM(2.0_dp*features%chunk_density(:, 1)* &
+                                                cached_layout%chunk_grid_weights)
+                  features%kinetic_integral = SUM(2.0_dp*features%chunk_kin(:, 1)* &
+                                                  cached_layout%chunk_grid_weights)
+               ELSE
+                  features%electron_count = SUM((features%chunk_density(:, 1) + &
+                                                 features%chunk_density(:, 2))* &
+                                                cached_layout%chunk_grid_weights)
+                  features%kinetic_integral = SUM((features%chunk_kin(:, 1) + &
+                                                   features%chunk_kin(:, 2))* &
+                                                  cached_layout%chunk_grid_weights)
+                  features%spin_moment = SUM((features%chunk_density(:, 1) - &
                                               features%chunk_density(:, 2))* &
                                              cached_layout%chunk_grid_weights)
-               features%kinetic_integral = SUM((features%chunk_kin(:, 1) + &
-                                                features%chunk_kin(:, 2))* &
-                                               cached_layout%chunk_grid_weights)
-               features%spin_moment = SUM((features%chunk_density(:, 1) - &
-                                           features%chunk_density(:, 2))* &
-                                          cached_layout%chunk_grid_weights)
+               END IF
             END IF
-         END IF
-         integrals = [features%electron_count, features%kinetic_integral, features%spin_moment]
-         CALL pw_grid%para%group%sum(integrals)
-         features%electron_count = integrals(1)
-         features%kinetic_integral = integrals(2)
-         features%spin_moment = integrals(3)
-      ELSE
-         features%electron_count = SUM((features%density(:, 1) + features%density(:, 2))* &
+            integrals = [features%electron_count, features%kinetic_integral, features%spin_moment]
+            CALL pw_grid%para%group%sum(integrals)
+            features%electron_count = integrals(1)
+            features%kinetic_integral = integrals(2)
+            features%spin_moment = integrals(3)
+         ELSE
+            features%electron_count = SUM((features%density(:, 1) + features%density(:, 2))* &
+                                          features%grid_weights)
+            features%kinetic_integral = SUM((features%kin(:, 1) + features%kin(:, 2))* &
+                                            features%grid_weights)
+            features%spin_moment = SUM((features%density(:, 1) - features%density(:, 2))* &
                                        features%grid_weights)
-         features%kinetic_integral = SUM((features%kin(:, 1) + features%kin(:, 2))* &
-                                         features%grid_weights)
-         features%spin_moment = SUM((features%density(:, 1) - features%density(:, 2))* &
-                                    features%grid_weights)
+         END IF
+         IF (use_atom_chunk_routing) THEN
+            features%grid_weight_sum = SUM(cached_layout%grid_weights)
+         ELSE
+            features%grid_weight_sum = SUM(features%grid_weights)
+         END IF
+         CALL timestop(phase_handle)
       END IF
-      IF (use_atom_chunk_routing) THEN
-         features%grid_weight_sum = SUM(cached_layout%grid_weights)
-      ELSE
-         features%grid_weight_sum = SUM(features%grid_weights)
-      END IF
-      CALL timestop(phase_handle)
 
       CALL timeset("skala_gpw_tensor_update", phase_handle)
       IF (use_atom_chunk_protocol .AND. .NOT. features%uses_atom_chunks) THEN
