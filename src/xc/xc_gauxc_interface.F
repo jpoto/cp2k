@@ -64,6 +64,9 @@ MODULE xc_gauxc_interface
       write_gto_basis_set
    USE periodic_table, ONLY: &
       get_ptable_info
+   USE offload_api, ONLY: &
+      offload_activate_chosen_device, &
+      offload_get_device_count
    USE gauxc_status, ONLY: &
       gauxc_status_message, &
       gauxc_status_type
@@ -194,6 +197,7 @@ MODULE xc_gauxc_interface
    TYPE cp_gauxc_integrator_type
       TYPE(gauxc_functional_type) :: func
       TYPE(gauxc_integrator_type) :: integrator
+      LOGICAL :: uses_device_runtime = .FALSE.
    END TYPE cp_gauxc_integrator_type
 
    TYPE cp_gauxc_status_type
@@ -578,6 +582,16 @@ CONTAINS
 
       IF (use_device_runtime) THEN
 #ifdef GAUXC_HAS_DEVICE
+         IF (offload_get_device_count() <= 0) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "GPU execution was requested for GauXC, but the offload library "// &
+                          "reports no usable device. Set USE_GPU HOST in the &GAUXC "// &
+                          "section to run on the CPU, or select a valid offload device "// &
+                          "(check CUDA_VISIBLE_DEVICES and the MPI rank-to-device mapping).")
+         END IF
+         ! Make the offload-selected device current before GauXC allocates its
+         ! runtime, so memory and streams are created on the right GPU.
+         CALL offload_activate_chosen_device()
 #if defined(GAUXC_HAS_MPI) && defined(__parallel)
          IF (PRESENT(mpi_comm)) THEN
             res%rt = gauxc_device_runtime_environment_new( &
@@ -726,6 +740,7 @@ CONTAINS
                        int_exec_space_local, &
                        local_work_kernel_name=TRIM(lwd_kernel))
       GAUXC_RETURN_IF_ERROR(status)
+      res%uses_device_runtime = grid%uses_device_runtime
 
 #else
       MARK_USED(grid)
@@ -791,6 +806,12 @@ CONTAINS
          CPASSERT(ALL(SHAPE(res%vxc_scalar) == SHAPE(density_scalar)))
       END IF
       res%vxc_scalar = 0._dp
+
+#ifdef GAUXC_HAS_DEVICE
+      ! Other libraries may have changed the current CUDA device; restore the
+      ! offload selection before GauXC touches the device.
+      IF (integrator%uses_device_runtime) CALL offload_activate_chosen_device()
+#endif
 
       IF (use_gauxc_model) THEN
 #ifndef GAUXC_HAS_ONEDFT
@@ -939,6 +960,12 @@ CONTAINS
          CALL uppercase(model_key)
          use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE")
       END IF
+
+#ifdef GAUXC_HAS_DEVICE
+      ! Other libraries may have changed the current CUDA device; restore the
+      ! offload selection before GauXC touches the device.
+      IF (integrator%uses_device_runtime) CALL offload_activate_chosen_device()
+#endif
 
       IF (use_gauxc_model) THEN
 #ifndef GAUXC_HAS_ONEDFT
