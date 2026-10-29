@@ -332,6 +332,7 @@ Fist/regtest-11
 QS/regtest-as-2                                             libint !ifx
 QS/regtest-mp2-admm-grad                                    libint !ifx
 QS/regtest-gauxc-gradients                                  gauxc_onedft_gradients
+QS/regtest-gauxc-energy-mpi                                 gauxc mpiranks>1
 QS/regtest-as-fci                                           libfci libint libxc !ifx
 QS/regtest-tdwf
 QMMM/SE/regtest_2

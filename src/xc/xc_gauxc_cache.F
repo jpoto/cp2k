@@ -168,9 +168,10 @@ CONTAINS
       END IF
 
       CALL gauxc_resolve_gradient_policy( &
-         .TRUE., params%gapw_method, cache%max_l(), params%use_gauxc_model, para_env%num_pe, &
-         params%use_self_runtime, TRIM(params%gradient_runtime), params%force_fd_gradient, &
-         params%use_fd_gradient, params%use_gradient_mpi_runtime, params%use_gradient_self_runtime, gradient_error)
+         params%need_xc_gradient, params%gapw_method, cache%max_l(), params%use_gauxc_model, &
+         para_env%num_pe, params%use_self_runtime, TRIM(params%gradient_runtime), &
+         params%force_fd_gradient, params%use_fd_gradient, params%use_gradient_mpi_runtime, &
+         params%use_gradient_self_runtime, gradient_error)
       SELECT CASE (gradient_error)
       CASE (1)
          CALL cp_abort(__LOCATION__, &
@@ -509,6 +510,7 @@ CONTAINS
       IF (TRIM(cache%lwd_kernel) /= TRIM(params%lwd_kernel)) RETURN
       IF (cache%use_self_runtime .NEQV. params%use_self_runtime) RETURN
 
+      IF (cache%need_xc_gradient .NEQV. params%need_xc_gradient) RETURN
       IF (cache%gradient_runtime /= params%gradient_runtime) RETURN
       IF (cache%gapw_method .NEQV. params%gapw_method) RETURN
       IF (cache%force_fd_gradient .NEQV. params%force_fd_gradient) RETURN
