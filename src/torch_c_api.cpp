@@ -309,6 +309,39 @@ static void remap_model_device_constants(torch::jit::Module &model,
   }
 }
 
+// Collect the device targets hard-coded in a graph (device constants such as
+// torch.device("cuda:0") or "cpu").
+static void collect_block_device_constants(torch::jit::Block *block,
+                                           bool &has_cuda, bool &has_cpu) {
+  for (torch::jit::Node *node : block->nodes()) {
+    if (node->kind() == torch::jit::prim::Constant &&
+        node->outputs().size() == 1 &&
+        node->output()->type()->kind() == c10::TypeKind::DeviceObjType &&
+        node->hasAttribute(torch::jit::attr::value) &&
+        node->kindOf(torch::jit::attr::value) == torch::jit::AttributeKind::s) {
+      const std::string &value = node->s(torch::jit::attr::value);
+      if (value.rfind("cuda", 0) == 0) {
+        has_cuda = true;
+      } else if (value.rfind("cpu", 0) == 0) {
+        has_cpu = true;
+      }
+    }
+    for (torch::jit::Block *nested_block : node->blocks()) {
+      collect_block_device_constants(nested_block, has_cuda, has_cpu);
+    }
+  }
+}
+
+static void collect_model_device_constants(torch::jit::Module &model,
+                                           bool &has_cuda, bool &has_cpu) {
+  for (const auto &method : model.get_methods()) {
+    collect_block_device_constants(method.graph()->block(), has_cuda, has_cpu);
+  }
+  for (auto child : model.children()) {
+    collect_model_device_constants(child, has_cuda, has_cpu);
+  }
+}
+
 static void promote_float32_constants(torch::jit::Block *block) {
   for (torch::jit::Node *node : block->nodes()) {
     if (node->kind() == torch::jit::prim::Constant &&
@@ -889,9 +922,23 @@ void torch_c_model_remap_device_constants(torch_c_model_t *model) {
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   const auto device = get_device_with_guard(guard);
+  // Remap even for CPU so that a CUDA export can run under USE_GPU HOST (and a
+  // CPU export under GPU) instead of failing later with a raw device mismatch.
+  remap_model_device_constants(*model, device);
   if (device.is_cuda()) {
-    remap_model_device_constants(*model, device);
     initialize_cuda_linalg(device);
+  }
+
+  bool has_cuda = false;
+  bool has_cpu = false;
+  collect_model_device_constants(*model, has_cuda, has_cpu);
+  if (device.is_cuda()) {
+    torch_c_check(!has_cpu,
+                  "SKALA TorchScript model still targets the CPU "
+                  "after remapping; use the CUDA export for GPU runs");
+  } else {
+    torch_c_check(!has_cuda, "SKALA TorchScript model still targets CUDA after "
+                             "remapping; use the CPU export or a CUDA build");
   }
   TORCH_C_CATCH("torch_c_model_remap_device_constants")
 }

@@ -2973,15 +2973,23 @@ CONTAINS
                        "GPU execution was requested, but no usable CUDA device was "// &
                        "found. Set USE_GPU HOST to force CPU execution.")
       END IF
-      IF (offload_get_device_count() > 0) THEN
-         selected_device = offload_get_chosen_device()
-      ELSE
-         selected_device = MOD(group%mepos, cuda_device_count)
+      IF (offload_get_device_count() <= 0) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "GPU execution was requested for native SKALA, but the offload "// &
+                       "library reports no usable device. Set USE_GPU HOST in the "// &
+                       "&SKALA_NATIVE section to run on the CPU, or start CP2K with a "// &
+                       "valid offload device selected (check CUDA_VISIBLE_DEVICES and "// &
+                       "the MPI rank-to-device mapping).")
       END IF
+
+      ! The offload library is the single source of truth for the active device.
+      selected_device = offload_get_chosen_device()
       IF (selected_device < 0 .OR. selected_device >= cuda_device_count) THEN
          CALL cp_abort(__LOCATION__, &
-                       "CP2K selected CUDA device outside the range visible to Torch. "// &
-                       "Check CUDA_VISIBLE_DEVICES and the offload device selection.")
+                       "GPU execution was requested for native SKALA, but the offload "// &
+                       "library did not select a device visible to Torch. Set USE_GPU "// &
+                       "HOST in the &SKALA_NATIVE section to run on the CPU, or fix "// &
+                       "CUDA_VISIBLE_DEVICES and the MPI rank-to-device mapping.")
       END IF
 
       ! This routine is called from the local atom loop in qs_vxc_atom, so the
