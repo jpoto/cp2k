@@ -14,12 +14,10 @@ MODULE xc_gauxc_functional
                                               get_atomic_kind
    USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
-   USE cp_dbcsr_api,                    ONLY: dbcsr_add,&
-                                              dbcsr_create,&
+   USE cp_dbcsr_api,                    ONLY: dbcsr_create,&
                                               dbcsr_finalize,&
                                               dbcsr_get_info,&
-                                              dbcsr_p_type,&
-                                              dbcsr_release
+                                              dbcsr_p_type
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
@@ -228,21 +226,22 @@ CONTAINS
    END SUBROUTINE dbcsr_to_dense
 
 ! ******, ***********************************************************************************
-!> \brief Convert a dense symmetric matrix to a DBCSR matrix with full upper block structure.
-!>        This creates all upper-triangular blocks, not just those present in a template.
+!> \brief Fill a DBCSR matrix from a dense symmetric matrix with full upper block structure.
+!>        This creates all upper-triangular blocks, not just those present in a template,
+!>        reusing the target matrix when its shape already matches.
 !>        This is needed because GauXC computes VXC for the full dense density matrix.
 !> \param dense_mat Input dense matrix
 !> \param template_dbcsr Template DBCSR matrix for distribution and block sizes
-!> \return dbcsr_mat Output DBCSR matrix with full upper block structure
+!> \param dbcsr_mat Output DBCSR matrix with full upper block structure
 ! **************************************************************************************************
-   FUNCTION dense_to_dbcsr(dense_mat, template_dbcsr) RESULT(dbcsr_mat)
+   SUBROUTINE dense_to_dbcsr_into(dense_mat, template_dbcsr, dbcsr_mat)
       USE cp_dbcsr_api, ONLY: &
+         dbcsr_clear, &
          dbcsr_create, &
          dbcsr_distribution_get, &
          dbcsr_distribution_type, &
          dbcsr_finalize, &
          dbcsr_get_info, &
-         dbcsr_get_stored_coordinates, &
          dbcsr_init_p, &
          dbcsr_put_block, &
          dbcsr_release, &
@@ -250,13 +249,14 @@ CONTAINS
          dbcsr_work_create
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: dense_mat
       TYPE(dbcsr_p_type), INTENT(IN)                     :: template_dbcsr
-      TYPE(dbcsr_p_type)                                 :: dbcsr_mat
+      TYPE(dbcsr_p_type), INTENT(INOUT)                  :: dbcsr_mat
 
-      INTEGER                                            :: col, icol, irow, mynode, nblkcols_total, &
-                                                            nblkrows_total, ncols, nrows, owner, &
-                                                            row
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, r_offset
-      INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, row_blk_size
+      INTEGER :: col, icol, irow, mcols, mrows, mynode, mypcol, myprow, nblkcols_total, &
+         nblkrows_total, ncols, nlocal_cols, nlocal_rows, nrows, row
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, local_cols, local_rows, &
+                                                            r_offset
+      INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, col_dist, row_blk_size, &
+                                                            row_dist
       TYPE(dbcsr_distribution_type)                      :: dist
 
       CALL dbcsr_get_info(template_dbcsr%matrix, &
@@ -267,20 +267,30 @@ CONTAINS
                           nfullrows_total=nrows, &
                           nfullcols_total=ncols, &
                           distribution=dist)
-      CALL dbcsr_distribution_get(dist, mynode=mynode)
 
       CPASSERT(nrows == SIZE(dense_mat, 1))
       CPASSERT(ncols == SIZE(dense_mat, 2))
 
-      CALL dbcsr_init_p(dbcsr_mat%matrix)
-      CALL dbcsr_create(dbcsr_mat%matrix, &
-                        template=template_dbcsr%matrix, &
-                        name="VXC from GauXC (dense)", &
-                        matrix_type=dbcsr_type_symmetric)
+      ! Reuse an existing matrix when its shape matches, otherwise (re)create it.
+      IF (ASSOCIATED(dbcsr_mat%matrix)) THEN
+         CALL dbcsr_get_info(dbcsr_mat%matrix, nfullrows_total=mrows, nfullcols_total=mcols)
+         IF (mrows /= nrows .OR. mcols /= ncols) THEN
+            CALL dbcsr_release(dbcsr_mat%matrix)
+            DEALLOCATE (dbcsr_mat%matrix)
+         END IF
+      END IF
+      IF (ASSOCIATED(dbcsr_mat%matrix)) THEN
+         CALL dbcsr_clear(dbcsr_mat%matrix)
+      ELSE
+         CALL dbcsr_init_p(dbcsr_mat%matrix)
+         CALL dbcsr_create(dbcsr_mat%matrix, &
+                           template=template_dbcsr%matrix, &
+                           name="VXC from GauXC (dense)", &
+                           matrix_type=dbcsr_type_symmetric)
+      END IF
       CALL dbcsr_work_create(dbcsr_mat%matrix, work_mutable=.TRUE.)
 
       ALLOCATE (r_offset(nblkrows_total), c_offset(nblkcols_total))
-
       r_offset(1) = 1
       DO row = 2, nblkrows_total
          r_offset(row) = r_offset(row - 1) + row_blk_size(row - 1)
@@ -290,11 +300,49 @@ CONTAINS
          c_offset(col) = c_offset(col - 1) + col_blk_size(col - 1)
       END DO
 
-      DO irow = 1, nblkrows_total
-         DO icol = 1, nblkcols_total
+      CALL dbcsr_distribution_get(dist, mynode=mynode, myprow=myprow, mypcol=mypcol, &
+                                  row_dist=row_dist, col_dist=col_dist)
+
+      ! Only visit blocks whose (row or transposed row) home is this rank.
+      ALLOCATE (local_rows(nblkrows_total), local_cols(nblkcols_total))
+      nlocal_rows = 0
+      DO row = 1, nblkrows_total
+         IF (row_dist(row) == myprow) THEN
+            nlocal_rows = nlocal_rows + 1
+            local_rows(nlocal_rows) = row
+         END IF
+      END DO
+      nlocal_cols = 0
+      DO col = 1, nblkcols_total
+         IF (col_dist(col) == mypcol) THEN
+            nlocal_cols = nlocal_cols + 1
+            local_cols(nlocal_cols) = col
+         END IF
+      END DO
+
+      ! Non-transposed blocks (even row+column).
+      DO row = 1, nlocal_rows
+         irow = local_rows(row)
+         DO col = 1, nlocal_cols
+            icol = local_cols(col)
             IF (irow > icol) CYCLE
-            CALL dbcsr_get_stored_coordinates(dbcsr_mat%matrix, irow, icol, owner)
-            IF (owner /= mynode) CYCLE
+            IF (BTEST(irow + icol, 0)) CYCLE
+            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, &
+                                 0.5_dp*( &
+                                 dense_mat(r_offset(irow):r_offset(irow) + row_blk_size(irow) - 1, &
+                                           c_offset(icol):c_offset(icol) + col_blk_size(icol) - 1) + &
+                                 TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
+                                                     c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1))))
+         END DO
+      END DO
+
+      ! Transposed blocks (odd row+column) are stored through the local columns.
+      DO col = 1, nlocal_cols
+         irow = local_cols(col)
+         DO row = 1, nlocal_rows
+            icol = local_rows(row)
+            IF (irow > icol) CYCLE
+            IF (.NOT. BTEST(irow + icol, 0)) CYCLE
             CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, &
                                  0.5_dp*( &
                                  dense_mat(r_offset(irow):r_offset(irow) + row_blk_size(irow) - 1, &
@@ -306,9 +354,8 @@ CONTAINS
 
       CALL dbcsr_finalize(dbcsr_mat%matrix)
 
-      DEALLOCATE (r_offset, c_offset)
-
-   END FUNCTION dense_to_dbcsr
+      DEALLOCATE (r_offset, c_offset, local_rows, local_cols)
+   END SUBROUTINE dense_to_dbcsr_into
 
 ! **************************************************************************************************
 !> \brief ...
@@ -1120,7 +1167,6 @@ CONTAINS
       TYPE(cp_gauxc_cache_params)                        :: params
       TYPE(cp_gauxc_cache_type), POINTER                 :: cache
       TYPE(cp_gauxc_status_type)                         :: gauxc_status
-      TYPE(dbcsr_p_type)                                 :: vxc_zeta_tmp
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_vxc
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -1213,7 +1259,6 @@ CONTAINS
             CPABORT(nonlocal_vdw_abort_message)
          END IF
       END IF
-      NULLIFY (vxc_zeta_tmp%matrix)
 
       gauxc_functional_section => get_gauxc_functional(xc_section)
       CALL section_vals_val_get( &
@@ -1537,8 +1582,14 @@ CONTAINS
 
       exc_value = 0.0_dp
 
-      IF (ASSOCIATED(matrix_vxc)) CALL dbcsr_deallocate_matrix_set(matrix_vxc)
-      CALL dbcsr_allocate_matrix_set(matrix_vxc, params%nspins)
+      IF (ASSOCIATED(matrix_vxc)) THEN
+         IF (SIZE(matrix_vxc) /= params%nspins) THEN
+            CALL dbcsr_deallocate_matrix_set(matrix_vxc)
+            CALL dbcsr_allocate_matrix_set(matrix_vxc, params%nspins)
+         END IF
+      ELSE
+         CALL dbcsr_allocate_matrix_set(matrix_vxc, params%nspins)
+      END IF
 
       DO img = 1, nimages
          IF (img > 1) THEN
@@ -1679,29 +1730,30 @@ CONTAINS
 
          IF (params%nspins == 1) THEN
             IF (img == 1) THEN
-               matrix_vxc(1) = dense_to_dbcsr(cache%xc_result%vxc_scalar, rho_ao(1, img))
+               CALL dense_to_dbcsr_into(cache%xc_result%vxc_scalar, rho_ao(1, img), &
+                                        matrix_vxc(1))
             ELSE
                CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
             END IF
          ELSE
             CPASSERT(params%nspins == 2)
-            ! Transform derivatives from total/spin density back to alpha/beta channels.
-            vxc_zeta_tmp = dense_to_dbcsr(cache%xc_result%vxc_zeta, rho_ao(1, img))
+            ! Transform derivatives from total/spin density back to alpha/beta
+            ! channels on the host and convert each spin only once.
+            IF (.NOT. ALLOCATED(cache%vxc_channel)) THEN
+               ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
+            ELSE IF (ANY(SHAPE(cache%vxc_channel) /= SHAPE(cache%xc_result%vxc_scalar))) THEN
+               DEALLOCATE (cache%vxc_channel)
+               ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
+            END IF
+            cache%vxc_channel(:, :) = cache%xc_result%vxc_scalar(:, :) + cache%xc_result%vxc_zeta(:, :)
+            cache%xc_result%vxc_zeta(:, :) = cache%xc_result%vxc_scalar(:, :) - &
+                                             cache%xc_result%vxc_zeta(:, :)
             IF (img == 1) THEN
-               DO ispin = 1, 2
-                  matrix_vxc(ispin) = dense_to_dbcsr(cache%xc_result%vxc_scalar, rho_ao(ispin, 1))
-                  CALL dbcsr_add( &
-                     matrix_vxc(ispin)%matrix, &
-                     vxc_zeta_tmp%matrix, &
-                     1.0_dp, &
-                     ! 1.0 for ispin==1, -1.0 for ispin==2
-                     1.0_dp - REAL(ispin - 1, dp)*2.0_dp)
-               END DO
+               CALL dense_to_dbcsr_into(cache%vxc_channel, rho_ao(1, 1), matrix_vxc(1))
+               CALL dense_to_dbcsr_into(cache%xc_result%vxc_zeta, rho_ao(2, 1), matrix_vxc(2))
             ELSE
                CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
             END IF
-            CALL dbcsr_release(vxc_zeta_tmp%matrix)
-            DEALLOCATE (vxc_zeta_tmp%matrix)
          END IF
       END DO
 

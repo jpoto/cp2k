@@ -64,6 +64,7 @@ MODULE xc_gauxc_cache
       TYPE(cp_gauxc_integrator_type)               :: gradient_integrator = cp_gauxc_integrator_type()
       TYPE(cp_gauxc_xc_type)                       :: xc_result = cp_gauxc_xc_type()
       TYPE(cp_gauxc_xc_gradient_type)              :: xc_gradient = cp_gauxc_xc_gradient_type()
+      REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: vxc_channel
       INTEGER                                      :: mpi_comm = -1
       LOGICAL                                      :: is_init = .FALSE.
       LOGICAL                                      :: gradient_is_init = .FALSE.
@@ -380,6 +381,7 @@ CONTAINS
       IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
       IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
       IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
+      IF (ALLOCATED(cache%vxc_channel)) DEALLOCATE (cache%vxc_channel)
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
       cache%is_init = .FALSE.
@@ -389,6 +391,7 @@ CONTAINS
       IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
       IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
       IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
+      IF (ALLOCATED(cache%vxc_channel)) DEALLOCATE (cache%vxc_channel)
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
       cache%is_init = .FALSE.
