@@ -191,11 +191,9 @@ CONTAINS
          CALL cp_abort(__LOCATION__, "Unknown GAUXC%MODEL_GRADIENT_RUNTIME value.")
       END SELECT
 
-      IF (params%use_self_runtime .OR. .NOT. params%use_gauxc_model) THEN
-         ! SKALA currently needs a replicated molecular runtime for reproducible
+      IF (params%use_self_runtime) THEN
+         ! SKALA can request a replicated molecular runtime for reproducible
          ! open-shell densities across CP2K MPI ranks.
-         ! Conventional GauXC also uses a replicated runtime here: CP2K has
-         ! already allreduced the dense AO density matrix on every rank.
          cache%grid = gauxc_create_grid( &
                       cache%molecule, &
                       cache%basisset, &
