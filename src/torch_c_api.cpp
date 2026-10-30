@@ -35,6 +35,7 @@
 #include <exception>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -406,12 +407,17 @@ static void promote_model_float32(torch::jit::Module &model) {
 }
 
 static void initialize_cuda_linalg(const torch::Device &device) {
-  static std::once_flag flag;
-  std::call_once(flag, [&]() {
-    const auto options =
-        torch::TensorOptions().dtype(torch::kFloat32).device(device);
-    static_cast<void>(at::linalg_eigh(torch::eye(1, options)));
-  });
+  // Warm up each CUDA device once; the active device can change within one
+  // process when several GPUs are used.
+  static std::mutex mutex;
+  static std::set<int> initialized_devices;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (!initialized_devices.insert(device.index()).second) {
+    return;
+  }
+  const auto options =
+      torch::TensorOptions().dtype(torch::kFloat32).device(device);
+  static_cast<void>(at::linalg_eigh(torch::eye(1, options)));
 }
 
 /*******************************************************************************

@@ -113,7 +113,6 @@ MODULE skala_gpw_functional
    INTEGER, SAVE                                       :: logged_cuda_device = -3, &
                                                           logged_cuda_device_count = -1, &
                                                           logged_cuda_nproc = -1
-   LOGICAL, SAVE                                       :: entry_torch_use_cuda = .TRUE.
 
 CONTAINS
 
@@ -449,7 +448,7 @@ CONTAINS
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, have_atom_coord_grad, lsd, my_just_energy, &
          native_grid_atom_chunk_routing, native_grid_atom_chunks, native_grid_diagnostics, &
-         native_grid_use_cuda, needs_atom_force, use_atom_subchunks
+         native_grid_use_cuda, needs_atom_force, saved_use_cuda, use_atom_subchunks
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: density_grad, kin_grad
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: grad_grad
@@ -525,7 +524,7 @@ CONTAINS
          native_grid_atom_chunks = .FALSE.
       END IF
       ! The portable SKALA export used by the regtests builds ragged-index tensors on CPU.
-      entry_torch_use_cuda = torch_get_use_cuda()
+      saved_use_cuda = torch_get_use_cuda()
       CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, rho_r(1)%pw_grid%para%group)
@@ -722,7 +721,7 @@ CONTAINS
       IF (.NOT. use_atom_subchunks .AND. has_atom_chunk_work) CALL torch_tensor_release(exc_tensor)
       CALL skala_gpw_feature_release(features)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
-      CALL torch_use_cuda(entry_torch_use_cuda)
+      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
       CALL timestop(phase_handle)
 
@@ -758,7 +757,7 @@ CONTAINS
          native_grid_atom_partition, natom, nspins, omp_max_threads_restore, row, &
          selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL                                            :: lsd, native_grid_use_cuda
+      LOGICAL                                            :: lsd, native_grid_use_cuda, saved_use_cuda
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: exc, local_derivative
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: partition_weights
@@ -803,7 +802,7 @@ CONTAINS
                        "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
       END IF
 
-      entry_torch_use_cuda = torch_get_use_cuda()
+      saved_use_cuda = torch_get_use_cuda()
       CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, rho_r(1)%pw_grid%para%group)
@@ -896,7 +895,7 @@ CONTAINS
       CALL torch_tensor_release(exc_tensor)
       CALL skala_gpw_feature_release(features)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
-      CALL torch_use_cuda(entry_torch_use_cuda)
+      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gpw_weight_derivative
@@ -949,7 +948,7 @@ CONTAINS
                                                             selected_cuda_device
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
-      LOGICAL                                            :: need_coord_grad, my_energy_only, native_grid_use_cuda
+      LOGICAL :: need_coord_grad, my_energy_only, native_grid_use_cuda, saved_use_cuda
       REAL(KIND=dp)                                      :: tmp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, grid_weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: coarse_0_atomic_coords, density, &
@@ -990,7 +989,7 @@ CONTAINS
 
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
-      entry_torch_use_cuda = torch_get_use_cuda()
+      saved_use_cuda = torch_get_use_cuda()
       CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, group)
@@ -1152,7 +1151,7 @@ CONTAINS
       CALL torch_dict_release(inputs)
       DEALLOCATE (atomic_grid_size_bound_shape, atomic_grid_sizes, atomic_grid_weights, &
                   coarse_0_atomic_coords, density, grad, grid_coords, grid_weights, kin)
-      CALL torch_use_cuda(entry_torch_use_cuda)
+      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gapw_atom_vxc_of_r
@@ -1209,7 +1208,7 @@ CONTAINS
                                                             chunk_row_begin, chunk_row_counts
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
       LOGICAL :: active_rank, native_grid_atom_chunks, native_grid_use_cuda, &
-                 need_coordinate_derivatives, need_derivatives
+                 need_coordinate_derivatives, need_derivatives, saved_use_cuda
       REAL(KIND=dp)                                      :: chunk_exc
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad, grid_weight_grad
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad, density_grad, &
@@ -1283,7 +1282,7 @@ CONTAINS
       IF (chunk_max_rows == -1) THEN
          chunk_max_rows = auto_atom_composite_chunk_max_rows(atomic_grid_sizes, group)
       END IF
-      entry_torch_use_cuda = torch_get_use_cuda()
+      saved_use_cuda = torch_get_use_cuda()
       CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, group)
@@ -1484,7 +1483,7 @@ CONTAINS
          DEALLOCATE (chunk_atom_begin, chunk_atom_count, chunk_row_begin, chunk_row_counts)
          CALL timestop(phase_handle)
       END IF
-      CALL torch_use_cuda(entry_torch_use_cuda)
+      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gapw_atom_composite_energy
