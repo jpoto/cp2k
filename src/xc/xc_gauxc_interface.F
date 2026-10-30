@@ -227,6 +227,15 @@ MODULE xc_gauxc_interface
       REAL(c_double), ALLOCATABLE, DIMENSION(:) :: exc_grad
    END TYPE cp_gauxc_xc_gradient_type
 
+#ifdef __GAUXC
+   ! Reused scratch buffers; XC evaluation is sequential, so a single buffer per
+   ! shape avoids a full nao x nao allocation on every call.
+   REAL(c_double), DIMENSION(:, :), ALLOCATABLE, SAVE :: density_scalar_rks_scratch
+#ifdef GAUXC_HAS_ONEDFT
+   REAL(c_double), DIMENSION(:, :), ALLOCATABLE, SAVE :: density_zeta_zero_scratch
+#endif
+#endif
+
    CHARACTER(len=*), PARAMETER :: no_gauxc_message = "Compile CP2K with GauXC to use this functionality!"
 
    PUBLIC :: &
@@ -871,38 +880,54 @@ CONTAINS
    END FUNCTION gauxc_create_integrator
 
 ! **************************************************************************************************
+!> \brief Allocate a reused matrix scratch buffer when its shape changes.
+!> \param scratch ...
+!> \param like ...
+! **************************************************************************************************
+   SUBROUTINE ensure_matrix_scratch(scratch, like)
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :), &
+         INTENT(INOUT)                                   :: scratch
+      REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: like
+
+      IF (ALLOCATED(scratch)) THEN
+         IF (ANY(SHAPE(scratch) /= SHAPE(like))) DEALLOCATE (scratch)
+      END IF
+      IF (.NOT. ALLOCATED(scratch)) ALLOCATE (scratch, mold=like)
+   END SUBROUTINE ensure_matrix_scratch
+
+! **************************************************************************************************
 !> \brief ...
 !> \param integrator ...
 !> \param density_scalar ...
+!> \param res ...
 !> \param density_zeta ...
 !> \param nspins ...
 !> \param status ...
 !> \param model ...
 !> \return ...
 ! **************************************************************************************************
-   FUNCTION gauxc_compute_xc( &
+   SUBROUTINE gauxc_compute_xc( &
       integrator, &
       density_scalar, &
+      res, &
       density_zeta, &
       nspins, &
       status, &
-      model) RESULT(res)
+      model)
 
       TYPE(cp_gauxc_integrator_type), INTENT(IN)         :: integrator
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: density_scalar
+      TYPE(cp_gauxc_xc_type), INTENT(INOUT)              :: res
       REAL(c_double), DIMENSION(:, :), INTENT(IN), &
          OPTIONAL                                        :: density_zeta
       INTEGER, INTENT(IN)                                :: nspins
       TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: model
-      TYPE(cp_gauxc_xc_type)                             :: res
 
 #ifdef __GAUXC
       CHARACTER(len=default_path_length)                 :: model_key
       LOGICAL                                            :: use_gauxc_model
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_scalar_rks
 #ifdef GAUXC_HAS_ONEDFT
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_zeta_zero
 #if defined (__HAS_IEEE_EXCEPTIONS)
       LOGICAL, DIMENSION(5)                              :: ieee_halt
 #endif
@@ -948,18 +973,17 @@ CONTAINS
          res%vxc_zeta = 0._dp
 
          IF (nspins == 1) THEN
-            ALLOCATE (density_zeta_zero, mold=density_scalar)
-            density_zeta_zero = 0._dp
+            CALL ensure_matrix_scratch(density_zeta_zero_scratch, density_scalar)
+            density_zeta_zero_scratch = 0._dp
             CALL gauxc_integrator_eval_exc_vxc_onedft_uks( &
                status%status, &
                integrator%integrator, &
                density_scalar, &
-               density_zeta_zero, &
+               density_zeta_zero_scratch, &
                TRIM(model), &
                res%exc, &
                res%vxc_scalar, &
                res%vxc_zeta)
-            DEALLOCATE (density_zeta_zero)
          ELSE
             CPASSERT(PRESENT(density_zeta))
             CALL gauxc_integrator_eval_exc_vxc_onedft_uks( &
@@ -985,15 +1009,14 @@ CONTAINS
          ! xmat factor 2 is applied by both CP2K and GauXC
          ! "unapply" it here to even things back out.
          ! This is NOT necessary in the Skala branch.
-         ALLOCATE (density_scalar_rks, mold=density_scalar)
-         density_scalar_rks(:, :) = 0.5_dp*density_scalar
+         CALL ensure_matrix_scratch(density_scalar_rks_scratch, density_scalar)
+         density_scalar_rks_scratch(:, :) = 0.5_dp*density_scalar
          CALL gauxc_integrator_eval_exc_vxc_rks( &
             status%status, &
             integrator%integrator, &
-            density_scalar_rks, &
+            density_scalar_rks_scratch, &
             res%exc, &
             res%vxc_scalar)
-         DEALLOCATE (density_scalar_rks)
       ELSE
          CPASSERT(PRESENT(density_zeta))
 
@@ -1024,12 +1047,13 @@ CONTAINS
       MARK_USED(model)
       CPABORT(no_gauxc_message)
 #endif
-   END FUNCTION gauxc_compute_xc
+   END SUBROUTINE gauxc_compute_xc
 
 ! **************************************************************************************************
 !> \brief ...
 !> \param integrator ...
 !> \param density_scalar ...
+!> \param res ...
 !> \param density_zeta ...
 !> \param nspins ...
 !> \param natom ...
@@ -1037,37 +1061,43 @@ CONTAINS
 !> \param model ...
 !> \return ...
 ! **************************************************************************************************
-   FUNCTION gauxc_compute_xc_gradient( &
+   SUBROUTINE gauxc_compute_xc_gradient( &
       integrator, &
       density_scalar, &
+      res, &
       density_zeta, &
       nspins, &
       natom, &
       status, &
-      model) RESULT(res)
+      model)
 
       TYPE(cp_gauxc_integrator_type), INTENT(IN)         :: integrator
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: density_scalar
+      TYPE(cp_gauxc_xc_gradient_type), INTENT(INOUT)     :: res
       REAL(c_double), DIMENSION(:, :), INTENT(IN), &
          OPTIONAL                                        :: density_zeta
       INTEGER, INTENT(IN)                                :: nspins, natom
       TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: model
-      TYPE(cp_gauxc_xc_gradient_type)                    :: res
 
 #ifdef __GAUXC
       CHARACTER(len=default_path_length)                 :: model_key
       LOGICAL                                            :: use_gauxc_model
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_scalar_rks
 #ifdef GAUXC_HAS_ONEDFT
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_zeta_zero
 #if defined (__HAS_IEEE_EXCEPTIONS)
       LOGICAL, DIMENSION(5)                              :: ieee_halt
 #endif
       INTEGER                                            :: omp_max_threads_restore
 #endif
 
-      ALLOCATE (res%exc_grad(3*natom))
+      IF (ALLOCATED(res%exc_grad)) THEN
+         IF (SIZE(res%exc_grad) /= 3*natom) THEN
+            DEALLOCATE (res%exc_grad)
+            ALLOCATE (res%exc_grad(3*natom))
+         END IF
+      ELSE
+         ALLOCATE (res%exc_grad(3*natom))
+      END IF
       res%exc_grad = 0._dp
 
       use_gauxc_model = .FALSE.
@@ -1095,16 +1125,15 @@ CONTAINS
          CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
 #endif
          IF (nspins == 1) THEN
-            ALLOCATE (density_zeta_zero, mold=density_scalar)
-            density_zeta_zero = 0._dp
+            CALL ensure_matrix_scratch(density_zeta_zero_scratch, density_scalar)
+            density_zeta_zero_scratch = 0._dp
             CALL gauxc_integrator_eval_exc_grad_onedft_uks( &
                status%status, &
                integrator%integrator, &
                density_scalar, &
-               density_zeta_zero, &
+               density_zeta_zero_scratch, &
                TRIM(model), &
                res%exc_grad)
-            DEALLOCATE (density_zeta_zero)
          ELSE
             CPASSERT(PRESENT(density_zeta))
             CALL gauxc_integrator_eval_exc_grad_onedft_uks( &
@@ -1125,14 +1154,13 @@ CONTAINS
       END IF
 
       IF (nspins == 1) THEN
-         ALLOCATE (density_scalar_rks, mold=density_scalar)
-         density_scalar_rks(:, :) = 0.5_dp*density_scalar
+         CALL ensure_matrix_scratch(density_scalar_rks_scratch, density_scalar)
+         density_scalar_rks_scratch(:, :) = 0.5_dp*density_scalar
          CALL gauxc_integrator_eval_exc_grad_rks( &
             status%status, &
             integrator%integrator, &
-            density_scalar_rks, &
+            density_scalar_rks_scratch, &
             res%exc_grad)
-         DEALLOCATE (density_scalar_rks)
       ELSE
          CPASSERT(PRESENT(density_zeta))
          CALL gauxc_integrator_eval_exc_grad_uks( &
@@ -1155,7 +1183,7 @@ CONTAINS
       MARK_USED(status)
       CPABORT(no_gauxc_message)
 #endif
-   END FUNCTION gauxc_compute_xc_gradient
+   END SUBROUTINE gauxc_compute_xc_gradient
 
 ! **************************************************************************************************
 !> \brief ...

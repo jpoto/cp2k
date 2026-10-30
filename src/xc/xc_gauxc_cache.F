@@ -22,9 +22,10 @@ MODULE xc_gauxc_cache
    USE xc_gauxc_gradient_policy,        ONLY: gauxc_resolve_gradient_policy
    USE xc_gauxc_interface,              ONLY: &
         cp_gauxc_basisset_type, cp_gauxc_grid_type, cp_gauxc_integrator_type, &
-        cp_gauxc_molecule_type, cp_gauxc_status_type, gauxc_check_status, gauxc_create_basisset, &
-        gauxc_create_grid, gauxc_create_integrator, gauxc_create_molecule, gauxc_destroy_basisset, &
-        gauxc_destroy_grid, gauxc_destroy_integrator, gauxc_destroy_molecule
+        cp_gauxc_molecule_type, cp_gauxc_status_type, cp_gauxc_xc_gradient_type, cp_gauxc_xc_type, &
+        gauxc_check_status, gauxc_create_basisset, gauxc_create_grid, gauxc_create_integrator, &
+        gauxc_create_molecule, gauxc_destroy_basisset, gauxc_destroy_grid, &
+        gauxc_destroy_integrator, gauxc_destroy_molecule
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -61,6 +62,8 @@ MODULE xc_gauxc_cache
       TYPE(cp_gauxc_grid_type)                     :: gradient_grid = cp_gauxc_grid_type()
       TYPE(cp_gauxc_integrator_type)               :: integrator = cp_gauxc_integrator_type()
       TYPE(cp_gauxc_integrator_type)               :: gradient_integrator = cp_gauxc_integrator_type()
+      TYPE(cp_gauxc_xc_type)                       :: xc_result = cp_gauxc_xc_type()
+      TYPE(cp_gauxc_xc_gradient_type)              :: xc_gradient = cp_gauxc_xc_gradient_type()
       INTEGER                                      :: mpi_comm = -1
       LOGICAL                                      :: is_init = .FALSE.
       LOGICAL                                      :: gradient_is_init = .FALSE.
@@ -374,12 +377,18 @@ CONTAINS
          CALL gauxc_check_status(status)
       END IF
       IF (ALLOCATED(cache%last_positions)) DEALLOCATE (cache%last_positions)
+      IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
+      IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
+      IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
       cache%is_init = .FALSE.
 #else
       MARK_USED(cache)
       IF (ALLOCATED(cache%last_positions)) DEALLOCATE (cache%last_positions)
+      IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
+      IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
+      IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
       cache%is_init = .FALSE.
