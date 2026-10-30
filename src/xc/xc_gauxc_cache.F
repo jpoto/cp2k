@@ -412,6 +412,7 @@ CONTAINS
 
 #ifdef __GAUXC
       INTEGER                                            :: error_code, unit_nr
+      CHARACTER(LEN=6)                                   :: gradient_runtime_label
 
       IF (.NOT. params%need_xc_gradient) RETURN
 
@@ -425,10 +426,17 @@ CONTAINS
          END IF
          unit_nr = cp_logger_get_default_io_unit()
          IF (unit_nr > 0) THEN
+            IF (params%use_gradient_self_runtime) THEN
+               gradient_runtime_label = "SELF"
+            ELSE IF (params%use_gradient_mpi_runtime) THEN
+               gradient_runtime_label = "MPI"
+            ELSE
+               gradient_runtime_label = "SHARED"
+            END IF
             WRITE (unit_nr, '(A,A)') " GAUXC| Molecular XC gradient method: ", &
                TRIM(MERGE("FD        ", "ANALYTICAL", params%use_fd_gradient))
             WRITE (unit_nr, '(A,A)') " GAUXC| Molecular XC gradient runtime: ", &
-               MERGE("MPI ", "SELF", params%use_gradient_mpi_runtime)
+               TRIM(gradient_runtime_label)
          END IF
          cache%gradient_notice_printed = .TRUE.
       END IF

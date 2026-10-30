@@ -120,9 +120,8 @@ batch. Larger batches reduce kernel-launch overhead but increase device memory u
 CUTLASS support, and otherwise leaves the choice to GauXC. `DEFAULT` always uses GauXC's default.
 `SCHEME1-CUTLASS` forces the CUTLASS grouped local-potential update.
 
-`MODEL_ATOM_CHUNK_SIZE` (see below) controls atom-blocked Torch inference and therefore also device
-memory use. `SKALA_RUNTIME` and `MODEL_GRADIENT_RUNTIME` select MPI or rank-replicated runtimes;
-replicated runtimes duplicate the model state on every rank, which matters for GPU memory.
+`SKALA_RUNTIME` and `MODEL_GRADIENT_RUNTIME` select MPI or rank-replicated runtimes; replicated
+runtimes duplicate the model state on every rank, which matters for GPU memory.
 `FORCE_NUMERICAL_GRADIENT` performs six full XC energy evaluations per atom, each of which runs on
 the device when the integrator is on the device.
 
@@ -159,10 +158,6 @@ neighbor-cell AO blocks, k-points, compact-cell quadrature, and periodic stress 
 dedicated periodic GauXC interface.
 
 ### Skala Runtime Controls
-
-`MODEL_ATOM_CHUNK_SIZE` controls atom-blocked Torch inference. A positive value selects the number
-of atoms per block, zero disables chunking, and the default lets GauXC or the
-`GAUXC_ONEDFT_ATOM_CHUNK_SIZE` environment variable choose the policy.
 
 For MPI calculations, `SKALA_RUNTIME` controls the communicator used for Skala energy and potential
 evaluation. `AUTO` uses the force-evaluation communicator for closed-shell calculations and a
