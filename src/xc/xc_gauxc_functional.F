@@ -63,11 +63,13 @@ MODULE xc_gauxc_functional
                                               gauxc_cache_init
    USE xc_gauxc_interface,              ONLY: &
         cp_gauxc_basisset_type, cp_gauxc_grid_type, cp_gauxc_integrator_type, &
-        cp_gauxc_molecule_type, cp_gauxc_status_type, cp_gauxc_xc_gradient_type, cp_gauxc_xc_type, &
-        gauxc_check_status, gauxc_compute_xc, gauxc_compute_xc_gradient, gauxc_create_basisset, &
-        gauxc_create_grid, gauxc_create_integrator, gauxc_create_molecule, gauxc_destroy_basisset, &
-        gauxc_destroy_grid, gauxc_destroy_integrator, gauxc_destroy_molecule, &
-        gauxc_write_basisset_hdf5, gauxc_write_molecule_hdf5
+        cp_gauxc_molecule_type, cp_gauxc_runtime_type, cp_gauxc_status_type, &
+        cp_gauxc_xc_gradient_type, cp_gauxc_xc_type, gauxc_check_status, gauxc_compute_xc, &
+        gauxc_compute_xc_gradient, gauxc_create_basisset, gauxc_create_grid, &
+        gauxc_create_integrator, gauxc_create_molecule, gauxc_create_shared_runtime, &
+        gauxc_destroy_basisset, gauxc_destroy_grid, gauxc_destroy_integrator, &
+        gauxc_destroy_molecule, gauxc_destroy_shared_runtime, gauxc_write_basisset_hdf5, &
+        gauxc_write_molecule_hdf5
    USE xc_rho_cflags_types,             ONLY: xc_rho_cflags_type
 #include "../base/base_uses.f90"
 
@@ -589,11 +591,13 @@ CONTAINS
 !> \param device_runtime_fill_fraction ...
 !> \param exc ...
 !> \param density_zeta ...
+!> \param runtime ...
 ! **************************************************************************************************
    SUBROUTINE gauxc_xc_energy_for_particles( &
       particle_set_eval, qs_kind_set, density_scalar, nspins, model_name, &
       xc_fun_name, grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
-      int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, exc, density_zeta)
+      int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, exc, density_zeta, &
+      runtime)
       TYPE(particle_type), DIMENSION(:), INTENT(IN)      :: particle_set_eval
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: density_scalar
@@ -605,6 +609,7 @@ CONTAINS
       REAL(KIND=dp), INTENT(OUT)                         :: exc
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), &
          OPTIONAL                                        :: density_zeta
+      TYPE(cp_gauxc_runtime_type), INTENT(IN), OPTIONAL  :: runtime
 
       TYPE(cp_gauxc_basisset_type)                       :: gauxc_basis_fd
       TYPE(cp_gauxc_grid_type)                           :: gauxc_grid_fd
@@ -617,19 +622,35 @@ CONTAINS
       CALL gauxc_check_status(gauxc_status)
       gauxc_basis_fd = gauxc_create_basisset(qs_kind_set, particle_set_eval, gauxc_status)
       CALL gauxc_check_status(gauxc_status)
-      gauxc_grid_fd = gauxc_create_grid( &
-                      gauxc_mol_fd, &
-                      gauxc_basis_fd, &
-                      grid_type, &
-                      radial_quadrature, &
-                      pruning_scheme, &
-                      lb_exec_space, &
-                      batch_size, &
-                      device_runtime_fill_fraction, &
-                      gauxc_status, &
-                      mpi_comm=mp_comm_self%get_handle(), &
-                      force_new_runtime=.TRUE., &
-                      int_exec_space=int_exec_space)
+      IF (PRESENT(runtime)) THEN
+         gauxc_grid_fd = gauxc_create_grid( &
+                         gauxc_mol_fd, &
+                         gauxc_basis_fd, &
+                         grid_type, &
+                         radial_quadrature, &
+                         pruning_scheme, &
+                         lb_exec_space, &
+                         batch_size, &
+                         device_runtime_fill_fraction, &
+                         gauxc_status, &
+                         mpi_comm=mp_comm_self%get_handle(), &
+                         int_exec_space=int_exec_space, &
+                         runtime=runtime)
+      ELSE
+         gauxc_grid_fd = gauxc_create_grid( &
+                         gauxc_mol_fd, &
+                         gauxc_basis_fd, &
+                         grid_type, &
+                         radial_quadrature, &
+                         pruning_scheme, &
+                         lb_exec_space, &
+                         batch_size, &
+                         device_runtime_fill_fraction, &
+                         gauxc_status, &
+                         mpi_comm=mp_comm_self%get_handle(), &
+                         force_new_runtime=.TRUE., &
+                         int_exec_space=int_exec_space)
+      END IF
       CALL gauxc_check_status(gauxc_status)
       gauxc_integrator_fd = gauxc_create_integrator( &
                             TRIM(xc_fun_name), &
@@ -715,8 +736,12 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), &
          OPTIONAL                                        :: density_zeta
 
-      INTEGER                                            :: iatom, idir
+      CHARACTER(len=default_path_length)                 :: model_key
+      INTEGER                                            :: iatom, idir, work_index
+      LOGICAL                                            :: distribute_fd, has_work, use_onedft_model
       REAL(KIND=dp)                                      :: xc_minus, xc_plus
+      TYPE(cp_gauxc_runtime_type)                        :: fd_runtime
+      TYPE(cp_gauxc_status_type)                         :: gauxc_status
       TYPE(particle_type), ALLOCATABLE, DIMENSION(:)     :: particle_set_minus, particle_set_plus
 
       CPASSERT(ASSOCIATED(particle_set))
@@ -725,11 +750,33 @@ CONTAINS
       ALLOCATE (exc_grad(3*SIZE(particle_set)))
       exc_grad = 0.0_dp
 
-      IF (para_env%mepos == 0) THEN
+      ! The GauXC OneDFT device path still assumes cuda:0, so only distribute
+      ! conventional functionals over ranks; OneDFT stays on rank 0.
+      use_onedft_model = .FALSE.
+      IF (LEN_TRIM(model_name) > 0) THEN
+         model_key = ADJUSTL(model_name)
+         CALL uppercase(model_key)
+         use_onedft_model = (TRIM(model_key) /= "NONE")
+      END IF
+      distribute_fd = (para_env%num_pe > 1) .AND. .NOT. use_onedft_model
+      has_work = distribute_fd .OR. (para_env%mepos == 0)
+
+      IF (has_work) THEN
+         ! Build the runtime once for the whole displacement sweep instead of
+         ! creating and destroying a runtime for every evaluation.
+         CALL gauxc_create_shared_runtime(fd_runtime, mp_comm_self%get_handle(), lb_exec_space, &
+                                          int_exec_space, device_runtime_fill_fraction, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
+
          ALLOCATE (particle_set_minus(SIZE(particle_set)), particle_set_plus(SIZE(particle_set)))
 
          DO iatom = 1, SIZE(particle_set)
             DO idir = 1, 3
+               work_index = 3*(iatom - 1) + (idir - 1)
+               IF (distribute_fd) THEN
+                  IF (MOD(work_index, para_env%num_pe) /= para_env%mepos) CYCLE
+               END IF
+
                particle_set_minus = particle_set
                particle_set_plus = particle_set
                particle_set_minus(iatom)%r(idir) = particle_set_minus(iatom)%r(idir) - dx
@@ -739,30 +786,39 @@ CONTAINS
                      particle_set_plus, qs_kind_set, density_scalar, nspins, model_name, &
                      xc_fun_name, grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
                      int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, xc_plus, &
-                     density_zeta=density_zeta)
+                     density_zeta=density_zeta, runtime=fd_runtime)
                   CALL gauxc_xc_energy_for_particles( &
                      particle_set_minus, qs_kind_set, density_scalar, nspins, model_name, &
                      xc_fun_name, grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
                      int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, xc_minus, &
-                     density_zeta=density_zeta)
+                     density_zeta=density_zeta, runtime=fd_runtime)
                ELSE
                   CALL gauxc_xc_energy_for_particles( &
                      particle_set_plus, qs_kind_set, density_scalar, nspins, model_name, &
                      xc_fun_name, grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
-                     int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, xc_plus)
+                     int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, xc_plus, &
+                     runtime=fd_runtime)
                   CALL gauxc_xc_energy_for_particles( &
                      particle_set_minus, qs_kind_set, density_scalar, nspins, model_name, &
                      xc_fun_name, grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
-                     int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, xc_minus)
+                     int_exec_space, lwd_kernel, batch_size, device_runtime_fill_fraction, xc_minus, &
+                     runtime=fd_runtime)
                END IF
                exc_grad(3*iatom - 3 + idir) = (xc_plus - xc_minus)/(2.0_dp*dx)
             END DO
          END DO
 
          DEALLOCATE (particle_set_minus, particle_set_plus)
+
+         CALL gauxc_destroy_shared_runtime(fd_runtime, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
       END IF
 
-      CALL para_env%bcast(exc_grad, 0)
+      IF (distribute_fd) THEN
+         CALL para_env%sum(exc_grad)
+      ELSE
+         CALL para_env%bcast(exc_grad, 0)
+      END IF
 
    END SUBROUTINE gauxc_xc_gradient_fd
 

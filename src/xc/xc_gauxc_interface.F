@@ -164,6 +164,9 @@ MODULE xc_gauxc_interface
    TYPE cp_gauxc_grid_type
    END TYPE cp_gauxc_grid_type
 
+   TYPE cp_gauxc_runtime_type
+   END TYPE cp_gauxc_runtime_type
+
    TYPE cp_gauxc_integrator_type
    END TYPE cp_gauxc_integrator_type
 
@@ -193,6 +196,11 @@ MODULE xc_gauxc_interface
       LOGICAL :: owns_rt = .FALSE.
       LOGICAL :: uses_device_runtime = .FALSE.
    END TYPE cp_gauxc_grid_type
+
+   TYPE cp_gauxc_runtime_type
+      TYPE(gauxc_runtime_environment_type) :: rt
+      LOGICAL :: is_device = .FALSE.
+   END TYPE cp_gauxc_runtime_type
 
    TYPE cp_gauxc_integrator_type
       TYPE(gauxc_functional_type) :: func
@@ -226,6 +234,7 @@ MODULE xc_gauxc_interface
       cp_gauxc_grid_type, &
       cp_gauxc_integrator_type, &
       cp_gauxc_molecule_type, &
+      cp_gauxc_runtime_type, &
       cp_gauxc_status_type, &
       cp_gauxc_xc_gradient_type, &
       cp_gauxc_xc_type, &
@@ -236,10 +245,12 @@ MODULE xc_gauxc_interface
       gauxc_create_grid, &
       gauxc_create_integrator, &
       gauxc_create_molecule, &
+      gauxc_create_shared_runtime, &
       gauxc_destroy_basisset, &
       gauxc_destroy_grid, &
       gauxc_destroy_integrator, &
       gauxc_destroy_molecule, &
+      gauxc_destroy_shared_runtime, &
       gauxc_finalize, &
       gauxc_init, &
       gauxc_write_basisset_hdf5, &
@@ -503,6 +514,94 @@ CONTAINS
    END FUNCTION gauxc_create_basisset
 
 ! **************************************************************************************************
+!> \brief Create a GauXC runtime that can be shared across several grids.
+!> \param runtime ...
+!> \param mpi_comm ...
+!> \param lb_exec_space ...
+!> \param int_exec_space ...
+!> \param device_runtime_fill_fraction ...
+!> \param status ...
+! **************************************************************************************************
+   SUBROUTINE gauxc_create_shared_runtime(runtime, mpi_comm, lb_exec_space, int_exec_space, &
+                                          device_runtime_fill_fraction, status)
+      TYPE(cp_gauxc_runtime_type), INTENT(OUT)           :: runtime
+      INTEGER, INTENT(IN)                                :: mpi_comm
+      CHARACTER(len=*), INTENT(IN)                       :: lb_exec_space, int_exec_space
+      REAL(c_double), INTENT(IN)                         :: device_runtime_fill_fraction
+      TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
+
+#ifdef __GAUXC
+      INTEGER(c_int)                                     :: int_exec_requested, lb_exec_space_local
+      LOGICAL                                            :: use_device_runtime
+
+      runtime%is_device = .FALSE.
+      lb_exec_space_local = read_execution_space(lb_exec_space)
+      int_exec_requested = read_execution_space(int_exec_space)
+      use_device_runtime = (lb_exec_space_local == gauxc_executionspace%device) .OR. &
+                           (int_exec_requested == gauxc_executionspace%device)
+      IF (use_device_runtime) THEN
+#ifdef GAUXC_HAS_DEVICE
+         IF (offload_get_device_count() <= 0) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "GPU execution was requested for GauXC, but the offload library "// &
+                          "reports no usable device. Set USE_GPU HOST in the &GAUXC section "// &
+                          "to run on the CPU, or select a valid offload device (check "// &
+                          "CUDA_VISIBLE_DEVICES and the MPI rank-to-device mapping).")
+         END IF
+         CALL offload_activate_chosen_device()
+#if defined(GAUXC_HAS_MPI) && defined(__parallel)
+         runtime%rt = gauxc_device_runtime_environment_new( &
+                      status%status, mpi_comm, device_runtime_fill_fraction)
+#else
+         MARK_USED(mpi_comm)
+         runtime%rt = gauxc_device_runtime_environment_new( &
+                      status%status, device_runtime_fill_fraction)
+#endif
+         runtime%is_device = .TRUE.
+#else
+         MARK_USED(device_runtime_fill_fraction)
+         MARK_USED(mpi_comm)
+         CPABORT("GauXC was built without device runtime support")
+#endif
+      ELSE
+#if defined(GAUXC_HAS_MPI) && defined(__parallel)
+         runtime%rt = gauxc_runtime_environment_new(status%status, mpi_comm)
+#else
+         MARK_USED(mpi_comm)
+         runtime%rt = gauxc_runtime_environment_new(status%status)
+#endif
+      END IF
+#else
+      MARK_USED(runtime)
+      MARK_USED(mpi_comm)
+      MARK_USED(lb_exec_space)
+      MARK_USED(int_exec_space)
+      MARK_USED(device_runtime_fill_fraction)
+      MARK_USED(status)
+      CPABORT(no_gauxc_message)
+#endif
+   END SUBROUTINE gauxc_create_shared_runtime
+
+! **************************************************************************************************
+!> \brief Destroy a runtime created by gauxc_create_shared_runtime.
+!> \param runtime ...
+!> \param status ...
+! **************************************************************************************************
+   SUBROUTINE gauxc_destroy_shared_runtime(runtime, status)
+      TYPE(cp_gauxc_runtime_type), INTENT(INOUT)         :: runtime
+      TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
+
+#ifdef __GAUXC
+      CALL gauxc_runtime_environment_delete(status%status, runtime%rt)
+      runtime%is_device = .FALSE.
+#else
+      MARK_USED(runtime)
+      MARK_USED(status)
+      CPABORT(no_gauxc_message)
+#endif
+   END SUBROUTINE gauxc_destroy_shared_runtime
+
+! **************************************************************************************************
 !> \brief ...
 !> \param molecule ...
 !> \param basis ...
@@ -518,6 +617,7 @@ CONTAINS
 !> \param int_exec_space optional integrator execution space; a DEVICE
 !>        integrator also requires a device runtime even when the load
 !>        balancer stays on the host
+!> \param runtime ...
 !> \return ...
 ! **************************************************************************************************
    FUNCTION gauxc_create_grid( &
@@ -532,7 +632,8 @@ CONTAINS
       status, &
       mpi_comm, &
       force_new_runtime, &
-      int_exec_space) RESULT(res)
+      int_exec_space, &
+      runtime) RESULT(res)
 
       TYPE(cp_gauxc_molecule_type), INTENT(IN)           :: molecule
       TYPE(cp_gauxc_basisset_type), INTENT(in)           :: basis
@@ -544,6 +645,7 @@ CONTAINS
       INTEGER, INTENT(IN), OPTIONAL                      :: mpi_comm
       LOGICAL, INTENT(IN), OPTIONAL                      :: force_new_runtime
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: int_exec_space
+      TYPE(cp_gauxc_runtime_type), INTENT(IN), OPTIONAL  :: runtime
       TYPE(cp_gauxc_grid_type)                           :: res
 
 #ifdef __GAUXC
@@ -551,7 +653,8 @@ CONTAINS
                                                             int_exec_requested, &
                                                             lb_exec_space_local, &
                                                             pruning_scheme_local, radial_quad_local
-      LOGICAL                                            :: force_new_runtime_local, use_device_runtime
+      LOGICAL                                            :: force_new_runtime_local, use_device_runtime, &
+                                                            use_external_runtime
 
       grid_type_local = read_atomic_grid_size(grid_type)
       radial_quad_local = read_radial_quad(radial_quadrature)
@@ -577,57 +680,69 @@ CONTAINS
 #endif
       force_new_runtime_local = .FALSE.
       IF (PRESENT(force_new_runtime)) force_new_runtime_local = force_new_runtime
+      use_external_runtime = PRESENT(runtime)
       res%owns_rt = .FALSE.
       res%uses_device_runtime = .FALSE.
 
       IF (use_device_runtime) THEN
 #ifdef GAUXC_HAS_DEVICE
-         IF (offload_get_device_count() <= 0) THEN
-            CALL cp_abort(__LOCATION__, &
-                          "GPU execution was requested for GauXC, but the offload library "// &
-                          "reports no usable device. Set USE_GPU HOST in the &GAUXC "// &
-                          "section to run on the CPU, or select a valid offload device "// &
-                          "(check CUDA_VISIBLE_DEVICES and the MPI rank-to-device mapping).")
-         END IF
-         ! Make the offload-selected device current before GauXC allocates its
-         ! runtime, so memory and streams are created on the right GPU.
-         CALL offload_activate_chosen_device()
-#if defined(GAUXC_HAS_MPI) && defined(__parallel)
-         IF (PRESENT(mpi_comm)) THEN
-            res%rt = gauxc_device_runtime_environment_new( &
-                     status%status, mpi_comm, device_runtime_fill_fraction)
+         IF (use_external_runtime) THEN
+            res%rt = runtime%rt
+            res%owns_rt = .FALSE.
+            res%uses_device_runtime = .TRUE.
          ELSE
+            IF (offload_get_device_count() <= 0) THEN
+               CALL cp_abort(__LOCATION__, &
+                             "GPU execution was requested for GauXC, but the offload library "// &
+                             "reports no usable device. Set USE_GPU HOST in the &GAUXC "// &
+                             "section to run on the CPU, or select a valid offload device "// &
+                             "(check CUDA_VISIBLE_DEVICES and the MPI rank-to-device mapping).")
+            END IF
+            ! Make the offload-selected device current before GauXC allocates its
+            ! runtime, so memory and streams are created on the right GPU.
+            CALL offload_activate_chosen_device()
+#if defined(GAUXC_HAS_MPI) && defined(__parallel)
+            IF (PRESENT(mpi_comm)) THEN
+               res%rt = gauxc_device_runtime_environment_new( &
+                        status%status, mpi_comm, device_runtime_fill_fraction)
+            ELSE
+               res%rt = gauxc_device_runtime_environment_new( &
+                        status%status, device_runtime_fill_fraction)
+            END IF
+#else
+            MARK_USED(mpi_comm)
             res%rt = gauxc_device_runtime_environment_new( &
                      status%status, device_runtime_fill_fraction)
-         END IF
-#else
-         MARK_USED(mpi_comm)
-         res%rt = gauxc_device_runtime_environment_new( &
-                  status%status, device_runtime_fill_fraction)
 #endif
-         GAUXC_RETURN_IF_ERROR(status)
-         res%owns_rt = .TRUE.
-         res%uses_device_runtime = .TRUE.
+            GAUXC_RETURN_IF_ERROR(status)
+            res%owns_rt = .TRUE.
+            res%uses_device_runtime = .TRUE.
+         END IF
 #else
          MARK_USED(device_runtime_fill_fraction)
          CPABORT("GauXC was built without device runtime support")
 #endif
       ELSE
+         IF (use_external_runtime) THEN
+            res%rt = runtime%rt
+            res%owns_rt = .FALSE.
+         ELSE
 #if defined(GAUXC_HAS_MPI) && defined(__parallel)
-         IF (PRESENT(mpi_comm)) THEN
-            ! Reuse the global runtime when the requested communicator matches
-            ! the communicator used during gauxc_init.
-            IF (force_new_runtime_local .OR. .NOT. rt_has_mpi_comm .OR. &
-                mpi_comm /= rt_mpi_comm) THEN
-               res%rt = gauxc_runtime_environment_new(status%status, mpi_comm)
-               GAUXC_RETURN_IF_ERROR(status)
-               res%owns_rt = .TRUE.
+            IF (PRESENT(mpi_comm)) THEN
+               ! Reuse the global runtime when the requested communicator matches
+               ! the communicator used during gauxc_init.
+               IF (force_new_runtime_local .OR. .NOT. rt_has_mpi_comm .OR. &
+                   mpi_comm /= rt_mpi_comm) THEN
+                  res%rt = gauxc_runtime_environment_new(status%status, mpi_comm)
+                  GAUXC_RETURN_IF_ERROR(status)
+                  res%owns_rt = .TRUE.
+               END IF
             END IF
-         END IF
 #else
-         MARK_USED(mpi_comm)
-         MARK_USED(force_new_runtime)
+            MARK_USED(mpi_comm)
+            MARK_USED(force_new_runtime)
 #endif
+         END IF
       END IF
 
       res%grid = gauxc_molgrid_new_default( &
@@ -644,7 +759,7 @@ CONTAINS
                 lb_exec_space_local)
       GAUXC_RETURN_IF_ERROR(status)
 
-      IF (res%owns_rt) THEN
+      IF (res%owns_rt .OR. res%uses_device_runtime .OR. use_external_runtime) THEN
          res%lb = gauxc_load_balancer_factory_get_instance( &
                   status%status, &
                   res%lbf, &
@@ -691,6 +806,7 @@ CONTAINS
       MARK_USED(pruning_scheme)
       MARK_USED(radial_quadrature)
       MARK_USED(res)
+      MARK_USED(runtime)
       MARK_USED(status)
       CPABORT(no_gauxc_message)
 #endif
