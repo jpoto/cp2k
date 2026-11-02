@@ -1082,6 +1082,22 @@ void torch_c_tensor_weighted_sum(const torch_c_tensor_t *values,
 }
 
 /*******************************************************************************
+ * \brief Adds a device scalar to an accumulator without a host synchronization.
+ ******************************************************************************/
+void torch_c_tensor_accumulate(torch_c_tensor_t **accumulator,
+                               const torch_c_tensor_t *value) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  get_device_with_guard(guard);
+  if (*accumulator == nullptr) {
+    *accumulator = new torch_c_tensor_t(value->clone());
+  } else {
+    (*accumulator)->add_(*value);
+  }
+  TORCH_C_CATCH("torch_c_tensor_accumulate")
+}
+
+/*******************************************************************************
  * \brief Returns a scalar double value from a Torch tensor.
  ******************************************************************************/
 double torch_c_tensor_item_double(const torch_c_tensor_t *tensor) {

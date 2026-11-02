@@ -80,7 +80,7 @@ MODULE torch_api
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
    PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3
    PUBLIC :: torch_tensor_to_device_leaf
-   PUBLIC :: torch_tensor_item_double, torch_tensor_weighted_sum
+   PUBLIC :: torch_tensor_accumulate, torch_tensor_item_double, torch_tensor_weighted_sum
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
    PUBLIC :: torch_dict_get, torch_dict_release
    PUBLIC :: torch_model_type, torch_model_load, torch_model_load_with_metadata, &
@@ -604,6 +604,33 @@ CONTAINS
       MARK_USED(result)
 #endif
    END SUBROUTINE torch_tensor_weighted_sum
+
+! **************************************************************************************************
+!> \brief Adds a device scalar to an accumulator without a host synchronization.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_accumulate(accumulator, value)
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: accumulator
+      TYPE(torch_tensor_type), INTENT(IN)                :: value
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_tensor_accumulate(accumulator, value) &
+            BIND(C, name="torch_c_tensor_accumulate")
+            IMPORT :: C_PTR
+            TYPE(C_PTR)                                  :: accumulator
+            TYPE(C_PTR), VALUE                           :: value
+         END SUBROUTINE torch_c_tensor_accumulate
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(value%c_ptr))
+      CALL torch_c_tensor_accumulate(accumulator=accumulator%c_ptr, value=value%c_ptr)
+      CPASSERT(C_ASSOCIATED(accumulator%c_ptr))
+#else
+      CPABORT("CP2K compiled without the Torch library.")
+      MARK_USED(accumulator)
+      MARK_USED(value)
+#endif
+   END SUBROUTINE torch_tensor_accumulate
 
 ! **************************************************************************************************
 !> \brief Returns a scalar double value from a Torch tensor.

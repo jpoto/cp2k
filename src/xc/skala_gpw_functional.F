@@ -44,17 +44,19 @@ MODULE skala_gpw_functional
         skala_gpw_feature_type, skala_gpw_features_release_cache, &
         skala_gpw_smooth_partition_derivatives, smooth_partition_atomic_weight_scale_derivative
    USE skala_torch_api,                 ONLY: skala_torch_model_get_exc,&
+                                              skala_torch_model_get_exc_device,&
                                               skala_torch_model_load,&
                                               skala_torch_model_release,&
                                               skala_torch_model_type
    USE string_utilities,                ONLY: uppercase
    USE torch_api,                       ONLY: &
         torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, torch_dict_insert, &
-        torch_dict_release, torch_dict_type, torch_get_use_cuda, torch_tensor_backward_scalar, &
-        torch_tensor_data_ptr, torch_tensor_from_array, torch_tensor_grad, &
-        torch_tensor_grad_batch, torch_tensor_grad_batch3, torch_tensor_narrow, &
-        torch_tensor_release, torch_tensor_reset_from_array, torch_tensor_to_device_leaf, &
-        torch_tensor_type, torch_use_cuda
+        torch_dict_release, torch_dict_type, torch_get_use_cuda, torch_tensor_accumulate, &
+        torch_tensor_backward_scalar, torch_tensor_data_ptr, torch_tensor_from_array, &
+        torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3, &
+        torch_tensor_item_double, torch_tensor_narrow, torch_tensor_release, &
+        torch_tensor_reset_from_array, torch_tensor_to_device_leaf, torch_tensor_type, &
+        torch_use_cuda
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -1217,6 +1219,7 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: gauxc_section
       TYPE(torch_dict_type)                              :: inputs
       TYPE(torch_tensor_type), DIMENSION(4)              :: grad_batch_t
+      TYPE(torch_tensor_type)                            :: exc_total_t
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
                                                             atomic_grid_sizes_t, &
                                                             atomic_grid_sizes_chunk_t, &
@@ -1387,10 +1390,10 @@ CONTAINS
             CALL torch_dict_insert(inputs, "coarse_0_atomic_coords", atomic_coords_chunk_t)
 
             CALL timeset("skala_atom_torch_forward", phase_handle)
-            CALL skala_torch_model_get_exc(cached_model, inputs, grid_weights_chunk_t, &
-                                           exc_tensor, chunk_exc)
+            CALL skala_torch_model_get_exc_device(cached_model, inputs, grid_weights_chunk_t, &
+                                                  exc_tensor)
+            CALL torch_tensor_accumulate(exc_total_t, exc_tensor)
             CALL timestop(phase_handle)
-            exc = exc + chunk_exc
             IF (need_derivatives) THEN
                CALL timeset("skala_atom_torch_backward", phase_handle)
                CALL torch_tensor_backward_scalar(exc_tensor)
@@ -1410,6 +1413,10 @@ CONTAINS
             CALL torch_tensor_release(atomic_grid_size_bound_shape_t)
             DEALLOCATE (atomic_grid_size_bound_shape)
          END DO
+         IF (nchunks > 0) THEN
+            exc = exc + torch_tensor_item_double(exc_total_t)
+            CALL torch_tensor_release(exc_total_t)
+         END IF
       END IF
       CALL group%sum(exc)
 
@@ -1898,7 +1905,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: subchunk_exc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: recv_grad_buffer, send_grad_buffer
       TYPE(skala_gpw_feature_type)                       :: subchunk
-      TYPE(torch_tensor_type)                            :: subchunk_exc_tensor
+      TYPE(torch_tensor_type)                            :: subchunk_exc_tensor, subchunk_exc_total_t
 
       CPASSERT(features%uses_atom_chunks)
       CPASSERT(max_rows > 0)
@@ -1942,11 +1949,10 @@ CONTAINS
                                                            compute_grads)
          CALL timestop(subphase_handle)
          CALL timeset("skala_gpw_atom_subchunk_forward", subphase_handle)
-         CALL skala_torch_model_get_exc(cached_model, subchunk%inputs, &
-                                        subchunk%grid_weights_t, subchunk_exc_tensor, &
-                                        subchunk_exc)
+         CALL skala_torch_model_get_exc_device(cached_model, subchunk%inputs, &
+                                               subchunk%grid_weights_t, subchunk_exc_tensor)
+         CALL torch_tensor_accumulate(subchunk_exc_total_t, subchunk_exc_tensor)
          CALL timestop(subphase_handle)
-         exc = exc + subchunk_exc
          IF (compute_grads) THEN
             CALL timeset("skala_gpw_atom_subchunk_backward", subphase_handle)
             CALL torch_tensor_backward_scalar(subchunk_exc_tensor)
@@ -1957,6 +1963,10 @@ CONTAINS
          CALL skala_gpw_feature_release(subchunk)
          CALL timestop(subphase_handle)
       END DO
+      IF (nsubchunks > 0) THEN
+         exc = exc + torch_tensor_item_double(subchunk_exc_total_t)
+         CALL torch_tensor_release(subchunk_exc_total_t)
+      END IF
       IF (compute_grads .AND. features%chunk_feature_count > 0) THEN
          CALL timeset("skala_gpw_atom_subchunk_grad_pack", subphase_handle)
          CALL pack_atom_chunk_grads(features, send_grad_buffer, .TRUE., collapse_spin_grads)
