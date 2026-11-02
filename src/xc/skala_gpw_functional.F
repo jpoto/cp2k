@@ -52,9 +52,9 @@ MODULE skala_gpw_functional
         torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, torch_dict_insert, &
         torch_dict_release, torch_dict_type, torch_get_use_cuda, torch_tensor_backward_scalar, &
         torch_tensor_data_ptr, torch_tensor_from_array, torch_tensor_grad, &
-        torch_tensor_grad_batch3, torch_tensor_narrow, torch_tensor_release, &
-        torch_tensor_reset_from_array, torch_tensor_to_device_leaf, torch_tensor_type, &
-        torch_use_cuda
+        torch_tensor_grad_batch, torch_tensor_grad_batch3, torch_tensor_narrow, &
+        torch_tensor_release, torch_tensor_reset_from_array, torch_tensor_to_device_leaf, &
+        torch_tensor_type, torch_use_cuda
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -958,6 +958,7 @@ CONTAINS
                                                             grid_coord_grad, kin_grad
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad
       TYPE(torch_dict_type)                              :: inputs
+      TYPE(torch_tensor_type), DIMENSION(2)              :: grad_batch_t
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
                                                             atomic_grid_sizes_t, &
                                                             atomic_grid_weights_t, &
@@ -1075,10 +1076,9 @@ CONTAINS
          NULLIFY (atom_coord_grad, density_grad, grad_grad, grid_coord_grad, kin_grad)
          CALL torch_tensor_backward_scalar(exc_tensor)
          IF (need_coord_grad) THEN
-            CALL torch_tensor_grad(grid_coords_t, grid_coord_grad_t)
-            CALL torch_tensor_grad(coarse_0_atomic_coords_t, atom_coord_grad_t)
-            CALL torch_tensor_data_ptr(grid_coord_grad_t, grid_coord_grad)
-            CALL torch_tensor_data_ptr(atom_coord_grad_t, atom_coord_grad)
+            CALL torch_tensor_grad_batch([grid_coords_t, coarse_0_atomic_coords_t], grad_batch_t)
+            CALL torch_tensor_data_ptr(grad_batch_t(1), grid_coord_grad)
+            CALL torch_tensor_data_ptr(grad_batch_t(2), atom_coord_grad)
             IF (PRESENT(atom_force)) THEN
                atom_force(:) = atom_coord_grad(:, 1)
                DO row = 1, nflat
@@ -1133,8 +1133,8 @@ CONTAINS
          CALL torch_tensor_release(grad_grad_t)
          CALL torch_tensor_release(kin_grad_t)
          IF (need_coord_grad) THEN
-            CALL torch_tensor_release(grid_coord_grad_t)
-            CALL torch_tensor_release(atom_coord_grad_t)
+            CALL torch_tensor_release(grad_batch_t(1))
+            CALL torch_tensor_release(grad_batch_t(2))
          END IF
       END IF
 
@@ -1216,6 +1216,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad
       TYPE(section_vals_type), POINTER                   :: gauxc_section
       TYPE(torch_dict_type)                              :: inputs
+      TYPE(torch_tensor_type), DIMENSION(4)              :: grad_batch_t
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
                                                             atomic_grid_sizes_t, &
                                                             atomic_grid_sizes_chunk_t, &
@@ -1442,22 +1443,21 @@ CONTAINS
             atom_coord_grad_out = 0.0_dp
             IF (active_rank) THEN
                NULLIFY (atomic_grid_weight_grad, atom_coord_grad, grid_coord_grad, grid_weight_grad)
-               CALL torch_tensor_grad(grid_coords_t, grid_coord_grad_t)
-               CALL torch_tensor_grad(grid_weights_t, grid_weight_grad_t)
-               CALL torch_tensor_grad(atomic_grid_weights_t, atomic_grid_weight_grad_t)
-               CALL torch_tensor_grad(atomic_coords_t, atom_coord_grad_t)
-               CALL torch_tensor_data_ptr(grid_coord_grad_t, grid_coord_grad)
-               CALL torch_tensor_data_ptr(grid_weight_grad_t, grid_weight_grad)
-               CALL torch_tensor_data_ptr(atomic_grid_weight_grad_t, atomic_grid_weight_grad)
-               CALL torch_tensor_data_ptr(atom_coord_grad_t, atom_coord_grad)
+               CALL torch_tensor_grad_batch( &
+                  [grid_coords_t, grid_weights_t, atomic_grid_weights_t, atomic_coords_t], &
+                  grad_batch_t)
+               CALL torch_tensor_data_ptr(grad_batch_t(1), grid_coord_grad)
+               CALL torch_tensor_data_ptr(grad_batch_t(2), grid_weight_grad)
+               CALL torch_tensor_data_ptr(grad_batch_t(3), atomic_grid_weight_grad)
+               CALL torch_tensor_data_ptr(grad_batch_t(4), atom_coord_grad)
                grid_coord_grad_out(:, :) = grid_coord_grad
                grid_weight_grad_out(:) = grid_weight_grad
                atomic_grid_weight_grad_out(:) = atomic_grid_weight_grad
                atom_coord_grad_out(:, :) = atom_coord_grad
-               CALL torch_tensor_release(grid_coord_grad_t)
-               CALL torch_tensor_release(grid_weight_grad_t)
-               CALL torch_tensor_release(atomic_grid_weight_grad_t)
-               CALL torch_tensor_release(atom_coord_grad_t)
+               CALL torch_tensor_release(grad_batch_t(1))
+               CALL torch_tensor_release(grad_batch_t(2))
+               CALL torch_tensor_release(grad_batch_t(3))
+               CALL torch_tensor_release(grad_batch_t(4))
                CALL timestop(phase_handle)
             END IF
          END IF

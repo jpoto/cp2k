@@ -816,6 +816,58 @@ void torch_c_tensor_grad_batch3(const torch_c_tensor_t *tensor1,
 }
 
 /*******************************************************************************
+ * \brief Copies N autograd gradients to CPU memory with one synchronization.
+ ******************************************************************************/
+void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
+                               const int count, torch_c_tensor_t **grads) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  const auto device = get_device_with_guard(guard);
+  torch_c_check(count > 0, "Torch gradient batch must be non-empty");
+  for (int i = 0; i < count; ++i) {
+    torch_c_check(tensors[i] != nullptr,
+                  "Torch gradient input must not be NULL");
+    torch_c_check(grads[i] == nullptr, "Torch gradient outputs must be NULL");
+  }
+
+  std::vector<torch::Tensor> sources(count);
+  bool all_defined = true;
+  bool any_cuda = false;
+  for (int i = 0; i < count; ++i) {
+    sources[i] = tensors[i]->grad();
+    all_defined = all_defined && sources[i].defined();
+    any_cuda = any_cuda || (sources[i].defined() && sources[i].is_cuda());
+  }
+
+  if (all_defined && any_cuda) {
+    // Pinned host buffers plus one synchronization for the whole batch.
+    std::vector<torch::Tensor> hosts(count);
+    for (int i = 0; i < count; ++i) {
+      hosts[i] = torch::empty(
+          sources[i].sizes(),
+          sources[i].options().device(torch::kCPU).pinned_memory(true));
+      hosts[i].copy_(sources[i], true);
+    }
+    torch::cuda::synchronize(device.index());
+    for (int i = 0; i < count; ++i) {
+      grads[i] = new torch_c_tensor_t(std::move(hosts[i]));
+    }
+  } else {
+    for (int i = 0; i < count; ++i) {
+      if (sources[i].defined()) {
+        grads[i] = new torch_c_tensor_t(
+            sources[i].detach().cpu().contiguous().clone());
+      } else {
+        grads[i] = new torch_c_tensor_t(torch::zeros(
+            tensors[i]->sizes(),
+            tensors[i]->options().device(torch::kCPU).requires_grad(false)));
+      }
+    }
+  }
+  TORCH_C_CATCH("torch_c_tensor_grad_batch")
+}
+
+/*******************************************************************************
  * \brief Releases a Torch tensor and all its ressources.
  * \author Ole Schuett
  ******************************************************************************/

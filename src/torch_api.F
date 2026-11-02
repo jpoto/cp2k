@@ -78,7 +78,7 @@ MODULE torch_api
              torch_tensor_narrow, torch_tensor_release
    PUBLIC :: torch_tensor_reset_from_array
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
-   PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch3
+   PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3
    PUBLIC :: torch_tensor_to_device_leaf
    PUBLIC :: torch_tensor_item_double, torch_tensor_weighted_sum
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
@@ -530,6 +530,49 @@ CONTAINS
       MARK_USED(grad3)
 #endif
    END SUBROUTINE torch_tensor_grad_batch3
+
+! **************************************************************************************************
+!> \brief Copies several autograd gradients to CPU memory with one synchronization.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_grad_batch(tensors, grads)
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(IN)  :: tensors
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(INOUT) :: grads
+
+#if defined(__LIBTORCH)
+      INTEGER                                            :: i, n
+      TYPE(C_PTR), ALLOCATABLE, DIMENSION(:)             :: c_grads, c_tensors
+
+      INTERFACE
+         SUBROUTINE torch_c_tensor_grad_batch(tensors, count, grads) &
+            BIND(C, name="torch_c_tensor_grad_batch")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), DIMENSION(*)                    :: tensors
+            INTEGER(kind=C_INT), VALUE                   :: count
+            TYPE(C_PTR), DIMENSION(*)                    :: grads
+         END SUBROUTINE torch_c_tensor_grad_batch
+      END INTERFACE
+
+      n = SIZE(tensors)
+      CPASSERT(SIZE(grads) == n)
+      ALLOCATE (c_tensors(n), c_grads(n))
+      DO i = 1, n
+         CPASSERT(C_ASSOCIATED(tensors(i)%c_ptr))
+         c_tensors(i) = tensors(i)%c_ptr
+         CPASSERT(.NOT. C_ASSOCIATED(grads(i)%c_ptr))
+         c_grads(i) = C_NULL_PTR
+      END DO
+      CALL torch_c_tensor_grad_batch(tensors=c_tensors, count=INT(n, C_INT), grads=c_grads)
+      DO i = 1, n
+         CPASSERT(C_ASSOCIATED(c_grads(i)))
+         grads(i)%c_ptr = c_grads(i)
+      END DO
+      DEALLOCATE (c_tensors, c_grads)
+#else
+      CPABORT("CP2K compiled without the Torch library.")
+      MARK_USED(tensors)
+      MARK_USED(grads)
+#endif
+   END SUBROUTINE torch_tensor_grad_batch
 
 ! **************************************************************************************************
 !> \brief Returns the weighted sum of two Torch tensors.
