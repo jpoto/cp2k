@@ -187,7 +187,8 @@ CONTAINS
                           "GFN1-xTB implementations are not numerically equivalent: among other "// &
                           "differences, the periodic electrostatics in the CP2K/tblite path include "// &
                           "the long-range 1/r^3 Ewald contribution, while the CP2K-internal path "// &
-                          "truncates it. Choose the backend explicitly when comparing energies or forces.", &
+                          "truncates it. Set XTB/KLOPMAN_OHNO_EWALD to include that term in the CP2K-internal "// &
+                          "GFN1 path. Choose the backend explicitly when comparing energies or forces.", &
                           usage="GFN_TYPE (0|1|TBLITE)", &
                           enum_c_vals=s2a("0", "1", "TBLITE"), &
                           enum_i_vals=[0, gfn1xtb, gfn_tblite], &
@@ -213,6 +214,17 @@ CONTAINS
                           usage="DO_EWALD", default_l_val=.FALSE., lone_keyword_l_val=.TRUE., &
                           deprecation_notice="Use SUBSYS/CELL/PERIODIC to select periodicity. "// &
                           "DO_EWALD is retained only as a debug override for the CP2K-internal xTB Ewald path.")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="KLOPMAN_OHNO_EWALD", &
+                          description="Use the generalized Ewald treatment of the periodic GFN1-xTB "// &
+                          "electrostatics. This includes the long-range 1/r^3 (Klopman-Ohno) "// &
+                          "contribution that the default CP2K-internal path truncates at the "// &
+                          "short-range cutoff, reproducing the periodic summation of tblite 0.8 "// &
+                          "for GFN_TYPE 1. Only valid for XTB/GFN_TYPE 1 and KG=2 (the GFN1 "// &
+                          "default); analytical stress is not available on this path.", &
+                          usage="KLOPMAN_OHNO_EWALD", default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

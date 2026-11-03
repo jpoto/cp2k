@@ -199,6 +199,14 @@ CONTAINS
       gmcharge = 0._dp
 
       ! short range contribution (gamma)
+      CALL get_cell(cell=cell, periodic=periodic)
+      IF (xtb_control%klopman_ohno_ewald .AND. ANY(periodic == 1)) THEN
+         IF (ABS(xtb_control%kg - 2.0_dp) > 1.e-12_dp) &
+            CPABORT("XTB/KLOPMAN_OHNO_EWALD requires KG=2")
+         IF (use_virial) &
+            CPABORT("XTB/KLOPMAN_OHNO_EWALD does not provide an analytical stress tensor")
+         CALL build_klopman_ohno_ewald_coulomb(qs_env, charges, gchrg, calculate_forces)
+      ELSE
       ! loop over all atom pairs (sab_xtbe)
       kg = xtb_control%kg
       NULLIFY (n_list)
@@ -255,6 +263,7 @@ CONTAINS
          DEALLOCATE (gammab)
       END DO
       CALL neighbor_list_iterator_release(nl_iterator)
+      END IF
 
       ! 1/R contribution
 
@@ -664,6 +673,361 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE build_xtb_coulomb
+
+! **************************************************************************************************
+!> \brief Build the periodic GFN1 Klopman-Ohno Coulomb matrix with the generalized
+!>        Ewald summation of tblite 0.8.
+!>        Adds the short-range residual sr and the Ewald 1/r^3 term to gchrg, while
+!>        the ordinary 1/r term is still supplied by the existing long-range Ewald
+!>        sum. The resulting on-site and off-site kernels are identical in form to
+!>        tblite's get_amat_ko_3d, i.e. sr - 0.5*s3/gamma^2 (+ gamma on-site).
+!> \param qs_env ...
+!> \param charges ...
+!> \param gchrg ...
+!> \param calculate_forces ...
+! **************************************************************************************************
+   SUBROUTINE build_klopman_ohno_ewald_coulomb(qs_env, charges, gchrg, calculate_forces)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      REAL(dp), DIMENSION(:, :), INTENT(in)              :: charges
+      REAL(dp), DIMENSION(:, :, :), INTENT(inout)        :: gchrg
+      LOGICAL, INTENT(in)                                :: calculate_forces
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'build_klopman_ohno_ewald_coulomb'
+
+      INTEGER :: handle, i, iatom, ikind, itr, j, jatom, jkind, k, lmaxa, lmaxb, &
+         natorb_a, natorb_b, natom, ng, nkind, ni, nj, ntrans
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: kind_of
+      LOGICAL                                            :: defined
+      REAL(dp)                                           :: alpha, c3, deth, dfs, dhdr, &
+                                                            ds3(3), dsr(3), dval(3), e, &
+                                                            g2inv, gam, invr, invr2, invr3, &
+                                                            invr4, k0, onsite_const, ph, pref, &
+                                                            r2, sr, s3, sqrtpi, val, vol
+      REAL(dp)                                           :: h_inv(3, 3), hmat(3, 3), rij(3)
+      REAL(dp), DIMENSION(5)                             :: kappaa, kappab
+      REAL(dp)                                           :: etaa, etab
+      REAL(dp), PARAMETER                                :: s3_constant = 0.5_dp*(LOG(pi) - 2.0_dp &
+                                                                                  + 0.57721566490153286061_dp &
+                                                                                  + 2.0_dp*LOG(2.0_dp))
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: gw, gw3, invr3v, invr5v, invrv, r2v
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: dvec, gvec, trans
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(ewald_environment_type), POINTER              :: ewald_env
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(xtb_atom_type), POINTER                       :: xtb_atom_a, xtb_atom_b
+
+      CALL timeset(routineN, handle)
+
+      CALL get_qs_env(qs_env=qs_env, &
+                      particle_set=particle_set, &
+                      cell=cell, &
+                      qs_kind_set=qs_kind_set, &
+                      atomic_kind_set=atomic_kind_set, &
+                      ewald_env=ewald_env, &
+                      natom=natom, nkind=nkind)
+
+      CALL get_cell(cell=cell, h=hmat, h_inv=h_inv, deth=deth)
+      IF (.NOT. ASSOCIATED(ewald_env)) &
+         CPABORT("XTB/KLOPMAN_OHNO_EWALD requires a periodic Poisson/Ewald setup")
+      CALL ewald_env_get(ewald_env, alpha=alpha)
+      vol = ABS(deth)
+
+      CALL get_atomic_kind_set(atomic_kind_set=atomic_kind_set, kind_of=kind_of)
+
+      CALL get_klopman_ohno_ewald_trans(hmat, h_inv, 40.0_dp, trans)
+      ntrans = SIZE(trans, 2)
+      CALL get_klopman_ohno_ewald_recip(hmat, h_inv, alpha, vol, &
+                                EPSILON(0.0_dp), gvec, gw, gw3)
+      ng = SIZE(gw)
+
+      ALLOCATE (dvec(3, ntrans), r2v(ntrans), invrv(ntrans), invr3v(ntrans), invr5v(ntrans))
+
+      sqrtpi = SQRT(pi)
+      k0 = alpha/sqrtpi
+      pref = 2.0_dp*alpha/sqrtpi
+      c3 = 4.0_dp*pi/vol*(LOG(k0) + s3_constant)
+      onsite_const = -4.0_dp*pi/3.0_dp*k0**3
+
+      DO iatom = 1, natom
+         ikind = kind_of(iatom)
+         CALL get_qs_kind(qs_kind_set(ikind), xtb_parameter=xtb_atom_a)
+         CALL get_xtb_atom_param(xtb_atom_a, defined=defined, natorb=natorb_a)
+         IF (.NOT. defined .OR. natorb_a < 1) CYCLE
+         CALL get_xtb_atom_param(xtb_atom_a, eta=etaa, lmax=lmaxa, kappa=kappaa)
+         ni = lmaxa + 1
+         DO jatom = 1, iatom
+            jkind = kind_of(jatom)
+            CALL get_qs_kind(qs_kind_set(jkind), xtb_parameter=xtb_atom_b)
+            CALL get_xtb_atom_param(xtb_atom_b, defined=defined, natorb=natorb_b)
+            IF (.NOT. defined .OR. natorb_b < 1) CYCLE
+            CALL get_xtb_atom_param(xtb_atom_b, eta=etab, lmax=lmaxb, kappa=kappab)
+            nj = lmaxb + 1
+
+            rij(:) = particle_set(iatom)%r - particle_set(jatom)%r
+            DO itr = 1, ntrans
+               dvec(:, itr) = rij + trans(:, itr)
+               r2 = SUM(dvec(:, itr)**2)
+               r2v(itr) = r2
+               invrv(itr) = 0.0_dp
+               invr3v(itr) = 0.0_dp
+               invr5v(itr) = 0.0_dp
+               IF (r2 > 1.e-20_dp) THEN
+                  invr = 1.0_dp/SQRT(r2)
+                  invrv(itr) = invr
+                  invr3v(itr) = invr**3
+                  invr5v(itr) = invr**5
+               END IF
+            END DO
+
+            ! Geometry-only Ewald 1/r^3 term and its Cartesian derivative.
+            s3 = 0.0_dp
+            ds3 = 0.0_dp
+            DO itr = 1, ntrans
+               IF (invrv(itr) == 0.0_dp) CYCLE
+               r2 = r2v(itr)
+               invr = invrv(itr)
+               invr2 = invr*invr
+               invr3 = invr3v(itr)
+               invr4 = invr*invr3
+               e = EXP(-alpha*alpha*r2)
+               s3 = s3 + ERFC(alpha*SQRT(r2))*invr3 + pref*e*invr2
+               dhdr = -pref*e*invr3 - 3.0_dp*ERFC(alpha*SQRT(r2))*invr4 &
+                      + pref*e*(-2.0_dp*alpha*alpha*invr - 2.0_dp*invr3)
+               ds3 = ds3 + dhdr*dvec(:, itr)*invr
+            END DO
+            DO itr = 1, ng
+               ph = DOT_PRODUCT(rij, gvec(:, itr))
+               s3 = s3 + gw3(itr)*COS(ph)
+               ds3 = ds3 - gw3(itr)*SIN(ph)*gvec(:, itr)
+            END DO
+            s3 = s3 + c3
+            IF (iatom == jatom) s3 = s3 + onsite_const
+
+            DO i = 1, ni
+               DO j = 1, nj
+                  gam = 2.0_dp/(1.0_dp/(etaa*(1.0_dp + kappaa(i))) &
+                                + 1.0_dp/(etab*(1.0_dp + kappab(j))))
+                  g2inv = 1.0_dp/(gam*gam)
+                  ! Klopman-Ohno short-range residual and derivative.
+                  sr = 0.0_dp
+                  dsr = 0.0_dp
+                  DO itr = 1, ntrans
+                     IF (invrv(itr) == 0.0_dp) CYCLE
+                     r2 = r2v(itr)
+                     invr = invrv(itr)
+                     invr3 = invr3v(itr)
+                     invr4 = invr*invr3
+                     sr = sr + 1.0_dp/SQRT(r2 + g2inv) - invr + 0.5_dp*g2inv*invr3
+                     dfs = -SQRT(r2)/(r2 + g2inv)**1.5_dp + invr*invr &
+                           - 1.5_dp*g2inv*invr4
+                     dsr = dsr + dfs*dvec(:, itr)*invr
+                  END DO
+                  val = sr - 0.5_dp*g2inv*s3
+                  dval = dsr - 0.5_dp*g2inv*ds3
+                  IF (iatom == jatom) val = val + gam
+
+                  gchrg(iatom, i, 1) = gchrg(iatom, i, 1) + val*charges(jatom, j)
+                  IF (iatom /= jatom) THEN
+                     gchrg(jatom, j, 1) = gchrg(jatom, j, 1) + charges(iatom, i)*val
+                  END IF
+                  IF (calculate_forces .AND. iatom /= jatom) THEN
+                     DO k = 1, 3
+                        gchrg(iatom, i, k + 1) = gchrg(iatom, i, k + 1) &
+                                                 + dval(k)*charges(jatom, j)
+                        gchrg(jatom, j, k + 1) = gchrg(jatom, j, k + 1) &
+                                                 - charges(iatom, i)*dval(k)
+                     END DO
+                  END IF
+               END DO
+            END DO
+         END DO
+      END DO
+
+      DEALLOCATE (dvec, r2v, invrv, invr3v, invr5v)
+      DEALLOCATE (trans, gvec, gw, gw3)
+      DEALLOCATE (kind_of)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE build_klopman_ohno_ewald_coulomb
+
+! **************************************************************************************************
+!> \brief Generate real-space lattice translations inside a cutoff.
+!> \param hmat ...
+!> \param h_inv ...
+!> \param rcut ...
+!> \param trans ...
+! **************************************************************************************************
+   SUBROUTINE get_klopman_ohno_ewald_trans(hmat, h_inv, rcut, trans)
+      REAL(dp), DIMENSION(3, 3), INTENT(in)              :: hmat, h_inv
+      REAL(dp), INTENT(in)                               :: rcut
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :), INTENT(out) :: trans
+
+      INTEGER                                            :: i, itr, j, k
+      INTEGER, DIMENSION(3)                              :: rep
+
+      DO i = 1, 3
+         rep(i) = CEILING(rcut*SQRT(SUM(h_inv(i, :)**2)))
+      END DO
+      ALLOCATE (trans(3, PRODUCT(2*rep + 1)))
+      itr = 0
+      DO k = -rep(3), rep(3)
+         DO j = -rep(2), rep(2)
+            DO i = -rep(1), rep(1)
+               itr = itr + 1
+               trans(:, itr) = REAL(i, dp)*hmat(:, 1) + REAL(j, dp)*hmat(:, 2) &
+                               + REAL(k, dp)*hmat(:, 3)
+            END DO
+         END DO
+      END DO
+
+   END SUBROUTINE get_klopman_ohno_ewald_trans
+
+! **************************************************************************************************
+!> \brief Generate nonzero reciprocal vectors and the 1/r and 1/r^3 Ewald weights.
+!> \param hmat ...
+!> \param h_inv ...
+!> \param alpha ...
+!> \param vol ...
+!> \param conv ...
+!> \param gvec ...
+!> \param gw ...
+!> \param gw3 ...
+! **************************************************************************************************
+   SUBROUTINE get_klopman_ohno_ewald_recip(hmat, h_inv, alpha, vol, conv, gvec, gw, gw3)
+      REAL(dp), DIMENSION(3, 3), INTENT(in)              :: hmat, h_inv
+      REAL(dp), INTENT(in)                               :: alpha, vol, conv
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :), INTENT(out) :: gvec
+      REAL(dp), ALLOCATABLE, DIMENSION(:), INTENT(out)   :: gw, gw3
+
+      INTEGER                                            :: i, itr, j, k, n, ng
+      INTEGER, DIMENSION(3)                              :: rep
+      REAL(dp)                                           :: fac, g2, gmax, x
+      REAL(dp), DIMENSION(3, 3)                          :: rec
+
+      DO i = 1, 3
+         rec(:, i) = 2.0_dp*pi*h_inv(i, :)
+      END DO
+      gmax = klopman_ohno_ewald_rec_cutoff(alpha, vol, conv)
+      DO i = 1, 3
+         rep(i) = CEILING(gmax*SQRT(SUM(hmat(:, i)**2))/(2.0_dp*pi))
+      END DO
+      ng = PRODUCT(2*rep + 1) - 1
+      ALLOCATE (gvec(3, ng), gw(ng), gw3(ng))
+      fac = 4.0_dp*pi/vol
+      itr = 0
+      DO k = -rep(3), rep(3)
+         DO j = -rep(2), rep(2)
+            DO i = -rep(1), rep(1)
+               IF (i == 0 .AND. j == 0 .AND. k == 0) CYCLE
+               itr = itr + 1
+               gvec(:, itr) = rec(:, 1)*REAL(i, dp) + rec(:, 2)*REAL(j, dp) &
+                              + rec(:, 3)*REAL(k, dp)
+               g2 = SUM(gvec(:, itr)**2)
+               x = g2/(4.0_dp*alpha*alpha)
+               gw(itr) = fac*EXP(-x)/g2
+               gw3(itr) = 0.5_dp*fac*klopman_ohno_ewald_expint_e1(x)
+            END DO
+         END DO
+      END DO
+
+   END SUBROUTINE get_klopman_ohno_ewald_recip
+
+! **************************************************************************************************
+!> \brief Reciprocal-space cutoff for the 1/r Ewald term.
+!> \param alpha ...
+!> \param vol ...
+!> \param conv ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION klopman_ohno_ewald_rec_cutoff(alpha, vol, conv) RESULT(x)
+      REAL(dp), INTENT(in)                               :: alpha, vol, conv
+      REAL(dp)                                           :: x
+
+      INTEGER                                            :: iter
+      REAL(dp)                                           :: xl, xr, y, yl, yr
+      REAL(dp), PARAMETER                                :: init = SQRT(EPSILON(0.0_dp))
+      INTEGER, PARAMETER                                 :: miter = 30
+
+      x = init
+      y = rec_value(x)
+      DO WHILE (y > conv .AND. x <= HUGE(1.0_dp))
+         x = 2.0_dp*x
+         y = rec_value(x)
+      END DO
+      xl = 0.5_dp*x
+      yl = rec_value(xl)
+      xr = x
+      yr = y
+      DO iter = 1, miter
+         IF (yl - yr <= conv) EXIT
+         x = 0.5_dp*(xl + xr)
+         y = rec_value(x)
+         IF (y >= conv) THEN
+            xl = x
+            yl = y
+         ELSE
+            xr = x
+            yr = y
+         END IF
+      END DO
+
+   CONTAINS
+
+      PURE FUNCTION rec_value(dist) RESULT(val)
+         REAL(dp), INTENT(in)                            :: dist
+         REAL(dp)                                        :: val
+
+         val = 4.0_dp*pi*EXP(-0.25_dp*dist*dist/(alpha*alpha))/(vol*dist*dist)
+
+      END FUNCTION rec_value
+
+   END FUNCTION klopman_ohno_ewald_rec_cutoff
+
+! **************************************************************************************************
+!> \brief Exponential integral E1(x) for positive x (port of the tblite helper).
+!> \param x ...
+!> \return ...
+! **************************************************************************************************
+   PURE FUNCTION klopman_ohno_ewald_expint_e1(x) RESULT(e1)
+      REAL(dp), INTENT(in)                               :: x
+      REAL(dp)                                           :: e1
+
+      INTEGER                                            :: iter
+      REAL(dp)                                           :: a, b, c, d, delta, h, sum, term
+      REAL(dp), PARAMETER                                :: euler_gamma = 0.57721566490153286061_dp, &
+                                                            fpmin = 10.0_dp*TINY(1.0_dp)
+
+      IF (x <= 1.0_dp) THEN
+         term = 1.0_dp
+         sum = 0.0_dp
+         DO iter = 1, 100
+            term = -term*x/REAL(iter, dp)
+            sum = sum + term/REAL(iter, dp)
+            IF (ABS(term) < EPSILON(1.0_dp)*ABS(sum)) EXIT
+         END DO
+         e1 = -euler_gamma - LOG(x) - sum
+      ELSE
+         b = x + 1.0_dp
+         c = 1.0_dp/fpmin
+         d = 1.0_dp/b
+         h = d
+         DO iter = 1, 100
+            a = -REAL(iter*iter, dp)
+            b = b + 2.0_dp
+            d = 1.0_dp/MAX(ABS(a*d + b), fpmin)*SIGN(1.0_dp, a*d + b)
+            c = b + a/c
+            IF (ABS(c) < fpmin) c = fpmin
+            delta = c*d
+            h = h*delta
+            IF (ABS(delta - 1.0_dp) < EPSILON(1.0_dp)) EXIT
+         END DO
+         e1 = EXP(-x)*h
+      END IF
+
+   END FUNCTION klopman_ohno_ewald_expint_e1
 
 ! **************************************************************************************************
 !> \brief  Computes the short-range gamma parameter from

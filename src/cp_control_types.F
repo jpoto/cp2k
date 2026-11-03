@@ -258,6 +258,7 @@ MODULE cp_control_types
       INTEGER                              :: gfn_type = 1
       !
       LOGICAL                              :: do_ewald = .FALSE.
+      LOGICAL                              :: klopman_ohno_ewald = .FALSE.
       LOGICAL                              :: do_tblite = .FALSE.
       LOGICAL                              :: tblite_mixer_damping_explicit = .FALSE.
       !
