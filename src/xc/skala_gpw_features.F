@@ -63,7 +63,8 @@ MODULE skala_gpw_features
                                                             cuda_device = -3, &
                                                             atom_partition = skala_gpw_atom_partition_hard
       INTEGER, DIMENSION(2, 3)                           :: bo = 0, bounds = 0
-      INTEGER, DIMENSION(3)                              :: npts = 0
+      INTEGER, DIMENSION(3)                              :: cell_perd = 0, npts = 0
+      INTEGER                                            :: comm_handle = -1
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: dynamic_counts, dynamic_displs, &
                                                             chunk_feature_counts, chunk_feature_displs, &
                                                             chunk_grad_counts, chunk_grad_displs, &
@@ -518,6 +519,32 @@ CONTAINS
    END SUBROUTINE ensure_layout_cache
 
 ! **************************************************************************************************
+!> \brief Check whether the geometry/periodicity/communicator part of the layout key matches.
+!> \param cached_hmat ...
+!> \param cached_perd ...
+!> \param cached_comm ...
+!> \param cell_hmat ...
+!> \param cell_perd ...
+!> \param comm ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION skala_gpw_layout_metadata_matches(cached_hmat, cached_perd, cached_comm, &
+                                              cell_hmat, cell_perd, comm) RESULT(matches)
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cached_hmat
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: cached_perd
+      INTEGER, INTENT(IN)                                :: cached_comm
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(IN)         :: cell_hmat
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: cell_perd
+      INTEGER, INTENT(IN)                                :: comm
+      LOGICAL                                            :: matches
+
+      matches = .NOT. ANY(ABS(cached_hmat - cell_hmat) > layout_tol)
+      matches = matches .AND. ALL(cached_perd == cell_perd)
+      matches = matches .AND. cached_comm == comm
+
+   END FUNCTION skala_gpw_layout_metadata_matches
+
+! **************************************************************************************************
 !> \brief Check whether the current static layout cache can be reused.
 !> \param pw_grid ...
 !> \param particle_set ...
@@ -554,7 +581,10 @@ CONTAINS
       IF (ANY(cached_layout%npts /= pw_grid%npts)) RETURN
       IF (ABS(cached_layout%dvol - pw_grid%dvol) > layout_tol) RETURN
       IF (ANY(ABS(cached_layout%dh - pw_grid%dh) > layout_tol)) RETURN
-      IF (ANY(ABS(cached_layout%cell_hmat - cell%hmat) > layout_tol)) RETURN
+      IF (.NOT. skala_gpw_layout_metadata_matches(cached_layout%cell_hmat, &
+                                                  cached_layout%cell_perd, &
+                                                  cached_layout%comm_handle, cell%hmat, &
+                                                  cell%perd, pw_grid%para%group%get_handle())) RETURN
       IF (.NOT. ALLOCATED(cached_layout%atom_coords)) RETURN
 
       DO iatom = 1, SIZE(particle_set)
@@ -981,6 +1011,8 @@ CONTAINS
       cached_layout%dvol = pw_grid%dvol
       cached_layout%dh = pw_grid%dh
       cached_layout%cell_hmat = cell%hmat
+      cached_layout%cell_perd = cell%perd
+      cached_layout%comm_handle = pw_grid%para%group%get_handle()
       cached_layout%weight_sum = weight_sum
       cached_layout%weight_sumsq = weight_sumsq
       cached_layout%has_weights = has_weights
