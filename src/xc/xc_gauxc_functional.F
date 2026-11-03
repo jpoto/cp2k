@@ -1414,12 +1414,11 @@ CONTAINS
             END IF
          END IF
       END IF
-      IF (params%use_gauxc_model) THEN
-         IF (has_nlcc(qs_kind_set)) THEN
-            CALL cp_abort(__LOCATION__, &
-                          "GauXC Skala with NLCC pseudopotentials is not implemented. "// &
-                          "The frozen core density would need a SKALA-consistent feature definition.")
-         END IF
+      IF (has_nlcc(qs_kind_set)) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "GauXC does not support NLCC pseudopotentials. The molecular GauXC "// &
+                       "quadrature does not receive the frozen core density. Use the native "// &
+                       "SKALA implementation (SKALA_NATIVE) for NLCC calculations.")
       END IF
       IF (params%use_gauxc_model) THEN
          IF (.NOT. grid_explicit) params%grid_type = "SUPERFINE"

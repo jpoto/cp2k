@@ -241,11 +241,9 @@ the native SKALA implementation (`SKALA_NATIVE`) for analytical stress, or disab
 tensor.
 
 Direct molecular GauXC evaluation with NLCC pseudopotentials is not supported because GauXC does not
-receive the frozen-core density and its derivatives. Molecular pseudopotential GAPW with
-`PAW_ONE_CENTER` is a separate, supported route: CP2K evaluates the NLCC density and gradient on the
-same atom-centered composite quadrature, adds them to the reconstructed primitive fields before
-Skala constructs its features, and differentiates the core and grid-center coordinates analytically.
-The kinetic-energy density remains valence-only. Non-local `VDW_POTENTIAL` corrections,
+receive the frozen-core density and its derivatives. This applies to both conventional GauXC and
+GauXC Skala models; NLCC calculations must use the native `SKALA_NATIVE` implementation, which
+evaluates the NLCC density and gradient on CP2K's grids. Non-local `VDW_POTENTIAL` corrections,
 higher-XC-derivative response and kernel properties, and real-time propagation remain unsupported
 through GauXC.
 

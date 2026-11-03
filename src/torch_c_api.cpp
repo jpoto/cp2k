@@ -458,7 +458,11 @@ static bool reset_tensor_from_array_double(torch_c_tensor_t **tensor,
   c10::OptionalDeviceGuard guard;
   const auto device = get_device_with_guard(guard);
   const auto sizes_ref = c10::IntArrayRef(sizes, ndims);
+  const bool requires_grad_changed = *tensor != nullptr &&
+                                     (*tensor)->defined() &&
+                                     (*tensor)->requires_grad() != req_grad;
   const bool reallocated =
+      requires_grad_changed ||
       !tensor_matches(*tensor, torch::kFloat64, device, ndims, sizes);
   if (reallocated) {
     delete (*tensor);
