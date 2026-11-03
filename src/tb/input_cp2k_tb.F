@@ -183,12 +183,17 @@ CONTAINS
                           "implementation. GFN_TYPE 0 uses the CP2K-internal GFN0-xTB implementation, which "// &
                           "has no SCC variables to mix, so XTB/SCC_MIXER AUTO is treated as NONE. "// &
                           "GFN_TYPE TBLITE uses the tblite backend and requires an XTB/TBLITE "// &
-                          "section, where the actual tblite method is selected.", &
+                          "section, where the actual tblite method is selected. Note that the two "// &
+                          "GFN1-xTB implementations are not numerically equivalent: among other "// &
+                          "differences, the periodic electrostatics in the CP2K/tblite path include "// &
+                          "the long-range 1/r^3 Ewald contribution, while the CP2K-internal path "// &
+                          "truncates it. Choose the backend explicitly when comparing energies or forces.", &
                           usage="GFN_TYPE (0|1|TBLITE)", &
                           enum_c_vals=s2a("0", "1", "TBLITE"), &
                           enum_i_vals=[0, gfn1xtb, gfn_tblite], &
                           enum_desc=s2a("Use the CP2K-internal GFN0-xTB implementation.", &
-                                        "Use the CP2K-internal GFN1-xTB implementation.", &
+                                        "Use the CP2K-internal GFN1-xTB implementation (not numerically "// &
+                                        "identical to GFN_TYPE TBLITE with METHOD GFN1).", &
                                         "Use the CP2K/tblite backend; requires XTB/TBLITE."), &
                           default_i_val=gfn1xtb)
       CALL section_add_keyword(section, keyword)
