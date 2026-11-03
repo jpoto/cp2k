@@ -235,7 +235,10 @@ runtime are printed when a gradient cache is initialized. The `PAW_ONE_CENTER` r
 instead propagates the Skala feature adjoint analytically through the CP2K smooth-field
 interpolation, one-center reconstruction, atom partition, and NLCC center coordinates.
 `MOLECULAR_VIRIAL` is a finite-system diagnostic constructed from the nuclear gradients; it is not a
-periodic stress tensor.
+periodic stress tensor. Analytical `STRESS_TENSOR` requests with GauXC abort because GauXC uses a
+molecular quadrature restricted to non-periodic/isolated systems. Use `STRESS_TENSOR NUMERICAL` or
+the native SKALA implementation (`SKALA_NATIVE`) for analytical stress, or disable the stress
+tensor.
 
 Direct molecular GauXC evaluation with NLCC pseudopotentials is not supported because GauXC does not
 receive the frozen-core density and its derivatives. Molecular pseudopotential GAPW with

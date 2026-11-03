@@ -1469,7 +1469,8 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="MOLECULAR_VIRIAL", &
                           description="Print a molecular XC virial diagnostic computed from GauXC "// &
-                          "nuclear gradients. This is not an analytical periodic stress tensor.", &
+                          "nuclear gradients. Analytical stress with GauXC is not supported; "// &
+                          "use SKALA_NATIVE instead.", &
                           usage="MOLECULAR_VIRIAL T", &
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)

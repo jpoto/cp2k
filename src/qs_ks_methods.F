@@ -362,6 +362,16 @@ CONTAINS
       ! remap pointer to allow for non-kpoint external ks matrix
       IF (PRESENT(ext_ks_matrix)) ks_matrix(1:nspins, 1:1) => ext_ks_matrix(1:nspins)
 
+      xc_section => section_vals_get_subs_vals(input, "DFT%XC")
+      IF (dft_control%use_gauxc .AND. .NOT. xc_section_uses_native_skala_grid(xc_section) .AND. &
+          virial%pv_availability .AND. .NOT. virial%pv_numer .AND. calculate_forces) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "Analytical stress is not supported for GauXC. GauXC uses a molecular "// &
+                       "quadrature restricted to non-periodic/isolated systems and cannot provide "// &
+                       "the stress tensor. Use STRESS_TENSOR NUMERICAL or the native SKALA "// &
+                       "implementation (SKALA_NATIVE) for analytical stress, or disable the "// &
+                       "stress tensor.")
+      END IF
       use_virial = virial%pv_availability .AND. (.NOT. virial%pv_numer)
 
       adiabatic_rescaling_section => section_vals_get_subs_vals(input, "DFT%XC%ADIABATIC_RESCALING")
