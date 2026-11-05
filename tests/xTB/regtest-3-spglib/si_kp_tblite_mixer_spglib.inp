@@ -19,6 +19,9 @@
     &POISSON
       PERIODIC XYZ
       POISSON_SOLVER PERIODIC
+      &EWALD
+        ALPHA 0.6
+      &END EWALD
     &END POISSON
     &QS
       EPS_DEFAULT 1.0E-10
@@ -26,7 +29,12 @@
       &XTB
         CHECK_ATOMIC_CHARGES F
         GFN_TYPE 1
+        STO_FLEX T
+        KLOPMAN_OHNO_EWALD
         SCC_MIXER TBLITE
+        &PARAMETER
+          DISPERSION_RADIUS 25
+        &END PARAMETER
       &END XTB
     &END QS
     &SCF

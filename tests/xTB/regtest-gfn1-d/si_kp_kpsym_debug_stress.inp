@@ -28,7 +28,7 @@
       PERIODIC XYZ
       POISSON_SOLVER PERIODIC
       &EWALD
-        ALPHA 0.35
+        ALPHA 0.6
         EWALD_TYPE SPME
         GMAX 50
       &END EWALD
@@ -37,6 +37,11 @@
       METHOD xTB
       &XTB
         GFN_TYPE 1
+        STO_FLEX T
+        KLOPMAN_OHNO_EWALD
+        &PARAMETER
+          DISPERSION_RADIUS 25
+        &END PARAMETER
       &END XTB
     &END QS
     &SCF

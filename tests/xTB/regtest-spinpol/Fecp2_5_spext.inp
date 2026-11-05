@@ -26,8 +26,11 @@
       &XTB
         CHECK_ATOMIC_CHARGES F
         GFN_TYPE 1
+        STO_FLEX T
+        KLOPMAN_OHNO_EWALD
         SPIN_POLARISATION T
         &PARAMETER
+          DISPERSION_RADIUS 25
           SPINPOL_PARAM_FILE_NAME xTB_sp_param_030
         &END PARAMETER
       &END XTB

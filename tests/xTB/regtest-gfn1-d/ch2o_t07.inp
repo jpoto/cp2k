@@ -18,10 +18,22 @@
 &FORCE_EVAL
   STRESS_TENSOR ANALYTICAL
   &DFT
+    &POISSON
+      PERIODIC XYZ
+      POISSON_SOLVER PERIODIC
+      &EWALD
+        ALPHA 0.6
+      &END EWALD
+    &END POISSON
     &QS
       METHOD xTB
       &XTB
         GFN_TYPE 1
+        STO_FLEX T
+        KLOPMAN_OHNO_EWALD
+        &PARAMETER
+          DISPERSION_RADIUS 25
+        &END PARAMETER
       &END XTB
     &END QS
     &SCF

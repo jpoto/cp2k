@@ -13,7 +13,12 @@
       &XTB
         CHECK_ATOMIC_CHARGES F
         GFN_TYPE 1
+        STO_FLEX T
+        KLOPMAN_OHNO_EWALD
         SPIN_POLARISATION T
+        &PARAMETER
+          DISPERSION_RADIUS 25
+        &END PARAMETER
       &END XTB
     &END QS
     &SCF
