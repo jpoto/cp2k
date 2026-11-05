@@ -187,8 +187,16 @@ CONTAINS
                           "GFN1-xTB implementations are not numerically equivalent: among other "// &
                           "differences, the periodic electrostatics in the CP2K/tblite path include "// &
                           "the long-range 1/r^3 Ewald contribution, while the CP2K-internal path "// &
-                          "truncates it. Set XTB/KLOPMAN_OHNO_EWALD to include that term in the CP2K-internal "// &
-                          "GFN1 path. Choose the backend explicitly when comparing energies or forces.", &
+                          "truncates it. Choose the backend explicitly when comparing energies or forces. "// &
+                          "To reproduce the tblite GFN1 results with the CP2K-internal backend use: "// &
+                          "GFN_TYPE 1, XTB/STO_FLEX T, XTB/KLOPMAN_OHNO_EWALD, "// &
+                          "XTB/PARAMETER DISPERSION_RADIUS 25, and a converged Ewald splitting such as "// &
+                          "DFT/POISSON/EWALD ALPHA 0.6 (angstrom^-1, may need tuning for the cell). "// &
+                          "For open-shell (LSD) calculations also set XTB/SPIN_POLARISATION T, because "// &
+                          "tblite's GFN1 spin polarization is intrinsic. Electric-field calculations "// &
+                          "cannot be matched with the tblite backend (not implemented there). NEGF runs "// &
+                          "use different total-energy definitions (native excludes the electronic "// &
+                          "entropic term).", &
                           usage="GFN_TYPE (0|1|TBLITE)", &
                           enum_c_vals=s2a("0", "1", "TBLITE"), &
                           enum_i_vals=[0, gfn1xtb, gfn_tblite], &
@@ -223,7 +231,8 @@ CONTAINS
                           "contribution that the default CP2K-internal path truncates at the "// &
                           "short-range cutoff, reproducing the periodic summation of tblite 0.8 "// &
                           "for GFN_TYPE 1. Only valid for XTB/GFN_TYPE 1 and KG=2 (the GFN1 "// &
-                          "default); analytical stress is not available on this path.", &
+                          "default). Analytical forces and stress are supported. This is one of "// &
+                          "the settings needed to reproduce tblite GFN1; see XTB/GFN_TYPE.", &
                           usage="KLOPMAN_OHNO_EWALD", default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -241,7 +250,9 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="STO_FLEX", &
-                          description="Use element- and shell-specific numbers of Gaussian primitives.", &
+                          description="Use element- and shell-specific numbers of Gaussian primitives. "// &
+                          "This matches the GFN1 STO-NG expansion used by tblite; set it together "// &
+                          "with XTB/KLOPMAN_OHNO_EWALD when comparing to the tblite backend.", &
                           usage="STO_FLEX T", default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -484,7 +495,9 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="DISPERSION_RADIUS", &
-                          description="Define radius of dispersion interaction", &
+                          description="Define radius of dispersion interaction. The D4 two-body "// &
+                          "real-space cutoff is twice this value; tblite uses 50 bohr, so set 25 "// &
+                          "to match the tblite GFN1 dispersion.", &
                           usage="DISPERSION_RADIUS", default_r_val=15._dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
