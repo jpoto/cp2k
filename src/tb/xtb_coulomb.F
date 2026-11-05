@@ -203,9 +203,8 @@ CONTAINS
       IF (xtb_control%klopman_ohno_ewald .AND. ANY(periodic == 1)) THEN
          IF (ABS(xtb_control%kg - 2.0_dp) > 1.e-12_dp) &
             CPABORT("XTB/KLOPMAN_OHNO_EWALD requires KG=2")
-         IF (use_virial) &
-            CPABORT("XTB/KLOPMAN_OHNO_EWALD does not provide an analytical stress tensor")
-         CALL build_klopman_ohno_ewald_coulomb(qs_env, charges, gchrg, calculate_forces)
+         CALL build_klopman_ohno_ewald_coulomb(qs_env, charges, gchrg, calculate_forces, &
+                                               use_virial, virial)
       ELSE
       ! loop over all atom pairs (sab_xtbe)
       kg = xtb_control%kg
@@ -685,12 +684,16 @@ CONTAINS
 !> \param charges ...
 !> \param gchrg ...
 !> \param calculate_forces ...
+!> \param use_virial ...
+!> \param virial ...
 ! **************************************************************************************************
-   SUBROUTINE build_klopman_ohno_ewald_coulomb(qs_env, charges, gchrg, calculate_forces)
+   SUBROUTINE build_klopman_ohno_ewald_coulomb(qs_env, charges, gchrg, calculate_forces, &
+                                              use_virial, virial)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       REAL(dp), DIMENSION(:, :), INTENT(in)              :: charges
       REAL(dp), DIMENSION(:, :, :), INTENT(inout)        :: gchrg
-      LOGICAL, INTENT(in)                                :: calculate_forces
+      LOGICAL, INTENT(in)                                :: calculate_forces, use_virial
+      TYPE(virial_type), POINTER                         :: virial
 
       CHARACTER(len=*), PARAMETER :: routineN = 'build_klopman_ohno_ewald_coulomb'
 
@@ -699,10 +702,12 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: kind_of
       LOGICAL                                            :: defined
       REAL(dp)                                           :: alpha, c3, deth, dfs, dhdr, &
-                                                            ds3(3), dsr(3), dval(3), e, &
-                                                            g2inv, gam, invr, invr2, invr3, &
-                                                            invr4, k0, onsite_const, ph, pref, &
-                                                            r2, sr, s3, sqrtpi, val, vol
+                                                            dtmp, ds3(3), ds3mat(3, 3), &
+                                                            dsmat(3, 3), dsr(3), dsrmat(3, 3), &
+                                                            dval(3), e, g2inv, gam, invr, invr2, &
+                                                            invr3, invr4, invr5, k0, onsite_const, &
+                                                            ph, pref, r2, sr, s3, sqrtpi, val, vol, &
+                                                            vpref
       REAL(dp)                                           :: h_inv(3, 3), hmat(3, 3), rij(3)
       REAL(dp), DIMENSION(5)                             :: kappaa, kappab
       REAL(dp)                                           :: etaa, etab
@@ -711,6 +716,10 @@ CONTAINS
                                                                                   + 2.0_dp*LOG(2.0_dp))
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: gw, gw3, invr3v, invr5v, invrv, r2v
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: dvec, gvec, trans
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :, :)          :: gstrain3
+      REAL(dp), DIMENSION(3, 3), PARAMETER               :: unity = RESHAPE( &
+                                                            [1.0_dp, 0.0_dp, 0.0_dp, 0.0_dp, 1.0_dp, 0.0_dp, &
+                                                             0.0_dp, 0.0_dp, 1.0_dp], [3, 3])
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(ewald_environment_type), POINTER              :: ewald_env
@@ -739,7 +748,7 @@ CONTAINS
       CALL get_klopman_ohno_ewald_trans(hmat, h_inv, 40.0_dp, trans)
       ntrans = SIZE(trans, 2)
       CALL get_klopman_ohno_ewald_recip(hmat, h_inv, alpha, vol, &
-                                EPSILON(0.0_dp), gvec, gw, gw3)
+                                EPSILON(0.0_dp), gvec, gw, gw3, gstrain3)
       ng = SIZE(gw)
 
       ALLOCATE (dvec(3, ntrans), r2v(ntrans), invrv(ntrans), invr3v(ntrans), invr5v(ntrans))
@@ -781,9 +790,10 @@ CONTAINS
                END IF
             END DO
 
-            ! Geometry-only Ewald 1/r^3 term and its Cartesian derivative.
+            ! Geometry-only Ewald 1/r^3 term and its derivatives.
             s3 = 0.0_dp
             ds3 = 0.0_dp
+            ds3mat = 0.0_dp
             DO itr = 1, ntrans
                IF (invrv(itr) == 0.0_dp) CYCLE
                r2 = r2v(itr)
@@ -791,42 +801,62 @@ CONTAINS
                invr2 = invr*invr
                invr3 = invr3v(itr)
                invr4 = invr*invr3
+               invr5 = invr5v(itr)
                e = EXP(-alpha*alpha*r2)
                s3 = s3 + ERFC(alpha*SQRT(r2))*invr3 + pref*e*invr2
                dhdr = -pref*e*invr3 - 3.0_dp*ERFC(alpha*SQRT(r2))*invr4 &
                       + pref*e*(-2.0_dp*alpha*alpha*invr - 2.0_dp*invr3)
                ds3 = ds3 + dhdr*dvec(:, itr)*invr
+               IF (use_virial) THEN
+                  dtmp = -3.0_dp*ERFC(alpha*SQRT(r2))*invr5 &
+                         - 6.0_dp*alpha*e/sqrtpi*invr4 &
+                         - 4.0_dp*alpha**3*e/sqrtpi*invr2
+                  DO k = 1, 3
+                     ds3mat(k, :) = ds3mat(k, :) + dtmp*dvec(k, itr)*dvec(:, itr)
+                  END DO
+               END IF
             END DO
             DO itr = 1, ng
                ph = DOT_PRODUCT(rij, gvec(:, itr))
                s3 = s3 + gw3(itr)*COS(ph)
                ds3 = ds3 - gw3(itr)*SIN(ph)*gvec(:, itr)
+               IF (use_virial) ds3mat = ds3mat + COS(ph)*gstrain3(:, :, itr)
             END DO
             s3 = s3 + c3
             IF (iatom == jatom) s3 = s3 + onsite_const
+            IF (use_virial) ds3mat = ds3mat - c3*unity
 
             DO i = 1, ni
                DO j = 1, nj
                   gam = 2.0_dp/(1.0_dp/(etaa*(1.0_dp + kappaa(i))) &
                                 + 1.0_dp/(etab*(1.0_dp + kappab(j))))
                   g2inv = 1.0_dp/(gam*gam)
-                  ! Klopman-Ohno short-range residual and derivative.
+                  ! Klopman-Ohno short-range residual and derivatives.
                   sr = 0.0_dp
                   dsr = 0.0_dp
+                  dsrmat = 0.0_dp
                   DO itr = 1, ntrans
                      IF (invrv(itr) == 0.0_dp) CYCLE
                      r2 = r2v(itr)
                      invr = invrv(itr)
                      invr3 = invr3v(itr)
                      invr4 = invr*invr3
+                     invr5 = invr5v(itr)
                      sr = sr + 1.0_dp/SQRT(r2 + g2inv) - invr + 0.5_dp*g2inv*invr3
                      dfs = -SQRT(r2)/(r2 + g2inv)**1.5_dp + invr*invr &
                            - 1.5_dp*g2inv*invr4
                      dsr = dsr + dfs*dvec(:, itr)*invr
+                     IF (use_virial) THEN
+                        dtmp = -1.0_dp/(r2 + g2inv)**1.5_dp + invr3 - 1.5_dp*g2inv*invr5
+                        DO k = 1, 3
+                           dsrmat(k, :) = dsrmat(k, :) + dtmp*dvec(k, itr)*dvec(:, itr)
+                        END DO
+                     END IF
                   END DO
                   val = sr - 0.5_dp*g2inv*s3
                   dval = dsr - 0.5_dp*g2inv*ds3
                   IF (iatom == jatom) val = val + gam
+                  IF (use_virial) dsmat = dsrmat - 0.5_dp*g2inv*ds3mat
 
                   gchrg(iatom, i, 1) = gchrg(iatom, i, 1) + val*charges(jatom, j)
                   IF (iatom /= jatom) THEN
@@ -835,10 +865,16 @@ CONTAINS
                   IF (calculate_forces .AND. iatom /= jatom) THEN
                      DO k = 1, 3
                         gchrg(iatom, i, k + 1) = gchrg(iatom, i, k + 1) &
-                                                 + dval(k)*charges(jatom, j)
+                                                 - dval(k)*charges(jatom, j)
                         gchrg(jatom, j, k + 1) = gchrg(jatom, j, k + 1) &
-                                                 - charges(iatom, i)*dval(k)
+                                                 + charges(iatom, i)*dval(k)
                      END DO
+                  END IF
+                  IF (use_virial) THEN
+                     vpref = 1.0_dp
+                     IF (iatom == jatom) vpref = 0.5_dp
+                     virial%pv_virial(:, :) = virial%pv_virial(:, :) &
+                        - vpref*charges(iatom, i)*charges(jatom, j)*dsmat(:, :)
                   END IF
                END DO
             END DO
@@ -846,7 +882,7 @@ CONTAINS
       END DO
 
       DEALLOCATE (dvec, r2v, invrv, invr3v, invr5v)
-      DEALLOCATE (trans, gvec, gw, gw3)
+      DEALLOCATE (trans, gvec, gw, gw3, gstrain3)
       DEALLOCATE (kind_of)
 
       CALL timestop(handle)
@@ -896,13 +932,14 @@ CONTAINS
 !> \param gw ...
 !> \param gw3 ...
 ! **************************************************************************************************
-   SUBROUTINE get_klopman_ohno_ewald_recip(hmat, h_inv, alpha, vol, conv, gvec, gw, gw3)
+   SUBROUTINE get_klopman_ohno_ewald_recip(hmat, h_inv, alpha, vol, conv, gvec, gw, gw3, gstrain3)
       REAL(dp), DIMENSION(3, 3), INTENT(in)              :: hmat, h_inv
       REAL(dp), INTENT(in)                               :: alpha, vol, conv
       REAL(dp), ALLOCATABLE, DIMENSION(:, :), INTENT(out) :: gvec
       REAL(dp), ALLOCATABLE, DIMENSION(:), INTENT(out)   :: gw, gw3
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :, :), INTENT(out) :: gstrain3
 
-      INTEGER                                            :: i, itr, j, k, n, ng
+      INTEGER                                            :: a, b, i, itr, j, k, n, ng
       INTEGER, DIMENSION(3)                              :: rep
       REAL(dp)                                           :: fac, g2, gmax, x
       REAL(dp), DIMENSION(3, 3)                          :: rec
@@ -915,7 +952,7 @@ CONTAINS
          rep(i) = CEILING(gmax*SQRT(SUM(hmat(:, i)**2))/(2.0_dp*pi))
       END DO
       ng = PRODUCT(2*rep + 1) - 1
-      ALLOCATE (gvec(3, ng), gw(ng), gw3(ng))
+      ALLOCATE (gvec(3, ng), gw(ng), gw3(ng), gstrain3(3, 3, ng))
       fac = 4.0_dp*pi/vol
       itr = 0
       DO k = -rep(3), rep(3)
@@ -929,6 +966,12 @@ CONTAINS
                x = g2/(4.0_dp*alpha*alpha)
                gw(itr) = fac*EXP(-x)/g2
                gw3(itr) = 0.5_dp*fac*klopman_ohno_ewald_expint_e1(x)
+               DO a = 1, 3
+                  DO b = 1, 3
+                     gstrain3(a, b, itr) = gw(itr)*gvec(a, itr)*gvec(b, itr)
+                  END DO
+                  gstrain3(a, a, itr) = gstrain3(a, a, itr) - gw3(itr)
+               END DO
             END DO
          END DO
       END DO
