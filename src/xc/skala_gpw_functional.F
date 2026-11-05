@@ -315,11 +315,25 @@ CONTAINS
       LOGICAL                                            :: uses_skala_model
 
       CHARACTER(len=default_path_length)                 :: model_key, model_name
-      TYPE(section_vals_type), POINTER                   :: gauxc_section
+      LOGICAL                                            :: section_active
+      TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
 
       uses_skala_model = .FALSE.
+
+      native_section => get_skala_native_section(xc_section)
+      IF (ASSOCIATED(native_section)) THEN
+         CALL section_vals_val_get(native_section, "_SECTION_PARAMETERS_", l_val=section_active)
+         IF (section_active) THEN
+            uses_skala_model = .TRUE.
+            RETURN
+         END IF
+      END IF
+
       gauxc_section => get_gauxc_section(xc_section)
       IF (.NOT. ASSOCIATED(gauxc_section)) RETURN
+
+      CALL section_vals_val_get(gauxc_section, "_SECTION_PARAMETERS_", l_val=section_active)
+      IF (.NOT. section_active) RETURN
 
       CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
       model_key = ADJUSTL(model_name)
