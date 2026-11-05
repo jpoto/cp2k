@@ -125,6 +125,7 @@ MODULE skala_gpw_features
                                                             chunk_dynamic_tensors_active = .FALSE., &
                                                             chunk_inputs_active = .FALSE., &
                                                             chunk_inputs_use_collapsed_rks = .FALSE., &
+                                                            chunk_static_requires_grad = .FALSE., &
                                                             chunk_static_tensors_active = .FALSE., &
                                                             dynamic_tensors_active = .FALSE., &
                                                             inputs_active = .FALSE., &
@@ -132,8 +133,9 @@ MODULE skala_gpw_features
    END TYPE skala_gpw_layout_cache_type
 
    TYPE skala_gpw_feature_type
-      INTEGER                                            :: chunk_feature_count = 0, nflat = 0, &
-                                                            nflat_local = 0, &
+      INTEGER                                            :: chunk_atom_begin = 1, chunk_atom_end = 0, &
+                                                            chunk_feature_count = 0, chunk_natom = 0, &
+                                                            nflat = 0, nflat_local = 0, &
                                                             atom_partition = skala_gpw_atom_partition_hard
       TYPE(torch_dict_type)                             :: inputs
       TYPE(torch_tensor_type)                           :: atomic_grid_size_bound_shape_t
@@ -270,8 +272,7 @@ CONTAINS
       CALL skala_gpw_feature_release(features)
       CALL timestop(phase_handle)
 
-      use_atom_chunk_protocol = my_use_atom_chunks .AND. &
-                                .NOT. (my_requires_coordinate_grad .OR. my_requires_stress_grad)
+      use_atom_chunk_protocol = my_use_atom_chunks
       use_atom_chunk_routing = use_atom_chunk_protocol .AND. my_route_atom_chunks
       CALL timeset("skala_gpw_layout_cache", phase_handle)
       CALL ensure_layout_cache(pw_grid, particle_set, cell, weights, my_atom_partition, &
@@ -1019,7 +1020,7 @@ CONTAINS
       CALL timeset("skala_gpw_layout_tensors", phase_handle)
       IF (needs_full_static_tensors) CALL build_full_static_layout_tensors(cached_layout)
       IF (cached_layout%chunk_feature_count > 0) THEN
-         CALL build_chunk_static_layout_tensors(cached_layout)
+         CALL build_chunk_static_layout_tensors(cached_layout, .FALSE.)
       END IF
       CALL timestop(phase_handle)
       cached_layout%active = .TRUE.
@@ -1074,24 +1075,26 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Build cached atom-chunk Torch tensors for static SKALA inputs.
 !> \param cache ...
+!> \param requires_grad ...
 ! **************************************************************************************************
-   SUBROUTINE build_chunk_static_layout_tensors(cache)
+   SUBROUTINE build_chunk_static_layout_tensors(cache, requires_grad)
       TYPE(skala_gpw_layout_cache_type), INTENT(INOUT)   :: cache
+      LOGICAL, INTENT(IN)                                :: requires_grad
 
       CPASSERT(.NOT. cache%chunk_static_tensors_active)
       CALL torch_tensor_from_array(cache%chunk_grid_coords_t, cache%chunk_grid_coords)
-      CALL torch_tensor_to_device_leaf(cache%chunk_grid_coords_t, .FALSE.)
+      CALL torch_tensor_to_device_leaf(cache%chunk_grid_coords_t, requires_grad)
       CALL torch_tensor_from_array(cache%chunk_grid_weights_t, cache%chunk_grid_weights)
-      CALL torch_tensor_to_device_leaf(cache%chunk_grid_weights_t, .FALSE.)
+      CALL torch_tensor_to_device_leaf(cache%chunk_grid_weights_t, requires_grad)
       CALL torch_tensor_from_array(cache%chunk_atomic_grid_weights_t, &
                                    cache%chunk_atomic_grid_weights)
-      CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_weights_t, .FALSE.)
+      CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_weights_t, requires_grad)
       CALL torch_tensor_from_array(cache%chunk_atomic_grid_sizes_t, &
                                    cache%chunk_atomic_grid_sizes)
       CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_sizes_t, .FALSE.)
       CALL torch_tensor_from_array(cache%chunk_coarse_0_atomic_coords_t, &
                                    cache%chunk_coarse_0_atomic_coords)
-      CALL torch_tensor_to_device_leaf(cache%chunk_coarse_0_atomic_coords_t, .FALSE.)
+      CALL torch_tensor_to_device_leaf(cache%chunk_coarse_0_atomic_coords_t, requires_grad)
       CALL torch_tensor_from_array(cache%chunk_atomic_grid_size_bound_shape_t, &
                                    cache%chunk_atomic_grid_size_bound_shape)
       CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_size_bound_shape_t, .FALSE.)
@@ -1109,9 +1112,49 @@ CONTAINS
                              cache%chunk_atomic_grid_sizes_t)
       CALL torch_dict_insert(cache%chunk_static_inputs, "atomic_grid_size_bound_shape", &
                              cache%chunk_atomic_grid_size_bound_shape_t)
+      cache%chunk_static_requires_grad = requires_grad
       cache%chunk_static_tensors_active = .TRUE.
 
    END SUBROUTINE build_chunk_static_layout_tensors
+
+! **************************************************************************************************
+!> \brief Release the cached atom-chunk static Torch tensors.
+!> \param cache ...
+! **************************************************************************************************
+   SUBROUTINE release_chunk_static_layout_tensors(cache)
+      TYPE(skala_gpw_layout_cache_type), INTENT(INOUT)   :: cache
+
+      IF (cache%chunk_inputs_active) THEN
+         CALL torch_dict_release(cache%chunk_inputs)
+         cache%chunk_inputs_active = .FALSE.
+      END IF
+      IF (.NOT. cache%chunk_static_tensors_active) RETURN
+      CALL torch_dict_release(cache%chunk_static_inputs)
+      CALL torch_tensor_release(cache%chunk_grid_coords_t)
+      CALL torch_tensor_release(cache%chunk_grid_weights_t)
+      CALL torch_tensor_release(cache%chunk_atomic_grid_weights_t)
+      CALL torch_tensor_release(cache%chunk_atomic_grid_sizes_t)
+      CALL torch_tensor_release(cache%chunk_coarse_0_atomic_coords_t)
+      CALL torch_tensor_release(cache%chunk_atomic_grid_size_bound_shape_t)
+      CALL torch_tensor_release(cache%chunk_feature_indices_t)
+      cache%chunk_static_tensors_active = .FALSE.
+      cache%chunk_static_requires_grad = .FALSE.
+
+   END SUBROUTINE release_chunk_static_layout_tensors
+
+! **************************************************************************************************
+!> \brief Ensure the chunk static Torch tensors expose the requested differentiability.
+!> \param requires_grad ...
+! **************************************************************************************************
+   SUBROUTINE ensure_chunk_static_tensor_grad(requires_grad)
+      LOGICAL, INTENT(IN)                                :: requires_grad
+
+      CPASSERT(cached_layout%chunk_static_tensors_active)
+      IF (cached_layout%chunk_static_requires_grad .EQV. requires_grad) RETURN
+      CALL release_chunk_static_layout_tensors(cached_layout)
+      CALL build_chunk_static_layout_tensors(cached_layout, requires_grad)
+
+   END SUBROUTINE ensure_chunk_static_tensor_grad
 
 ! **************************************************************************************************
 !> \brief Copy static cached layout arrays into a feature bundle.
@@ -1149,7 +1192,10 @@ CONTAINS
       END IF
       features%nflat = cached_layout%nflat
       features%nflat_local = cached_layout%nflat_local
+      features%chunk_atom_begin = cached_layout%chunk_atom_begin
+      features%chunk_atom_end = cached_layout%chunk_atom_end
       features%chunk_feature_count = cached_layout%chunk_feature_count
+      features%chunk_natom = cached_layout%chunk_natom
       features%atom_partition = cached_layout%atom_partition
       ALLOCATE (features%atomic_grid_sizes(cached_layout%natom))
       features%atomic_grid_sizes(:) = cached_layout%atomic_grid_sizes
@@ -2263,9 +2309,9 @@ CONTAINS
       features%owns_dynamic_tensors = .FALSE.
       features%owns_inputs = .TRUE.
       IF (use_atom_chunks) THEN
-         CPASSERT(.NOT. requires_coordinate_grad)
-         CPASSERT(.NOT. requires_stress_grad)
-         CPASSERT(.NOT. my_requires_weight_grad)
+         CALL ensure_chunk_static_tensor_grad(requires_coordinate_grad .OR. &
+                                              requires_stress_grad .OR. &
+                                              my_requires_weight_grad)
          CPASSERT(cached_layout%chunk_static_tensors_active)
          features%grid_coords_t = cached_layout%chunk_grid_coords_t
          features%grid_weights_t = cached_layout%chunk_grid_weights_t
@@ -2429,8 +2475,8 @@ CONTAINS
          END IF
       END IF
 
-      IF (requires_coordinate_grad .OR. requires_stress_grad) THEN
-         CPASSERT(.NOT. use_atom_chunks)
+      IF (.NOT. use_atom_chunks .AND. &
+          (requires_coordinate_grad .OR. requires_stress_grad)) THEN
          CALL torch_tensor_from_array(features%coarse_0_atomic_coords_t, &
                                       features%coarse_0_atomic_coords)
          CALL torch_tensor_to_device_leaf(features%coarse_0_atomic_coords_t, .TRUE.)
