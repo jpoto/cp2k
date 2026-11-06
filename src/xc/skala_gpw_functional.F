@@ -40,7 +40,8 @@ MODULE skala_gpw_functional
         skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, skala_gpw_feature_build, &
         skala_gpw_feature_build_atom_subchunk_bounds, skala_gpw_feature_release, &
         skala_gpw_feature_type, skala_gpw_features_release_cache, &
-        skala_gpw_smooth_partition_derivatives, smooth_partition_atomic_weight_scale_derivative
+        smooth_partition_atomic_weight_scale_derivative, smooth_partition_derivative_action, &
+        smooth_partition_weights
    USE skala_model_selection,           ONLY: get_gauxc_section,&
                                               get_skala_native_section,&
                                               resolve_skala_model_path,&
@@ -371,13 +372,14 @@ CONTAINS
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: atomic_grid_weight_grad_g, &
                                                             grid_weight_grad_g
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), TARGET :: atom_coord_grad_g, grid_coord_grad_g
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: density_grad, kin_grad
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
+         TARGET                                          :: atom_coord_grad_g, grid_coord_grad_g
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: grad_grad
+      REAL(KIND=dp), DIMENSION(3, 3)                     :: virial_before
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad_p, &
                                                             grid_weight_grad_p
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad_p, grid_coord_grad_p
-      REAL(KIND=dp), DIMENSION(3, 3)                     :: virial_before
       TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(skala_gpw_feature_type)                       :: features
       TYPE(torch_tensor_type)                            :: atom_coord_grad_t, &
@@ -596,21 +598,66 @@ CONTAINS
                CALL add_explicit_coordinate_force(atom_force, features, atom_coord_grad_t, &
                                                   rho_r(1)%pw_grid%para%group%mepos == 0, &
                                                   atom_coord_grad_in=atom_coord_grad_p)
-               IF (features%atom_partition == skala_gpw_atom_partition_smooth) THEN
-                  CALL add_smooth_partition_force(atom_force, features, particle_set, cell, rho_r, &
-                                                  grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                                                  grid_weight_grad_in=grid_weight_grad_p, &
-                                                  atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
-               END IF
             ELSE
                CALL add_explicit_coordinate_force(atom_force, features, atom_coord_grad_t, &
                                                   rho_r(1)%pw_grid%para%group%mepos == 0)
-               IF (features%atom_partition == skala_gpw_atom_partition_smooth) THEN
-                  CALL add_smooth_partition_force(atom_force, features, particle_set, cell, rho_r, &
-                                                  grid_weight_grad_t, atomic_grid_weight_grad_t)
-               END IF
             END IF
             have_atom_coord_grad = .TRUE.
+         END IF
+
+         ! SMOOTH partition force and virial share the O(natom^2) pair loop; compute
+         ! both in one sweep when both are requested.
+         IF ((needs_atom_force .OR. compute_virial) .AND. &
+             features%atom_partition == skala_gpw_atom_partition_smooth) THEN
+            IF (compute_virial .AND. native_grid_diagnostics) virial_before = virial_xc
+            IF (use_static_grad_arrays) THEN
+               IF (needs_atom_force .AND. compute_virial) THEN
+                  CALL add_smooth_partition_force_virial( &
+                     atom_force=atom_force, virial_xc=virial_xc, features=features, &
+                     particle_set=particle_set, cell=cell, rho_r=rho_r, &
+                     grid_weight_grad_t=grid_weight_grad_t, &
+                     atomic_grid_weight_grad_t=atomic_grid_weight_grad_t, &
+                     grid_weight_grad_in=grid_weight_grad_p, &
+                     atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
+               ELSE IF (needs_atom_force) THEN
+                  CALL add_smooth_partition_force_virial( &
+                     atom_force=atom_force, features=features, particle_set=particle_set, &
+                     cell=cell, rho_r=rho_r, grid_weight_grad_t=grid_weight_grad_t, &
+                     atomic_grid_weight_grad_t=atomic_grid_weight_grad_t, &
+                     grid_weight_grad_in=grid_weight_grad_p, &
+                     atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
+               ELSE
+                  CALL add_smooth_partition_force_virial( &
+                     virial_xc=virial_xc, features=features, particle_set=particle_set, &
+                     cell=cell, rho_r=rho_r, grid_weight_grad_t=grid_weight_grad_t, &
+                     atomic_grid_weight_grad_t=atomic_grid_weight_grad_t, &
+                     grid_weight_grad_in=grid_weight_grad_p, &
+                     atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
+               END IF
+            ELSE
+               IF (needs_atom_force .AND. compute_virial) THEN
+                  CALL add_smooth_partition_force_virial( &
+                     atom_force=atom_force, virial_xc=virial_xc, features=features, &
+                     particle_set=particle_set, cell=cell, rho_r=rho_r, &
+                     grid_weight_grad_t=grid_weight_grad_t, &
+                     atomic_grid_weight_grad_t=atomic_grid_weight_grad_t)
+               ELSE IF (needs_atom_force) THEN
+                  CALL add_smooth_partition_force_virial( &
+                     atom_force=atom_force, features=features, particle_set=particle_set, &
+                     cell=cell, rho_r=rho_r, grid_weight_grad_t=grid_weight_grad_t, &
+                     atomic_grid_weight_grad_t=atomic_grid_weight_grad_t)
+               ELSE
+                  CALL add_smooth_partition_force_virial( &
+                     virial_xc=virial_xc, features=features, particle_set=particle_set, &
+                     cell=cell, rho_r=rho_r, grid_weight_grad_t=grid_weight_grad_t, &
+                     atomic_grid_weight_grad_t=atomic_grid_weight_grad_t)
+               END IF
+            END IF
+            IF (compute_virial .AND. native_grid_diagnostics) THEN
+               CALL print_virial_delta("smooth-partition", virial_xc - virial_before, &
+                                       rho_r(1)%pw_grid%para%group%mepos == 0)
+               virial_before = virial_xc
+            END IF
          END IF
 
          CALL timeset("skala_gpw_vxc_unpack", phase_handle)
@@ -680,24 +727,6 @@ CONTAINS
                CALL print_virial_delta("static-coordinates", virial_xc - virial_before, &
                                        rho_r(1)%pw_grid%para%group%mepos == 0)
                virial_before = virial_xc
-            END IF
-            IF (features%atom_partition == skala_gpw_atom_partition_smooth) THEN
-               IF (use_static_grad_arrays) THEN
-                  CALL build_smooth_partition_virial( &
-                     virial_xc, features, particle_set, cell, rho_r, &
-                     grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                     grid_weight_grad_in=grid_weight_grad_p, &
-                     atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
-               ELSE
-                  CALL build_smooth_partition_virial( &
-                     virial_xc, features, particle_set, cell, rho_r, &
-                     grid_weight_grad_t, atomic_grid_weight_grad_t)
-               END IF
-               IF (native_grid_diagnostics) THEN
-                  CALL print_virial_delta("smooth-partition", virial_xc - virial_before, &
-                                          rho_r(1)%pw_grid%para%group%mepos == 0)
-                  virial_before = virial_xc
-               END IF
             END IF
          END IF
          CALL omp_set_num_threads(omp_max_threads_restore)
@@ -774,7 +803,6 @@ CONTAINS
       REAL(KIND=dp)                                      :: exc, local_derivative
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: local_weight_grad, partition_weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dweights_datom, dweights_dstrain
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: grid_weight_grad
       TYPE(section_vals_type), POINTER                   :: native_section
@@ -909,8 +937,7 @@ CONTAINS
 
       natom = SIZE(particle_set)
       IF (native_grid_atom_partition == skala_gpw_atom_partition_smooth) THEN
-         ALLOCATE (atom_coords_pbc(3, natom), included(natom), partition_weights(natom), &
-                   dweights_datom(3, natom, natom), dweights_dstrain(3, 3, natom))
+         ALLOCATE (atom_coords_pbc(3, natom), included(natom), partition_weights(natom))
          DO iatom = 1, natom
             atom_coords_pbc(:, iatom) = pbc(particle_set(iatom)%r, cell, positive_range=.TRUE.)
          END DO
@@ -935,9 +962,8 @@ CONTAINS
                   END IF
                ELSE
                   grid_point = native_grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
-                  CALL skala_gpw_smooth_partition_derivatives( &
-                     grid_point, atom_coords_pbc, cell, partition_weights, included, &
-                     dweights_datom, dweights_dstrain)
+                  CALL smooth_partition_weights(grid_point, atom_coords_pbc, cell, &
+                                                partition_weights, included)
                   CPASSERT(feature_end - feature_begin + 1 == COUNT(included))
                   feature_pos = feature_begin
                   DO iatom = 1, natom
@@ -961,8 +987,7 @@ CONTAINS
       CPASSERT(local_row == features%nflat_local)
 
       IF (ALLOCATED(atom_coords_pbc)) THEN
-         DEALLOCATE (atom_coords_pbc, dweights_datom, dweights_dstrain, included, &
-                     partition_weights)
+         DEALLOCATE (atom_coords_pbc, included, partition_weights)
       END IF
       IF (have_weight_grad_t) CALL torch_tensor_release(grid_weight_grad_t)
       IF (have_exc_tensor) CALL torch_tensor_release(exc_tensor)
@@ -1743,112 +1768,10 @@ CONTAINS
    END SUBROUTINE add_explicit_coordinate_force
 
 ! **************************************************************************************************
-!> \brief Add the force from SMOOTH native-grid atom partition weights.
+!> \brief Add the force and/or virial from SMOOTH native-grid atom partition weights.
+!>        The logarithmic weight derivatives are contracted directly, so no
+!>        O(natom^2) derivative tensor is formed.
 !> \param atom_force ...
-!> \param features ...
-!> \param particle_set ...
-!> \param cell ...
-!> \param rho_r ...
-!> \param grid_weight_grad_t ...
-!> \param atomic_grid_weight_grad_t ...
-!> \param grid_weight_grad_in ...
-!> \param atomic_grid_weight_grad_in ...
-! **************************************************************************************************
-   SUBROUTINE add_smooth_partition_force(atom_force, features, particle_set, cell, rho_r, &
-                                         grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                                         grid_weight_grad_in, atomic_grid_weight_grad_in)
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: atom_force
-      TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      TYPE(cell_type), POINTER                           :: cell
-      TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r
-      TYPE(torch_tensor_type), INTENT(INOUT)             :: grid_weight_grad_t, &
-                                                            atomic_grid_weight_grad_t
-      REAL(KIND=dp), DIMENSION(:), INTENT(IN), &
-         OPTIONAL, TARGET                                :: grid_weight_grad_in, &
-                                                            atomic_grid_weight_grad_in
-
-      INTEGER                                            :: feature_begin, feature_end, feature_pos, &
-                                                            i, iatom, j, jatom, k, local_row, &
-                                                            natom, row
-      INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL                                            :: have_external_grad
-      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
-      REAL(KIND=dp)                                      :: grid_base_weight, weight_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: weights
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dweights_datom, dweights_dstrain
-      REAL(KIND=dp), DIMENSION(3)                        :: grid_point
-      REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad, grid_weight_grad
-
-      have_external_grad = PRESENT(grid_weight_grad_in)
-      NULLIFY (atomic_grid_weight_grad, grid_weight_grad)
-      IF (have_external_grad) THEN
-         grid_weight_grad => grid_weight_grad_in
-         atomic_grid_weight_grad => atomic_grid_weight_grad_in
-      ELSE
-         CALL torch_tensor_grad(features%grid_weights_t, grid_weight_grad_t)
-         CALL torch_tensor_grad(features%atomic_grid_weights_t, atomic_grid_weight_grad_t)
-         CALL torch_tensor_data_ptr(grid_weight_grad_t, grid_weight_grad)
-         CALL torch_tensor_data_ptr(atomic_grid_weight_grad_t, atomic_grid_weight_grad)
-      END IF
-
-      natom = SIZE(particle_set)
-      CPASSERT(SIZE(atom_force, 1) == 3)
-      CPASSERT(SIZE(atom_force, 2) == natom)
-      ALLOCATE (atom_coords_pbc(3, natom), included(natom), weights(natom), &
-                dweights_datom(3, natom, natom), dweights_dstrain(3, 3, natom))
-      DO iatom = 1, natom
-         atom_coords_pbc(:, iatom) = pbc(particle_set(iatom)%r, cell, positive_range=.TRUE.)
-      END DO
-
-      bo = rho_r(1)%pw_grid%bounds_local
-      local_row = 0
-      DO k = bo(1, 3), bo(2, 3)
-         DO j = bo(1, 2), bo(2, 2)
-            DO i = bo(1, 1), bo(2, 1)
-               local_row = local_row + 1
-               grid_point = native_grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
-               CALL skala_gpw_smooth_partition_derivatives(grid_point, atom_coords_pbc, cell, &
-                                                           weights, included, dweights_datom, &
-                                                           dweights_dstrain)
-               feature_begin = features%local_feature_offsets(local_row)
-               feature_end = features%local_feature_offsets(local_row + 1) - 1
-               CPASSERT(feature_end - feature_begin + 1 == COUNT(included))
-               grid_base_weight = 0.0_dp
-               DO feature_pos = feature_begin, feature_end
-                  row = features%local_feature_rows(feature_pos)
-                  grid_base_weight = grid_base_weight + features%grid_weights(row)
-               END DO
-               feature_pos = feature_begin
-               DO iatom = 1, natom
-                  IF (.NOT. included(iatom)) CYCLE
-                  row = features%local_feature_rows(feature_pos)
-                  weight_grad = grid_base_weight*grid_weight_grad(row) + &
-                                rho_r(1)%pw_grid%dvol*atomic_grid_weight_grad(row)* &
-                                smooth_partition_atomic_weight_scale_derivative(weights(iatom))
-                  DO jatom = 1, natom
-                     atom_force(:, jatom) = atom_force(:, jatom) + &
-                                            weight_grad*dweights_datom(:, jatom, iatom)
-                  END DO
-                  feature_pos = feature_pos + 1
-               END DO
-               CPASSERT(feature_pos == feature_end + 1)
-            END DO
-         END DO
-      END DO
-      CPASSERT(local_row == features%nflat_local)
-
-      DEALLOCATE (atom_coords_pbc, dweights_datom, dweights_dstrain, included, weights)
-      IF (.NOT. have_external_grad) THEN
-         CALL torch_tensor_release(grid_weight_grad_t)
-         CALL torch_tensor_release(atomic_grid_weight_grad_t)
-      END IF
-
-   END SUBROUTINE add_smooth_partition_force
-
-! **************************************************************************************************
-!> \brief Add the virial from SMOOTH native-grid atom partition weights.
 !> \param virial_xc ...
 !> \param features ...
 !> \param particle_set ...
@@ -1859,10 +1782,13 @@ CONTAINS
 !> \param grid_weight_grad_in ...
 !> \param atomic_grid_weight_grad_in ...
 ! **************************************************************************************************
-   SUBROUTINE build_smooth_partition_virial(virial_xc, features, particle_set, cell, rho_r, &
-                                            grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                                            grid_weight_grad_in, atomic_grid_weight_grad_in)
-      REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT)      :: virial_xc
+   SUBROUTINE add_smooth_partition_force_virial(atom_force, virial_xc, features, particle_set, cell, &
+                                                rho_r, grid_weight_grad_t, atomic_grid_weight_grad_t, &
+                                                grid_weight_grad_in, atomic_grid_weight_grad_in)
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT), &
+         OPTIONAL                                        :: atom_force
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT), &
+         OPTIONAL                                        :: virial_xc
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(cell_type), POINTER                           :: cell
@@ -1874,17 +1800,19 @@ CONTAINS
                                                             atomic_grid_weight_grad_in
 
       INTEGER                                            :: feature_begin, feature_end, feature_pos, &
-                                                            i, iatom, idir, j, jdir, k, local_row, &
-                                                            natom, row
+                                                            i, iatom, j, k, local_row, natom, row
       INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL                                            :: have_external_grad
+      LOGICAL                                            :: do_force, do_virial, have_external_grad
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
-      REAL(KIND=dp)                                      :: grid_base_weight, tmp, weight_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: weights
+      REAL(KIND=dp)                                      :: grid_base_weight
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: weight_grad, weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dweights_datom, dweights_dstrain
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad, grid_weight_grad
+
+      do_force = PRESENT(atom_force)
+      do_virial = PRESENT(virial_xc)
+      CPASSERT(do_force .OR. do_virial)
 
       have_external_grad = PRESENT(grid_weight_grad_in)
       NULLIFY (atomic_grid_weight_grad, grid_weight_grad)
@@ -1899,8 +1827,11 @@ CONTAINS
       END IF
 
       natom = SIZE(particle_set)
-      ALLOCATE (atom_coords_pbc(3, natom), included(natom), weights(natom), &
-                dweights_datom(3, natom, natom), dweights_dstrain(3, 3, natom))
+      IF (do_force) THEN
+         CPASSERT(SIZE(atom_force, 1) == 3)
+         CPASSERT(SIZE(atom_force, 2) == natom)
+      END IF
+      ALLOCATE (atom_coords_pbc(3, natom), included(natom), weights(natom), weight_grad(natom))
       DO iatom = 1, natom
          atom_coords_pbc(:, iatom) = pbc(particle_set(iatom)%r, cell, positive_range=.TRUE.)
       END DO
@@ -1912,9 +1843,7 @@ CONTAINS
             DO i = bo(1, 1), bo(2, 1)
                local_row = local_row + 1
                grid_point = native_grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
-               CALL skala_gpw_smooth_partition_derivatives(grid_point, atom_coords_pbc, cell, &
-                                                           weights, included, dweights_datom, &
-                                                           dweights_dstrain)
+               CALL smooth_partition_weights(grid_point, atom_coords_pbc, cell, weights, included)
                feature_begin = features%local_feature_offsets(local_row)
                feature_end = features%local_feature_offsets(local_row + 1) - 1
                CPASSERT(feature_end - feature_begin + 1 == COUNT(included))
@@ -1923,35 +1852,44 @@ CONTAINS
                   row = features%local_feature_rows(feature_pos)
                   grid_base_weight = grid_base_weight + features%grid_weights(row)
                END DO
+               weight_grad = 0.0_dp
                feature_pos = feature_begin
                DO iatom = 1, natom
                   IF (.NOT. included(iatom)) CYCLE
                   row = features%local_feature_rows(feature_pos)
-                  weight_grad = grid_base_weight*grid_weight_grad(row) + &
-                                rho_r(1)%pw_grid%dvol*atomic_grid_weight_grad(row)* &
-                                smooth_partition_atomic_weight_scale_derivative(weights(iatom))
-                  DO idir = 1, 3
-                     DO jdir = 1, idir
-                        tmp = weight_grad*dweights_dstrain(idir, jdir, iatom)
-                        virial_xc(jdir, idir) = virial_xc(jdir, idir) + tmp
-                        IF (idir /= jdir) virial_xc(idir, jdir) = virial_xc(idir, jdir) + tmp
-                     END DO
-                  END DO
+                  weight_grad(iatom) = grid_base_weight*grid_weight_grad(row) + &
+                                       rho_r(1)%pw_grid%dvol*atomic_grid_weight_grad(row)* &
+                                       smooth_partition_atomic_weight_scale_derivative( &
+                                       weights(iatom))
                   feature_pos = feature_pos + 1
                END DO
                CPASSERT(feature_pos == feature_end + 1)
+
+               IF (do_force .AND. do_virial) THEN
+                  CALL smooth_partition_derivative_action( &
+                     grid_point, atom_coords_pbc, cell, weights, included, weight_grad, &
+                     atom_force=atom_force, virial_xc=virial_xc)
+               ELSE IF (do_force) THEN
+                  CALL smooth_partition_derivative_action( &
+                     grid_point, atom_coords_pbc, cell, weights, included, weight_grad, &
+                     atom_force=atom_force)
+               ELSE
+                  CALL smooth_partition_derivative_action( &
+                     grid_point, atom_coords_pbc, cell, weights, included, weight_grad, &
+                     virial_xc=virial_xc)
+               END IF
             END DO
          END DO
       END DO
       CPASSERT(local_row == features%nflat_local)
 
-      DEALLOCATE (atom_coords_pbc, dweights_datom, dweights_dstrain, included, weights)
+      DEALLOCATE (atom_coords_pbc, included, weights, weight_grad)
       IF (.NOT. have_external_grad) THEN
          CALL torch_tensor_release(grid_weight_grad_t)
          CALL torch_tensor_release(atomic_grid_weight_grad_t)
       END IF
 
-   END SUBROUTINE build_smooth_partition_virial
+   END SUBROUTINE add_smooth_partition_force_virial
 
 ! **************************************************************************************************
 !> \brief Return the Cartesian coordinate of a regular GPW grid point.

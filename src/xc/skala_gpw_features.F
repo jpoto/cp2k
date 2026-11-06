@@ -49,7 +49,8 @@ MODULE skala_gpw_features
              skala_gpw_features_release_cache, &
              skala_gpw_feature_build, skala_gpw_feature_build_atom_subchunk_bounds, &
              skala_gpw_feature_release, &
-             skala_gpw_feature_type, skala_gpw_smooth_partition_derivatives, &
+             skala_gpw_feature_type, smooth_partition_derivative_action, &
+             smooth_partition_weights, &
              build_periodic_atom_image_layout, periodic_atom_image_partition, &
              periodic_atom_image_partition_from_layout, smooth_atom_partition, &
              smooth_partition_atomic_weight_scale, smooth_partition_atomic_weight_scale_derivative
@@ -3251,69 +3252,39 @@ CONTAINS
    END SUBROUTINE periodic_atom_image_partition
 
 ! **************************************************************************************************
-!> \brief Build smooth atom weights and their atom/cell deformation derivatives.
+!> \brief Build normalized smooth atom partition weights.
 !> \param grid_point ...
 !> \param atom_coords ...
 !> \param cell ...
 !> \param weights ...
 !> \param included ...
-!> \param dweights_datom ...
-!> \param dweights_dstrain ...
 ! **************************************************************************************************
-   SUBROUTINE skala_gpw_smooth_partition_derivatives(grid_point, atom_coords, cell, &
-                                                     weights, included, dweights_datom, &
-                                                     dweights_dstrain)
+   SUBROUTINE smooth_partition_weights(grid_point, atom_coords, cell, weights, included)
       REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: grid_point
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: atom_coords
       TYPE(cell_type), POINTER                           :: cell
       REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: weights
       LOGICAL, DIMENSION(:), INTENT(OUT)                 :: included
-      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(OUT)     :: dweights_datom, dweights_dstrain
 
-      INTEGER                                            :: iatom, idir, jatom, jdir, natom
-      REAL(KIND=dp)                                      :: dist_diff, ds_dmu, included_sum, mu, &
-                                                            mu_raw, one_minus_switch, rab, rsum, &
-                                                            switch, total
-      REAL(KIND=dp), DIMENSION(3)                        :: dmu_atom_i, dmu_atom_j, ds_atom_i, &
-                                                            ds_atom_j, pair, unit_pair
-      REAL(KIND=dp), DIMENSION(3, 3)                     :: dmu_strain, ds_strain, mean_strain
-      REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2), &
-         SIZE(atom_coords, 2))                           :: log_weight_atom
-      REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2))  :: mean_atom, partition_atom_coords, rvecs, &
-                                                            unit_rvecs
-      REAL(KIND=dp), &
-         DIMENSION(3, 3, SIZE(atom_coords, 2))           :: log_weight_strain
-      REAL(KIND=dp), DIMENSION(SIZE(atom_coords, 2))     :: distances, normalized_weights, &
-                                                            raw_weights
+      INTEGER                                            :: iatom, jatom, natom
+      REAL(KIND=dp)                                      :: included_sum, mu, rab, rsum, switch, &
+                                                            total
+      REAL(KIND=dp), DIMENSION(3)                        :: pair
+      REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2))  :: partition_atom_coords
+      REAL(KIND=dp), DIMENSION(SIZE(atom_coords, 2))     :: distances, raw_weights
 
       natom = SIZE(atom_coords, 2)
       CPASSERT(SIZE(weights) == natom)
       CPASSERT(SIZE(included) == natom)
-      CPASSERT(SIZE(dweights_datom, 1) == 3)
-      CPASSERT(SIZE(dweights_datom, 2) == natom)
-      CPASSERT(SIZE(dweights_datom, 3) == natom)
-      CPASSERT(SIZE(dweights_dstrain, 1) == 3)
-      CPASSERT(SIZE(dweights_dstrain, 2) == 3)
-      CPASSERT(SIZE(dweights_dstrain, 3) == natom)
 
       weights = 0.0_dp
       included = .FALSE.
-      dweights_datom = 0.0_dp
-      dweights_dstrain = 0.0_dp
       raw_weights = 1.0_dp
-      log_weight_atom = 0.0_dp
-      log_weight_strain = 0.0_dp
 
       DO iatom = 1, natom
          partition_atom_coords(:, iatom) = &
             nearest_atom_image_coordinate(atom_coords(:, iatom), grid_point, cell)
-         rvecs(:, iatom) = grid_point - partition_atom_coords(:, iatom)
-         distances(iatom) = SQRT(SUM(rvecs(:, iatom)**2))
-         IF (distances(iatom) > layout_tol) THEN
-            unit_rvecs(:, iatom) = rvecs(:, iatom)/distances(iatom)
-         ELSE
-            unit_rvecs(:, iatom) = 0.0_dp
-         END IF
+         distances(iatom) = SQRT(SUM((grid_point - partition_atom_coords(:, iatom))**2))
       END DO
 
       DO iatom = 1, natom - 1
@@ -3321,57 +3292,18 @@ CONTAINS
             pair = partition_atom_coords(:, iatom) - partition_atom_coords(:, jatom)
             rab = SQRT(SUM(pair**2))
             IF (rab <= layout_tol) CYCLE
-            unit_pair = pair/rab
-            dist_diff = distances(iatom) - distances(jatom)
-            mu_raw = dist_diff/rab
-            mu = MAX(-1.0_dp, MIN(1.0_dp, mu_raw))
+            mu = (distances(iatom) - distances(jatom))/rab
+            mu = MAX(-1.0_dp, MIN(1.0_dp, mu))
             switch = 0.5_dp*(1.0_dp - becke_shape(mu))
-            one_minus_switch = 1.0_dp - switch
-
-            IF (ABS(mu_raw) < 1.0_dp) THEN
-               ds_dmu = -0.5_dp*becke_shape_derivative(mu)
-            ELSE
-               ds_dmu = 0.0_dp
-            END IF
-            IF (ABS(ds_dmu) > 0.0_dp .AND. switch > TINY(1.0_dp) .AND. &
-                one_minus_switch > TINY(1.0_dp)) THEN
-               dmu_atom_i = (-unit_rvecs(:, iatom)*rab - dist_diff*unit_pair)/rab**2
-               dmu_atom_j = (unit_rvecs(:, jatom)*rab + dist_diff*unit_pair)/rab**2
-               ds_atom_i = ds_dmu*dmu_atom_i
-               ds_atom_j = ds_dmu*dmu_atom_j
-               log_weight_atom(:, iatom, iatom) = &
-                  log_weight_atom(:, iatom, iatom) + ds_atom_i/switch
-               log_weight_atom(:, iatom, jatom) = &
-                  log_weight_atom(:, iatom, jatom) - ds_atom_i/one_minus_switch
-               log_weight_atom(:, jatom, iatom) = &
-                  log_weight_atom(:, jatom, iatom) + ds_atom_j/switch
-               log_weight_atom(:, jatom, jatom) = &
-                  log_weight_atom(:, jatom, jatom) - ds_atom_j/one_minus_switch
-
-               DO idir = 1, 3
-                  DO jdir = 1, 3
-                     dmu_strain(idir, jdir) = &
-                        ((unit_rvecs(idir, iatom)*rvecs(jdir, iatom) - &
-                          unit_rvecs(idir, jatom)*rvecs(jdir, jatom))*rab - &
-                         dist_diff*unit_pair(idir)*pair(jdir))/rab**2
-                  END DO
-               END DO
-               ds_strain = ds_dmu*dmu_strain
-               log_weight_strain(:, :, iatom) = &
-                  log_weight_strain(:, :, iatom) + ds_strain/switch
-               log_weight_strain(:, :, jatom) = &
-                  log_weight_strain(:, :, jatom) - ds_strain/one_minus_switch
-            END IF
-
             raw_weights(iatom) = raw_weights(iatom)*switch
-            raw_weights(jatom) = raw_weights(jatom)*one_minus_switch
+            raw_weights(jatom) = raw_weights(jatom)*(1.0_dp - switch)
          END DO
       END DO
 
       total = SUM(raw_weights)
       IF (total > 0.0_dp) THEN
-         normalized_weights = raw_weights/total
-         included = normalized_weights > smooth_partition_eps
+         weights = raw_weights/total
+         included = weights > smooth_partition_eps
       ELSE
          rsum = HUGE(1.0_dp)
          jatom = 1
@@ -3407,28 +3339,197 @@ CONTAINS
          IF (included(iatom)) weights(iatom) = raw_weights(iatom)/included_sum
       END DO
 
-      mean_atom = 0.0_dp
-      mean_strain = 0.0_dp
+   END SUBROUTINE smooth_partition_weights
+
+! **************************************************************************************************
+!> \brief Contract the smooth-partition logarithmic weight derivatives directly onto the
+!>        force and/or virial, avoiding an O(natom^2) derivative tensor.
+!>
+!> With L(j,i) = d ln w_i / dR_j, m_j = sum_i w_i L(j,i) and A = sum_i G_i w_i, the force is
+!> F_j = sum_i G_i w_i L(j,i) - A m_j. The pair loop accumulates sum_i G_i w_i L(j,i) and m_j
+!> without storing L(j,i).
+!> \param grid_point ...
+!> \param atom_coords ...
+!> \param cell ...
+!> \param weights ...
+!> \param included ...
+!> \param weight_grad ...
+!> \param atom_force ...
+!> \param virial_xc ...
+!> \param dweight_column_sum ...
+! **************************************************************************************************
+   SUBROUTINE smooth_partition_derivative_action(grid_point, atom_coords, cell, &
+                                                 weights, included, weight_grad, &
+                                                 atom_force, virial_xc, dweight_column_sum)
+      REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: grid_point
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: atom_coords
+      TYPE(cell_type), POINTER                           :: cell
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: weights
+      LOGICAL, DIMENSION(:), INTENT(IN)                  :: included
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: weight_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT), &
+         OPTIONAL                                        :: atom_force
+      REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT), &
+         OPTIONAL                                        :: virial_xc
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT), &
+         OPTIONAL                                        :: dweight_column_sum
+
+      INTEGER                                            :: iatom, idir, jatom, jdir, natom
+      LOGICAL                                            :: do_column_sum, do_force, do_virial
+      REAL(KIND=dp)                                      :: dist_diff, ds_dmu, mu, mu_raw, &
+                                                            one_minus_switch, rab, switch, &
+                                                            total_weight_grad
+      REAL(KIND=dp), DIMENSION(3)                        :: dmu_atom_i, dmu_atom_j, ds_atom_i, &
+                                                            ds_atom_j, pair, total_mean, unit_pair
+      REAL(KIND=dp), DIMENSION(3, 3)                     :: dmu_strain, ds_strain, strain_action, &
+                                                            strain_mean
+      REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2))  :: atom_action, atom_mean, log_deriv_sum, &
+                                                            partition_atom_coords, rvecs, &
+                                                            unit_rvecs
+      REAL(KIND=dp), DIMENSION(SIZE(atom_coords, 2))     :: distances
+
+      natom = SIZE(atom_coords, 2)
+      do_force = PRESENT(atom_force)
+      do_virial = PRESENT(virial_xc)
+      do_column_sum = PRESENT(dweight_column_sum)
+      CPASSERT(SIZE(weights) == natom)
+      CPASSERT(SIZE(weight_grad) == natom)
+      CPASSERT(SIZE(included) == natom)
+      IF (do_force) THEN
+         CPASSERT(SIZE(atom_force, 1) == 3)
+         CPASSERT(SIZE(atom_force, 2) == natom)
+      END IF
+      IF (do_column_sum) THEN
+         CPASSERT(SIZE(dweight_column_sum, 1) == 3)
+         CPASSERT(SIZE(dweight_column_sum, 2) == natom)
+      END IF
+
       DO iatom = 1, natom
-         IF (.NOT. included(iatom)) CYCLE
-         mean_strain = mean_strain + weights(iatom)*log_weight_strain(:, :, iatom)
-         DO jatom = 1, natom
-            mean_atom(:, jatom) = mean_atom(:, jatom) + &
-                                  weights(iatom)*log_weight_atom(:, jatom, iatom)
+         partition_atom_coords(:, iatom) = &
+            nearest_atom_image_coordinate(atom_coords(:, iatom), grid_point, cell)
+         rvecs(:, iatom) = grid_point - partition_atom_coords(:, iatom)
+         distances(iatom) = SQRT(SUM(rvecs(:, iatom)**2))
+         IF (distances(iatom) > layout_tol) THEN
+            unit_rvecs(:, iatom) = rvecs(:, iatom)/distances(iatom)
+         ELSE
+            unit_rvecs(:, iatom) = 0.0_dp
+         END IF
+      END DO
+
+      atom_mean = 0.0_dp
+      atom_action = 0.0_dp
+      log_deriv_sum = 0.0_dp
+      strain_mean = 0.0_dp
+      strain_action = 0.0_dp
+      total_weight_grad = 0.0_dp
+      DO iatom = 1, natom
+         IF (included(iatom)) total_weight_grad = total_weight_grad + &
+                                                  weight_grad(iatom)*weights(iatom)
+      END DO
+
+      DO iatom = 1, natom - 1
+         DO jatom = iatom + 1, natom
+            pair = partition_atom_coords(:, iatom) - partition_atom_coords(:, jatom)
+            rab = SQRT(SUM(pair**2))
+            IF (rab <= layout_tol) CYCLE
+            unit_pair = pair/rab
+            dist_diff = distances(iatom) - distances(jatom)
+            mu_raw = dist_diff/rab
+            mu = MAX(-1.0_dp, MIN(1.0_dp, mu_raw))
+            switch = 0.5_dp*(1.0_dp - becke_shape(mu))
+            one_minus_switch = 1.0_dp - switch
+            IF (ABS(mu_raw) < 1.0_dp) THEN
+               ds_dmu = -0.5_dp*becke_shape_derivative(mu)
+            ELSE
+               ds_dmu = 0.0_dp
+            END IF
+            IF (ABS(ds_dmu) <= 0.0_dp .OR. switch <= TINY(1.0_dp) .OR. &
+                one_minus_switch <= TINY(1.0_dp)) CYCLE
+            dmu_atom_i = (-unit_rvecs(:, iatom)*rab - dist_diff*unit_pair)/rab**2
+            dmu_atom_j = (unit_rvecs(:, jatom)*rab + dist_diff*unit_pair)/rab**2
+            ds_atom_i = ds_dmu*dmu_atom_i
+            ds_atom_j = ds_dmu*dmu_atom_j
+
+            ! Weight atom i uses the switch factor, weight atom j the complementary factor.
+            IF (included(iatom)) THEN
+               atom_mean(:, iatom) = atom_mean(:, iatom) + weights(iatom)*ds_atom_i/switch
+               atom_mean(:, jatom) = atom_mean(:, jatom) + weights(iatom)*ds_atom_j/switch
+               atom_action(:, iatom) = atom_action(:, iatom) + &
+                                       weight_grad(iatom)*weights(iatom)*ds_atom_i/switch
+               atom_action(:, jatom) = atom_action(:, jatom) + &
+                                       weight_grad(iatom)*weights(iatom)*ds_atom_j/switch
+               IF (do_column_sum) log_deriv_sum(:, iatom) = log_deriv_sum(:, iatom) + &
+                                                            (ds_atom_i + ds_atom_j)/switch
+            END IF
+            IF (included(jatom)) THEN
+               atom_mean(:, iatom) = atom_mean(:, iatom) - &
+                                     weights(jatom)*ds_atom_i/one_minus_switch
+               atom_mean(:, jatom) = atom_mean(:, jatom) - &
+                                     weights(jatom)*ds_atom_j/one_minus_switch
+               atom_action(:, iatom) = atom_action(:, iatom) - &
+                                       weight_grad(jatom)*weights(jatom)*ds_atom_i/one_minus_switch
+               atom_action(:, jatom) = atom_action(:, jatom) - &
+                                       weight_grad(jatom)*weights(jatom)*ds_atom_j/one_minus_switch
+               IF (do_column_sum) log_deriv_sum(:, jatom) = log_deriv_sum(:, jatom) - &
+                                                            (ds_atom_i + ds_atom_j)/one_minus_switch
+            END IF
+
+            IF (do_virial) THEN
+               DO idir = 1, 3
+                  DO jdir = 1, 3
+                     dmu_strain(idir, jdir) = &
+                        ((unit_rvecs(idir, iatom)*rvecs(jdir, iatom) - &
+                          unit_rvecs(idir, jatom)*rvecs(jdir, jatom))*rab - &
+                         dist_diff*unit_pair(idir)*pair(jdir))/rab**2
+                  END DO
+               END DO
+               ds_strain = ds_dmu*dmu_strain
+               IF (included(iatom)) THEN
+                  strain_mean = strain_mean + weights(iatom)*ds_strain/switch
+                  strain_action = strain_action + &
+                                  weight_grad(iatom)*weights(iatom)*ds_strain/switch
+               END IF
+               IF (included(jatom)) THEN
+                  strain_mean = strain_mean - weights(jatom)*ds_strain/one_minus_switch
+                  strain_action = strain_action - &
+                                  weight_grad(jatom)*weights(jatom)*ds_strain/one_minus_switch
+               END IF
+            END IF
          END DO
       END DO
 
-      DO iatom = 1, natom
-         IF (.NOT. included(iatom)) CYCLE
-         dweights_dstrain(:, :, iatom) = &
-            weights(iatom)*(log_weight_strain(:, :, iatom) - mean_strain)
+      IF (do_force) THEN
          DO jatom = 1, natom
-            dweights_datom(:, jatom, iatom) = &
-               weights(iatom)*(log_weight_atom(:, jatom, iatom) - mean_atom(:, jatom))
+            atom_force(:, jatom) = atom_force(:, jatom) + &
+                                   atom_action(:, jatom) - total_weight_grad*atom_mean(:, jatom)
          END DO
-      END DO
+      END IF
 
-   END SUBROUTINE skala_gpw_smooth_partition_derivatives
+      IF (do_column_sum) THEN
+         total_mean = SUM(atom_mean, DIM=2)
+         dweight_column_sum = 0.0_dp
+         DO iatom = 1, natom
+            IF (included(iatom)) THEN
+               dweight_column_sum(:, iatom) = weights(iatom)*(log_deriv_sum(:, iatom) - total_mean)
+            END IF
+         END DO
+      END IF
+
+      IF (do_virial) THEN
+         strain_action = strain_action - total_weight_grad*strain_mean
+         DO idir = 1, 3
+            DO jdir = 1, idir
+               IF (idir == jdir) THEN
+                  virial_xc(idir, jdir) = virial_xc(idir, jdir) + strain_action(idir, jdir)
+               ELSE
+                  virial_xc(jdir, idir) = virial_xc(jdir, idir) + strain_action(idir, jdir)
+                  virial_xc(idir, jdir) = virial_xc(idir, jdir) + strain_action(idir, jdir)
+               END IF
+            END DO
+         END DO
+      END IF
+
+   END SUBROUTINE smooth_partition_derivative_action
 
 ! **************************************************************************************************
 !> \brief Smoothly suppress a sparse atom row's internal quadrature weight at the layout cutoff.
