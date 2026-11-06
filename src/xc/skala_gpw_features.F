@@ -737,11 +737,14 @@ CONTAINS
          max_local_features = nflat_local*natom
       END IF
       ALLOCATE (local_owner(max_local_features), &
-                local_source_points(max_local_features), &
                 local_static(nstatic_per_point*max_local_features), &
                 local_feature_counts_tmp(nflat_local), feature_counts(nproc), &
-                feature_displs(nproc), point_counts(nproc), point_displs(nproc), &
-                static_counts(nproc), static_displs(nproc), atom_coords_pbc(3, natom))
+                feature_displs(nproc), static_counts(nproc), static_displs(nproc), &
+                atom_coords_pbc(3, natom))
+      IF (needs_full_static_tensors) THEN
+         ALLOCATE (local_source_points(max_local_features), point_counts(nproc), &
+                   point_displs(nproc))
+      END IF
       IF (needs_full_static_tensors) THEN
          ALLOCATE (cached_layout%feature_index(bo(1, 1):bo(2, 1), &
                                                bo(1, 2):bo(2, 2), &
@@ -792,7 +795,7 @@ CONTAINS
                   owner = nearest_atom(grid_point, atom_coords_pbc, cell)
                   local_feature_counts_tmp(local_row) = 1
                   local_owner(local_row) = owner
-                  local_source_points(local_row) = local_row
+                  IF (needs_full_static_tensors) local_source_points(local_row) = local_row
                   static_base = nstatic_per_point*(local_row - 1)
                   local_static(static_base + 1:static_base + 3) = grid_point
                   local_static(static_base + 4) = base_weight
@@ -846,7 +849,7 @@ CONTAINS
                      local_feature = local_feature + 1
                      feature_slot = natom*(local_row - 1) + local_feature
                      local_owner(feature_slot) = iatom
-                     local_source_points(feature_slot) = local_row
+                     IF (needs_full_static_tensors) local_source_points(feature_slot) = local_row
                      static_base = nstatic_per_point*(feature_slot - 1)
                      local_static(static_base + 1:static_base + 3) = grid_point
                      local_static(static_base + 4) = base_weight*partition_weight
@@ -871,7 +874,8 @@ CONTAINS
                feature_slot = natom*(local_row - 1) + local_feature
                IF (feature_slot == nfeature_local) CYCLE
                local_owner(nfeature_local) = local_owner(feature_slot)
-               local_source_points(nfeature_local) = local_source_points(feature_slot)
+               IF (needs_full_static_tensors) local_source_points(nfeature_local) = &
+                  local_source_points(feature_slot)
                local_static(nstatic_per_point*(nfeature_local - 1) + 1: &
                             nstatic_per_point*nfeature_local) = &
                   local_static(nstatic_per_point*(feature_slot - 1) + 1: &
@@ -884,10 +888,10 @@ CONTAINS
       ! SKALA groups all grid points by atom. This ordering is static while the
       ! grid, cell, atom positions, and optional integration weights are unchanged.
       CALL timeset("skala_gpw_layout_gather", phase_handle)
-      point_counts = 0
-      point_displs = 0
       npoint = 0
       IF (needs_full_static_tensors) THEN
+         point_counts = 0
+         point_displs = 0
          CALL pw_grid%para%group%allgather(nflat_local, point_counts)
          CALL counts_to_displs(point_counts, point_displs)
          npoint = SUM(point_counts)
@@ -1202,9 +1206,10 @@ CONTAINS
       DEALLOCATE (atom_coords_pbc, atom_offset, &
                   chunk_atom_begin, chunk_atom_end, feature_counts, feature_displs, &
                   global_owner, global_source_points, global_static, local_feature_counts_tmp, &
-                  local_owner, local_source_points, &
-                  local_static, pair_distances, point_counts, point_displs, static_counts, &
-                  static_displs)
+                  local_owner, local_static, pair_distances, static_counts, static_displs)
+      IF (ALLOCATED(local_source_points)) DEALLOCATE (local_source_points)
+      IF (ALLOCATED(point_counts)) DEALLOCATE (point_counts)
+      IF (ALLOCATED(point_displs)) DEALLOCATE (point_displs)
       IF (ALLOCATED(atom_position)) DEALLOCATE (atom_position)
       IF (ALLOCATED(cursor)) DEALLOCATE (cursor)
       IF (ALLOCATED(local_source_global)) DEALLOCATE (local_source_global)

@@ -995,12 +995,10 @@ CONTAINS
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
                                                             atomic_grid_sizes_t, &
                                                             atomic_grid_weights_t, &
-                                                            atom_coord_grad_t, &
                                                             coarse_0_atomic_coords_t, density_t, &
                                                             density_grad_t, exc_tensor, grad_t, &
-                                                            grad_grad_t, grid_coord_grad_t, &
-                                                            grid_coords_t, grid_weights_t, kin_t, &
-                                                            kin_grad_t
+                                                            grad_grad_t, grid_coords_t, grid_weights_t, &
+                                                            kin_t, kin_grad_t
 
       CPASSERT(ASSOCIATED(xc_section))
       CPASSERT(ASSOCIATED(grid_atom))
@@ -1242,7 +1240,6 @@ CONTAINS
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
       LOGICAL :: active_rank, native_grid_atom_chunks, native_grid_use_cuda, &
                  need_coordinate_derivatives, need_derivatives, saved_use_cuda
-      REAL(KIND=dp)                                      :: chunk_exc
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad, grid_weight_grad
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad, density_grad, &
                                                             grid_coord_grad, kin_grad
@@ -1254,13 +1251,11 @@ CONTAINS
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
                                                             atomic_grid_sizes_t, &
                                                             atomic_grid_sizes_chunk_t, &
-                                                            atomic_grid_weight_grad_t, &
                                                             atomic_grid_weights_chunk_t, &
-                                                            atom_coord_grad_t, atomic_coords_chunk_t, &
+                                                            atomic_coords_chunk_t, &
                                                             density_chunk_t, density_grad_t, &
                                                             exc_tensor, grad_chunk_t, grad_grad_t, &
-                                                            grid_coord_grad_t, grid_coords_chunk_t, &
-                                                            grid_weight_grad_t, grid_weights_chunk_t, &
+                                                            grid_coords_chunk_t, grid_weights_chunk_t, &
                                                             kin_chunk_t, kin_grad_t
       TYPE(torch_tensor_type), TARGET                    :: atomic_coords_local_t, &
                                                             atomic_grid_weights_local_t, &
@@ -1973,7 +1968,6 @@ CONTAINS
                                                             subchunk_atom_count, &
                                                             subchunk_row_begin, &
                                                             subchunk_row_count
-      REAL(KIND=dp)                                      :: subchunk_exc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: recv_grad_buffer, send_grad_buffer
       TYPE(skala_gpw_feature_type)                       :: subchunk
       TYPE(torch_tensor_type)                            :: subchunk_exc_tensor, subchunk_exc_total_t

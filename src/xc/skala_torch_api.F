@@ -33,7 +33,6 @@ MODULE skala_torch_api
 
    PUBLIC :: skala_torch_model_type, skala_torch_model_load, skala_torch_model_release
    PUBLIC :: skala_torch_model_get_exc, skala_torch_model_get_exc_device
-   PUBLIC :: skala_torch_model_needs_feature, skala_torch_model_protocol_version
 
    TYPE skala_torch_model_type
       PRIVATE
@@ -92,50 +91,6 @@ CONTAINS
       model%protocol_version = -1
 
    END SUBROUTINE skala_torch_model_release
-
-! **************************************************************************************************
-!> \brief Check whether a loaded SKALA model requests a feature.
-!> \param model ...
-!> \param feature ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION skala_torch_model_needs_feature(model, feature) RESULT(needs_feature)
-      TYPE(skala_torch_model_type), INTENT(IN)           :: model
-      CHARACTER(len=*), INTENT(IN)                       :: feature
-      LOGICAL                                            :: needs_feature
-
-      CHARACTER(len=default_string_length)               :: feature_key, model_feature
-      INTEGER                                            :: i
-
-      feature_key = ADJUSTL(feature)
-      CALL uppercase(feature_key)
-
-      needs_feature = .FALSE.
-      IF (.NOT. ALLOCATED(model%features)) RETURN
-
-      DO i = 1, SIZE(model%features)
-         model_feature = ADJUSTL(model%features(i))
-         CALL uppercase(model_feature)
-         IF (TRIM(model_feature) == TRIM(feature_key)) THEN
-            needs_feature = .TRUE.
-            RETURN
-         END IF
-      END DO
-
-   END FUNCTION skala_torch_model_needs_feature
-
-! **************************************************************************************************
-!> \brief Return the loaded SKALA TorchScript protocol version.
-!> \param model ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION skala_torch_model_protocol_version(model) RESULT(protocol_version)
-      TYPE(skala_torch_model_type), INTENT(IN)           :: model
-      INTEGER                                            :: protocol_version
-
-      protocol_version = model%protocol_version
-
-   END FUNCTION skala_torch_model_protocol_version
 
 ! **************************************************************************************************
 !> \brief Evaluate the weighted SKALA exchange-correlation energy.
