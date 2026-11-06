@@ -24,8 +24,8 @@ MODULE skala_gpw_features
    USE torch_api,                       ONLY: &
         torch_dict_clone, torch_dict_create, torch_dict_insert, torch_dict_release, &
         torch_dict_type, torch_tensor_expand_dim, torch_tensor_from_array, torch_tensor_narrow, &
-        torch_tensor_release, torch_tensor_reset_from_array, torch_tensor_to_device_leaf, &
-        torch_tensor_type
+        torch_tensor_release, torch_tensor_reset_from_array, torch_tensor_set_requires_grad, &
+        torch_tensor_to_device_leaf, torch_tensor_type
    USE xc_rho_set_types,                ONLY: xc_rho_set_get,&
                                               xc_rho_set_type
 #include "../base/base_uses.f90"
@@ -1328,8 +1328,13 @@ CONTAINS
 
       CPASSERT(cached_layout%chunk_static_tensors_active)
       IF (cached_layout%chunk_static_grad_mode == grad_mode) RETURN
-      CALL release_chunk_static_layout_tensors(cached_layout)
-      CALL build_chunk_static_layout_tensors(cached_layout, grad_mode)
+      CALL torch_tensor_set_requires_grad(cached_layout%chunk_grid_coords_t, grad_mode >= 2)
+      CALL torch_tensor_set_requires_grad(cached_layout%chunk_grid_weights_t, grad_mode >= 1)
+      CALL torch_tensor_set_requires_grad(cached_layout%chunk_atomic_grid_weights_t, &
+                                          grad_mode >= 2)
+      CALL torch_tensor_set_requires_grad(cached_layout%chunk_coarse_0_atomic_coords_t, &
+                                          grad_mode >= 2)
+      cached_layout%chunk_static_grad_mode = grad_mode
 
    END SUBROUTINE ensure_chunk_static_tensor_grad
 
@@ -1347,28 +1352,77 @@ CONTAINS
                                                             needs_coordinate_array, &
                                                             needs_grid_coordinate_array
 
-      INTEGER                                            :: feature_pos
-
       CPASSERT(cached_layout%active)
 
-      IF (.NOT. use_atom_chunk_routing) THEN
-         ALLOCATE (features%feature_index(LBOUND(cached_layout%feature_index, 1): &
-                                          UBOUND(cached_layout%feature_index, 1), &
-                                          LBOUND(cached_layout%feature_index, 2): &
-                                          UBOUND(cached_layout%feature_index, 2), &
-                                          LBOUND(cached_layout%feature_index, 3): &
-                                          UBOUND(cached_layout%feature_index, 3)))
-         ALLOCATE (features%grid_weights(cached_layout%nflat))
-         ALLOCATE (features%local_feature_counts(cached_layout%nflat_local), &
-                   features%local_feature_offsets(cached_layout%nflat_local + 1), &
-                   features%local_feature_rows(SIZE(cached_layout%local_feature_rows)))
+      IF (use_atom_chunk_routing) THEN
+         CALL copy_routing_layout(features, needs_coordinate_array)
+      ELSE
+         CALL copy_full_layout(features, needs_grid_coordinate_array)
+      END IF
 
-         features%feature_index(:, :, :) = cached_layout%feature_index
-         features%grid_weights(:) = cached_layout%grid_weights
-         features%local_feature_counts(:) = cached_layout%local_feature_counts
-         features%local_feature_offsets(:) = cached_layout%local_feature_offsets
-         features%local_feature_rows(:) = cached_layout%local_feature_rows
-      ELSE IF (needs_coordinate_array) THEN
+      features%nflat = cached_layout%nflat
+      features%nflat_local = cached_layout%nflat_local
+      features%chunk_atom_begin = cached_layout%chunk_atom_begin
+      features%chunk_atom_end = cached_layout%chunk_atom_end
+      features%chunk_feature_count = cached_layout%chunk_feature_count
+      features%chunk_natom = cached_layout%chunk_natom
+      features%atom_partition = cached_layout%atom_partition
+      ALLOCATE (features%atomic_grid_sizes(cached_layout%natom))
+      features%atomic_grid_sizes(:) = cached_layout%atomic_grid_sizes
+      IF (needs_coordinate_array) THEN
+         ALLOCATE (features%coarse_0_atomic_coords(3, cached_layout%natom))
+         features%coarse_0_atomic_coords(:, :) = cached_layout%coarse_0_atomic_coords
+      END IF
+
+   END SUBROUTINE copy_cached_layout
+
+! **************************************************************************************************
+!> \brief Copy the full (non-routing) cached layout into a feature bundle.
+!> \param features ...
+!> \param needs_grid_coordinate_array ...
+! **************************************************************************************************
+   SUBROUTINE copy_full_layout(features, needs_grid_coordinate_array)
+      TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
+      LOGICAL, INTENT(IN)                                :: needs_grid_coordinate_array
+
+      ALLOCATE (features%feature_index(LBOUND(cached_layout%feature_index, 1): &
+                                       UBOUND(cached_layout%feature_index, 1), &
+                                       LBOUND(cached_layout%feature_index, 2): &
+                                       UBOUND(cached_layout%feature_index, 2), &
+                                       LBOUND(cached_layout%feature_index, 3): &
+                                       UBOUND(cached_layout%feature_index, 3)))
+      ALLOCATE (features%grid_weights(cached_layout%nflat))
+      ALLOCATE (features%local_feature_counts(cached_layout%nflat_local), &
+                features%local_feature_offsets(cached_layout%nflat_local + 1), &
+                features%local_feature_rows(SIZE(cached_layout%local_feature_rows)))
+
+      features%feature_index(:, :, :) = cached_layout%feature_index
+      features%grid_weights(:) = cached_layout%grid_weights
+      features%local_feature_counts(:) = cached_layout%local_feature_counts
+      features%local_feature_offsets(:) = cached_layout%local_feature_offsets
+      features%local_feature_rows(:) = cached_layout%local_feature_rows
+
+      IF (needs_grid_coordinate_array) THEN
+         ALLOCATE (features%grid_coords(3, cached_layout%nflat))
+         ALLOCATE (features%atomic_grid_weights(cached_layout%nflat))
+         features%grid_coords(:, :) = cached_layout%grid_coords
+         features%atomic_grid_weights(:) = cached_layout%atomic_grid_weights
+      END IF
+
+   END SUBROUTINE copy_full_layout
+
+! **************************************************************************************************
+!> \brief Copy the per-rank routing layout into a feature bundle.
+!> \param features ...
+!> \param needs_coordinate_array ...
+! **************************************************************************************************
+   SUBROUTINE copy_routing_layout(features, needs_coordinate_array)
+      TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
+      LOGICAL, INTENT(IN)                                :: needs_coordinate_array
+
+      INTEGER                                            :: feature_pos
+
+      IF (needs_coordinate_array) THEN
          ! Routing mode keeps a per-rank local feature layout. Assembly routines
          ! index these arrays by feature position, so the row map is made local.
          ALLOCATE (features%local_feature_counts(cached_layout%nflat_local), &
@@ -1389,44 +1443,24 @@ CONTAINS
             features%local_feature_rows(feature_pos) = feature_pos
          END DO
       END IF
-      features%nflat = cached_layout%nflat
-      features%nflat_local = cached_layout%nflat_local
-      features%chunk_atom_begin = cached_layout%chunk_atom_begin
-      features%chunk_atom_end = cached_layout%chunk_atom_end
-      features%chunk_feature_count = cached_layout%chunk_feature_count
-      features%chunk_natom = cached_layout%chunk_natom
-      features%atom_partition = cached_layout%atom_partition
-      ALLOCATE (features%atomic_grid_sizes(cached_layout%natom))
-      features%atomic_grid_sizes(:) = cached_layout%atomic_grid_sizes
-      IF (needs_grid_coordinate_array .AND. .NOT. use_atom_chunk_routing) THEN
-         ALLOCATE (features%grid_coords(3, cached_layout%nflat))
-         ALLOCATE (features%atomic_grid_weights(cached_layout%nflat))
-         features%grid_coords(:, :) = cached_layout%grid_coords
-         features%atomic_grid_weights(:) = cached_layout%atomic_grid_weights
-      END IF
-      IF (use_atom_chunk_routing) THEN
-         features%route_point_recv_counts => cached_layout%route_point_recv_counts
-         features%route_point_recv_displs => cached_layout%route_point_recv_displs
-         features%route_point_send_counts => cached_layout%route_point_send_counts
-         features%route_point_send_displs => cached_layout%route_point_send_displs
-         features%route_chunk_offsets => cached_layout%route_chunk_offsets
-         features%route_chunk_rows => cached_layout%route_chunk_rows
-         features%route_row_offsets => cached_layout%route_row_offsets
-         features%route_row_positions => cached_layout%route_row_positions
-         features%route_send_local_rows => cached_layout%route_send_local_rows
-         features%route_feature_send_counts => cached_layout%route_feature_send_counts
-         features%route_feature_send_displs => cached_layout%route_feature_send_displs
-         features%route_feature_recv_counts => cached_layout%route_feature_recv_counts
-         features%route_feature_recv_displs => cached_layout%route_feature_recv_displs
-         features%route_send_local_features => cached_layout%route_send_local_features
-         features%route_recv_chunk_rows => cached_layout%route_recv_chunk_rows
-      END IF
-      IF (needs_coordinate_array) THEN
-         ALLOCATE (features%coarse_0_atomic_coords(3, cached_layout%natom))
-         features%coarse_0_atomic_coords(:, :) = cached_layout%coarse_0_atomic_coords
-      END IF
 
-   END SUBROUTINE copy_cached_layout
+      features%route_point_recv_counts => cached_layout%route_point_recv_counts
+      features%route_point_recv_displs => cached_layout%route_point_recv_displs
+      features%route_point_send_counts => cached_layout%route_point_send_counts
+      features%route_point_send_displs => cached_layout%route_point_send_displs
+      features%route_chunk_offsets => cached_layout%route_chunk_offsets
+      features%route_chunk_rows => cached_layout%route_chunk_rows
+      features%route_row_offsets => cached_layout%route_row_offsets
+      features%route_row_positions => cached_layout%route_row_positions
+      features%route_send_local_rows => cached_layout%route_send_local_rows
+      features%route_feature_send_counts => cached_layout%route_feature_send_counts
+      features%route_feature_send_displs => cached_layout%route_feature_send_displs
+      features%route_feature_recv_counts => cached_layout%route_feature_recv_counts
+      features%route_feature_recv_displs => cached_layout%route_feature_recv_displs
+      features%route_send_local_features => cached_layout%route_send_local_features
+      features%route_recv_chunk_rows => cached_layout%route_recv_chunk_rows
+
+   END SUBROUTINE copy_routing_layout
 
 ! **************************************************************************************************
 !> \brief Split the atom-ordered feature rows into contiguous atom chunks.

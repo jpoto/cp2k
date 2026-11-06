@@ -366,19 +366,24 @@ CONTAINS
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, have_atom_coord_grad, lsd, my_just_energy, &
          native_grid_atom_chunks, native_grid_diagnostics, native_grid_use_cuda, needs_atom_force, &
-         saved_use_cuda, use_atom_subchunks, use_chunk_static_grad
+         saved_use_cuda, use_atom_subchunks, use_chunk_static_grad, use_full_static_grad, &
+         use_static_grad_arrays
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weight_grad_g, &
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: atomic_grid_weight_grad_g, &
                                                             grid_weight_grad_g
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coord_grad_g, density_grad, &
-                                                            grid_coord_grad_g, kin_grad
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), TARGET :: atom_coord_grad_g, grid_coord_grad_g
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: density_grad, kin_grad
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: grad_grad
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad_p, &
+                                                            grid_weight_grad_p
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad_p, grid_coord_grad_p
       REAL(KIND=dp), DIMENSION(3, 3)                     :: virial_before
-      TYPE(section_vals_type), POINTER                   :: gauxc_section
+      TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(skala_gpw_feature_type)                       :: features
       TYPE(torch_tensor_type)                            :: atom_coord_grad_t, &
                                                             atomic_grid_weight_grad_t, exc_tensor, &
                                                             grid_coord_grad_t, grid_weight_grad_t
+      TYPE(torch_tensor_type), DIMENSION(4)              :: static_grad_batch_t
       TYPE(xc_rho_cflags_type)                           :: needs
       TYPE(xc_rho_set_type)                              :: rho_set
 
@@ -411,13 +416,13 @@ CONTAINS
       native_grid_atom_chunks = .TRUE.
       native_grid_atom_chunk_max_rows = -1
       native_grid_atom_partition = skala_gpw_atom_partition_smooth
-      gauxc_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(gauxc_section)) THEN
-         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNKS", &
+      native_section => get_skala_native_section(xc_section)
+      IF (ASSOCIATED(native_section)) THEN
+         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", &
                                    l_val=native_grid_atom_chunks)
-         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNK_MAX_ROWS", &
+         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", &
                                    i_val=native_grid_atom_chunk_max_rows)
-         CALL section_vals_val_get(gauxc_section, "ATOM_PARTITION", &
+         CALL section_vals_val_get(native_section, "ATOM_PARTITION", &
                                    i_val=native_grid_atom_partition)
       END IF
       SELECT CASE (native_grid_atom_partition)
@@ -468,7 +473,7 @@ CONTAINS
       CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
                              xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
 
-      CALL section_vals_val_get(gauxc_section, "DIAGNOSTICS", l_val=native_grid_diagnostics)
+      CALL section_vals_val_get(native_section, "DIAGNOSTICS", l_val=native_grid_diagnostics)
       CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                    requires_grad=(.NOT. my_just_energy), weights=weights, &
                                    requires_coordinate_grad=(needs_atom_force .OR. compute_virial), &
@@ -541,18 +546,40 @@ CONTAINS
                local_grid_weight_grad=grid_weight_grad_g, &
                local_atomic_grid_weight_grad=atomic_grid_weight_grad_g, &
                atom_coord_grad=atom_coord_grad_g)
+            grid_coord_grad_p => grid_coord_grad_g
+            grid_weight_grad_p => grid_weight_grad_g
+            atomic_grid_weight_grad_p => atomic_grid_weight_grad_g
+            atom_coord_grad_p => atom_coord_grad_g
             have_atom_coord_grad = .TRUE.
             CALL timestop(phase_handle)
          END IF
+         use_full_static_grad = .NOT. features%uses_atom_chunks .AND. &
+                                (needs_atom_force .OR. compute_virial)
+         IF (use_full_static_grad) THEN
+            CALL timeset("skala_gpw_static_grad_fetch", phase_handle)
+            NULLIFY (grid_coord_grad_p, grid_weight_grad_p, atomic_grid_weight_grad_p, &
+                     atom_coord_grad_p)
+            CALL torch_tensor_grad_batch( &
+               [features%grid_coords_t, features%grid_weights_t, &
+                features%atomic_grid_weights_t, features%coarse_0_atomic_coords_t], &
+               static_grad_batch_t)
+            CALL torch_tensor_data_ptr(static_grad_batch_t(1), grid_coord_grad_p)
+            CALL torch_tensor_data_ptr(static_grad_batch_t(2), grid_weight_grad_p)
+            CALL torch_tensor_data_ptr(static_grad_batch_t(3), atomic_grid_weight_grad_p)
+            CALL torch_tensor_data_ptr(static_grad_batch_t(4), atom_coord_grad_p)
+            have_atom_coord_grad = .TRUE.
+            CALL timestop(phase_handle)
+         END IF
+         use_static_grad_arrays = use_chunk_static_grad .OR. use_full_static_grad
          IF (compute_virial) THEN
             IF (native_grid_diagnostics) virial_before = virial_xc
-            IF (use_chunk_static_grad) THEN
+            IF (use_static_grad_arrays) THEN
                CALL build_weight_virial(virial_xc, features, exc, grid_weight_grad_t, &
                                         atomic_grid_weight_grad_t, &
                                         rho_r(1)%pw_grid%para%group%mepos == 0, &
                                         native_grid_diagnostics, &
-                                        grid_weight_grad_in=grid_weight_grad_g, &
-                                        atomic_grid_weight_grad_in=atomic_grid_weight_grad_g)
+                                        grid_weight_grad_in=grid_weight_grad_p, &
+                                        atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
             ELSE
                CALL build_weight_virial(virial_xc, features, exc, grid_weight_grad_t, &
                                         atomic_grid_weight_grad_t, &
@@ -565,15 +592,15 @@ CONTAINS
             END IF
          END IF
          IF (needs_atom_force) THEN
-            IF (use_chunk_static_grad) THEN
+            IF (use_static_grad_arrays) THEN
                CALL add_explicit_coordinate_force(atom_force, features, atom_coord_grad_t, &
                                                   rho_r(1)%pw_grid%para%group%mepos == 0, &
-                                                  atom_coord_grad_in=atom_coord_grad_g)
+                                                  atom_coord_grad_in=atom_coord_grad_p)
                IF (features%atom_partition == skala_gpw_atom_partition_smooth) THEN
                   CALL add_smooth_partition_force(atom_force, features, particle_set, cell, rho_r, &
                                                   grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                                                  grid_weight_grad_in=grid_weight_grad_g, &
-                                                  atomic_grid_weight_grad_in=atomic_grid_weight_grad_g)
+                                                  grid_weight_grad_in=grid_weight_grad_p, &
+                                                  atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
                END IF
             ELSE
                CALL add_explicit_coordinate_force(atom_force, features, atom_coord_grad_t, &
@@ -632,13 +659,13 @@ CONTAINS
                                        rho_r(1)%pw_grid%para%group%mepos == 0)
                virial_before = virial_xc
             END IF
-            IF (use_chunk_static_grad) THEN
+            IF (use_static_grad_arrays) THEN
                CALL build_static_coordinate_virial(virial_xc, features, atom_coord_grad_t, &
                                                    grid_coord_grad_t, &
                                                    rho_r(1)%pw_grid%para%group%mepos == 0, &
                                                    native_grid_diagnostics, &
-                                                   atom_coord_grad_in=atom_coord_grad_g, &
-                                                   grid_coord_grad_in=grid_coord_grad_g)
+                                                   atom_coord_grad_in=atom_coord_grad_p, &
+                                                   grid_coord_grad_in=grid_coord_grad_p)
             ELSE
                IF (.NOT. have_atom_coord_grad) THEN
                   CALL torch_tensor_grad(features%coarse_0_atomic_coords_t, atom_coord_grad_t)
@@ -655,12 +682,12 @@ CONTAINS
                virial_before = virial_xc
             END IF
             IF (features%atom_partition == skala_gpw_atom_partition_smooth) THEN
-               IF (use_chunk_static_grad) THEN
+               IF (use_static_grad_arrays) THEN
                   CALL build_smooth_partition_virial( &
                      virial_xc, features, particle_set, cell, rho_r, &
                      grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                     grid_weight_grad_in=grid_weight_grad_g, &
-                     atomic_grid_weight_grad_in=atomic_grid_weight_grad_g)
+                     grid_weight_grad_in=grid_weight_grad_p, &
+                     atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
                ELSE
                   CALL build_smooth_partition_virial( &
                      virial_xc, features, particle_set, cell, rho_r, &
@@ -681,8 +708,14 @@ CONTAINS
 
          CALL timeset("skala_gpw_grad_release", phase_handle)
          DEALLOCATE (density_grad, grad_grad, kin_grad)
-         IF (have_atom_coord_grad .AND. .NOT. use_chunk_static_grad) THEN
+         IF (have_atom_coord_grad .AND. .NOT. use_static_grad_arrays) THEN
             CALL torch_tensor_release(atom_coord_grad_t)
+         END IF
+         IF (use_full_static_grad) THEN
+            CALL torch_tensor_release(static_grad_batch_t(1))
+            CALL torch_tensor_release(static_grad_batch_t(2))
+            CALL torch_tensor_release(static_grad_batch_t(3))
+            CALL torch_tensor_release(static_grad_batch_t(4))
          END IF
          IF (ALLOCATED(atom_coord_grad_g)) DEALLOCATE (atom_coord_grad_g)
          IF (ALLOCATED(grid_coord_grad_g)) DEALLOCATE (grid_coord_grad_g)
@@ -739,12 +772,12 @@ CONTAINS
                                                             native_grid_use_cuda, saved_use_cuda
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: exc, local_derivative
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: local_weight_grad, partition_weights
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: local_weight_grad, partition_weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dweights_datom, dweights_dstrain
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: grid_weight_grad
-      TYPE(section_vals_type), POINTER                   :: gauxc_section
+      TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(skala_gpw_feature_type)                       :: features, subchunk
       TYPE(torch_tensor_type)                            :: exc_tensor, grid_weight_grad_t
       TYPE(xc_rho_cflags_type)                           :: needs
@@ -763,13 +796,13 @@ CONTAINS
       native_grid_atom_partition = skala_gpw_atom_partition_smooth
       native_grid_atom_chunks = .TRUE.
       chunk_max_rows = -1
-      gauxc_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(gauxc_section)) THEN
-         CALL section_vals_val_get(gauxc_section, "ATOM_PARTITION", &
+      native_section => get_skala_native_section(xc_section)
+      IF (ASSOCIATED(native_section)) THEN
+         CALL section_vals_val_get(native_section, "ATOM_PARTITION", &
                                    i_val=native_grid_atom_partition)
-         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNKS", &
+         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", &
                                    l_val=native_grid_atom_chunks)
-         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNK_MAX_ROWS", &
+         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", &
                                    i_val=chunk_max_rows)
       END IF
       IF (chunk_max_rows < -1) THEN
@@ -864,7 +897,6 @@ CONTAINS
          CALL fetch_and_route_atom_chunk_grads(features, rho_r(1)%pw_grid%para%group, &
                                                weight_only=.TRUE., &
                                                local_grid_weight_grad=local_weight_grad)
-         grid_weight_grad => local_weight_grad
       ELSE
          CALL skala_torch_model_get_exc(cached_model, features%inputs, features%grid_weights_t, &
                                         exc_tensor, exc)
@@ -896,7 +928,11 @@ CONTAINS
                IF (native_grid_atom_partition == skala_gpw_atom_partition_hard) THEN
                   CPASSERT(feature_end == feature_begin)
                   row = features%local_feature_rows(feature_begin)
-                  local_derivative = grid_weight_grad(row)
+                  IF (features%uses_atom_chunks) THEN
+                     local_derivative = local_weight_grad(row)
+                  ELSE
+                     local_derivative = grid_weight_grad(row)
+                  END IF
                ELSE
                   grid_point = native_grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
                   CALL skala_gpw_smooth_partition_derivatives( &
@@ -907,8 +943,13 @@ CONTAINS
                   DO iatom = 1, natom
                      IF (.NOT. included(iatom)) CYCLE
                      row = features%local_feature_rows(feature_pos)
-                     local_derivative = local_derivative + &
-                                        partition_weights(iatom)*grid_weight_grad(row)
+                     IF (features%uses_atom_chunks) THEN
+                        local_derivative = local_derivative + &
+                                           partition_weights(iatom)*local_weight_grad(row)
+                     ELSE
+                        local_derivative = local_derivative + &
+                                           partition_weights(iatom)*grid_weight_grad(row)
+                     END IF
                      feature_pos = feature_pos + 1
                   END DO
                   CPASSERT(feature_pos == feature_end + 1)
@@ -1244,7 +1285,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad, density_grad, &
                                                             grid_coord_grad, kin_grad
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad
-      TYPE(section_vals_type), POINTER                   :: gauxc_section
+      TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(torch_dict_type)                              :: inputs
       TYPE(torch_tensor_type), DIMENSION(4)              :: grad_batch_t
       TYPE(torch_tensor_type)                            :: exc_total_t
@@ -1297,11 +1338,11 @@ CONTAINS
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
       native_grid_atom_chunks = .TRUE.
       chunk_max_rows = -1
-      gauxc_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(gauxc_section)) THEN
-         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNKS", &
+      native_section => get_skala_native_section(xc_section)
+      IF (ASSOCIATED(native_section)) THEN
+         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", &
                                    l_val=native_grid_atom_chunks)
-         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNK_MAX_ROWS", &
+         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", &
                                    i_val=chunk_max_rows)
       END IF
       IF (chunk_max_rows < -1) THEN

@@ -135,6 +135,12 @@ static void torch_c_check(const bool condition, const char *message) {
  ******************************************************************************/
 static bool use_cuda_if_available = true;
 
+// Cached model metadata (TorchScript extra files) keyed by model filename.
+static std::mutex model_metadata_mutex;
+static std::unordered_map<std::string,
+                          std::unordered_map<std::string, std::string>>
+    model_metadata_cache;
+
 static void enable_expandable_cuda_segments_if_unconfigured() {
 #if defined(__LIBTORCH_CUDA)
   static const bool initialized = []() {
@@ -497,6 +503,7 @@ static void *get_data_ptr(const torch_c_tensor_t *tensor,
   }
 
   torch_c_check(tensor->is_contiguous(), "Torch tensor is not contiguous");
+  torch_c_check(tensor->is_cpu(), "Torch tensor is not on the CPU");
   return tensor->data_ptr();
 };
 /*******************************************************************************
@@ -724,6 +731,21 @@ void torch_c_tensor_to_device_leaf(torch_c_tensor_t **tensor,
 }
 
 /*******************************************************************************
+ * \brief Sets a leaf tensor's requires_grad flag and clears any stale grad.
+ ******************************************************************************/
+void torch_c_tensor_set_requires_grad(torch_c_tensor_t *tensor,
+                                      const bool requires_grad) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  get_device_with_guard(guard);
+  torch_c_check(tensor != nullptr && tensor->defined(),
+                "Torch tensor set_requires_grad received an undefined tensor");
+  tensor->set_requires_grad(requires_grad);
+  tensor->mutable_grad() = torch::Tensor();
+  TORCH_C_CATCH("torch_c_tensor_set_requires_grad")
+}
+
+/*******************************************************************************
  * \brief Select whether Torch wrappers should use CUDA when available.
  ******************************************************************************/
 void torch_c_use_cuda(const bool use_cuda) { use_cuda_if_available = use_cuda; }
@@ -732,6 +754,23 @@ void torch_c_use_cuda(const bool use_cuda) { use_cuda_if_available = use_cuda; }
  * \brief Returns whether Torch wrappers currently select CUDA when available.
  ******************************************************************************/
 bool torch_c_get_use_cuda() { return use_cuda_if_available; }
+
+/*******************************************************************************
+ * \brief Materializes a contiguous host-owned copy of an autograd gradient.
+ ******************************************************************************/
+static torch::Tensor materialize_host_gradient(const torch::Tensor &source,
+                                               const torch::Tensor &like) {
+  if (!source.defined()) {
+    return torch::zeros(
+        like.sizes(), like.options().device(torch::kCPU).requires_grad(false));
+  }
+  auto host =
+      torch::empty(source.sizes(),
+                   source.options().device(torch::kCPU).requires_grad(false));
+  torch::NoGradGuard no_grad;
+  host.copy_(source);
+  return host;
+}
 
 /*******************************************************************************
  * \brief Returns the gradient of a Torch tensor which was computed by autograd.
@@ -743,21 +782,7 @@ void torch_c_tensor_grad(const torch_c_tensor_t *tensor,
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
   const torch::Tensor maybe_grad = tensor->grad();
-  torch::Tensor host_grad;
-  if (maybe_grad.defined()) {
-    host_grad = maybe_grad.detach().cpu().contiguous();
-    if (maybe_grad.is_cpu()) {
-      host_grad = host_grad.clone();
-    }
-  } else {
-    // A tensor that does not enter the differentiated expression has no
-    // gradient; return an explicit zero instead of dereferencing an undefined
-    // tensor in release builds.
-    host_grad = torch::zeros(
-        tensor->sizes(),
-        tensor->options().device(torch::kCPU).requires_grad(false));
-  }
-  *grad = new torch_c_tensor_t(std::move(host_grad));
+  *grad = new torch_c_tensor_t(materialize_host_gradient(maybe_grad, *tensor));
   TORCH_C_CATCH("torch_c_tensor_grad")
 }
 
@@ -797,14 +822,8 @@ void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
     }
   } else {
     for (int i = 0; i < count; ++i) {
-      if (sources[i].defined()) {
-        grads[i] = new torch_c_tensor_t(
-            sources[i].detach().cpu().contiguous().clone());
-      } else {
-        grads[i] = new torch_c_tensor_t(torch::zeros(
-            tensors[i]->sizes(),
-            tensors[i]->options().device(torch::kCPU).requires_grad(false)));
-      }
+      grads[i] = new torch_c_tensor_t(
+          materialize_host_gradient(sources[i], *tensors[i]));
     }
   }
   TORCH_C_CATCH("torch_c_tensor_grad_batch")
@@ -850,7 +869,11 @@ void torch_c_dict_insert(const torch_c_dict_t *dict, const char *key,
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   const auto device = get_device_with_guard(guard);
-  dict->insert(key, tensor->to(device));
+  if (tensor->device() == device) {
+    dict->insert(key, *tensor);
+  } else {
+    dict->insert(key, tensor->to(device));
+  }
   TORCH_C_CATCH("torch_c_dict_insert")
 }
 
@@ -1067,9 +1090,26 @@ void torch_c_model_read_metadata(const char *filename, const char *key,
                                  char **content, int *length) {
   TORCH_C_TRY
 
+  const std::string filename_key(filename);
+  {
+    std::lock_guard<std::mutex> lock(model_metadata_mutex);
+    auto file_it = model_metadata_cache.find(filename_key);
+    if (file_it != model_metadata_cache.end()) {
+      auto key_it = file_it->second.find(key);
+      if (key_it != file_it->second.end()) {
+        copy_string_to_c_buffer(key_it->second, content, length);
+        return;
+      }
+    }
+  }
+
   std::unordered_map<std::string, std::string> extra_files = {{key, ""}};
   torch::jit::load(filename, torch::kCPU, extra_files);
-  const std::string &content_str = extra_files[key];
+  const std::string content_str = extra_files[key];
+  {
+    std::lock_guard<std::mutex> lock(model_metadata_mutex);
+    model_metadata_cache[filename_key][key] = content_str;
+  }
   copy_string_to_c_buffer(content_str, content, length);
   TORCH_C_CATCH("torch_c_model_read_metadata")
 }

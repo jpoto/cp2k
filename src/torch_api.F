@@ -79,7 +79,7 @@ MODULE torch_api
    PUBLIC :: torch_tensor_reset_from_array
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
    PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3
-   PUBLIC :: torch_tensor_to_device_leaf
+   PUBLIC :: torch_tensor_to_device_leaf, torch_tensor_set_requires_grad
    PUBLIC :: torch_tensor_accumulate, torch_tensor_item_double, torch_tensor_weighted_sum
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
    PUBLIC :: torch_dict_get, torch_dict_release
@@ -423,6 +423,33 @@ CONTAINS
    END SUBROUTINE torch_tensor_to_device_leaf
 
 ! **************************************************************************************************
+!> \brief Changes a tensor's requires_grad flag and clears any stale gradient.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_set_requires_grad(tensor, requires_grad)
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: tensor
+      LOGICAL, INTENT(IN)                                :: requires_grad
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_tensor_set_requires_grad(tensor, req_grad) &
+            BIND(C, name="torch_c_tensor_set_requires_grad")
+            IMPORT :: C_BOOL, C_PTR
+            TYPE(C_PTR), VALUE                           :: tensor
+            LOGICAL(kind=C_BOOL), VALUE                  :: req_grad
+         END SUBROUTINE torch_c_tensor_set_requires_grad
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(tensor%c_ptr))
+      CALL torch_c_tensor_set_requires_grad(tensor=tensor%c_ptr, &
+                                            req_grad=LOGICAL(requires_grad, C_BOOL))
+#else
+      CPABORT("CP2K compiled without the Torch library.")
+      MARK_USED(tensor)
+      MARK_USED(requires_grad)
+#endif
+   END SUBROUTINE torch_tensor_set_requires_grad
+
+! **************************************************************************************************
 !> \brief Select whether Torch wrappers should use CUDA when available.
 ! **************************************************************************************************
    SUBROUTINE torch_use_cuda(use_cuda)
@@ -470,25 +497,13 @@ CONTAINS
       TYPE(torch_tensor_type), INTENT(IN)                :: tensor
       TYPE(torch_tensor_type), INTENT(INOUT)             :: grad
 
-#if defined(__LIBTORCH)
-      INTERFACE
-         SUBROUTINE torch_c_tensor_grad(tensor, grad) &
-            BIND(C, name="torch_c_tensor_grad")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                           :: tensor
-            TYPE(C_PTR)                                  :: grad
-         END SUBROUTINE torch_c_tensor_grad
-      END INTERFACE
+      TYPE(torch_tensor_type), DIMENSION(1)              :: grads, tensors
 
-      CPASSERT(C_ASSOCIATED(tensor%c_ptr))
       CPASSERT(.NOT. C_ASSOCIATED(grad%c_ptr))
-      CALL torch_c_tensor_grad(tensor=tensor%c_ptr, grad=grad%c_ptr)
-      CPASSERT(C_ASSOCIATED(grad%c_ptr))
-#else
-      CPABORT("CP2K compiled without the Torch library.")
-      MARK_USED(tensor)
-      MARK_USED(grad)
-#endif
+      tensors(1) = tensor
+      CALL torch_tensor_grad_batch(tensors, grads)
+      grad = grads(1)
+
    END SUBROUTINE torch_tensor_grad
 
 ! **************************************************************************************************
