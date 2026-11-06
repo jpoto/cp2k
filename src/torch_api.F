@@ -498,37 +498,16 @@ CONTAINS
       TYPE(torch_tensor_type), INTENT(IN)                :: tensor1, tensor2, tensor3
       TYPE(torch_tensor_type), INTENT(INOUT)             :: grad1, grad2, grad3
 
-#if defined(__LIBTORCH)
-      INTERFACE
-         SUBROUTINE torch_c_tensor_grad_batch3(tensor1, tensor2, tensor3, grad1, grad2, grad3) &
-            BIND(C, name="torch_c_tensor_grad_batch3")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                           :: tensor1, tensor2, tensor3
-            TYPE(C_PTR)                                  :: grad1, grad2, grad3
-         END SUBROUTINE torch_c_tensor_grad_batch3
-      END INTERFACE
+      TYPE(torch_tensor_type), DIMENSION(3)              :: grads, tensors
 
-      CPASSERT(C_ASSOCIATED(tensor1%c_ptr))
-      CPASSERT(C_ASSOCIATED(tensor2%c_ptr))
-      CPASSERT(C_ASSOCIATED(tensor3%c_ptr))
-      CPASSERT(.NOT. C_ASSOCIATED(grad1%c_ptr))
-      CPASSERT(.NOT. C_ASSOCIATED(grad2%c_ptr))
-      CPASSERT(.NOT. C_ASSOCIATED(grad3%c_ptr))
-      CALL torch_c_tensor_grad_batch3(tensor1=tensor1%c_ptr, tensor2=tensor2%c_ptr, &
-                                      tensor3=tensor3%c_ptr, grad1=grad1%c_ptr, &
-                                      grad2=grad2%c_ptr, grad3=grad3%c_ptr)
-      CPASSERT(C_ASSOCIATED(grad1%c_ptr))
-      CPASSERT(C_ASSOCIATED(grad2%c_ptr))
-      CPASSERT(C_ASSOCIATED(grad3%c_ptr))
-#else
-      CPABORT("CP2K compiled without the Torch library.")
-      MARK_USED(tensor1)
-      MARK_USED(tensor2)
-      MARK_USED(tensor3)
-      MARK_USED(grad1)
-      MARK_USED(grad2)
-      MARK_USED(grad3)
-#endif
+      tensors(1) = tensor1
+      tensors(2) = tensor2
+      tensors(3) = tensor3
+      CALL torch_tensor_grad_batch(tensors, grads)
+      grad1 = grads(1)
+      grad2 = grads(2)
+      grad3 = grads(3)
+
    END SUBROUTINE torch_tensor_grad_batch3
 
 ! **************************************************************************************************

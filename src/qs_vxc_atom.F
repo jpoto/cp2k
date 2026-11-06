@@ -90,15 +90,18 @@ MODULE qs_vxc_atom
                                               smooth_atom_partition,&
                                               smooth_partition_atomic_weight_scale,&
                                               smooth_partition_atomic_weight_scale_derivative
-   USE skala_gpw_functional,            ONLY: &
-        build_vxc_from_feature_grads, native_skala_gapw_density_partition, &
-        skala_gapw_atom_composite_energy, skala_gapw_atom_vxc_of_r, &
-        skala_gapw_density_partition_hard_minus_soft, skala_gapw_density_partition_hard_only, &
-        skala_gapw_density_partition_none, skala_gapw_density_partition_soft_only, &
-        xc_section_uses_native_skala_evaluator
+   USE skala_gpw_functional,            ONLY: build_vxc_from_feature_grads,&
+                                              native_skala_gapw_density_partition,&
+                                              skala_gapw_atom_composite_energy,&
+                                              skala_gapw_atom_vxc_of_r,&
+                                              skala_gapw_density_partition_hard_minus_soft,&
+                                              skala_gapw_density_partition_hard_only,&
+                                              skala_gapw_density_partition_none,&
+                                              skala_gapw_density_partition_soft_only
    USE skala_model_selection,           ONLY: get_gauxc_section,&
                                               get_skala_native_section,&
-                                              xc_section_uses_gauxc_model
+                                              xc_section_uses_gauxc_model,&
+                                              xc_section_uses_native_skala_grid
    USE spherical_harmonics,             ONLY: y_lm
    USE util,                            ONLY: get_limit
    USE virial_types,                    ONLY: virial_type
@@ -488,7 +491,7 @@ CONTAINS
                                                     ASSOCIATED(sgp_potential)))
          END DO
       END IF
-      IF (skala_atom_grid .AND. xc_section_uses_native_skala_evaluator(my_xc_section)) THEN
+      IF (skala_atom_grid .AND. xc_section_uses_native_skala_grid(my_xc_section)) THEN
          native_section => get_skala_native_section(my_xc_section)
          CPASSERT(ASSOCIATED(native_section))
          CALL section_vals_val_get(native_section, &

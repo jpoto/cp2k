@@ -59,9 +59,9 @@ MODULE qs_vxc
                                               qs_rho_type
    USE skala_gpw_functional,            ONLY: native_skala_gapw_composite_direct_ao,&
                                               native_skala_gapw_composite_reference,&
-                                              skala_gpw_eval,&
-                                              xc_section_uses_native_skala_evaluator
-   USE skala_model_selection,           ONLY: get_skala_native_section
+                                              skala_gpw_eval
+   USE skala_model_selection,           ONLY: get_skala_native_section,&
+                                              xc_section_uses_native_skala_grid
    USE virial_types,                    ONLY: virial_type
    USE xc,                              ONLY: calc_xc_density,&
                                               xc_exc_calc,&
@@ -243,7 +243,7 @@ CONTAINS
          vdW_nl = .FALSE.
       END IF
       IF (PRESENT(edisp)) edisp = 0.0_dp
-      native_skala_grid = xc_section_uses_native_skala_evaluator(xc_section)
+      native_skala_grid = xc_section_uses_native_skala_grid(xc_section)
       defer_native_skala_to_atom_composite = .FALSE.
       IF (PRESENT(native_skala_defer_to_atom_composite)) THEN
          defer_native_skala_to_atom_composite = native_skala_defer_to_atom_composite

@@ -27,7 +27,8 @@ MODULE skala_model_selection
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'skala_model_selection'
 
-   PUBLIC :: gauxc_model_none_selected, get_gauxc_section, get_skala_native_section, &
+   PUBLIC :: find_functional_subsection, find_single_functional_subsection, &
+             gauxc_model_none_selected, get_gauxc_section, get_skala_native_section, &
              resolve_skala_model_path, skala_gpu_mode_use_cuda, &
              xc_section_uses_gauxc, xc_section_uses_gauxc_model, &
              xc_section_uses_native_skala_grid, xc_section_uses_skala_model
@@ -68,6 +69,41 @@ CONTAINS
    END FUNCTION find_functional_subsection
 
 ! **************************************************************************************************
+!> \brief Return the named functional subsection and the number of explicit XC_FUNCTIONAL subsections.
+!> \param xc_section ...
+!> \param section_name ...
+!> \param functional_section ...
+!> \param n_subsections ...
+! **************************************************************************************************
+   SUBROUTINE find_single_functional_subsection(xc_section, section_name, functional_section, &
+                                                n_subsections)
+      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
+      CHARACTER(len=*), INTENT(IN)                       :: section_name
+      TYPE(section_vals_type), POINTER                   :: functional_section
+      INTEGER, INTENT(OUT)                               :: n_subsections
+
+      INTEGER                                            :: ifun
+      TYPE(section_vals_type), POINTER                   :: functionals, xc_fun
+
+      NULLIFY (functional_section)
+      n_subsections = 0
+      IF (.NOT. ASSOCIATED(xc_section)) RETURN
+
+      functionals => section_vals_get_subs_vals(xc_section, "XC_FUNCTIONAL")
+      IF (.NOT. ASSOCIATED(functionals)) RETURN
+
+      ifun = 0
+      DO
+         ifun = ifun + 1
+         xc_fun => section_vals_get_subs_vals2(functionals, i_section=ifun)
+         IF (.NOT. ASSOCIATED(xc_fun)) EXIT
+         n_subsections = n_subsections + 1
+         IF (TRIM(xc_fun%section%name) == TRIM(section_name)) functional_section => xc_fun
+      END DO
+
+   END SUBROUTINE find_single_functional_subsection
+
+! **************************************************************************************************
 !> \brief Return the CP2K-native SKALA functional subsection, if present.
 !> \param xc_section ...
 !> \return ...
@@ -94,7 +130,7 @@ CONTAINS
    END FUNCTION get_gauxc_section
 
 ! **************************************************************************************************
-!> \brief Return true if an active GAUXC or SKALA_NATIVE subsection is present.
+!> \brief Return true if a GAUXC or SKALA_NATIVE subsection is present.
 !> \param xc_section ...
 !> \return ...
 ! **************************************************************************************************
@@ -129,7 +165,7 @@ CONTAINS
       TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
       LOGICAL                                            :: uses_gauxc_model
 
-      CHARACTER(len=default_path_length)                 :: model_key, model_name, xc_key, xc_name
+      CHARACTER(len=default_path_length)                 :: model_name, xc_name
       TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
 
       uses_gauxc_model = .FALSE.
@@ -143,12 +179,7 @@ CONTAINS
 
       CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
       CALL section_vals_val_get(gauxc_section, "FUNCTIONAL", c_val=xc_name)
-      model_key = ADJUSTL(model_name)
-      xc_key = ADJUSTL(xc_name)
-      CALL uppercase(model_key)
-      CALL uppercase(xc_key)
-      uses_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE" .AND. &
-                          TRIM(model_key) /= TRIM(xc_key))
+      uses_gauxc_model = .NOT. model_key_is_none(model_name, xc_name)
 
    END FUNCTION xc_section_uses_gauxc_model
 
@@ -189,22 +220,29 @@ CONTAINS
    END FUNCTION xc_section_uses_skala_model
 
 ! **************************************************************************************************
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
+!> \brief Return true when a model key selects NONE or the functional itself.
+!> \param model_name ...
+!> \param xc_name ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION model_key_is_none(model_name, xc_name) RESULT(none_selected)
+      CHARACTER(len=*), INTENT(IN)                       :: model_name, xc_name
+      LOGICAL                                            :: none_selected
+
+      CHARACTER(len=default_path_length)                 :: model_key, xc_key
+
+      model_key = ADJUSTL(model_name)
+      xc_key = ADJUSTL(xc_name)
+      CALL uppercase(model_key)
+      CALL uppercase(xc_key)
+      none_selected = (TRIM(model_key) == "" .OR. TRIM(model_key) == "NONE" .OR. &
+                       TRIM(model_key) == TRIM(xc_key))
+
+   END FUNCTION model_key_is_none
+
+! **************************************************************************************************
 !> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
 !> \param functional the GAUXC section
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
 !> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
 !> \param none_selected ...
 !> \return ...
@@ -213,17 +251,11 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: functional
       LOGICAL                                            :: none_selected
 
-      CHARACTER(LEN=default_path_length)                 :: model_key, model_name, xc_fun_name, &
-                                                            xc_key
+      CHARACTER(len=default_path_length)                 :: model_name, xc_fun_name
 
       CALL section_vals_val_get(functional, "MODEL", c_val=model_name)
       CALL section_vals_val_get(functional, "FUNCTIONAL", c_val=xc_fun_name)
-      model_key = ADJUSTL(model_name)
-      xc_key = ADJUSTL(xc_fun_name)
-      CALL uppercase(model_key)
-      CALL uppercase(xc_key)
-      none_selected = (TRIM(model_key) == "" .OR. TRIM(model_key) == "NONE" .OR. &
-                       TRIM(model_key) == TRIM(xc_key))
+      none_selected = model_key_is_none(model_name, xc_fun_name)
 
    END FUNCTION gauxc_model_none_selected
 
@@ -267,7 +299,9 @@ CONTAINS
 
       model_key = ADJUSTL(model_name)
       CALL uppercase(model_key)
-      IF (TRIM(model_key) == "SKALA") THEN
+      IF (TRIM(model_key) == "NONE" .OR. TRIM(model_key) == "") THEN
+         CPABORT("SKALA requires MODEL SKALA or a TorchScript model path")
+      ELSE IF (TRIM(model_key) == "SKALA") THEN
          IF (use_cuda) THEN
             CALL GET_ENVIRONMENT_VARIABLE("SKALA_CUDA_MODEL", model_path, STATUS=env_status)
             IF (env_status /= 0 .OR. LEN_TRIM(model_path) == 0) THEN

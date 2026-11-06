@@ -761,67 +761,6 @@ void torch_c_tensor_grad(const torch_c_tensor_t *tensor,
   TORCH_C_CATCH("torch_c_tensor_grad")
 }
 
-/*******************************************************************************
- * \brief Copies three autograd gradients to CPU memory.
- ******************************************************************************/
-void torch_c_tensor_grad_batch3(const torch_c_tensor_t *tensor1,
-                                const torch_c_tensor_t *tensor2,
-                                const torch_c_tensor_t *tensor3,
-                                torch_c_tensor_t **grad1,
-                                torch_c_tensor_t **grad2,
-                                torch_c_tensor_t **grad3) {
-  TORCH_C_TRY
-  c10::OptionalDeviceGuard guard;
-  const auto device = get_device_with_guard(guard);
-  torch_c_check(*grad1 == nullptr && *grad2 == nullptr && *grad3 == nullptr,
-                "Torch gradient outputs must be NULL");
-
-  const torch::Tensor source1 = tensor1->grad();
-  const torch::Tensor source2 = tensor2->grad();
-  const torch::Tensor source3 = tensor3->grad();
-  const bool all_defined =
-      source1.defined() && source2.defined() && source3.defined();
-  if (all_defined && use_batched_gradient_readback(source1)) {
-    torch_c_check(source1.device() == source2.device() &&
-                      source1.device() == source3.device(),
-                  "Torch gradients live on different devices");
-    auto host1 =
-        torch::empty(source1.sizes(),
-                     source1.options().device(torch::kCPU).pinned_memory(true));
-    auto host2 =
-        torch::empty(source2.sizes(),
-                     source2.options().device(torch::kCPU).pinned_memory(true));
-    auto host3 =
-        torch::empty(source3.sizes(),
-                     source3.options().device(torch::kCPU).pinned_memory(true));
-    host1.copy_(source1, true);
-    host2.copy_(source2, true);
-    host3.copy_(source3, true);
-    torch::cuda::synchronize(device.index());
-    *grad1 = new torch_c_tensor_t(std::move(host1));
-    *grad2 = new torch_c_tensor_t(std::move(host2));
-    *grad3 = new torch_c_tensor_t(std::move(host3));
-  } else {
-    // Materialize independent host buffers instead of aliasing gradients owned
-    // by the autograd graph when they are already contiguous CPU tensors.
-    // Tensors without an autograd gradient get an explicit zero buffer.
-    const auto materialize = [](const torch::Tensor &source,
-                                const torch::Tensor &like) {
-      if (!source.defined()) {
-        return torch::zeros(like.sizes(), like.options().device(torch::kCPU));
-      }
-      return source.detach().cpu().contiguous().clone();
-    };
-    *grad1 = new torch_c_tensor_t(materialize(source1, *tensor1));
-    *grad2 = new torch_c_tensor_t(materialize(source2, *tensor2));
-    *grad3 = new torch_c_tensor_t(materialize(source3, *tensor3));
-  }
-  TORCH_C_CATCH("torch_c_tensor_grad_batch3")
-}
-
-/*******************************************************************************
- * \brief Copies N autograd gradients to CPU memory with one synchronization.
- ******************************************************************************/
 void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
                                const int count, torch_c_tensor_t **grads) {
   TORCH_C_TRY

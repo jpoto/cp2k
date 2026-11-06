@@ -45,8 +45,7 @@ MODULE skala_gpw_functional
                                               get_skala_native_section,&
                                               resolve_skala_model_path,&
                                               skala_gpu_mode_use_cuda,&
-                                              xc_section_uses_gauxc_model,&
-                                              xc_section_uses_native_skala_grid
+                                              xc_section_uses_gauxc_model
    USE skala_torch_api,                 ONLY: skala_torch_model_get_exc,&
                                               skala_torch_model_get_exc_device,&
                                               skala_torch_model_load,&
@@ -104,8 +103,7 @@ MODULE skala_gpw_functional
              native_skala_uses_atom_composite_grid, &
              native_skala_gapw_composite_direct_ao, native_skala_gapw_composite_reference, &
              native_skala_gapw_density_partition, skala_gpw_eval, skala_gpw_weight_derivative, &
-             skala_execution_use_cuda, skala_gpw_release_caches, skala_gapw_representation, &
-             xc_section_uses_native_skala_evaluator
+             skala_execution_use_cuda, skala_gpw_release_caches, skala_gapw_representation
 
    TYPE(skala_torch_model_type), SAVE                  :: cached_model
    TYPE(skala_gapw_atom_cuda_tensor_cache_type), SAVE, TARGET :: cached_atom_cuda_tensors
@@ -153,19 +151,6 @@ CONTAINS
       END SELECT
 
    END FUNCTION skala_gapw_representation
-
-! **************************************************************************************************
-!> \brief Return true when SKALA must be evaluated by the CP2K-native grid machinery.
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION xc_section_uses_native_skala_evaluator(xc_section) RESULT(uses_native_evaluator)
-      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
-      LOGICAL                                            :: uses_native_evaluator
-
-      uses_native_evaluator = xc_section_uses_native_skala_grid(xc_section)
-
-   END FUNCTION xc_section_uses_native_skala_evaluator
 
 ! **************************************************************************************************
 !> \brief Return true if native SKALA should use the full GAPW ORB density on one common grid.
@@ -495,7 +480,8 @@ CONTAINS
       use_chunk_static_grad = features%uses_atom_chunks .AND. &
                               (needs_atom_force .OR. compute_virial)
       IF (native_grid_diagnostics) THEN
-         CALL print_native_grid_diagnostics(features, rho_r(1)%pw_grid%para%group%mepos == 0)
+         CALL print_native_grid_diagnostics(features, rho_r(1)%pw_grid%para%group%mepos == 0, &
+                                            rho_r(1)%pw_grid%para%group)
       END IF
 
       IF (features%uses_atom_chunks .AND. native_grid_atom_chunk_max_rows == -1) THEN
@@ -2000,7 +1986,6 @@ CONTAINS
 
       exc = 0.0_dp
       IF (compute_grads) THEN
-         CPASSERT(features%uses_atom_chunk_routing)
          nroute_recv_points = SUM(features%route_point_recv_counts)
          nroute_send_points = SIZE(features%route_send_local_rows)
          CPASSERT(SUM(features%route_point_send_counts) == nroute_send_points)
@@ -2465,7 +2450,6 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: recv_grad_buffer, send_grad_buffer
 
       CPASSERT(features%uses_atom_chunks)
-      CPASSERT(features%uses_atom_chunk_routing)
 
       nroute_recv_points = SUM(features%route_point_recv_counts)
       nroute_send_points = SIZE(features%route_send_local_rows)
@@ -2556,7 +2540,6 @@ CONTAINS
       TYPE(torch_tensor_type)                            :: grid_weight_grad_t
 
       CPASSERT(features%uses_atom_chunks)
-      CPASSERT(features%uses_atom_chunk_routing)
       CPASSERT(PRESENT(local_grid_weight_grad))
 
       comps = 1
@@ -3042,14 +3025,26 @@ CONTAINS
 !> \brief Print optional diagnostics for the CP2K-native SKALA GPW feature block.
 !> \param features ...
 !> \param print_active ...
+!> \param group ...
 ! **************************************************************************************************
-   SUBROUTINE print_native_grid_diagnostics(features, print_active)
+   SUBROUTINE print_native_grid_diagnostics(features, print_active, group)
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
       LOGICAL, INTENT(IN)                                :: print_active
+
+      CLASS(mp_comm_type), INTENT(IN)                    :: group
 
       INTEGER                                            :: atom_rows_max, atom_rows_min, &
                                                             chunk_rows_max, chunk_rows_min, iw
       REAL(KIND=dp)                                      :: chunk_imbalance
+
+      chunk_rows_min = 0
+      chunk_rows_max = 0
+      IF (features%uses_atom_chunks) THEN
+         chunk_rows_min = features%chunk_feature_count
+         chunk_rows_max = features%chunk_feature_count
+         CALL group%min(chunk_rows_min)
+         CALL group%max(chunk_rows_max)
+      END IF
 
       IF (.NOT. print_active) RETURN
 
@@ -3074,14 +3069,10 @@ CONTAINS
          WRITE (UNIT=iw, FMT="(T2,A,1X,I0,1X,A,1X,I0)") &
             "SKALA_GPW| Native grid atom chunk rows", features%chunk_feature_count, &
             "of", features%nflat
-         IF (ALLOCATED(features%chunk_grad_counts)) THEN
-            chunk_rows_min = MINVAL(features%chunk_grad_counts)/ngrad_per_point
-            chunk_rows_max = MAXVAL(features%chunk_grad_counts)/ngrad_per_point
-            chunk_imbalance = REAL(chunk_rows_max, KIND=dp)/REAL(MAX(1, chunk_rows_min), KIND=dp)
-            WRITE (UNIT=iw, FMT="(T2,A,1X,I0,1X,A,1X,I0,1X,A,1X,ES12.5)") &
-               "SKALA_GPW| Native grid atom chunk row range", chunk_rows_min, &
-               "to", chunk_rows_max, "imbalance", chunk_imbalance
-         END IF
+         chunk_imbalance = REAL(chunk_rows_max, KIND=dp)/REAL(MAX(1, chunk_rows_min), KIND=dp)
+         WRITE (UNIT=iw, FMT="(T2,A,1X,I0,1X,A,1X,I0,1X,A,1X,ES12.5)") &
+            "SKALA_GPW| Native grid atom chunk row range", chunk_rows_min, &
+            "to", chunk_rows_max, "imbalance", chunk_imbalance
       END IF
 
    END SUBROUTINE print_native_grid_diagnostics
@@ -3246,7 +3237,7 @@ CONTAINS
       TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
       CHARACTER(len=default_path_length), INTENT(OUT)    :: model_path
 
-      CHARACTER(len=default_path_length)                 :: model_key, model_name
+      CHARACTER(len=default_path_length)                 :: model_name
       LOGICAL                                            :: use_cuda
       TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
 
@@ -3260,11 +3251,6 @@ CONTAINS
             CPABORT("Native SKALA GPW requires an XC_FUNCTIONAL%SKALA_NATIVE section")
          END IF
          CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
-      END IF
-      model_key = ADJUSTL(model_name)
-      CALL uppercase(model_key)
-      IF (TRIM(model_key) == "NONE" .OR. TRIM(model_key) == "") THEN
-         CPABORT("SKALA requires MODEL SKALA or a TorchScript model path")
       END IF
       CALL resolve_skala_model_path(model_name, use_cuda, model_path)
 

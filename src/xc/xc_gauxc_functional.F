@@ -26,7 +26,6 @@ MODULE xc_gauxc_functional
                                               sgp_potential_type
    USE input_constants,                 ONLY: xc_vdw_fun_nonloc
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
-                                              section_vals_get_subs_vals2,&
                                               section_vals_type,&
                                               section_vals_val_get
    USE iso_c_binding,                   ONLY: c_double
@@ -48,7 +47,8 @@ MODULE xc_gauxc_functional
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
-   USE skala_model_selection,           ONLY: resolve_skala_model_path,&
+   USE skala_model_selection,           ONLY: find_single_functional_subsection,&
+                                              resolve_skala_model_path,&
                                               skala_gpu_mode_use_cuda
    USE string_utilities,                ONLY: uppercase
    USE xc_gauxc_cache,                  ONLY: cp_gauxc_cache_params,&
@@ -319,29 +319,21 @@ CONTAINS
       TYPE(section_vals_type), INTENT(in), POINTER       :: xc_section
       TYPE(section_vals_type), POINTER                   :: gauxc_functional_section
 
-      INTEGER                                            :: ifun
-      TYPE(section_vals_type), POINTER                   :: functionals, xc_fun
-
-      NULLIFY (gauxc_functional_section)
+      INTEGER                                            :: n_subsections
+      TYPE(section_vals_type), POINTER                   :: functionals
 
       functionals => section_vals_get_subs_vals(xc_section, "XC_FUNCTIONAL")
       IF (.NOT. ASSOCIATED(functionals)) THEN
          CPABORT("XC_FUNCTIONAL section not found")
       END IF
 
-      ifun = 0
-      DO
-         ifun = ifun + 1
-         xc_fun => section_vals_get_subs_vals2(functionals, i_section=ifun)
-         IF (.NOT. ASSOCIATED(xc_fun)) EXIT
-         IF (xc_fun%section%name /= "GAUXC" .OR. ifun > 1) THEN
-            CPABORT("GauXC functionals are mutually exclusive with any other functional.")
-         END IF
-         gauxc_functional_section => xc_fun
-      END DO
-
-      IF (.NOT. ASSOCIATED(gauxc_functional_section)) THEN
+      CALL find_single_functional_subsection(xc_section, "GAUXC", gauxc_functional_section, &
+                                             n_subsections)
+      IF (n_subsections == 0) THEN
          CPABORT("No XC functional found in XC_FUNCTIONAL section")
+      END IF
+      IF (n_subsections > 1 .OR. .NOT. ASSOCIATED(gauxc_functional_section)) THEN
+         CPABORT("GauXC functionals are mutually exclusive with any other functional.")
       END IF
    END FUNCTION get_gauxc_functional
 
