@@ -464,9 +464,8 @@ CONTAINS
          phase_handle, selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, have_atom_coord_grad, lsd, my_just_energy, &
-         native_grid_atom_chunk_routing, native_grid_atom_chunks, native_grid_diagnostics, &
-         native_grid_use_cuda, needs_atom_force, saved_use_cuda, use_atom_subchunks, &
-         use_chunk_static_grad
+         native_grid_atom_chunks, native_grid_diagnostics, native_grid_use_cuda, needs_atom_force, &
+         saved_use_cuda, use_atom_subchunks, use_chunk_static_grad
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weight_grad_g, &
                                                             grid_weight_grad_g
@@ -520,7 +519,6 @@ CONTAINS
          CALL section_vals_val_get(gauxc_section, "ATOM_PARTITION", &
                                    i_val=native_grid_atom_partition)
       END IF
-      native_grid_atom_chunk_routing = native_grid_atom_chunks
       SELECT CASE (native_grid_atom_partition)
       CASE (1)
          native_grid_atom_partition = skala_gpw_atom_partition_hard
@@ -530,7 +528,6 @@ CONTAINS
          CALL cp_abort(__LOCATION__, &
                        "Unknown SKALA_NATIVE%ATOM_PARTITION value.")
       END SELECT
-      native_grid_atom_chunks = native_grid_atom_chunks .OR. native_grid_atom_chunk_routing
       IF (native_grid_atom_chunk_max_rows < -1) THEN
          CALL cp_abort(__LOCATION__, &
                        "SKALA_NATIVE%ATOM_CHUNK_MAX_ROWS must be -1, zero, or positive.")
@@ -541,13 +538,6 @@ CONTAINS
                           "SKALA_NATIVE%ATOM_PARTITION HARD supports energy/VXC only. "// &
                           "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
          END IF
-         ! Keep the atom-chunk model distribution for force/stress, but use the
-         ! non-routing chunk protocol so the coordinate/weight adjoints can be
-         ! gathered into the global feature layout used by the force assembly.
-         ! Atom subchunking requires the routing protocol, so it stays disabled
-         ! for this path.
-         native_grid_atom_chunk_routing = .FALSE.
-         native_grid_atom_chunk_max_rows = 0
       END IF
       ! The portable SKALA export used by the regtests builds ragged-index tensors on CPU.
       saved_use_cuda = torch_get_use_cuda()
@@ -583,7 +573,6 @@ CONTAINS
                                    requires_coordinate_grad=(needs_atom_force .OR. compute_virial), &
                                    requires_stress_grad=compute_virial, &
                                    use_atom_chunks=native_grid_atom_chunks, &
-                                   route_atom_chunks=native_grid_atom_chunk_routing, &
                                    compute_diagnostics=native_grid_diagnostics, &
                                    atom_partition=native_grid_atom_partition, &
                                    cuda_device=selected_cuda_device)
@@ -644,9 +633,12 @@ CONTAINS
          END IF
          IF (use_chunk_static_grad) THEN
             CALL timeset("skala_gpw_coord_grad_fetch", phase_handle)
-            CALL fetch_and_gather_atom_chunk_coordinate_grads( &
-               features, rho_r(1)%pw_grid%para%group, grid_coord_grad_g, grid_weight_grad_g, &
-               atomic_grid_weight_grad_g, atom_coord_grad_g)
+            CALL fetch_and_route_atom_chunk_grads( &
+               features, rho_r(1)%pw_grid%para%group, weight_only=.FALSE., &
+               local_grid_coord_grad=grid_coord_grad_g, &
+               local_grid_weight_grad=grid_weight_grad_g, &
+               local_atomic_grid_weight_grad=atomic_grid_weight_grad_g, &
+               atom_coord_grad=atom_coord_grad_g)
             have_atom_coord_grad = .TRUE.
             CALL timestop(phase_handle)
          END IF
@@ -833,20 +825,25 @@ CONTAINS
       TYPE(cell_type), POINTER                           :: cell
 
       CHARACTER(len=default_path_length)                 :: model_path
-      INTEGER :: feature_begin, feature_end, feature_pos, i, iatom, j, k, local_row, &
-         native_grid_atom_partition, natom, nspins, omp_max_threads_restore, row, &
-         selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
+      INTEGER :: chunk_max_rows, feature_begin, feature_end, feature_pos, i, iatom, isub, j, k, &
+         local_row, native_grid_atom_partition, natom, nspins, nsubchunks, &
+         omp_max_threads_restore, row, selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: subchunk_atom_begin, &
+                                                            subchunk_atom_count, &
+                                                            subchunk_row_begin, subchunk_row_count
       INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL                                            :: lsd, native_grid_use_cuda, saved_use_cuda
+      LOGICAL                                            :: have_exc_tensor, have_weight_grad_t, &
+                                                            lsd, native_grid_atom_chunks, &
+                                                            native_grid_use_cuda, saved_use_cuda
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: exc, local_derivative
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: partition_weights
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: local_weight_grad, partition_weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: dweights_datom, dweights_dstrain
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: grid_weight_grad
       TYPE(section_vals_type), POINTER                   :: gauxc_section
-      TYPE(skala_gpw_feature_type)                       :: features
+      TYPE(skala_gpw_feature_type)                       :: features, subchunk
       TYPE(torch_tensor_type)                            :: exc_tensor, grid_weight_grad_t
       TYPE(xc_rho_cflags_type)                           :: needs
       TYPE(xc_rho_set_type)                              :: rho_set
@@ -862,11 +859,22 @@ CONTAINS
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
       native_grid_atom_partition = skala_gpw_atom_partition_smooth
+      native_grid_atom_chunks = .TRUE.
+      chunk_max_rows = -1
       gauxc_section => get_skala_native_section(xc_section)
       IF (ASSOCIATED(gauxc_section)) THEN
          CALL section_vals_val_get(gauxc_section, "ATOM_PARTITION", &
                                    i_val=native_grid_atom_partition)
+         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNKS", &
+                                   l_val=native_grid_atom_chunks)
+         CALL section_vals_val_get(gauxc_section, "ATOM_CHUNK_MAX_ROWS", &
+                                   i_val=chunk_max_rows)
       END IF
+      IF (chunk_max_rows < -1) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "SKALA_NATIVE%ATOM_CHUNK_MAX_ROWS must be -1, zero, or positive.")
+      END IF
+      IF (.NOT. native_grid_atom_chunks) chunk_max_rows = 0
       SELECT CASE (native_grid_atom_partition)
       CASE (1)
          native_grid_atom_partition = skala_gpw_atom_partition_hard
@@ -912,16 +920,58 @@ CONTAINS
       CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                    requires_grad=.FALSE., weights=weights, &
                                    requires_coordinate_grad=.FALSE., &
-                                   requires_stress_grad=.TRUE., &
-                                   use_atom_chunks=.FALSE., route_atom_chunks=.FALSE., &
+                                   requires_stress_grad=.FALSE., &
+                                   requires_weight_grad=.TRUE., &
+                                   use_atom_chunks=native_grid_atom_chunks, &
                                    atom_partition=native_grid_atom_partition, &
                                    cuda_device=selected_cuda_device)
-      CALL skala_torch_model_get_exc(cached_model, features%inputs, features%grid_weights_t, &
-                                     exc_tensor, exc)
-      CALL torch_tensor_backward_scalar(exc_tensor)
+      have_exc_tensor = .FALSE.
+      have_weight_grad_t = .FALSE.
       NULLIFY (grid_weight_grad)
-      CALL torch_tensor_grad(features%grid_weights_t, grid_weight_grad_t)
-      CALL torch_tensor_data_ptr(grid_weight_grad_t, grid_weight_grad)
+      IF (features%uses_atom_chunks) THEN
+         IF (chunk_max_rows == -1) THEN
+            chunk_max_rows = auto_atom_chunk_max_rows(features, rho_r(1)%pw_grid%para%group)
+         END IF
+         nsubchunks = 1
+         IF (features%chunk_feature_count > 0 .AND. chunk_max_rows > 0) THEN
+            nsubchunks = skala_gpw_atom_subchunk_count(chunk_max_rows)
+            CALL rho_r(1)%pw_grid%para%group%max(nsubchunks)
+         END IF
+         IF (nsubchunks > 1) THEN
+            CALL skala_gpw_atom_subchunk_layout(chunk_max_rows, subchunk_atom_begin, &
+                                                subchunk_atom_count, subchunk_row_begin, &
+                                                subchunk_row_count)
+            DO isub = 1, SIZE(subchunk_atom_begin)
+               CALL skala_gpw_feature_build_atom_subchunk_bounds( &
+                  features, subchunk, subchunk_atom_begin(isub), subchunk_atom_count(isub), &
+                  subchunk_row_begin(isub), subchunk_row_count(isub), .FALSE.)
+               CALL skala_torch_model_get_exc(cached_model, subchunk%inputs, &
+                                              subchunk%grid_weights_t, exc_tensor, exc)
+               CALL torch_tensor_backward_scalar(exc_tensor)
+               CALL torch_tensor_release(exc_tensor)
+               CALL skala_gpw_feature_release(subchunk)
+            END DO
+            DEALLOCATE (subchunk_atom_begin, subchunk_atom_count, subchunk_row_begin, &
+                        subchunk_row_count)
+         ELSE IF (features%chunk_feature_count > 0) THEN
+            CALL skala_torch_model_get_exc(cached_model, features%inputs, features%grid_weights_t, &
+                                           exc_tensor, exc)
+            CALL torch_tensor_backward_scalar(exc_tensor)
+            have_exc_tensor = .TRUE.
+         END IF
+         CALL fetch_and_route_atom_chunk_grads(features, rho_r(1)%pw_grid%para%group, &
+                                               weight_only=.TRUE., &
+                                               local_grid_weight_grad=local_weight_grad)
+         grid_weight_grad => local_weight_grad
+      ELSE
+         CALL skala_torch_model_get_exc(cached_model, features%inputs, features%grid_weights_t, &
+                                        exc_tensor, exc)
+         CALL torch_tensor_backward_scalar(exc_tensor)
+         CALL torch_tensor_grad(features%grid_weights_t, grid_weight_grad_t)
+         CALL torch_tensor_data_ptr(grid_weight_grad_t, grid_weight_grad)
+         have_exc_tensor = .TRUE.
+         have_weight_grad_t = .TRUE.
+      END IF
 
       natom = SIZE(particle_set)
       IF (native_grid_atom_partition == skala_gpw_atom_partition_smooth) THEN
@@ -971,8 +1021,9 @@ CONTAINS
          DEALLOCATE (atom_coords_pbc, dweights_datom, dweights_dstrain, included, &
                      partition_weights)
       END IF
-      CALL torch_tensor_release(grid_weight_grad_t)
-      CALL torch_tensor_release(exc_tensor)
+      IF (have_weight_grad_t) CALL torch_tensor_release(grid_weight_grad_t)
+      IF (have_exc_tensor) CALL torch_tensor_release(exc_tensor)
+      IF (ALLOCATED(local_weight_grad)) DEALLOCATE (local_weight_grad)
       CALL skala_gpw_feature_release(features)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
       CALL torch_use_cuda(saved_use_cuda)
@@ -2488,231 +2539,201 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
          INTENT(OUT)                                     :: grad_grad
 
-      INTEGER                                            :: base, feature_pos, i, j, k, local_row, &
-                                                            nflat_local, nroute_grad_per_point, &
+      INTEGER                                            :: nroute_grad_per_point, &
                                                             nroute_recv_points, nroute_send_points, &
-                                                            phase_handle, row
+                                                            phase_handle
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: route_grad_return_recv_counts, &
                                                             route_grad_return_recv_displs, &
                                                             route_grad_return_send_counts, &
                                                             route_grad_return_send_displs
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: chunk_grad_buffer, global_grad_buffer, &
-                                                            recv_grad_buffer, send_grad_buffer
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: recv_grad_buffer, send_grad_buffer
 
       CPASSERT(features%uses_atom_chunks)
+      CPASSERT(features%uses_atom_chunk_routing)
 
-      nflat_local = features%nflat_local
-      IF (features%uses_atom_chunk_routing) THEN
-         nroute_recv_points = SUM(features%route_point_recv_counts)
-         nroute_send_points = SIZE(features%route_send_local_rows)
-         CPASSERT(SUM(features%route_point_send_counts) == nroute_send_points)
-         CPASSERT(SIZE(features%route_chunk_offsets) == nroute_recv_points + 1)
+      nroute_recv_points = SUM(features%route_point_recv_counts)
+      nroute_send_points = SIZE(features%route_send_local_rows)
+      CPASSERT(SUM(features%route_point_send_counts) == nroute_send_points)
+      CPASSERT(SIZE(features%route_chunk_offsets) == nroute_recv_points + 1)
 
-         nroute_grad_per_point = ngrad_per_point
-         IF (features%uses_collapsed_rks_dynamic) THEN
-            nroute_grad_per_point = ncollapsed_grad_per_point
-         END IF
-         ALLOCATE (send_grad_buffer(MAX(1, nroute_grad_per_point*nroute_recv_points)), &
-                   recv_grad_buffer(MAX(1, nroute_grad_per_point*nroute_send_points)), &
-                   route_grad_return_send_counts(SIZE(features%route_point_recv_counts)), &
-                   route_grad_return_send_displs(SIZE(features%route_point_recv_displs)), &
-                   route_grad_return_recv_counts(SIZE(features%route_point_send_counts)), &
-                   route_grad_return_recv_displs(SIZE(features%route_point_send_displs)))
-         route_grad_return_send_counts(:) = &
-            nroute_grad_per_point*features%route_point_recv_counts
-         route_grad_return_send_displs(:) = &
-            nroute_grad_per_point*features%route_point_recv_displs
-         route_grad_return_recv_counts(:) = &
-            nroute_grad_per_point*features%route_point_send_counts
-         route_grad_return_recv_displs(:) = &
-            nroute_grad_per_point*features%route_point_send_displs
-
-         IF (features%chunk_feature_count > 0) THEN
-            CALL timeset("skala_gpw_grad_torch_pack", phase_handle)
-            CALL pack_atom_chunk_grads(features, send_grad_buffer, .TRUE., &
-                                       features%uses_collapsed_rks_dynamic)
-            CALL timestop(phase_handle)
-         END IF
-
-         CALL timeset("skala_gpw_grad_route_comm", phase_handle)
-         CALL group%alltoall(send_grad_buffer, route_grad_return_send_counts, &
-                             route_grad_return_send_displs, recv_grad_buffer, &
-                             route_grad_return_recv_counts, route_grad_return_recv_displs)
-         CALL timestop(phase_handle)
-
-         CALL timeset("skala_gpw_grad_route_scatter", phase_handle)
-         CALL scatter_routed_atom_chunk_grads(features, recv_grad_buffer, &
-                                              features%uses_collapsed_rks_dynamic, &
-                                              density_grad, grad_grad, kin_grad)
-         CALL timestop(phase_handle)
-
-         DEALLOCATE (recv_grad_buffer, route_grad_return_recv_counts, &
-                     route_grad_return_recv_displs, route_grad_return_send_counts, &
-                     route_grad_return_send_displs, send_grad_buffer)
-      ELSE
-         ALLOCATE (chunk_grad_buffer(MAX(1, ngrad_per_point*features%chunk_feature_count)), &
-                   global_grad_buffer(ngrad_per_point*features%nflat))
-         IF (features%chunk_feature_count > 0) THEN
-            CALL timeset("skala_gpw_grad_torch_pack", phase_handle)
-            CALL pack_atom_chunk_grads(features, chunk_grad_buffer, .FALSE.)
-            CALL timestop(phase_handle)
-         END IF
-
-         CALL timeset("skala_gpw_grad_allgatherv", phase_handle)
-         CALL group%allgatherv(chunk_grad_buffer, global_grad_buffer, &
-                               features%chunk_grad_counts, features%chunk_grad_displs)
-         CALL timestop(phase_handle)
-
-         CALL timeset("skala_gpw_grad_scatter", phase_handle)
-         ALLOCATE (density_grad(nflat_local, 2), grad_grad(nflat_local, 3, 2), &
-                   kin_grad(nflat_local, 2))
-         density_grad = 0.0_dp
-         grad_grad = 0.0_dp
-         kin_grad = 0.0_dp
-         local_row = 0
-         DO k = LBOUND(features%feature_index, 3), UBOUND(features%feature_index, 3)
-            DO j = LBOUND(features%feature_index, 2), UBOUND(features%feature_index, 2)
-               DO i = LBOUND(features%feature_index, 1), UBOUND(features%feature_index, 1)
-                  local_row = local_row + 1
-                  DO feature_pos = features%local_feature_offsets(local_row), &
-                     features%local_feature_offsets(local_row + 1) - 1
-                     row = features%local_feature_rows(feature_pos)
-                     CPASSERT(row >= 1 .AND. row <= features%nflat)
-                     base = ngrad_per_point*(row - 1)
-                     density_grad(local_row, :) = density_grad(local_row, :) + &
-                                                  global_grad_buffer(base + 1:base + 2)
-                     grad_grad(local_row, 1, 1) = grad_grad(local_row, 1, 1) + &
-                                                  global_grad_buffer(base + 3)
-                     grad_grad(local_row, 2, 1) = grad_grad(local_row, 2, 1) + &
-                                                  global_grad_buffer(base + 4)
-                     grad_grad(local_row, 3, 1) = grad_grad(local_row, 3, 1) + &
-                                                  global_grad_buffer(base + 5)
-                     grad_grad(local_row, 1, 2) = grad_grad(local_row, 1, 2) + &
-                                                  global_grad_buffer(base + 6)
-                     grad_grad(local_row, 2, 2) = grad_grad(local_row, 2, 2) + &
-                                                  global_grad_buffer(base + 7)
-                     grad_grad(local_row, 3, 2) = grad_grad(local_row, 3, 2) + &
-                                                  global_grad_buffer(base + 8)
-                     kin_grad(local_row, :) = kin_grad(local_row, :) + &
-                                              global_grad_buffer(base + 9:base + 10)
-                  END DO
-               END DO
-            END DO
-         END DO
-         CALL timestop(phase_handle)
-         DEALLOCATE (chunk_grad_buffer, global_grad_buffer)
-
+      nroute_grad_per_point = ngrad_per_point
+      IF (features%uses_collapsed_rks_dynamic) THEN
+         nroute_grad_per_point = ncollapsed_grad_per_point
       END IF
+      ALLOCATE (send_grad_buffer(MAX(1, nroute_grad_per_point*nroute_recv_points)), &
+                recv_grad_buffer(MAX(1, nroute_grad_per_point*nroute_send_points)), &
+                route_grad_return_send_counts(SIZE(features%route_point_recv_counts)), &
+                route_grad_return_send_displs(SIZE(features%route_point_recv_displs)), &
+                route_grad_return_recv_counts(SIZE(features%route_point_send_counts)), &
+                route_grad_return_recv_displs(SIZE(features%route_point_send_displs)))
+      route_grad_return_send_counts(:) = &
+         nroute_grad_per_point*features%route_point_recv_counts
+      route_grad_return_send_displs(:) = &
+         nroute_grad_per_point*features%route_point_recv_displs
+      route_grad_return_recv_counts(:) = &
+         nroute_grad_per_point*features%route_point_send_counts
+      route_grad_return_recv_displs(:) = &
+         nroute_grad_per_point*features%route_point_send_displs
+
+      IF (features%chunk_feature_count > 0) THEN
+         CALL timeset("skala_gpw_grad_torch_pack", phase_handle)
+         CALL pack_atom_chunk_grads(features, send_grad_buffer, .TRUE., &
+                                    features%uses_collapsed_rks_dynamic)
+         CALL timestop(phase_handle)
+      END IF
+
+      CALL timeset("skala_gpw_grad_route_comm", phase_handle)
+      CALL group%alltoall(send_grad_buffer, route_grad_return_send_counts, &
+                          route_grad_return_send_displs, recv_grad_buffer, &
+                          route_grad_return_recv_counts, route_grad_return_recv_displs)
+      CALL timestop(phase_handle)
+
+      CALL timeset("skala_gpw_grad_route_scatter", phase_handle)
+      CALL scatter_routed_atom_chunk_grads(features, recv_grad_buffer, &
+                                           features%uses_collapsed_rks_dynamic, &
+                                           density_grad, grad_grad, kin_grad)
+      CALL timestop(phase_handle)
+
+      DEALLOCATE (recv_grad_buffer, route_grad_return_recv_counts, &
+                  route_grad_return_recv_displs, route_grad_return_send_counts, &
+                  route_grad_return_send_displs, send_grad_buffer)
 
    END SUBROUTINE fetch_and_gather_atom_chunk_grads
 
 ! **************************************************************************************************
-!> \brief Fetch and gather atom-chunk coordinate and integration-weight gradients.
+!> \brief Fetch and route atom-chunk feature gradients.
 !>
-!> This is the non-routing chunk counterpart of
-!> fetch_and_gather_atom_chunk_grads. Each rank evaluates only its atom chunk but
-!> the coordinate/weight adjoints are gathered into the global feature layout so
-!> the existing force and virial assembly can be reused.
+!> In full mode it routes grid-coordinate, grid-weight, atomic-grid-weight and
+!> atomic-coordinate adjoints. In weight-only mode it fetches and routes only
+!> dE/d(grid_weights), which is all the accurate-XCINT weight derivative needs.
 !> \param features ...
 !> \param group ...
-!> \param grid_coord_grad ...
-!> \param grid_weight_grad ...
-!> \param atomic_grid_weight_grad ...
+!> \param weight_only ...
+!> \param local_grid_coord_grad ...
+!> \param local_grid_weight_grad ...
+!> \param local_atomic_grid_weight_grad ...
 !> \param atom_coord_grad ...
 ! **************************************************************************************************
-   SUBROUTINE fetch_and_gather_atom_chunk_coordinate_grads(features, group, grid_coord_grad, &
-                                                           grid_weight_grad, &
-                                                           atomic_grid_weight_grad, &
-                                                           atom_coord_grad)
+   SUBROUTINE fetch_and_route_atom_chunk_grads(features, group, weight_only, &
+                                               local_grid_coord_grad, local_grid_weight_grad, &
+                                               local_atomic_grid_weight_grad, atom_coord_grad)
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
 
       CLASS(mp_comm_type), INTENT(IN)                    :: group
+      LOGICAL, INTENT(IN)                                :: weight_only
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: grid_coord_grad, atom_coord_grad
+         INTENT(OUT), OPTIONAL                           :: local_grid_coord_grad, atom_coord_grad
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), &
-         INTENT(OUT)                                     :: grid_weight_grad, atomic_grid_weight_grad
+         INTENT(OUT), OPTIONAL                           :: local_grid_weight_grad, &
+                                                            local_atomic_grid_weight_grad
 
-      INTEGER                                            :: base, irow, natom, nflat, phase_handle
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: coord_counts, coord_displs
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: chunk_buffer, global_buffer
+      INTEGER                                            :: base, comps, feature_pos, irow, &
+                                                            local_feature, natom, nfeature_local, &
+                                                            phase_handle
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: recv_counts, recv_displs, send_counts, &
+                                                            send_displs
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: recv_buffer, send_buffer
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: chunk_atom_coord_grad, chunk_coord_grad
       REAL(KIND=dp), DIMENSION(:), POINTER               :: chunk_atomic_grid_weight_grad, &
                                                             chunk_grid_weight_grad
       TYPE(torch_tensor_type), DIMENSION(4)              :: grad_batch_t
+      TYPE(torch_tensor_type)                            :: grid_weight_grad_t
 
       CPASSERT(features%uses_atom_chunks)
-      CPASSERT(.NOT. features%uses_atom_chunk_routing)
-      CPASSERT(ALLOCATED(features%coarse_0_atomic_coords))
+      CPASSERT(features%uses_atom_chunk_routing)
+      CPASSERT(PRESENT(local_grid_weight_grad))
 
-      nflat = features%nflat
-      natom = SIZE(features%coarse_0_atomic_coords, 2)
-      ALLOCATE (grid_coord_grad(3, nflat), grid_weight_grad(nflat), &
-                atomic_grid_weight_grad(nflat), atom_coord_grad(3, natom))
-      grid_coord_grad = 0.0_dp
-      grid_weight_grad = 0.0_dp
-      atomic_grid_weight_grad = 0.0_dp
-      atom_coord_grad = 0.0_dp
+      comps = 1
+      IF (.NOT. weight_only) comps = 5
+      nfeature_local = SIZE(features%route_send_local_features)
 
-      ALLOCATE (coord_counts(SIZE(features%chunk_grad_counts)), &
-                coord_displs(SIZE(features%chunk_grad_displs)), &
-                chunk_buffer(MAX(1, ncoord_grad_per_point*features%chunk_feature_count)), &
-                global_buffer(ncoord_grad_per_point*nflat))
-      ! chunk_grad_counts = ngrad_per_point*chunk_feature_counts
-      coord_counts(:) = (features%chunk_grad_counts/ngrad_per_point)*ncoord_grad_per_point
-      coord_displs(:) = (features%chunk_grad_displs/ngrad_per_point)*ncoord_grad_per_point
-      chunk_buffer = 0.0_dp
-      global_buffer = 0.0_dp
-
-      IF (features%chunk_feature_count > 0) THEN
-         CALL timeset("skala_gpw_coord_grad_torch", phase_handle)
-         NULLIFY (chunk_coord_grad, chunk_grid_weight_grad, chunk_atomic_grid_weight_grad, &
-                  chunk_atom_coord_grad)
-         CALL torch_tensor_grad_batch( &
-            [features%grid_coords_t, features%grid_weights_t, &
-             features%atomic_grid_weights_t, features%coarse_0_atomic_coords_t], &
-            grad_batch_t)
-         CALL torch_tensor_data_ptr(grad_batch_t(1), chunk_coord_grad)
-         CALL torch_tensor_data_ptr(grad_batch_t(2), chunk_grid_weight_grad)
-         CALL torch_tensor_data_ptr(grad_batch_t(3), chunk_atomic_grid_weight_grad)
-         CALL torch_tensor_data_ptr(grad_batch_t(4), chunk_atom_coord_grad)
-         CALL timestop(phase_handle)
-
-!$OMP PARALLEL DO DEFAULT(NONE) &
-!$OMP SHARED(chunk_atomic_grid_weight_grad, chunk_buffer, chunk_coord_grad, &
-!$OMP        chunk_grid_weight_grad, features) &
-!$OMP PRIVATE(base, irow)
-         DO irow = 1, features%chunk_feature_count
-            base = ncoord_grad_per_point*(irow - 1)
-            chunk_buffer(base + 1:base + 3) = chunk_coord_grad(:, irow)
-            chunk_buffer(base + 4) = chunk_grid_weight_grad(irow)
-            chunk_buffer(base + 5) = chunk_atomic_grid_weight_grad(irow)
-         END DO
-!$OMP END PARALLEL DO
-
-         DO irow = 1, features%chunk_natom
-            atom_coord_grad(:, features%chunk_atom_begin + irow - 1) = &
-               chunk_atom_coord_grad(:, irow)
-         END DO
-
-         CALL torch_tensor_release(grad_batch_t(1))
-         CALL torch_tensor_release(grad_batch_t(2))
-         CALL torch_tensor_release(grad_batch_t(3))
-         CALL torch_tensor_release(grad_batch_t(4))
+      ALLOCATE (local_grid_weight_grad(nfeature_local))
+      local_grid_weight_grad = 0.0_dp
+      IF (.NOT. weight_only) THEN
+         CPASSERT(PRESENT(local_grid_coord_grad))
+         CPASSERT(PRESENT(local_atomic_grid_weight_grad))
+         CPASSERT(PRESENT(atom_coord_grad))
+         natom = SIZE(features%atomic_grid_sizes)
+         ALLOCATE (local_grid_coord_grad(3, nfeature_local), &
+                   local_atomic_grid_weight_grad(nfeature_local), atom_coord_grad(3, natom))
+         local_grid_coord_grad = 0.0_dp
+         local_atomic_grid_weight_grad = 0.0_dp
+         atom_coord_grad = 0.0_dp
       END IF
 
-      CALL group%allgatherv(chunk_buffer, global_buffer, coord_counts, coord_displs)
-      CALL group%sum(atom_coord_grad)
+      ALLOCATE (send_counts(SIZE(features%route_feature_recv_counts)), &
+                send_displs(SIZE(features%route_feature_recv_displs)), &
+                recv_counts(SIZE(features%route_feature_send_counts)), &
+                recv_displs(SIZE(features%route_feature_send_displs)), &
+                send_buffer(MAX(1, comps*features%chunk_feature_count)), &
+                recv_buffer(MAX(1, comps*nfeature_local)))
+      send_counts(:) = comps*features%route_feature_recv_counts
+      send_displs(:) = comps*features%route_feature_recv_displs
+      recv_counts(:) = comps*features%route_feature_send_counts
+      recv_displs(:) = comps*features%route_feature_send_displs
+      send_buffer = 0.0_dp
+      recv_buffer = 0.0_dp
 
-      DO irow = 1, nflat
-         base = ncoord_grad_per_point*(irow - 1)
-         grid_coord_grad(:, irow) = global_buffer(base + 1:base + 3)
-         grid_weight_grad(irow) = global_buffer(base + 4)
-         atomic_grid_weight_grad(irow) = global_buffer(base + 5)
+      IF (features%chunk_feature_count > 0) THEN
+         CALL timeset("skala_gpw_feature_grad_torch", phase_handle)
+         IF (weight_only) THEN
+            NULLIFY (chunk_grid_weight_grad)
+            CALL torch_tensor_grad(features%grid_weights_t, grid_weight_grad_t)
+            CALL torch_tensor_data_ptr(grid_weight_grad_t, chunk_grid_weight_grad)
+            DO feature_pos = 1, features%chunk_feature_count
+               irow = features%route_recv_chunk_rows(feature_pos)
+               send_buffer(feature_pos) = chunk_grid_weight_grad(irow)
+            END DO
+            CALL torch_tensor_release(grid_weight_grad_t)
+         ELSE
+            NULLIFY (chunk_coord_grad, chunk_grid_weight_grad, chunk_atomic_grid_weight_grad, &
+                     chunk_atom_coord_grad)
+            CALL torch_tensor_grad_batch( &
+               [features%grid_coords_t, features%grid_weights_t, &
+                features%atomic_grid_weights_t, features%coarse_0_atomic_coords_t], &
+               grad_batch_t)
+            CALL torch_tensor_data_ptr(grad_batch_t(1), chunk_coord_grad)
+            CALL torch_tensor_data_ptr(grad_batch_t(2), chunk_grid_weight_grad)
+            CALL torch_tensor_data_ptr(grad_batch_t(3), chunk_atomic_grid_weight_grad)
+            CALL torch_tensor_data_ptr(grad_batch_t(4), chunk_atom_coord_grad)
+            DO feature_pos = 1, features%chunk_feature_count
+               irow = features%route_recv_chunk_rows(feature_pos)
+               base = comps*(feature_pos - 1)
+               send_buffer(base + 1:base + 3) = chunk_coord_grad(:, irow)
+               send_buffer(base + 4) = chunk_grid_weight_grad(irow)
+               send_buffer(base + 5) = chunk_atomic_grid_weight_grad(irow)
+            END DO
+            DO irow = 1, features%chunk_natom
+               atom_coord_grad(:, features%chunk_atom_begin + irow - 1) = &
+                  chunk_atom_coord_grad(:, irow)
+            END DO
+            CALL torch_tensor_release(grad_batch_t(1))
+            CALL torch_tensor_release(grad_batch_t(2))
+            CALL torch_tensor_release(grad_batch_t(3))
+            CALL torch_tensor_release(grad_batch_t(4))
+         END IF
+         CALL timestop(phase_handle)
+      END IF
+
+      CALL group%alltoall(send_buffer, send_counts, send_displs, recv_buffer, recv_counts, &
+                          recv_displs)
+      IF (.NOT. weight_only) CALL group%sum(atom_coord_grad)
+
+      DO feature_pos = 1, nfeature_local
+         local_feature = features%route_send_local_features(feature_pos)
+         IF (weight_only) THEN
+            local_grid_weight_grad(local_feature) = recv_buffer(feature_pos)
+         ELSE
+            base = comps*(feature_pos - 1)
+            local_grid_coord_grad(:, local_feature) = recv_buffer(base + 1:base + 3)
+            local_grid_weight_grad(local_feature) = recv_buffer(base + 4)
+            local_atomic_grid_weight_grad(local_feature) = recv_buffer(base + 5)
+         END IF
       END DO
 
-      DEALLOCATE (chunk_buffer, global_buffer, coord_counts, coord_displs)
+      DEALLOCATE (send_buffer, recv_buffer, send_counts, send_displs, recv_counts, recv_displs)
 
-   END SUBROUTINE fetch_and_gather_atom_chunk_coordinate_grads
+   END SUBROUTINE fetch_and_route_atom_chunk_grads
 
 ! **************************************************************************************************
 !> \brief Build the native SKALA XC virial from feature gradients.
@@ -2823,8 +2844,8 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), &
          OPTIONAL, TARGET                                :: atom_coord_grad_in, grid_coord_grad_in
 
-      INTEGER                                            :: feature_pos, i, iatom, idir, iw, j, &
-                                                            jdir, k, local_row, row
+      INTEGER                                            :: feature_pos, iatom, idir, iw, jdir, &
+                                                            local_row, row
       LOGICAL                                            :: have_external_grad, my_print_components
       REAL(KIND=dp)                                      :: tmp
       REAL(KIND=dp), DIMENSION(3)                        :: atom_grad_sum, grid_grad_sum
@@ -2850,26 +2871,20 @@ CONTAINS
       grid_grad_sum = 0.0_dp
       atom_grad_sum = 0.0_dp
       local_row = 0
-      DO k = LBOUND(features%feature_index, 3), UBOUND(features%feature_index, 3)
-         DO j = LBOUND(features%feature_index, 2), UBOUND(features%feature_index, 2)
-            DO i = LBOUND(features%feature_index, 1), UBOUND(features%feature_index, 1)
-               local_row = local_row + 1
-               DO feature_pos = features%local_feature_offsets(local_row), &
-                  features%local_feature_offsets(local_row + 1) - 1
-                  row = features%local_feature_rows(feature_pos)
-                  grid_grad_sum(:) = grid_grad_sum(:) + grid_coord_grad(:, row)
-                  DO idir = 1, 3
-                     DO jdir = 1, 3
-                        tmp = grid_coord_grad(idir, row)*features%grid_coords(jdir, row)
-                        grid_virial(idir, jdir) = grid_virial(idir, jdir) + tmp
-                        virial_xc(idir, jdir) = virial_xc(idir, jdir) + tmp
-                     END DO
-                  END DO
+      DO local_row = 1, features%nflat_local
+         DO feature_pos = features%local_feature_offsets(local_row), &
+            features%local_feature_offsets(local_row + 1) - 1
+            row = features%local_feature_rows(feature_pos)
+            grid_grad_sum(:) = grid_grad_sum(:) + grid_coord_grad(:, row)
+            DO idir = 1, 3
+               DO jdir = 1, 3
+                  tmp = grid_coord_grad(idir, row)*features%grid_coords(jdir, row)
+                  grid_virial(idir, jdir) = grid_virial(idir, jdir) + tmp
+                  virial_xc(idir, jdir) = virial_xc(idir, jdir) + tmp
                END DO
             END DO
          END DO
       END DO
-      CPASSERT(local_row == features%nflat_local)
 
       IF (root_rank) THEN
          DO iatom = 1, SIZE(features%coarse_0_atomic_coords, 2)
@@ -2928,8 +2943,7 @@ CONTAINS
          OPTIONAL, TARGET                                :: grid_weight_grad_in, &
                                                             atomic_grid_weight_grad_in
 
-      INTEGER                                            :: feature_pos, i, idir, iw, j, k, &
-                                                            local_row, row
+      INTEGER                                            :: feature_pos, idir, iw, local_row, row
       LOGICAL                                            :: have_external_grad, my_print_components
       REAL(KIND=dp)                                      :: atomic_tmp, exc_tmp, grid_tmp, tmp
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad, grid_weight_grad
@@ -2952,21 +2966,15 @@ CONTAINS
       grid_tmp = 0.0_dp
       atomic_tmp = 0.0_dp
       local_row = 0
-      DO k = LBOUND(features%feature_index, 3), UBOUND(features%feature_index, 3)
-         DO j = LBOUND(features%feature_index, 2), UBOUND(features%feature_index, 2)
-            DO i = LBOUND(features%feature_index, 1), UBOUND(features%feature_index, 1)
-               local_row = local_row + 1
-               DO feature_pos = features%local_feature_offsets(local_row), &
-                  features%local_feature_offsets(local_row + 1) - 1
-                  row = features%local_feature_rows(feature_pos)
-                  grid_tmp = grid_tmp + grid_weight_grad(row)*features%grid_weights(row)
-                  atomic_tmp = atomic_tmp + &
-                               atomic_grid_weight_grad(row)*features%atomic_grid_weights(row)
-               END DO
-            END DO
+      DO local_row = 1, features%nflat_local
+         DO feature_pos = features%local_feature_offsets(local_row), &
+            features%local_feature_offsets(local_row + 1) - 1
+            row = features%local_feature_rows(feature_pos)
+            grid_tmp = grid_tmp + grid_weight_grad(row)*features%grid_weights(row)
+            atomic_tmp = atomic_tmp + &
+                         atomic_grid_weight_grad(row)*features%atomic_grid_weights(row)
          END DO
       END DO
-      CPASSERT(local_row == features%nflat_local)
       exc_tmp = 0.0_dp
       IF (root_rank) exc_tmp = -exc
       tmp = grid_tmp + atomic_tmp + exc_tmp
