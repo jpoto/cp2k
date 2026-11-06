@@ -24,10 +24,7 @@ MODULE xc_gauxc_functional
    USE external_potential_types,        ONLY: all_potential_type,&
                                               gth_potential_type,&
                                               sgp_potential_type
-   USE input_constants,                 ONLY: do_gpu_auto,&
-                                              do_gpu_device,&
-                                              do_gpu_host,&
-                                              xc_vdw_fun_nonloc
+   USE input_constants,                 ONLY: xc_vdw_fun_nonloc
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_get_subs_vals2,&
                                               section_vals_type,&
@@ -51,6 +48,8 @@ MODULE xc_gauxc_functional
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
+   USE skala_model_selection,           ONLY: resolve_skala_model_path,&
+                                              skala_gpu_mode_use_cuda
    USE string_utilities,                ONLY: uppercase
    USE xc_gauxc_cache,                  ONLY: cp_gauxc_cache_params,&
                                               cp_gauxc_cache_type,&
@@ -75,8 +74,7 @@ MODULE xc_gauxc_functional
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'xc_gauxc_functional'
 
    PUBLIC :: apply_gauxc, gauxc_gapw_all_all_electron, gauxc_gapw_all_pseudopotentials, &
-             gauxc_gapw_has_paw_pseudopotentials, gauxc_gapw_has_pseudopotentials, skala_info, &
-             xc_section_uses_gauxc
+             gauxc_gapw_has_paw_pseudopotentials, gauxc_gapw_has_pseudopotentials, skala_info
 
 CONTAINS
 
@@ -346,37 +344,6 @@ CONTAINS
          CPABORT("No XC functional found in XC_FUNCTIONAL section")
       END IF
    END FUNCTION get_gauxc_functional
-
-! **************************************************************************************************
-!> \brief ...
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION xc_section_uses_gauxc(xc_section) RESULT(uses_gauxc)
-      TYPE(section_vals_type), INTENT(in), POINTER       :: xc_section
-      LOGICAL                                            :: uses_gauxc
-
-      INTEGER                                            :: ifun
-      TYPE(section_vals_type), POINTER                   :: functionals, xc_fun
-
-      uses_gauxc = .FALSE.
-      IF (.NOT. ASSOCIATED(xc_section)) RETURN
-
-      functionals => section_vals_get_subs_vals(xc_section, "XC_FUNCTIONAL")
-      IF (.NOT. ASSOCIATED(functionals)) RETURN
-
-      ifun = 0
-      DO
-         ifun = ifun + 1
-         xc_fun => section_vals_get_subs_vals2(functionals, i_section=ifun)
-         IF (.NOT. ASSOCIATED(xc_fun)) EXIT
-         IF (xc_fun%section%name == "GAUXC" .OR. xc_fun%section%name == "SKALA_NATIVE") THEN
-            uses_gauxc = .TRUE.
-            EXIT
-         END IF
-      END DO
-
-   END FUNCTION xc_section_uses_gauxc
 
 ! **************************************************************************************************
 !> \brief Return whether GauXC GAPW mode sees pseudopotential kinds.
@@ -1104,12 +1071,13 @@ CONTAINS
          "Use an additive PAIR_POTENTIAL dispersion correction or disable GauXC."
       REAL(KIND=dp), PARAMETER :: gapw_fd_gradient_dx = 1.0E-4_dp
 
-      CHARACTER(len=default_path_length)                 :: model_key, model_name, output_path
+      CHARACTER(len=default_path_length)                 :: model_key, model_name, output_path, &
+                                                            resolved_model
       CHARACTER(len=default_string_length) :: gradient_runtime, gradient_runtime_key, grid_key, &
          int_exec_space_key, lb_exec_space_key, lwd_kernel_key, pruning_key, skala_runtime, &
          skala_runtime_key, xc_fun_key
-      INTEGER                                            :: env_status, gpu_mode, img, ispin, nimages
-      LOGICAL :: do_kpoints, external_density, gapw_method, gapw_paw_pseudopotentials, &
+      INTEGER                                            :: gpu_mode, img, ispin, nimages
+      LOGICAL :: auto_cuda, do_kpoints, external_density, gapw_method, gapw_paw_pseudopotentials, &
          gapw_pseudopotentials, grid_explicit, hdf5_output, int_space_explicit, is_periodic, &
          lb_space_explicit, low_spin_scope, molecular_virial, molecular_virial_debug, &
          need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, use_skala_model, &
@@ -1265,20 +1233,11 @@ CONTAINS
          gauxc_functional_section, &
          "USE_GPU", &
          i_val=gpu_mode)
-      SELECT CASE (gpu_mode)
-      CASE (do_gpu_auto)
+      auto_cuda = .FALSE.
 #if defined(GAUXC_HAS_DEVICE) && defined(__LIBTORCH_CUDA)
-         use_cuda = .TRUE.
-#else
-         use_cuda = .FALSE.
+      auto_cuda = .TRUE.
 #endif
-      CASE (do_gpu_host)
-         use_cuda = .FALSE.
-      CASE (do_gpu_device)
-         use_cuda = .TRUE.
-      CASE DEFAULT
-         CALL cp_abort(__LOCATION__, "Unknown GAUXC%USE_GPU value.")
-      END SELECT
+      use_cuda = skala_gpu_mode_use_cuda(gpu_mode, auto_cuda)
       CALL section_vals_val_get( &
          gauxc_functional_section, &
          "LB_EXECUTION_SPACE", &
@@ -1436,25 +1395,9 @@ CONTAINS
                "Use GRID SUPERFINE and PRUNING_SCHEME UNPRUNED for quantitative force checks.")
          END IF
          IF (TRIM(model_key) == "SKALA") THEN
-            model_name = ""
-            env_status = 1
-            IF (TRIM(int_exec_space_key) == "DEVICE") THEN
-               CALL GET_ENVIRONMENT_VARIABLE("SKALA_CUDA_MODEL", model_name, STATUS=env_status)
-            END IF
-            IF (env_status /= 0 .OR. LEN_TRIM(model_name) == 0) THEN
-               CALL GET_ENVIRONMENT_VARIABLE("SKALA_MODEL", model_name, STATUS=env_status)
-            END IF
-            IF (env_status /= 0 .OR. LEN_TRIM(model_name) == 0) THEN
-               IF (TRIM(int_exec_space_key) == "DEVICE") THEN
-                  CALL cp_abort( &
-                     __LOCATION__, &
-                     "MODEL SKALA with DEVICE execution requires SKALA_CUDA_MODEL or "// &
-                     "SKALA_MODEL")
-               ELSE
-                  CPABORT("MODEL SKALA requires the SKALA_MODEL environment variable")
-               END IF
-            END IF
-            params%model_eval_name = model_name
+            CALL resolve_skala_model_path(model_name, TRIM(params%int_exec_space) == "DEVICE", &
+                                          resolved_model)
+            params%model_eval_name = resolved_model
          END IF
       END IF
       SELECT CASE (TRIM(skala_runtime_key))

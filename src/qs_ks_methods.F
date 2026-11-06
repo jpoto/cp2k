@@ -145,11 +145,16 @@ MODULE qs_ks_methods
    USE rtp_admm_methods,                ONLY: rtp_admm_calc_rho_aux,&
                                               rtp_admm_merge_ks_matrix
    USE se_fock_matrix,                  ONLY: build_se_fock_matrix
-   USE skala_gpw_functional,            ONLY: &
-        ensure_native_skala_grid_scope, get_gauxc_section, get_skala_native_section, &
-        native_skala_gapw_atom_composite_requested, native_skala_gapw_composite_direct_ao, &
-        native_skala_gapw_composite_reference, native_skala_uses_atom_composite_grid, &
-        skala_execution_use_cuda, skala_gapw_representation, xc_section_uses_native_skala_grid
+   USE skala_gpw_functional,            ONLY: ensure_native_skala_grid_scope,&
+                                              native_skala_gapw_atom_composite_requested,&
+                                              native_skala_gapw_composite_direct_ao,&
+                                              native_skala_gapw_composite_reference,&
+                                              native_skala_uses_atom_composite_grid,&
+                                              skala_execution_use_cuda,&
+                                              skala_gapw_representation
+   USE skala_model_selection,           ONLY: get_gauxc_section,&
+                                              get_skala_native_section,&
+                                              xc_section_uses_native_skala_grid
    USE smeagol_interface,               ONLY: smeagol_shift_v_hartree
    USE string_utilities,                ONLY: uppercase
    USE surface_dipole,                  ONLY: calc_dipsurf_potential

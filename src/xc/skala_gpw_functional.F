@@ -15,9 +15,7 @@ MODULE skala_gpw_functional
                                               pbc
    USE cp_array_utils,                  ONLY: cp_3d_r_cp_type
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
-   USE input_constants,                 ONLY: do_gpu_auto,&
-                                              do_gpu_device,&
-                                              do_gpu_host
+   USE input_constants,                 ONLY: do_gpu_auto
    USE input_section_types,             ONLY: section_get_rval,&
                                               section_vals_get_subs_vals,&
                                               section_vals_get_subs_vals2,&
@@ -43,6 +41,12 @@ MODULE skala_gpw_functional
         skala_gpw_feature_build_atom_subchunk_bounds, skala_gpw_feature_release, &
         skala_gpw_feature_type, skala_gpw_features_release_cache, &
         skala_gpw_smooth_partition_derivatives, smooth_partition_atomic_weight_scale_derivative
+   USE skala_model_selection,           ONLY: get_gauxc_section,&
+                                              get_skala_native_section,&
+                                              resolve_skala_model_path,&
+                                              skala_gpu_mode_use_cuda,&
+                                              xc_section_uses_gauxc_model,&
+                                              xc_section_uses_native_skala_grid
    USE skala_torch_api,                 ONLY: skala_torch_model_get_exc,&
                                               skala_torch_model_get_exc_device,&
                                               skala_torch_model_load,&
@@ -94,17 +98,14 @@ MODULE skala_gpw_functional
                                                             grid_weights_t, kin_t
    END TYPE skala_gapw_atom_cuda_tensor_cache_type
 
-   PUBLIC :: build_vxc_from_feature_grads, ensure_native_skala_grid_scope, get_gauxc_section, &
-             get_skala_native_section, &
+   PUBLIC :: build_vxc_from_feature_grads, ensure_native_skala_grid_scope, &
              skala_gapw_atom_composite_energy, skala_gapw_atom_vxc_of_r, &
              native_skala_gapw_atom_composite_requested, &
              native_skala_uses_atom_composite_grid, &
              native_skala_gapw_composite_direct_ao, native_skala_gapw_composite_reference, &
              native_skala_gapw_density_partition, skala_gpw_eval, skala_gpw_weight_derivative, &
              skala_execution_use_cuda, skala_gpw_release_caches, skala_gapw_representation, &
-             xc_section_uses_native_skala_evaluator, &
-             xc_section_uses_native_skala_grid, xc_section_uses_gauxc_model, &
-             xc_section_uses_skala_model
+             xc_section_uses_native_skala_evaluator
 
    TYPE(skala_torch_model_type), SAVE                  :: cached_model
    TYPE(skala_gapw_atom_cuda_tensor_cache_type), SAVE, TARGET :: cached_atom_cuda_tensors
@@ -118,22 +119,6 @@ MODULE skala_gpw_functional
                                                           logged_cuda_nproc = -1
 
 CONTAINS
-
-! **************************************************************************************************
-!> \brief Return true if the GAUXC subsection requests the CP2K-native GPW grid path.
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION xc_section_uses_native_skala_grid(xc_section) RESULT(uses_native_grid)
-      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
-      LOGICAL                                            :: uses_native_grid
-
-      TYPE(section_vals_type), POINTER                   :: native_section
-
-      native_section => get_skala_native_section(xc_section)
-      uses_native_grid = ASSOCIATED(native_section)
-
-   END FUNCTION xc_section_uses_native_skala_grid
 
 ! **************************************************************************************************
 !> \brief Return the pseudopotential GAPW representation selected for an active model.
@@ -273,75 +258,6 @@ CONTAINS
       use_direct_ao = native_skala_gapw_composite_reference(xc_section) .AND. use_direct_ao
 
    END FUNCTION native_skala_gapw_composite_direct_ao
-
-! **************************************************************************************************
-!> \brief Return true if the GAUXC subsection requests a model evaluation.
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION xc_section_uses_gauxc_model(xc_section) RESULT(uses_gauxc_model)
-      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
-      LOGICAL                                            :: uses_gauxc_model
-
-      CHARACTER(len=default_path_length)                 :: model_key, model_name, xc_key, xc_name
-      TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
-
-      uses_gauxc_model = .FALSE.
-      native_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(native_section)) THEN
-         uses_gauxc_model = .TRUE.
-         RETURN
-      END IF
-      gauxc_section => get_gauxc_section(xc_section)
-      IF (ASSOCIATED(gauxc_section)) THEN
-         CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
-         CALL section_vals_val_get(gauxc_section, "FUNCTIONAL", c_val=xc_name)
-         model_key = ADJUSTL(model_name)
-         xc_key = ADJUSTL(xc_name)
-         CALL uppercase(model_key)
-         CALL uppercase(xc_key)
-         uses_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE" .AND. &
-                             TRIM(model_key) /= TRIM(xc_key))
-      END IF
-
-   END FUNCTION xc_section_uses_gauxc_model
-
-! **************************************************************************************************
-!> \brief Return true if the XC section requests a SKALA model (GauXC or native/FTorch).
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION xc_section_uses_skala_model(xc_section) RESULT(uses_skala_model)
-      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
-      LOGICAL                                            :: uses_skala_model
-
-      CHARACTER(len=default_path_length)                 :: model_key, model_name
-      LOGICAL                                            :: section_active
-      TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
-
-      uses_skala_model = .FALSE.
-
-      native_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(native_section)) THEN
-         CALL section_vals_val_get(native_section, "_SECTION_PARAMETERS_", l_val=section_active)
-         IF (section_active) THEN
-            uses_skala_model = .TRUE.
-            RETURN
-         END IF
-      END IF
-
-      gauxc_section => get_gauxc_section(xc_section)
-      IF (.NOT. ASSOCIATED(gauxc_section)) RETURN
-
-      CALL section_vals_val_get(gauxc_section, "_SECTION_PARAMETERS_", l_val=section_active)
-      IF (.NOT. section_active) RETURN
-
-      CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
-      model_key = ADJUSTL(model_name)
-      CALL uppercase(model_key)
-      uses_skala_model = INDEX(TRIM(model_key), "SKALA") > 0
-
-   END FUNCTION xc_section_uses_skala_model
 
 ! **************************************************************************************************
 !> \brief Return the hard/soft GAPW one-center density partition for native SKALA.
@@ -3180,6 +3096,7 @@ CONTAINS
       LOGICAL                                            :: use_cuda
 
       INTEGER                                            :: gpu_mode
+      LOGICAL                                            :: save_auto_cuda
       TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
 
       gpu_mode = do_gpu_auto
@@ -3193,20 +3110,11 @@ CONTAINS
          END IF
       END IF
 
-      SELECT CASE (gpu_mode)
-      CASE (do_gpu_auto)
+      save_auto_cuda = .FALSE.
 #if defined(__LIBTORCH_CUDA)
-         use_cuda = .TRUE.
-#else
-         use_cuda = .FALSE.
+      save_auto_cuda = .TRUE.
 #endif
-      CASE (do_gpu_host)
-         use_cuda = .FALSE.
-      CASE (do_gpu_device)
-         use_cuda = .TRUE.
-      CASE DEFAULT
-         CALL cp_abort(__LOCATION__, "Unknown SKALA execution-space value.")
-      END SELECT
+      use_cuda = skala_gpu_mode_use_cuda(gpu_mode, save_auto_cuda)
 
       IF (use_cuda) THEN
          IF (.NOT. torch_cuda_is_available() .OR. torch_cuda_device_count() <= 0) THEN
@@ -3338,41 +3246,27 @@ CONTAINS
       TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
       CHARACTER(len=default_path_length), INTENT(OUT)    :: model_path
 
-      CHARACTER(len=default_path_length)                 :: model_key
-      INTEGER                                            :: env_status
+      CHARACTER(len=default_path_length)                 :: model_key, model_name
       LOGICAL                                            :: use_cuda
       TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
 
       use_cuda = skala_execution_use_cuda(xc_section)
       native_section => get_skala_native_section(xc_section)
       IF (ASSOCIATED(native_section)) THEN
-         CALL section_vals_val_get(native_section, "MODEL", c_val=model_path)
+         CALL section_vals_val_get(native_section, "MODEL", c_val=model_name)
       ELSE
          gauxc_section => get_gauxc_section(xc_section)
          IF (.NOT. ASSOCIATED(gauxc_section)) THEN
             CPABORT("Native SKALA GPW requires an XC_FUNCTIONAL%SKALA_NATIVE section")
          END IF
-         CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_path)
+         CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
       END IF
-      model_key = ADJUSTL(model_path)
+      model_key = ADJUSTL(model_name)
       CALL uppercase(model_key)
       IF (TRIM(model_key) == "NONE" .OR. TRIM(model_key) == "") THEN
          CPABORT("SKALA requires MODEL SKALA or a TorchScript model path")
-      ELSE IF (TRIM(model_key) == "SKALA") THEN
-         IF (use_cuda) THEN
-            CALL GET_ENVIRONMENT_VARIABLE("SKALA_CUDA_MODEL", model_path, STATUS=env_status)
-            IF (env_status /= 0 .OR. LEN_TRIM(model_path) == 0) THEN
-               CALL cp_abort(__LOCATION__, &
-                             "GPU execution of SKALA requires SKALA_CUDA_MODEL")
-            END IF
-         ELSE
-            CALL GET_ENVIRONMENT_VARIABLE("SKALA_MODEL", model_path, STATUS=env_status)
-            IF (env_status /= 0 .OR. LEN_TRIM(model_path) == 0) THEN
-               CALL cp_abort(__LOCATION__, &
-                             "SKALA requires the SKALA_MODEL environment variable")
-            END IF
-         END IF
       END IF
+      CALL resolve_skala_model_path(model_name, use_cuda, model_path)
 
    END SUBROUTINE get_skala_model_path
 
@@ -3396,67 +3290,5 @@ CONTAINS
       END IF
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
-
-! **************************************************************************************************
-!> \brief Return the CP2K-native SKALA functional subsection, if present.
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION get_skala_native_section(xc_section) RESULT(native_section)
-      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
-      TYPE(section_vals_type), POINTER                   :: native_section
-
-      INTEGER                                            :: ifun
-      TYPE(section_vals_type), POINTER                   :: functionals, xc_fun
-
-      NULLIFY (native_section)
-      IF (.NOT. ASSOCIATED(xc_section)) RETURN
-
-      functionals => section_vals_get_subs_vals(xc_section, "XC_FUNCTIONAL")
-      IF (.NOT. ASSOCIATED(functionals)) RETURN
-
-      ifun = 0
-      DO
-         ifun = ifun + 1
-         xc_fun => section_vals_get_subs_vals2(functionals, i_section=ifun)
-         IF (.NOT. ASSOCIATED(xc_fun)) EXIT
-         IF (xc_fun%section%name == "SKALA_NATIVE") THEN
-            native_section => xc_fun
-            EXIT
-         END IF
-      END DO
-
-   END FUNCTION get_skala_native_section
-
-! **************************************************************************************************
-!> \brief Return the first GAUXC functional subsection, if present.
-!> \param xc_section ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION get_gauxc_section(xc_section) RESULT(gauxc_section)
-      TYPE(section_vals_type), INTENT(IN), POINTER       :: xc_section
-      TYPE(section_vals_type), POINTER                   :: gauxc_section
-
-      INTEGER                                            :: ifun
-      TYPE(section_vals_type), POINTER                   :: functionals, xc_fun
-
-      NULLIFY (gauxc_section)
-      IF (.NOT. ASSOCIATED(xc_section)) RETURN
-
-      functionals => section_vals_get_subs_vals(xc_section, "XC_FUNCTIONAL")
-      IF (.NOT. ASSOCIATED(functionals)) RETURN
-
-      ifun = 0
-      DO
-         ifun = ifun + 1
-         xc_fun => section_vals_get_subs_vals2(functionals, i_section=ifun)
-         IF (.NOT. ASSOCIATED(xc_fun)) EXIT
-         IF (xc_fun%section%name == "GAUXC") THEN
-            gauxc_section => xc_fun
-            EXIT
-         END IF
-      END DO
-
-   END FUNCTION get_gauxc_section
 
 END MODULE skala_gpw_functional

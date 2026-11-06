@@ -57,11 +57,11 @@ MODULE qs_vxc
                                               qs_ks_env_type
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
-   USE skala_gpw_functional,            ONLY: get_skala_native_section,&
-                                              native_skala_gapw_composite_direct_ao,&
+   USE skala_gpw_functional,            ONLY: native_skala_gapw_composite_direct_ao,&
                                               native_skala_gapw_composite_reference,&
                                               skala_gpw_eval,&
                                               xc_section_uses_native_skala_evaluator
+   USE skala_model_selection,           ONLY: get_skala_native_section
    USE virial_types,                    ONLY: virial_type
    USE xc,                              ONLY: calc_xc_density,&
                                               xc_exc_calc,&

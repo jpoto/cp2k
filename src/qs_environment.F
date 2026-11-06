@@ -212,8 +212,8 @@ MODULE qs_environment
    USE semi_empirical_types,            ONLY: se_taper_create,&
                                               se_taper_type
    USE semi_empirical_utils,            ONLY: se_cutoff_compatible
-   USE skala_gpw_functional,            ONLY: xc_section_uses_native_skala_evaluator,&
-                                              xc_section_uses_skala_model
+   USE skala_gpw_functional,            ONLY: xc_section_uses_native_skala_evaluator
+   USE skala_model_selection,           ONLY: xc_section_uses_skala_model
    USE tblite_interface,                ONLY: tb_get_basis,&
                                               tb_init_geometry,&
                                               tb_init_wf,&
