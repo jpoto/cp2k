@@ -32,8 +32,7 @@ MODULE skala_torch_api
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'skala_torch_api'
 
    PUBLIC :: skala_torch_model_type, skala_torch_model_load, skala_torch_model_release
-   PUBLIC :: skala_torch_model_get_exc, skala_torch_model_get_exc_density, &
-             skala_torch_model_get_exc_device
+   PUBLIC :: skala_torch_model_get_exc, skala_torch_model_get_exc_device
    PUBLIC :: skala_torch_model_needs_feature, skala_torch_model_protocol_version
 
    TYPE skala_torch_model_type
@@ -137,30 +136,6 @@ CONTAINS
       protocol_version = model%protocol_version
 
    END FUNCTION skala_torch_model_protocol_version
-
-! **************************************************************************************************
-!> \brief Evaluate the SKALA exchange-correlation energy density.
-!> \param model ...
-!> \param inputs ...
-!> \param exc_density ...
-! **************************************************************************************************
-   SUBROUTINE skala_torch_model_get_exc_density(model, inputs, exc_density)
-      TYPE(skala_torch_model_type), INTENT(INOUT)        :: model
-      TYPE(torch_dict_type), INTENT(IN)                  :: inputs
-      TYPE(torch_tensor_type), INTENT(INOUT)             :: exc_density
-
-#if defined (__HAS_IEEE_EXCEPTIONS)
-      LOGICAL, DIMENSION(5)                              :: ieee_halt
-
-      CALL ieee_get_halting_mode(IEEE_ALL, ieee_halt)
-      CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
-#endif
-      CALL torch_model_forward_mol_tensor(model%torch_model, "get_exc_density", inputs, exc_density)
-#if defined (__HAS_IEEE_EXCEPTIONS)
-      CALL ieee_set_halting_mode(IEEE_ALL, ieee_halt)
-#endif
-
-   END SUBROUTINE skala_torch_model_get_exc_density
 
 ! **************************************************************************************************
 !> \brief Evaluate the weighted SKALA exchange-correlation energy.
