@@ -881,6 +881,13 @@ void torch_c_tensor_grad(const torch_c_tensor_t *tensor,
   TORCH_C_CATCH("torch_c_tensor_grad")
 }
 
+// Reusable pinned host buffers for gradient readbacks, one per leaf tensor.
+// The map is intentionally leaked (raw pointer, never destroyed) because a
+// static torch::Tensor would be destroyed after the CUDA driver has shut down.
+static std::mutex grad_pinned_mutex;
+static std::unordered_map<const torch_c_tensor_t *, torch::Tensor>
+    *grad_pinned_pool = nullptr;
+
 static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
                             const int count, torch_c_tensor_t **grads,
                             const bool synchronize) {
@@ -903,13 +910,26 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
   }
 
   if (all_defined && any_cuda) {
-    // Pinned host buffers plus one synchronization for the whole batch.
+    // Reuse one pinned host buffer per leaf tensor; one synchronization for the
+    // whole batch.
+    std::lock_guard<std::mutex> lock(grad_pinned_mutex);
+    if (grad_pinned_pool == nullptr) {
+      grad_pinned_pool =
+          new std::unordered_map<const torch_c_tensor_t *, torch::Tensor>();
+    }
     std::vector<torch::Tensor> hosts(count);
     for (int i = 0; i < count; ++i) {
-      hosts[i] = torch::empty(
-          sources[i].sizes(),
-          sources[i].options().device(torch::kCPU).pinned_memory(true));
-      hosts[i].copy_(sources[i], true);
+      auto &entry = (*grad_pinned_pool)[tensors[i]];
+      const auto sizes = sources[i].sizes();
+      const bool reuse = entry.defined() && entry.sizes() == sizes &&
+                         entry.scalar_type() == sources[i].scalar_type();
+      if (!reuse) {
+        entry = torch::empty(
+            sizes,
+            sources[i].options().device(torch::kCPU).pinned_memory(true));
+      }
+      entry.copy_(sources[i], true);
+      hosts[i] = entry;
     }
     if (synchronize) {
       torch::cuda::synchronize(device.index());
@@ -1142,6 +1162,30 @@ void torch_c_model_forward(torch_c_model_t *model, const torch_c_dict_t *inputs,
 /*******************************************************************************
  * \brief Evaluates a TorchScript model method expecting argument "mol".
  ******************************************************************************/
+// Cache TorchScript method handles per model and method name. The map is
+// intentionally leaked for the same reason as the pinned gradient pool.
+static std::mutex model_method_mutex;
+static std::unordered_map<const torch_c_model_t *,
+                          std::unordered_map<std::string, torch::jit::Method>>
+    *model_method_cache = nullptr;
+
+static torch::jit::Method *get_cached_method(torch_c_model_t *model,
+                                             const char *method_name) {
+  std::lock_guard<std::mutex> lock(model_method_mutex);
+  if (model_method_cache == nullptr) {
+    model_method_cache = new std::unordered_map<
+        const torch_c_model_t *,
+        std::unordered_map<std::string, torch::jit::Method>>();
+  }
+  auto &methods = (*model_method_cache)[model];
+  const std::string key(method_name);
+  auto it = methods.find(key);
+  if (it == methods.end()) {
+    it = methods.emplace(key, model->get_method(key)).first;
+  }
+  return &it->second;
+}
+
 void torch_c_model_forward_mol_tensor(torch_c_model_t *model,
                                       const char *method_name,
                                       const torch_c_dict_t *inputs,
@@ -1156,8 +1200,8 @@ void torch_c_model_forward_mol_tensor(torch_c_model_t *model,
     graph_optimization.emplace(false);
   }
   torch_c_check(*output == NULL, "Torch tensor output must be NULL");
-  *output = new torch_c_tensor_t(
-      model->get_method(method_name)({*inputs}).toTensor());
+  auto *method = get_cached_method(model, method_name);
+  *output = new torch_c_tensor_t((*method)({*inputs}).toTensor());
   TORCH_C_CATCH("torch_c_model_forward_mol_tensor")
 }
 
@@ -1170,8 +1214,13 @@ void torch_c_tensor_weighted_sum(const torch_c_tensor_t *values,
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
-  const auto weights_on_device = weights->to(values->device());
-  *result = new torch_c_tensor_t((*values * weights_on_device).sum());
+  const auto weights_on_device =
+      weights->to(values->device()).to(values->dtype());
+  const auto flat_values = values->flatten();
+  const auto flat_weights = weights_on_device.flatten();
+  torch_c_check(flat_values.numel() == flat_weights.numel(),
+                "Torch weighted sum: value/weight size mismatch");
+  *result = new torch_c_tensor_t(torch::dot(flat_values, flat_weights));
   TORCH_C_CATCH("torch_c_tensor_weighted_sum")
 }
 
@@ -1183,10 +1232,13 @@ void torch_c_tensor_accumulate(torch_c_tensor_t **accumulator,
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
+  // Only the scalar value is consumed (and it is read back once); never let the
+  // accumulator retain the per-chunk autograd graphs.
+  torch::NoGradGuard no_grad;
   if (*accumulator == nullptr) {
-    *accumulator = new torch_c_tensor_t(value->clone());
+    *accumulator = new torch_c_tensor_t(value->detach().clone());
   } else {
-    (*accumulator)->add_(*value);
+    (*accumulator)->add_(value->detach());
   }
   TORCH_C_CATCH("torch_c_tensor_accumulate")
 }
@@ -1206,7 +1258,15 @@ double torch_c_tensor_item_double(const torch_c_tensor_t *tensor) {
  * \brief Releases a Torch model and all its ressources.
  * \author Ole Schuett
  ******************************************************************************/
-void torch_c_model_release(torch_c_model_t *model) { delete (model); }
+void torch_c_model_release(torch_c_model_t *model) {
+  {
+    std::lock_guard<std::mutex> lock(model_method_mutex);
+    if (model_method_cache != nullptr) {
+      model_method_cache->erase(model);
+    }
+  }
+  delete (model);
+}
 
 /*******************************************************************************
  * \brief Reads metadata entry from given "*.pth" file.
