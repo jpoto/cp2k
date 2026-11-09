@@ -195,6 +195,17 @@ MODULE skala_gpw_features
 
    TYPE(skala_gpw_layout_cache_type), SAVE, TARGET       :: cached_layout
 
+   ! Persistent per-layout host scratch, reused across SCF steps to avoid
+   ! reallocating the grid-sized dynamic and routing buffers every call.
+   TYPE skala_gpw_scratch_type
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: local_dynamic, global_dynamic, &
+                                                         route_send_dynamic, route_recv_dynamic
+      INTEGER, ALLOCATABLE, DIMENSION(:)              :: route_send_counts, route_send_displs, &
+                                                         route_recv_counts, route_recv_displs
+   END TYPE skala_gpw_scratch_type
+
+   TYPE(skala_gpw_scratch_type), SAVE, TARGET            :: gpw_scratch
+
 CONTAINS
 
 ! **************************************************************************************************
@@ -237,8 +248,8 @@ CONTAINS
          my_requires_grad, my_requires_stress_grad, my_requires_weight_grad, my_use_atom_chunks, &
          use_atom_chunk_protocol
       REAL(KIND=dp)                                      :: grid_weight_local
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: global_dynamic, local_dynamic
       REAL(KIND=dp), DIMENSION(3)                        :: integrals
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: global_dynamic, local_dynamic
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: rho, rhoa, rhob, tau_a, tau_b, tau_total
       TYPE(cp_3d_r_cp_type), DIMENSION(3)                :: drho, drhoa, drhob
       TYPE(pw_grid_type), POINTER                        :: pw_grid
@@ -276,7 +287,7 @@ CONTAINS
       nflat_local = pw_grid%ngpts_local
 
       CALL timeset("skala_gpw_pre_release", phase_handle)
-      CALL skala_gpw_feature_release(features)
+      CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL timestop(phase_handle)
 
       use_atom_chunk_protocol = my_use_atom_chunks
@@ -292,8 +303,9 @@ CONTAINS
       collapse_spin_dynamics = nspins == 1 .AND. use_atom_chunk_protocol
       ndynamic_local_per_point = ndynamic_per_point
       IF (collapse_spin_dynamics) ndynamic_local_per_point = nrks_dynamic_per_point
-      ALLOCATE (local_dynamic(ndynamic_local_per_point*nflat_local))
-      local_dynamic = 0.0_dp
+      CALL ensure_real_1d(gpw_scratch%local_dynamic, ndynamic_local_per_point*nflat_local)
+      gpw_scratch%local_dynamic = 0.0_dp
+      local_dynamic => gpw_scratch%local_dynamic
 
       CALL timeset("skala_gpw_pack_local", phase_handle)
       IF (nspins == 1) THEN
@@ -364,7 +376,8 @@ CONTAINS
          features%uses_atom_chunks = .TRUE.
          CALL timestop(phase_handle)
       ELSE
-         ALLOCATE (global_dynamic(ndynamic_per_point*cached_layout%npoint))
+         CALL ensure_real_1d(gpw_scratch%global_dynamic, ndynamic_per_point*cached_layout%npoint)
+         global_dynamic => gpw_scratch%global_dynamic
          CALL timeset("skala_gpw_allgatherv", phase_handle)
          CALL pw_grid%para%group%allgatherv(local_dynamic, global_dynamic, &
                                             cached_layout%dynamic_counts, &
@@ -372,8 +385,9 @@ CONTAINS
          CALL timestop(phase_handle)
 
          CALL timeset("skala_gpw_reorder_dyn", phase_handle)
-         ALLOCATE (features%density(nflat, 2), features%grad(nflat, 3, 2), &
-                   features%kin(nflat, 2))
+         CALL ensure_real_2d(features%density, nflat, 2)
+         CALL ensure_real_3d(features%grad, nflat, 3, 2)
+         CALL ensure_real_2d(features%kin, nflat, 2)
          features%density = 0.0_dp
          features%grad = 0.0_dp
          features%kin = 0.0_dp
@@ -464,8 +478,7 @@ CONTAINS
       CALL timestop(phase_handle)
       features%active = .TRUE.
 
-      IF (ALLOCATED(global_dynamic)) DEALLOCATE (global_dynamic)
-      DEALLOCATE (local_dynamic)
+      NULLIFY (local_dynamic, global_dynamic)
       CALL timestop(handle)
 
    END SUBROUTINE skala_gpw_feature_build
@@ -1368,10 +1381,10 @@ CONTAINS
       features%chunk_feature_count = cached_layout%chunk_feature_count
       features%chunk_natom = cached_layout%chunk_natom
       features%atom_partition = cached_layout%atom_partition
-      ALLOCATE (features%atomic_grid_sizes(cached_layout%natom))
+      CALL ensure_i8_1d(features%atomic_grid_sizes, cached_layout%natom)
       features%atomic_grid_sizes(:) = cached_layout%atomic_grid_sizes
       IF (needs_coordinate_array) THEN
-         ALLOCATE (features%coarse_0_atomic_coords(3, cached_layout%natom))
+         CALL ensure_real_2d(features%coarse_0_atomic_coords, 3, cached_layout%natom)
          features%coarse_0_atomic_coords(:, :) = cached_layout%coarse_0_atomic_coords
       END IF
 
@@ -1386,16 +1399,17 @@ CONTAINS
       TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
       LOGICAL, INTENT(IN)                                :: needs_grid_coordinate_array
 
-      ALLOCATE (features%feature_index(LBOUND(cached_layout%feature_index, 1): &
-                                       UBOUND(cached_layout%feature_index, 1), &
-                                       LBOUND(cached_layout%feature_index, 2): &
-                                       UBOUND(cached_layout%feature_index, 2), &
-                                       LBOUND(cached_layout%feature_index, 3): &
-                                       UBOUND(cached_layout%feature_index, 3)))
-      ALLOCATE (features%grid_weights(cached_layout%nflat))
-      ALLOCATE (features%local_feature_counts(cached_layout%nflat_local), &
-                features%local_feature_offsets(cached_layout%nflat_local + 1), &
-                features%local_feature_rows(SIZE(cached_layout%local_feature_rows)))
+      CALL ensure_int_3d(features%feature_index, &
+                         LBOUND(cached_layout%feature_index, 1), &
+                         UBOUND(cached_layout%feature_index, 1), &
+                         LBOUND(cached_layout%feature_index, 2), &
+                         UBOUND(cached_layout%feature_index, 2), &
+                         LBOUND(cached_layout%feature_index, 3), &
+                         UBOUND(cached_layout%feature_index, 3))
+      CALL ensure_real_1d(features%grid_weights, cached_layout%nflat)
+      CALL ensure_int_1d(features%local_feature_counts, cached_layout%nflat_local)
+      CALL ensure_int_1d(features%local_feature_offsets, cached_layout%nflat_local + 1)
+      CALL ensure_int_1d(features%local_feature_rows, SIZE(cached_layout%local_feature_rows))
 
       features%feature_index(:, :, :) = cached_layout%feature_index
       features%grid_weights(:) = cached_layout%grid_weights
@@ -1404,8 +1418,8 @@ CONTAINS
       features%local_feature_rows(:) = cached_layout%local_feature_rows
 
       IF (needs_grid_coordinate_array) THEN
-         ALLOCATE (features%grid_coords(3, cached_layout%nflat))
-         ALLOCATE (features%atomic_grid_weights(cached_layout%nflat))
+         CALL ensure_real_2d(features%grid_coords, 3, cached_layout%nflat)
+         CALL ensure_real_1d(features%atomic_grid_weights, cached_layout%nflat)
          features%grid_coords(:, :) = cached_layout%grid_coords
          features%atomic_grid_weights(:) = cached_layout%atomic_grid_weights
       END IF
@@ -1426,12 +1440,12 @@ CONTAINS
       IF (needs_coordinate_array) THEN
          ! Routing mode keeps a per-rank local feature layout. Assembly routines
          ! index these arrays by feature position, so the row map is made local.
-         ALLOCATE (features%local_feature_counts(cached_layout%nflat_local), &
-                   features%local_feature_offsets(cached_layout%nflat_local + 1), &
-                   features%local_feature_rows(SIZE(cached_layout%local_feature_rows)))
-         ALLOCATE (features%grid_coords(3, SIZE(cached_layout%local_feature_rows)), &
-                   features%grid_weights(SIZE(cached_layout%local_feature_rows)), &
-                   features%atomic_grid_weights(SIZE(cached_layout%local_feature_rows)))
+         CALL ensure_int_1d(features%local_feature_counts, cached_layout%nflat_local)
+         CALL ensure_int_1d(features%local_feature_offsets, cached_layout%nflat_local + 1)
+         CALL ensure_int_1d(features%local_feature_rows, SIZE(cached_layout%local_feature_rows))
+         CALL ensure_real_2d(features%grid_coords, 3, SIZE(cached_layout%local_feature_rows))
+         CALL ensure_real_1d(features%grid_weights, SIZE(cached_layout%local_feature_rows))
+         CALL ensure_real_1d(features%atomic_grid_weights, SIZE(cached_layout%local_feature_rows))
          features%local_feature_counts(:) = cached_layout%local_feature_counts
          features%local_feature_offsets(:) = cached_layout%local_feature_offsets
          DO feature_pos = 1, SIZE(cached_layout%local_feature_rows)
@@ -1825,8 +1839,9 @@ CONTAINS
       INTEGER                                            :: chunk_row, dyn_base, local_row, &
                                                             ndynamic_route_per_point, nrecv, nsend, &
                                                             point_pos, src_base
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: recv_counts, recv_displs, send_counts, send_displs
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: recv_dynamic, send_dynamic
+      INTEGER, DIMENSION(:), POINTER                     :: recv_counts, recv_displs, send_counts, &
+                                                            send_displs
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: recv_dynamic, send_dynamic
 
       nsend = SIZE(cached_layout%route_send_local_rows)
       nrecv = SUM(cached_layout%route_point_recv_counts)
@@ -1834,11 +1849,20 @@ CONTAINS
       ndynamic_route_per_point = ndynamic_per_point
       IF (collapse_spin_dynamics) ndynamic_route_per_point = nrks_dynamic_per_point
 
-      ALLOCATE (send_dynamic(MAX(1, ndynamic_route_per_point*nsend)), &
-                recv_dynamic(MAX(1, ndynamic_route_per_point*nrecv)), &
-                send_counts(cached_layout%nproc), send_displs(cached_layout%nproc), &
-                recv_counts(cached_layout%nproc), &
-                recv_displs(cached_layout%nproc))
+      CALL ensure_real_1d(gpw_scratch%route_send_dynamic, &
+                          ndynamic_route_per_point*nsend)
+      CALL ensure_real_1d(gpw_scratch%route_recv_dynamic, &
+                          ndynamic_route_per_point*nrecv)
+      CALL ensure_int_1d(gpw_scratch%route_send_counts, cached_layout%nproc)
+      CALL ensure_int_1d(gpw_scratch%route_send_displs, cached_layout%nproc)
+      CALL ensure_int_1d(gpw_scratch%route_recv_counts, cached_layout%nproc)
+      CALL ensure_int_1d(gpw_scratch%route_recv_displs, cached_layout%nproc)
+      send_dynamic => gpw_scratch%route_send_dynamic
+      recv_dynamic => gpw_scratch%route_recv_dynamic
+      send_counts => gpw_scratch%route_send_counts
+      send_displs => gpw_scratch%route_send_displs
+      recv_counts => gpw_scratch%route_recv_counts
+      recv_displs => gpw_scratch%route_recv_displs
       send_counts(:) = ndynamic_route_per_point*cached_layout%route_point_send_counts
       send_displs(:) = ndynamic_route_per_point*cached_layout%route_point_send_displs
       recv_counts(:) = ndynamic_route_per_point*cached_layout%route_point_recv_counts
@@ -1861,13 +1885,13 @@ CONTAINS
       features%uses_collapsed_rks_dynamic = collapse_spin_dynamics
       IF (cached_layout%chunk_feature_count > 0) THEN
          IF (collapse_spin_dynamics) THEN
-            ALLOCATE (features%chunk_density(cached_layout%chunk_feature_count, 1), &
-                      features%chunk_grad(cached_layout%chunk_feature_count, 3, 1), &
-                      features%chunk_kin(cached_layout%chunk_feature_count, 1))
+            CALL ensure_real_2d(features%chunk_density, cached_layout%chunk_feature_count, 1)
+            CALL ensure_real_3d(features%chunk_grad, cached_layout%chunk_feature_count, 3, 1)
+            CALL ensure_real_2d(features%chunk_kin, cached_layout%chunk_feature_count, 1)
          ELSE
-            ALLOCATE (features%chunk_density(cached_layout%chunk_feature_count, 2), &
-                      features%chunk_grad(cached_layout%chunk_feature_count, 3, 2), &
-                      features%chunk_kin(cached_layout%chunk_feature_count, 2))
+            CALL ensure_real_2d(features%chunk_density, cached_layout%chunk_feature_count, 2)
+            CALL ensure_real_3d(features%chunk_grad, cached_layout%chunk_feature_count, 3, 2)
+            CALL ensure_real_2d(features%chunk_kin, cached_layout%chunk_feature_count, 2)
          END IF
 
 !$OMP PARALLEL DO DEFAULT(NONE) &
@@ -1897,7 +1921,7 @@ CONTAINS
 !$OMP END PARALLEL DO
       END IF
 
-      DEALLOCATE (recv_counts, recv_displs, recv_dynamic, send_counts, send_displs, send_dynamic)
+      NULLIFY (recv_counts, recv_displs, recv_dynamic, send_counts, send_displs, send_dynamic)
 
    END SUBROUTINE route_atom_chunk_dynamics
 
@@ -2080,9 +2104,16 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Release Torch objects and backing arrays owned by a feature bundle.
 !> \param features ...
+!> \param keep_host_arrays keep the reusable host arrays for the next SCF step
 ! **************************************************************************************************
-   SUBROUTINE skala_gpw_feature_release(features)
+   SUBROUTINE skala_gpw_feature_release(features, keep_host_arrays)
       TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
+      LOGICAL, INTENT(IN), OPTIONAL                      :: keep_host_arrays
+
+      LOGICAL                                            :: keep
+
+      keep = .FALSE.
+      IF (PRESENT(keep_host_arrays)) keep = keep_host_arrays
 
       IF (features%active) THEN
          IF (features%owns_dynamic_tensors) THEN
@@ -2124,12 +2155,14 @@ CONTAINS
          features%uses_collapsed_rks_dynamic = .FALSE.
       END IF
 
-      IF (ALLOCATED(features%chunk_density)) DEALLOCATE (features%chunk_density)
-      IF (ALLOCATED(features%chunk_grad)) DEALLOCATE (features%chunk_grad)
-      IF (ALLOCATED(features%chunk_kin)) DEALLOCATE (features%chunk_kin)
-      IF (ALLOCATED(features%density)) DEALLOCATE (features%density)
-      IF (ALLOCATED(features%grad)) DEALLOCATE (features%grad)
-      IF (ALLOCATED(features%kin)) DEALLOCATE (features%kin)
+      IF (.NOT. keep) THEN
+         IF (ALLOCATED(features%chunk_density)) DEALLOCATE (features%chunk_density)
+         IF (ALLOCATED(features%chunk_grad)) DEALLOCATE (features%chunk_grad)
+         IF (ALLOCATED(features%chunk_kin)) DEALLOCATE (features%chunk_kin)
+         IF (ALLOCATED(features%density)) DEALLOCATE (features%density)
+         IF (ALLOCATED(features%grad)) DEALLOCATE (features%grad)
+         IF (ALLOCATED(features%kin)) DEALLOCATE (features%kin)
+      END IF
       NULLIFY (features%route_point_recv_counts, features%route_point_recv_displs, &
                features%route_point_send_counts, features%route_point_send_displs, &
                features%route_chunk_offsets, features%route_chunk_rows, &
@@ -2138,17 +2171,19 @@ CONTAINS
                features%route_feature_send_displs, features%route_feature_recv_counts, &
                features%route_feature_recv_displs, features%route_send_local_features, &
                features%route_recv_chunk_rows)
-      IF (ALLOCATED(features%feature_index)) DEALLOCATE (features%feature_index)
-      IF (ALLOCATED(features%local_feature_counts)) DEALLOCATE (features%local_feature_counts)
-      IF (ALLOCATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
-      IF (ALLOCATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
-      IF (ALLOCATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
-      IF (ALLOCATED(features%grid_weights)) DEALLOCATE (features%grid_weights)
-      IF (ALLOCATED(features%atomic_grid_weights)) DEALLOCATE (features%atomic_grid_weights)
-      IF (ALLOCATED(features%atomic_grid_sizes)) DEALLOCATE (features%atomic_grid_sizes)
-      IF (ALLOCATED(features%coarse_0_atomic_coords)) DEALLOCATE (features%coarse_0_atomic_coords)
-      IF (ALLOCATED(features%atomic_grid_size_bound_shape)) THEN
-         DEALLOCATE (features%atomic_grid_size_bound_shape)
+      IF (.NOT. keep) THEN
+         IF (ALLOCATED(features%feature_index)) DEALLOCATE (features%feature_index)
+         IF (ALLOCATED(features%local_feature_counts)) DEALLOCATE (features%local_feature_counts)
+         IF (ALLOCATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
+         IF (ALLOCATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
+         IF (ALLOCATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
+         IF (ALLOCATED(features%grid_weights)) DEALLOCATE (features%grid_weights)
+         IF (ALLOCATED(features%atomic_grid_weights)) DEALLOCATE (features%atomic_grid_weights)
+         IF (ALLOCATED(features%atomic_grid_sizes)) DEALLOCATE (features%atomic_grid_sizes)
+         IF (ALLOCATED(features%coarse_0_atomic_coords)) DEALLOCATE (features%coarse_0_atomic_coords)
+         IF (ALLOCATED(features%atomic_grid_size_bound_shape)) THEN
+            DEALLOCATE (features%atomic_grid_size_bound_shape)
+         END IF
       END IF
       features%chunk_feature_count = 0
       features%nflat = 0
@@ -3688,5 +3723,128 @@ CONTAINS
       END IF
 
    END FUNCTION nearest_atom
+
+! **************************************************************************************************
+!> \brief Ensure a reusable 1D real scratch buffer has the requested size.
+!> \param buf ...
+!> \param n ...
+! **************************************************************************************************
+   SUBROUTINE ensure_real_1d(buf, n)
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: n
+
+      IF (ALLOCATED(buf)) THEN
+         IF (SIZE(buf) == MAX(1, n)) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(MAX(1, n)))
+      buf = 0.0_dp
+
+   END SUBROUTINE ensure_real_1d
+
+! **************************************************************************************************
+!> \brief Ensure a reusable 1D integer scratch buffer has the requested size.
+!> \param buf ...
+!> \param n ...
+! **************************************************************************************************
+   SUBROUTINE ensure_int_1d(buf, n)
+      INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(INOUT)  :: buf
+      INTEGER, INTENT(IN)                                :: n
+
+      IF (ALLOCATED(buf)) THEN
+         IF (SIZE(buf) == MAX(1, n)) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(MAX(1, n)))
+      buf = 0
+
+   END SUBROUTINE ensure_int_1d
+
+! **************************************************************************************************
+!> \brief Ensure a reusable 1D int_8 scratch buffer has the requested size.
+!> \param buf ...
+!> \param n ...
+! **************************************************************************************************
+   SUBROUTINE ensure_i8_1d(buf, n)
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: n
+
+      IF (ALLOCATED(buf)) THEN
+         IF (SIZE(buf) == MAX(1, n)) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(MAX(1, n)))
+      buf = 0_int_8
+
+   END SUBROUTINE ensure_i8_1d
+
+! **************************************************************************************************
+!> \brief Ensure a reusable 2D real scratch buffer has the requested shape.
+!> \param buf ...
+!> \param n ...
+!> \param m ...
+! **************************************************************************************************
+   SUBROUTINE ensure_real_2d(buf, n, m)
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: n, m
+
+      IF (ALLOCATED(buf)) THEN
+         IF (SIZE(buf, 1) == n .AND. SIZE(buf, 2) == m) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(n, m))
+      buf = 0.0_dp
+
+   END SUBROUTINE ensure_real_2d
+
+! **************************************************************************************************
+!> \brief Ensure a reusable 3D real scratch buffer has the requested shape.
+!> \param buf ...
+!> \param n ...
+!> \param m ...
+!> \param k ...
+! **************************************************************************************************
+   SUBROUTINE ensure_real_3d(buf, n, m, k)
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: n, m, k
+
+      IF (ALLOCATED(buf)) THEN
+         IF (SIZE(buf, 1) == n .AND. SIZE(buf, 2) == m .AND. SIZE(buf, 3) == k) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(n, m, k))
+      buf = 0.0_dp
+
+   END SUBROUTINE ensure_real_3d
+
+! **************************************************************************************************
+!> \brief Ensure a reusable 3D integer scratch buffer has the requested bounds.
+!> \param buf ...
+!> \param l1 ...
+!> \param u1 ...
+!> \param l2 ...
+!> \param u2 ...
+!> \param l3 ...
+!> \param u3 ...
+! **************************************************************************************************
+   SUBROUTINE ensure_int_3d(buf, l1, u1, l2, u2, l3, u3)
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: l1, u1, l2, u2, l3, u3
+
+      IF (ALLOCATED(buf)) THEN
+         IF (LBOUND(buf, 1) == l1 .AND. UBOUND(buf, 1) == u1 .AND. &
+             LBOUND(buf, 2) == l2 .AND. UBOUND(buf, 2) == u2 .AND. &
+             LBOUND(buf, 3) == l3 .AND. UBOUND(buf, 3) == u3) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(l1:u1, l2:u2, l3:u3))
+      buf = 0
+
+   END SUBROUTINE ensure_int_3d
 
 END MODULE skala_gpw_features

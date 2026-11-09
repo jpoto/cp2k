@@ -117,6 +117,21 @@ MODULE skala_gpw_functional
                                                           logged_cuda_device_count = -1, &
                                                           logged_cuda_nproc = -1
 
+   ! Persistent feature bundle reused across SCF steps (keeps the host arrays
+   ! allocated; the Torch objects are still recreated per call). The common-grid
+   ! evaluation and the accurate-XCINT weight derivative are never nested, so a
+   ! single bundle is shared to bound the persistent memory.
+   TYPE(skala_gpw_feature_type), SAVE, TARGET          :: cached_features
+
+   ! Cached atom-composite chunk layout, keyed on the per-atom grid sizes.
+   TYPE atom_chunk_layout_cache_type
+      INTEGER                                            :: max_rows = -1
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: atom_begin, atom_count, &
+                                                            row_begin, row_counts
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: grid_sizes
+   END TYPE atom_chunk_layout_cache_type
+   TYPE(atom_chunk_layout_cache_type), SAVE, TARGET    :: chunk_layout_cache
+
 CONTAINS
 
 ! **************************************************************************************************
@@ -381,7 +396,7 @@ CONTAINS
                                                             grid_weight_grad_p
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad_p, grid_coord_grad_p
       TYPE(section_vals_type), POINTER                   :: native_section
-      TYPE(skala_gpw_feature_type)                       :: features
+      TYPE(skala_gpw_feature_type), POINTER              :: features
       TYPE(torch_tensor_type)                            :: atom_coord_grad_t, &
                                                             atomic_grid_weight_grad_t, exc_tensor, &
                                                             grid_coord_grad_t, grid_weight_grad_t
@@ -476,6 +491,7 @@ CONTAINS
                              xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
 
       CALL section_vals_val_get(native_section, "DIAGNOSTICS", l_val=native_grid_diagnostics)
+      features => cached_features
       CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                    requires_grad=(.NOT. my_just_energy), weights=weights, &
                                    requires_coordinate_grad=(needs_atom_force .OR. compute_virial), &
@@ -755,7 +771,7 @@ CONTAINS
 
       CALL timeset("skala_gpw_cleanup", phase_handle)
       IF (.NOT. use_atom_subchunks .AND. has_atom_chunk_work) CALL torch_tensor_release(exc_tensor)
-      CALL skala_gpw_feature_release(features)
+      CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
       CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
@@ -806,7 +822,8 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: grid_weight_grad
       TYPE(section_vals_type), POINTER                   :: native_section
-      TYPE(skala_gpw_feature_type)                       :: features, subchunk
+      TYPE(skala_gpw_feature_type)                       :: subchunk
+      TYPE(skala_gpw_feature_type), POINTER              :: features
       TYPE(torch_tensor_type)                            :: exc_tensor, grid_weight_grad_t
       TYPE(xc_rho_cflags_type)                           :: needs
       TYPE(xc_rho_set_type)                              :: rho_set
@@ -880,6 +897,7 @@ CONTAINS
       CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
                              xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
 
+      features => cached_features
       CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                    requires_grad=.FALSE., weights=weights, &
                                    requires_coordinate_grad=.FALSE., &
@@ -992,7 +1010,7 @@ CONTAINS
       IF (have_weight_grad_t) CALL torch_tensor_release(grid_weight_grad_t)
       IF (have_exc_tensor) CALL torch_tensor_release(exc_tensor)
       IF (ALLOCATED(local_weight_grad)) DEALLOCATE (local_weight_grad)
-      CALL skala_gpw_feature_release(features)
+      CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
       CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
@@ -1301,7 +1319,7 @@ CONTAINS
       INTEGER :: atom_begin, atom_count, chunk_max_rows, chunk_row_count, chunk_row_start, &
                  ichunk, local_natom, local_nrow, max_grid_size, &
                  nchunks, omp_max_threads_restore, phase_handle, selected_cuda_device
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: chunk_atom_begin, chunk_atom_count, &
+      INTEGER, DIMENSION(:), POINTER                     :: chunk_atom_begin, chunk_atom_count, &
                                                             chunk_row_begin, chunk_row_counts
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
       LOGICAL :: active_rank, native_grid_atom_chunks, native_grid_use_cuda, &
@@ -1386,9 +1404,11 @@ CONTAINS
       IF (active_rank) THEN
          CALL timeset("skala_atom_tensor_setup", phase_handle)
          CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
-         CALL atom_composite_chunk_layout(atomic_grid_sizes, chunk_max_rows, &
-                                          chunk_atom_begin, chunk_atom_count, &
-                                          chunk_row_begin, chunk_row_counts)
+         CALL ensure_atom_chunk_layout(atomic_grid_sizes, chunk_max_rows)
+         chunk_atom_begin => chunk_layout_cache%atom_begin
+         chunk_atom_count => chunk_layout_cache%atom_count
+         chunk_row_begin => chunk_layout_cache%row_begin
+         chunk_row_counts => chunk_layout_cache%row_counts
          nchunks = SIZE(chunk_atom_begin)
          CPASSERT(nchunks > 0)
 
@@ -1579,7 +1599,7 @@ CONTAINS
             CALL torch_tensor_release(atomic_coords_t)
          END IF
          CALL torch_tensor_release(atomic_grid_sizes_t)
-         DEALLOCATE (chunk_atom_begin, chunk_atom_count, chunk_row_begin, chunk_row_counts)
+         NULLIFY (chunk_atom_begin, chunk_atom_count, chunk_row_begin, chunk_row_counts)
          CALL timestop(phase_handle)
       END IF
       CALL torch_use_cuda(saved_use_cuda)
@@ -1620,6 +1640,48 @@ CONTAINS
       max_rows = atom_chunk_auto_max_rows
 
    END FUNCTION auto_atom_composite_chunk_max_rows
+
+! **************************************************************************************************
+!> \brief Rebuild the atom-composite chunk layout only when the grid sizes change.
+!> \param atomic_grid_sizes ...
+!> \param max_rows ...
+! **************************************************************************************************
+   SUBROUTINE ensure_atom_chunk_layout(atomic_grid_sizes, max_rows)
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:), &
+         INTENT(IN)                                      :: atomic_grid_sizes
+      INTEGER, INTENT(IN)                                :: max_rows
+
+      LOGICAL                                            :: valid
+
+      valid = chunk_layout_cache%max_rows == max_rows
+      IF (valid) THEN
+         valid = ALLOCATED(chunk_layout_cache%grid_sizes)
+         IF (valid) valid = SIZE(chunk_layout_cache%grid_sizes) == SIZE(atomic_grid_sizes)
+         IF (valid) valid = ALL(chunk_layout_cache%grid_sizes == atomic_grid_sizes)
+      END IF
+      IF (valid) RETURN
+
+      IF (ALLOCATED(chunk_layout_cache%atom_begin)) THEN
+         DEALLOCATE (chunk_layout_cache%atom_begin, chunk_layout_cache%atom_count, &
+                     chunk_layout_cache%row_begin, chunk_layout_cache%row_counts)
+      END IF
+      CALL atom_composite_chunk_layout(atomic_grid_sizes, max_rows, &
+                                       chunk_layout_cache%atom_begin, &
+                                       chunk_layout_cache%atom_count, &
+                                       chunk_layout_cache%row_begin, &
+                                       chunk_layout_cache%row_counts)
+      IF (ALLOCATED(chunk_layout_cache%grid_sizes)) THEN
+         IF (SIZE(chunk_layout_cache%grid_sizes) /= SIZE(atomic_grid_sizes)) THEN
+            DEALLOCATE (chunk_layout_cache%grid_sizes)
+         END IF
+      END IF
+      IF (.NOT. ALLOCATED(chunk_layout_cache%grid_sizes)) THEN
+         ALLOCATE (chunk_layout_cache%grid_sizes(SIZE(atomic_grid_sizes)))
+      END IF
+      chunk_layout_cache%grid_sizes = atomic_grid_sizes
+      chunk_layout_cache%max_rows = max_rows
+
+   END SUBROUTINE ensure_atom_chunk_layout
 
 ! **************************************************************************************************
 !> \brief Split contiguous atom-composite rows without dividing an atomic block.
