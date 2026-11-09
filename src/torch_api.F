@@ -51,17 +51,15 @@ MODULE torch_api
       #:endfor
    END INTERFACE torch_tensor_from_array
 
-   INTERFACE torch_tensor_reset_from_array
-      #:for ndims  in range(1, max_dim+1)
-         MODULE PROCEDURE torch_tensor_reset_from_array_double_${ndims}$d
-      #:endfor
-   END INTERFACE torch_tensor_reset_from_array
-
    INTERFACE torch_tensor_upload_pinned
       #:for ndims  in range(1, max_dim+1)
          MODULE PROCEDURE torch_tensor_upload_pinned_double_${ndims}$d
       #:endfor
    END INTERFACE torch_tensor_upload_pinned
+
+   INTERFACE staged_upload
+      MODULE PROCEDURE staged_upload_1d, staged_upload_2d, staged_upload_3d
+   END INTERFACE staged_upload
 
    INTERFACE torch_tensor_data_ptr
       #:for ndims  in range(1, max_dim+1)
@@ -82,8 +80,8 @@ MODULE torch_api
 
    PUBLIC :: torch_tensor_type, torch_tensor_expand_dim, torch_tensor_from_array, &
              torch_tensor_narrow, torch_tensor_release
-   PUBLIC :: torch_tensor_reset_from_array
-   PUBLIC :: torch_tensor_upload_pinned, torch_pinned_reserve, torch_stream_synchronize
+   PUBLIC :: torch_tensor_upload_pinned, staged_upload, torch_pinned_reserve, torch_stream_synchronize
+   PUBLIC :: torch_file_stamp, torch_grad_pool_clear, torch_pinned_finish, torch_pinned_release
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
    PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3
    PUBLIC :: torch_tensor_grad_batch_deferred, torch_tensor_grad_batch3_deferred
@@ -214,64 +212,6 @@ CONTAINS
    #:for ndims in range(1, max_dim+1)
 
 ! **************************************************************************************************
-!> \brief Reuses or creates a device leaf tensor and copies data into it.
-!>        The source must be an ALLOCATABLE to prevent passing a temporary array.
-! **************************************************************************************************
-      SUBROUTINE torch_tensor_reset_from_array_double_${ndims}$d(tensor, source, requires_grad, &
-                                                                 reallocated)
-         TYPE(torch_tensor_type), INTENT(INOUT)             :: tensor
-         #:set arraydims = ", ".join(":" for i in range(ndims))
-         REAL(dp), DIMENSION(${arraydims}$), ALLOCATABLE, INTENT(IN)  :: source
-         LOGICAL, OPTIONAL, INTENT(IN)                      :: requires_grad
-         LOGICAL, OPTIONAL, INTENT(OUT)                     :: reallocated
-
-#if defined(__LIBTORCH)
-         INTEGER(kind=int_8), DIMENSION(${ndims}$)          :: sizes_c
-         LOGICAL                                            :: my_req_grad
-         LOGICAL(kind=C_BOOL)                               :: reallocated_c
-
-         INTERFACE
-            FUNCTION torch_c_tensor_reset_from_array_double_status(tensor, req_grad, ndims, sizes, source) &
-               RESULT(reallocated_flag) BIND(C, name="torch_c_tensor_reset_from_array_double_status")
-               IMPORT :: C_PTR, C_INT, C_INT64_T, C_DOUBLE, C_BOOL
-               TYPE(C_PTR)                                  :: tensor
-               LOGICAL(kind=C_BOOL), VALUE                  :: req_grad
-               INTEGER(kind=C_INT), VALUE                   :: ndims
-               INTEGER(kind=C_INT64_T), DIMENSION(*)        :: sizes
-               REAL(kind=C_DOUBLE), DIMENSION(*)            :: source
-               LOGICAL(kind=C_BOOL)                         :: reallocated_flag
-            END FUNCTION torch_c_tensor_reset_from_array_double_status
-         END INTERFACE
-
-         my_req_grad = .FALSE.
-         IF (PRESENT(requires_grad)) my_req_grad = requires_grad
-
-         #:for axis in range(ndims)
-            sizes_c(${axis + 1}$) = SIZE(source, ${ndims - axis}$) ! C arrays are stored row-major.
-         #:endfor
-
-         reallocated_c = torch_c_tensor_reset_from_array_double_status( &
-            tensor=tensor%c_ptr, &
-            req_grad=LOGICAL(my_req_grad, C_BOOL), &
-            ndims=${ndims}$, &
-            sizes=sizes_c, &
-            source=source)
-         IF (PRESENT(reallocated)) reallocated = reallocated_c
-         CPASSERT(C_ASSOCIATED(tensor%c_ptr))
-#else
-         CPABORT("CP2K compiled without the Torch library.")
-         MARK_USED(tensor)
-         MARK_USED(source)
-         MARK_USED(requires_grad)
-         MARK_USED(reallocated)
-#endif
-      END SUBROUTINE torch_tensor_reset_from_array_double_${ndims}$d
-
-   #:endfor
-
-   #:for ndims in range(1, max_dim+1)
-
-! **************************************************************************************************
 !> \brief Reuses or creates a device leaf tensor and uploads data through the shared
 !>        pinned staging buffer. The device copy is asynchronous; call
 !>        torch_stream_synchronize() before consuming the data.
@@ -331,6 +271,54 @@ CONTAINS
       END SUBROUTINE torch_tensor_upload_pinned_double_${ndims}$d
 
    #:endfor
+
+! **************************************************************************************************
+!> \brief Upload a 1D array through the staged path and return the next offset.
+! **************************************************************************************************
+   FUNCTION staged_upload_1d(tensor, array, offset, requires_grad, reallocated) RESULT(next_offset)
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: tensor
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), INTENT(IN) :: array
+      INTEGER(KIND=int_8), INTENT(IN)                    :: offset
+      LOGICAL, INTENT(IN)                                :: requires_grad
+      LOGICAL, OPTIONAL, INTENT(OUT)                     :: reallocated
+      INTEGER(KIND=int_8)                                :: next_offset
+
+      CALL torch_tensor_upload_pinned(tensor, array, offset, requires_grad, reallocated)
+      next_offset = offset + INT(SIZE(array), KIND=int_8)
+
+   END FUNCTION staged_upload_1d
+
+! **************************************************************************************************
+!> \brief Upload a 2D array through the staged path and return the next offset.
+! **************************************************************************************************
+   FUNCTION staged_upload_2d(tensor, array, offset, requires_grad, reallocated) RESULT(next_offset)
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: tensor
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), INTENT(IN) :: array
+      INTEGER(KIND=int_8), INTENT(IN)                    :: offset
+      LOGICAL, INTENT(IN)                                :: requires_grad
+      LOGICAL, OPTIONAL, INTENT(OUT)                     :: reallocated
+      INTEGER(KIND=int_8)                                :: next_offset
+
+      CALL torch_tensor_upload_pinned(tensor, array, offset, requires_grad, reallocated)
+      next_offset = offset + INT(SIZE(array), KIND=int_8)
+
+   END FUNCTION staged_upload_2d
+
+! **************************************************************************************************
+!> \brief Upload a 3D array through the staged path and return the next offset.
+! **************************************************************************************************
+   FUNCTION staged_upload_3d(tensor, array, offset, requires_grad, reallocated) RESULT(next_offset)
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: tensor
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), INTENT(IN) :: array
+      INTEGER(KIND=int_8), INTENT(IN)                    :: offset
+      LOGICAL, INTENT(IN)                                :: requires_grad
+      LOGICAL, OPTIONAL, INTENT(OUT)                     :: reallocated
+      INTEGER(KIND=int_8)                                :: next_offset
+
+      CALL torch_tensor_upload_pinned(tensor, array, offset, requires_grad, reallocated)
+      next_offset = offset + INT(SIZE(array), KIND=int_8)
+
+   END FUNCTION staged_upload_3d
 
 ! **************************************************************************************************
 !> \brief Creates an expanded tensor view along one singleton dimension.
@@ -581,6 +569,36 @@ CONTAINS
    END SUBROUTINE torch_pinned_reserve
 
 ! **************************************************************************************************
+!> \brief Return this thread's pinned staging buffer to the pool.
+! **************************************************************************************************
+   SUBROUTINE torch_pinned_finish()
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_pinned_finish() BIND(C, name="torch_c_pinned_finish")
+         END SUBROUTINE torch_c_pinned_finish
+      END INTERFACE
+
+      CALL torch_c_pinned_finish()
+#endif
+   END SUBROUTINE torch_pinned_finish
+
+! **************************************************************************************************
+!> \brief Release all pinned staging buffers.
+! **************************************************************************************************
+   SUBROUTINE torch_pinned_release()
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_pinned_release() BIND(C, name="torch_c_pinned_release")
+         END SUBROUTINE torch_c_pinned_release
+      END INTERFACE
+
+      CALL torch_c_pinned_release()
+#endif
+   END SUBROUTINE torch_pinned_release
+
+! **************************************************************************************************
 !> \brief Wait for all pending asynchronous device copies.
 ! **************************************************************************************************
    SUBROUTINE torch_stream_synchronize()
@@ -594,6 +612,49 @@ CONTAINS
       CALL torch_c_stream_synchronize()
 #endif
    END SUBROUTINE torch_stream_synchronize
+
+! **************************************************************************************************
+!> \brief Return a size+mtime fingerprint of a model file (empty if unavailable).
+! **************************************************************************************************
+   SUBROUTINE torch_file_stamp(filename, stamp)
+      CHARACTER(len=*), INTENT(IN)                       :: filename
+      CHARACTER(len=*), INTENT(OUT)                      :: stamp
+
+#if defined(__LIBTORCH)
+      INTEGER(kind=C_INT)                                :: length
+
+      INTERFACE
+         SUBROUTINE torch_c_file_stamp(filename, buf, length) BIND(C, name="torch_c_file_stamp")
+            IMPORT :: C_CHAR, C_INT
+            CHARACTER(kind=C_CHAR), DIMENSION(*)         :: filename
+            CHARACTER(kind=C_CHAR), DIMENSION(*)         :: buf
+            INTEGER(kind=C_INT)                          :: length
+         END SUBROUTINE torch_c_file_stamp
+      END INTERFACE
+
+      stamp = ""
+      length = INT(LEN(stamp), C_INT)
+      CALL torch_c_file_stamp(filename=TRIM(filename)//C_NULL_CHAR, buf=stamp, length=length)
+#else
+      stamp = ""
+      MARK_USED(filename)
+#endif
+   END SUBROUTINE torch_file_stamp
+
+! **************************************************************************************************
+!> \brief Release the cached pinned gradient buffers.
+! **************************************************************************************************
+   SUBROUTINE torch_grad_pool_clear()
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_grad_pool_clear() BIND(C, name="torch_c_grad_pool_clear")
+         END SUBROUTINE torch_c_grad_pool_clear
+      END INTERFACE
+
+      CALL torch_c_grad_pool_clear()
+#endif
+   END SUBROUTINE torch_grad_pool_clear
 
 ! **************************************************************************************************
 !> \brief Returns the gradient of a Torch tensor which was computed by autograd.

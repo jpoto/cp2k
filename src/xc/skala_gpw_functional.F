@@ -54,14 +54,15 @@ MODULE skala_gpw_functional
                                               skala_torch_model_type
    USE string_utilities,                ONLY: uppercase
    USE torch_api,                       ONLY: &
-        torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, torch_dict_insert, &
-        torch_dict_release, torch_dict_set, torch_dict_type, torch_get_use_cuda, &
+        staged_upload, torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, &
+        torch_dict_insert, torch_dict_release, torch_dict_set, torch_dict_type, torch_file_stamp, &
+        torch_get_use_cuda, torch_grad_pool_clear, torch_pinned_finish, torch_pinned_release, &
         torch_pinned_reserve, torch_stream_synchronize, torch_tensor_accumulate, &
         torch_tensor_backward_scalar, torch_tensor_data_ptr, torch_tensor_from_array, &
         torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3, &
         torch_tensor_grad_batch3_deferred, torch_tensor_grad_batch_deferred, &
         torch_tensor_item_double, torch_tensor_narrow, torch_tensor_release, &
-        torch_tensor_to_device_leaf, torch_tensor_type, torch_tensor_upload_pinned, torch_use_cuda
+        torch_tensor_to_device_leaf, torch_tensor_type, torch_use_cuda
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -111,6 +112,7 @@ MODULE skala_gpw_functional
    TYPE(skala_gapw_atom_cuda_tensor_cache_type), SAVE, TARGET :: cached_atom_cuda_tensors
    LOGICAL, SAVE                                       :: cached_atom_cuda_tensors_active = .FALSE.
    CHARACTER(len=default_path_length), SAVE            :: cached_model_path = ""
+   CHARACTER(len=default_path_length), SAVE            :: cached_model_stamp = ""
    LOGICAL, SAVE                                       :: cached_model_loaded = .FALSE.
    LOGICAL, SAVE                                       :: cached_model_fp64 = .FALSE.
    INTEGER, SAVE                                       :: cached_model_cuda_device = -3
@@ -1164,24 +1166,19 @@ CONTAINS
                         INT(SIZE(kin), KIND=int_8)
          CALL torch_pinned_reserve(upload_total)
          upload_offset = 0_int_8
-         CALL torch_tensor_upload_pinned(grid_coords_t, grid_coords, upload_offset, &
-                                         need_coord_grad)
-         upload_offset = upload_offset + INT(SIZE(grid_coords), KIND=int_8)
-         CALL torch_tensor_upload_pinned(grid_weights_t, grid_weights, upload_offset, .FALSE.)
-         upload_offset = upload_offset + INT(SIZE(grid_weights), KIND=int_8)
-         CALL torch_tensor_upload_pinned(atomic_grid_weights_t, atomic_grid_weights, &
-                                         upload_offset, .FALSE.)
-         upload_offset = upload_offset + INT(SIZE(atomic_grid_weights), KIND=int_8)
-         CALL torch_tensor_upload_pinned(coarse_0_atomic_coords_t, coarse_0_atomic_coords, &
-                                         upload_offset, need_coord_grad)
-         upload_offset = upload_offset + INT(SIZE(coarse_0_atomic_coords), KIND=int_8)
-         CALL torch_tensor_upload_pinned(density_t, density, upload_offset, &
-                                         .NOT. my_energy_only)
-         upload_offset = upload_offset + INT(SIZE(density), KIND=int_8)
-         CALL torch_tensor_upload_pinned(grad_t, grad, upload_offset,.NOT. my_energy_only)
-         upload_offset = upload_offset + INT(SIZE(grad), KIND=int_8)
-         CALL torch_tensor_upload_pinned(kin_t, kin, upload_offset,.NOT. my_energy_only)
+         upload_offset = staged_upload(grid_coords_t, grid_coords, upload_offset, &
+                                       need_coord_grad)
+         upload_offset = staged_upload(grid_weights_t, grid_weights, upload_offset, .FALSE.)
+         upload_offset = staged_upload(atomic_grid_weights_t, atomic_grid_weights, &
+                                       upload_offset, .FALSE.)
+         upload_offset = staged_upload(coarse_0_atomic_coords_t, coarse_0_atomic_coords, &
+                                       upload_offset, need_coord_grad)
+         upload_offset = staged_upload(density_t, density, upload_offset, &
+                                       .NOT. my_energy_only)
+         upload_offset = staged_upload(grad_t, grad, upload_offset,.NOT. my_energy_only)
+         upload_offset = staged_upload(kin_t, kin, upload_offset,.NOT. my_energy_only)
          CALL torch_stream_synchronize()
+         CALL torch_pinned_finish()
       ELSE
          CALL torch_tensor_from_array(grid_coords_t, grid_coords)
          CALL torch_tensor_to_device_leaf(grid_coords_t, need_coord_grad)
@@ -1467,24 +1464,19 @@ CONTAINS
                            INT(SIZE(kin), KIND=int_8)
             CALL torch_pinned_reserve(upload_total)
             upload_offset = 0_int_8
-            CALL torch_tensor_upload_pinned(grid_coords_t, grid_coords, upload_offset, &
-                                            need_coordinate_derivatives)
-            upload_offset = upload_offset + INT(SIZE(grid_coords), KIND=int_8)
-            CALL torch_tensor_upload_pinned(grid_weights_t, grid_weights, upload_offset, &
-                                            need_coordinate_derivatives)
-            upload_offset = upload_offset + INT(SIZE(grid_weights), KIND=int_8)
-            CALL torch_tensor_upload_pinned(atomic_grid_weights_t, atomic_grid_weights, &
-                                            upload_offset, need_coordinate_derivatives)
-            upload_offset = upload_offset + INT(SIZE(atomic_grid_weights), KIND=int_8)
-            CALL torch_tensor_upload_pinned(atomic_coords_t, atomic_coords, upload_offset, &
-                                            need_coordinate_derivatives)
-            upload_offset = upload_offset + INT(SIZE(atomic_coords), KIND=int_8)
-            CALL torch_tensor_upload_pinned(density_t, density, upload_offset, need_derivatives)
-            upload_offset = upload_offset + INT(SIZE(density), KIND=int_8)
-            CALL torch_tensor_upload_pinned(grad_t, grad, upload_offset, need_derivatives)
-            upload_offset = upload_offset + INT(SIZE(grad), KIND=int_8)
-            CALL torch_tensor_upload_pinned(kin_t, kin, upload_offset, need_derivatives)
+            upload_offset = staged_upload(grid_coords_t, grid_coords, upload_offset, &
+                                          need_coordinate_derivatives)
+            upload_offset = staged_upload(grid_weights_t, grid_weights, upload_offset, &
+                                          need_coordinate_derivatives)
+            upload_offset = staged_upload(atomic_grid_weights_t, atomic_grid_weights, &
+                                          upload_offset, need_coordinate_derivatives)
+            upload_offset = staged_upload(atomic_coords_t, atomic_coords, upload_offset, &
+                                          need_coordinate_derivatives)
+            upload_offset = staged_upload(density_t, density, upload_offset, need_derivatives)
+            upload_offset = staged_upload(grad_t, grad, upload_offset, need_derivatives)
+            upload_offset = staged_upload(kin_t, kin, upload_offset, need_derivatives)
             CALL torch_stream_synchronize()
+            CALL torch_pinned_finish()
             cached_atom_cuda_tensors_active = .TRUE.
          ELSE
             grid_coords_t => grid_coords_local_t
@@ -3288,6 +3280,7 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: cuda_device
       TYPE(section_vals_type), POINTER                   :: xc_section
 
+      CHARACTER(len=default_path_length)                 :: model_stamp
       INTEGER                                            :: iw
       LOGICAL                                            :: fp64
       TYPE(section_vals_type), POINTER                   :: native_section
@@ -3297,17 +3290,20 @@ CONTAINS
       IF (ASSOCIATED(native_section)) THEN
          CALL section_vals_val_get(native_section, "MODEL_FP64", l_val=fp64)
       END IF
+      CALL torch_file_stamp(TRIM(model_path), model_stamp)
 
       IF (cached_model_loaded) THEN
          IF (TRIM(cached_model_path) == TRIM(model_path) .AND. &
              cached_model_cuda_device == cuda_device .AND. &
-             (cached_model_fp64 .EQV. fp64)) RETURN
+             (cached_model_fp64 .EQV. fp64) .AND. &
+             TRIM(cached_model_stamp) == TRIM(model_stamp)) RETURN
          CALL skala_torch_model_release(cached_model)
          cached_model_loaded = .FALSE.
       END IF
 
       CALL skala_torch_model_load(cached_model, TRIM(model_path), fp64=fp64)
       cached_model_path = model_path
+      cached_model_stamp = model_stamp
       cached_model_cuda_device = cuda_device
       cached_model_fp64 = fp64
       cached_model_loaded = .TRUE.
@@ -3358,6 +3354,9 @@ CONTAINS
          CALL skala_torch_model_release(cached_model)
          cached_model_loaded = .FALSE.
       END IF
+      CALL torch_grad_pool_clear()
+      CALL torch_pinned_release()
+      CALL skala_gpw_feature_release(cached_features)
       IF (cached_atom_cuda_tensors_active) THEN
          CALL torch_tensor_release(cached_atom_cuda_tensors%grid_coords_t)
          CALL torch_tensor_release(cached_atom_cuda_tensors%grid_weights_t)

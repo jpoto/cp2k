@@ -221,20 +221,13 @@ MODULE xc_gauxc_interface
    TYPE cp_gauxc_xc_type
       REAL(c_double) :: exc = 0.0_c_double
       REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: vxc_scalar, vxc_zeta
+      REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: scratch_rks, scratch_zeta_zero
    END TYPE cp_gauxc_xc_type
 
    TYPE cp_gauxc_xc_gradient_type
       REAL(c_double), ALLOCATABLE, DIMENSION(:) :: exc_grad
+      REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: scratch_rks, scratch_zeta_zero
    END TYPE cp_gauxc_xc_gradient_type
-
-#ifdef __GAUXC
-   ! Reused scratch buffers; XC evaluation is sequential, so a single buffer per
-   ! shape avoids a full nao x nao allocation on every call.
-   REAL(c_double), DIMENSION(:, :), ALLOCATABLE, SAVE :: density_scalar_rks_scratch
-#ifdef GAUXC_HAS_ONEDFT
-   REAL(c_double), DIMENSION(:, :), ALLOCATABLE, SAVE :: density_zeta_zero_scratch
-#endif
-#endif
 
    CHARACTER(len=*), PARAMETER :: no_gauxc_message = "Compile CP2K with GauXC to use this functionality!"
 
@@ -973,13 +966,13 @@ CONTAINS
          res%vxc_zeta = 0._dp
 
          IF (nspins == 1) THEN
-            CALL ensure_matrix_scratch(density_zeta_zero_scratch, density_scalar)
-            density_zeta_zero_scratch = 0._dp
+            CALL ensure_matrix_scratch(res%scratch_zeta_zero, density_scalar)
+            res%scratch_zeta_zero = 0._dp
             CALL gauxc_integrator_eval_exc_vxc_onedft_uks( &
                status%status, &
                integrator%integrator, &
                density_scalar, &
-               density_zeta_zero_scratch, &
+               res%scratch_zeta_zero, &
                TRIM(model), &
                res%exc, &
                res%vxc_scalar, &
@@ -1009,12 +1002,12 @@ CONTAINS
          ! xmat factor 2 is applied by both CP2K and GauXC
          ! "unapply" it here to even things back out.
          ! This is NOT necessary in the Skala branch.
-         CALL ensure_matrix_scratch(density_scalar_rks_scratch, density_scalar)
-         density_scalar_rks_scratch(:, :) = 0.5_dp*density_scalar
+         CALL ensure_matrix_scratch(res%scratch_rks, density_scalar)
+         res%scratch_rks(:, :) = 0.5_dp*density_scalar
          CALL gauxc_integrator_eval_exc_vxc_rks( &
             status%status, &
             integrator%integrator, &
-            density_scalar_rks_scratch, &
+            res%scratch_rks, &
             res%exc, &
             res%vxc_scalar)
       ELSE
@@ -1125,13 +1118,13 @@ CONTAINS
          CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
 #endif
          IF (nspins == 1) THEN
-            CALL ensure_matrix_scratch(density_zeta_zero_scratch, density_scalar)
-            density_zeta_zero_scratch = 0._dp
+            CALL ensure_matrix_scratch(res%scratch_zeta_zero, density_scalar)
+            res%scratch_zeta_zero = 0._dp
             CALL gauxc_integrator_eval_exc_grad_onedft_uks( &
                status%status, &
                integrator%integrator, &
                density_scalar, &
-               density_zeta_zero_scratch, &
+               res%scratch_zeta_zero, &
                TRIM(model), &
                res%exc_grad)
          ELSE
@@ -1154,12 +1147,12 @@ CONTAINS
       END IF
 
       IF (nspins == 1) THEN
-         CALL ensure_matrix_scratch(density_scalar_rks_scratch, density_scalar)
-         density_scalar_rks_scratch(:, :) = 0.5_dp*density_scalar
+         CALL ensure_matrix_scratch(res%scratch_rks, density_scalar)
+         res%scratch_rks(:, :) = 0.5_dp*density_scalar
          CALL gauxc_integrator_eval_exc_grad_rks( &
             status%status, &
             integrator%integrator, &
-            density_scalar_rks_scratch, &
+            res%scratch_rks, &
             res%exc_grad)
       ELSE
          CPASSERT(PRESENT(density_zeta))

@@ -53,6 +53,11 @@ MODULE xc_gauxc_cache
       LOGICAL                                      :: use_gradient_self_runtime = .FALSE.
       LOGICAL                                      :: use_fd_gradient = .FALSE.
       LOGICAL                                      :: use_gauxc_model = .FALSE.
+      INTEGER                                      :: nimages = -1
+      INTEGER                                      :: nkind = -1
+      REAL(c_double)                               :: cell_hmat(3, 3) = 0.0_c_double
+      INTEGER                                      :: cell_perd(3) = 0
+      CHARACTER(LEN=default_string_length), ALLOCATABLE :: kind_basis_names(:)
    END TYPE cp_gauxc_cache_params
 
    TYPE, extends(cp_gauxc_cache_params)            :: cp_gauxc_cache_type
@@ -375,25 +380,23 @@ CONTAINS
          CALL gauxc_destroy_molecule(cache%molecule, status)
          CALL gauxc_check_status(status)
       END IF
-      IF (ALLOCATED(cache%last_positions)) DEALLOCATE (cache%last_positions)
-      IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
-      IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
-      IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
-      IF (ALLOCATED(cache%vxc_channel)) DEALLOCATE (cache%vxc_channel)
-      cache%gradient_is_init = .FALSE.
-      cache%gradient_notice_printed = .FALSE.
-      cache%is_init = .FALSE.
 #else
       MARK_USED(cache)
+#endif
+
       IF (ALLOCATED(cache%last_positions)) DEALLOCATE (cache%last_positions)
       IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
       IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
+      IF (ALLOCATED(cache%xc_result%scratch_rks)) DEALLOCATE (cache%xc_result%scratch_rks)
+      IF (ALLOCATED(cache%xc_result%scratch_zeta_zero)) DEALLOCATE (cache%xc_result%scratch_zeta_zero)
       IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
+      IF (ALLOCATED(cache%xc_gradient%scratch_rks)) DEALLOCATE (cache%xc_gradient%scratch_rks)
+      IF (ALLOCATED(cache%xc_gradient%scratch_zeta_zero)) DEALLOCATE (cache%xc_gradient%scratch_zeta_zero)
       IF (ALLOCATED(cache%vxc_channel)) DEALLOCATE (cache%vxc_channel)
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
       cache%is_init = .FALSE.
-#endif
+
    END SUBROUTINE gauxc_cache_release
 
 ! **************************************************************************************************
@@ -534,6 +537,15 @@ CONTAINS
       IF (cache%force_fd_gradient .NEQV. params%force_fd_gradient) RETURN
       IF (cache%use_gauxc_model .NEQV. params%use_gauxc_model) RETURN
       IF (cache%mpi_comm /= para_env%get_handle()) RETURN
+      IF (cache%nimages /= params%nimages) RETURN
+      IF (cache%nkind /= params%nkind) RETURN
+      IF (ANY(cache%cell_perd /= params%cell_perd)) RETURN
+      IF (ANY(ABS(cache%cell_hmat - params%cell_hmat) > 1.0E-10_c_double)) RETURN
+      IF (ALLOCATED(cache%kind_basis_names) .NEQV. ALLOCATED(params%kind_basis_names)) RETURN
+      IF (ALLOCATED(params%kind_basis_names)) THEN
+         IF (SIZE(cache%kind_basis_names) /= SIZE(params%kind_basis_names)) RETURN
+         IF (ANY(cache%kind_basis_names /= params%kind_basis_names)) RETURN
+      END IF
 
       IF (.NOT. ALLOCATED(cache%last_positions)) RETURN
       IF (SIZE(cache%last_positions, 2) /= params%natom) RETURN

@@ -12,6 +12,7 @@
 MODULE xc_gauxc_functional
    USE atomic_kind_types,               ONLY: atomic_kind_type,&
                                               get_atomic_kind
+   USE basis_set_types,                 ONLY: gto_basis_set_type
    USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: dbcsr_create,&
@@ -79,6 +80,52 @@ MODULE xc_gauxc_functional
 CONTAINS
 
 ! **************************************************************************************************
+!> \brief Return the GAPW kind-set pseudopotential flags in one pass.
+!> \param qs_kind_set ...
+!> \param has_pseudopotentials ...
+!> \param all_pseudopotentials ...
+!> \param has_paw_pseudopotentials ...
+!> \param all_all_electron ...
+! **************************************************************************************************
+   SUBROUTINE gauxc_gapw_kind_flags(qs_kind_set, has_pseudopotentials, &
+                                    all_pseudopotentials, has_paw_pseudopotentials, &
+                                    all_all_electron)
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      LOGICAL, INTENT(OUT)                               :: has_pseudopotentials, &
+                                                            all_pseudopotentials, &
+                                                            has_paw_pseudopotentials, &
+                                                            all_all_electron
+
+      INTEGER                                            :: ikind
+      LOGICAL                                            :: is_pseudopotential, paw_atom
+      TYPE(all_potential_type), POINTER                  :: all_potential
+      TYPE(gth_potential_type), POINTER                  :: gth_potential
+      TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+
+      CPASSERT(ASSOCIATED(qs_kind_set))
+      has_pseudopotentials = .FALSE.
+      all_pseudopotentials = .TRUE.
+      has_paw_pseudopotentials = .FALSE.
+      all_all_electron = .TRUE.
+      DO ikind = 1, SIZE(qs_kind_set)
+         NULLIFY (all_potential, gth_potential, sgp_potential)
+         CALL get_qs_kind(qs_kind_set(ikind), all_potential=all_potential, &
+                          gth_potential=gth_potential, paw_atom=paw_atom, &
+                          sgp_potential=sgp_potential)
+         is_pseudopotential = ASSOCIATED(gth_potential) .OR. ASSOCIATED(sgp_potential)
+         IF (is_pseudopotential) THEN
+            has_pseudopotentials = .TRUE.
+            IF (paw_atom) has_paw_pseudopotentials = .TRUE.
+            all_all_electron = .FALSE.
+         ELSE
+            all_pseudopotentials = .FALSE.
+         END IF
+         IF (.NOT. ASSOCIATED(all_potential)) all_all_electron = .FALSE.
+      END DO
+
+   END SUBROUTINE gauxc_gapw_kind_flags
+
+! **************************************************************************************************
 !> \brief Return whether every GAPW kind uses an all-electron potential.
 !> \param qs_kind_set ...
 !> \return ...
@@ -87,20 +134,12 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       LOGICAL                                            :: all_all_electron
 
-      INTEGER                                            :: ikind
-      TYPE(all_potential_type), POINTER                  :: all_potential
+      LOGICAL                                            :: all_pseudopotentials, &
+                                                            has_paw_pseudopotentials, &
+                                                            has_pseudopotentials
 
-      CPASSERT(ASSOCIATED(qs_kind_set))
-
-      all_all_electron = .TRUE.
-      DO ikind = 1, SIZE(qs_kind_set)
-         NULLIFY (all_potential)
-         CALL get_qs_kind(qs_kind_set(ikind), all_potential=all_potential)
-         IF (.NOT. ASSOCIATED(all_potential)) THEN
-            all_all_electron = .FALSE.
-            EXIT
-         END IF
-      END DO
+      CALL gauxc_gapw_kind_flags(qs_kind_set, has_pseudopotentials, all_pseudopotentials, &
+                                 has_paw_pseudopotentials, all_all_electron)
 
    END FUNCTION gauxc_gapw_all_all_electron
 
@@ -346,23 +385,11 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       LOGICAL                                            :: has_pseudopotentials
 
-      INTEGER                                            :: ikind
-      TYPE(gth_potential_type), POINTER                  :: gth_potential
-      TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+      LOGICAL                                            :: all_all_electron, all_pseudopotentials, &
+                                                            has_paw_pseudopotentials
 
-      CPASSERT(ASSOCIATED(qs_kind_set))
-
-      has_pseudopotentials = .FALSE.
-      DO ikind = 1, SIZE(qs_kind_set)
-         NULLIFY (gth_potential, sgp_potential)
-         CALL get_qs_kind(qs_kind_set(ikind), &
-                          gth_potential=gth_potential, &
-                          sgp_potential=sgp_potential)
-         IF (ASSOCIATED(gth_potential) .OR. ASSOCIATED(sgp_potential)) THEN
-            has_pseudopotentials = .TRUE.
-            EXIT
-         END IF
-      END DO
+      CALL gauxc_gapw_kind_flags(qs_kind_set, has_pseudopotentials, all_pseudopotentials, &
+                                 has_paw_pseudopotentials, all_all_electron)
 
    END FUNCTION gauxc_gapw_has_pseudopotentials
 
@@ -375,23 +402,12 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       LOGICAL                                            :: all_pseudopotentials
 
-      INTEGER                                            :: ikind
-      TYPE(gth_potential_type), POINTER                  :: gth_potential
-      TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+      LOGICAL                                            :: all_all_electron, &
+                                                            has_paw_pseudopotentials, &
+                                                            has_pseudopotentials
 
-      CPASSERT(ASSOCIATED(qs_kind_set))
-
-      all_pseudopotentials = .TRUE.
-      DO ikind = 1, SIZE(qs_kind_set)
-         NULLIFY (gth_potential, sgp_potential)
-         CALL get_qs_kind(qs_kind_set(ikind), &
-                          gth_potential=gth_potential, &
-                          sgp_potential=sgp_potential)
-         IF (.NOT. (ASSOCIATED(gth_potential) .OR. ASSOCIATED(sgp_potential))) THEN
-            all_pseudopotentials = .FALSE.
-            EXIT
-         END IF
-      END DO
+      CALL gauxc_gapw_kind_flags(qs_kind_set, has_pseudopotentials, all_pseudopotentials, &
+                                 has_paw_pseudopotentials, all_all_electron)
 
    END FUNCTION gauxc_gapw_all_pseudopotentials
 
@@ -404,26 +420,11 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       LOGICAL                                            :: has_paw_pseudopotentials
 
-      INTEGER                                            :: ikind
-      LOGICAL                                            :: paw_atom
-      TYPE(gth_potential_type), POINTER                  :: gth_potential
-      TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+      LOGICAL                                            :: all_all_electron, all_pseudopotentials, &
+                                                            has_pseudopotentials
 
-      CPASSERT(ASSOCIATED(qs_kind_set))
-
-      has_paw_pseudopotentials = .FALSE.
-      DO ikind = 1, SIZE(qs_kind_set)
-         NULLIFY (gth_potential, sgp_potential)
-         CALL get_qs_kind(qs_kind_set(ikind), &
-                          gth_potential=gth_potential, &
-                          paw_atom=paw_atom, &
-                          sgp_potential=sgp_potential)
-         IF ((ASSOCIATED(gth_potential) .OR. ASSOCIATED(sgp_potential)) .AND. &
-             paw_atom) THEN
-            has_paw_pseudopotentials = .TRUE.
-            EXIT
-         END IF
-      END DO
+      CALL gauxc_gapw_kind_flags(qs_kind_set, has_pseudopotentials, all_pseudopotentials, &
+                                 has_paw_pseudopotentials, all_all_electron)
 
    END FUNCTION gauxc_gapw_has_paw_pseudopotentials
 
@@ -1068,7 +1069,7 @@ CONTAINS
       CHARACTER(len=default_string_length) :: gradient_runtime, gradient_runtime_key, grid_key, &
          int_exec_space_key, lb_exec_space_key, lwd_kernel_key, pruning_key, skala_runtime, &
          skala_runtime_key, xc_fun_key
-      INTEGER                                            :: gpu_mode, img, ispin, nimages
+      INTEGER                                            :: gpu_mode, ikind, img, ispin, nimages
       LOGICAL :: auto_cuda, do_kpoints, external_density, gapw_method, gapw_paw_pseudopotentials, &
          gapw_pseudopotentials, grid_explicit, hdf5_output, int_space_explicit, is_periodic, &
          lb_space_explicit, low_spin_scope, molecular_virial, molecular_virial_debug, &
@@ -1084,6 +1085,7 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_vxc
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(gto_basis_set_type), POINTER                  :: basis_set
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_energy_type), POINTER                      :: energy
@@ -1160,6 +1162,26 @@ CONTAINS
       END IF
       nimages = dft_control%nimages
       params%nspins = dft_control%nspins
+      params%nimages = dft_control%nimages
+      IF (ASSOCIATED(cell)) THEN
+         params%cell_hmat = REAL(cell%hmat, KIND=c_double)
+         params%cell_perd = cell%perd
+      ELSE
+         params%cell_hmat = 0.0_c_double
+         params%cell_perd = 0
+      END IF
+      params%nkind = SIZE(qs_kind_set)
+      IF (ALLOCATED(params%kind_basis_names)) DEALLOCATE (params%kind_basis_names)
+      ALLOCATE (params%kind_basis_names(params%nkind))
+      DO ikind = 1, params%nkind
+         NULLIFY (basis_set)
+         CALL get_qs_kind(qs_kind_set(ikind), basis_set=basis_set)
+         IF (ASSOCIATED(basis_set)) THEN
+            params%kind_basis_names(ikind) = TRIM(basis_set%name)
+         ELSE
+            params%kind_basis_names(ikind) = ""
+         END IF
+      END DO
       IF (external_density) THEN
          CPASSERT(SIZE(rho_ao, 1) == params%nspins)
          CPASSERT(SIZE(rho_ao, 2) == nimages)

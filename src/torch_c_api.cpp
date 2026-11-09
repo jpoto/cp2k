@@ -8,6 +8,7 @@
 #if defined(__LIBTORCH)
 
 #include <ATen/Parallel.h>
+#include <algorithm>
 #if defined(__LIBTORCH_CUDA)
 #include <ATen/cuda/CUDAContextLight.h>
 #include <c10/cuda/CUDAAllocatorConfig.h>
@@ -37,6 +38,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <sys/stat.h>
 #include <unordered_map>
 #include <vector>
 
@@ -135,10 +137,14 @@ static void torch_c_check(const bool condition, const char *message) {
  ******************************************************************************/
 static bool use_cuda_if_available = true;
 
-// Cached model metadata (TorchScript extra files) keyed by model filename.
+// Cached model metadata (TorchScript extra files) keyed by model filename and
+// the file stamp (size + mtime).
+struct model_metadata_entry {
+  std::string stamp;
+  std::unordered_map<std::string, std::string> files;
+};
 static std::mutex model_metadata_mutex;
-static std::unordered_map<std::string,
-                          std::unordered_map<std::string, std::string>>
+static std::unordered_map<std::string, model_metadata_entry>
     model_metadata_cache;
 
 static void enable_expandable_cuda_segments_if_unconfigured() {
@@ -457,12 +463,10 @@ static bool tensor_matches(const torch_c_tensor_t *tensor,
   return tensor->is_contiguous();
 }
 
-static bool reset_tensor_from_array_double(torch_c_tensor_t **tensor,
-                                           const bool req_grad, const int ndims,
-                                           const int64_t sizes[],
-                                           double source[]) {
-  c10::OptionalDeviceGuard guard;
-  const auto device = get_device_with_guard(guard);
+static bool prepare_target_tensor(torch_c_tensor_t **tensor,
+                                  const bool req_grad,
+                                  const torch::Device &device, const int ndims,
+                                  const int64_t sizes[]) {
   const auto sizes_ref = c10::IntArrayRef(sizes, ndims);
   const bool requires_grad_changed = *tensor != nullptr &&
                                      (*tensor)->defined() &&
@@ -476,14 +480,6 @@ static bool reset_tensor_from_array_double(torch_c_tensor_t **tensor,
         torch::TensorOptions().dtype(torch::kFloat64).device(device);
     *tensor = new torch_c_tensor_t(torch::empty(sizes_ref, opts).detach());
   }
-  const auto source_tensor = torch::from_blob(
-      source, sizes_ref, torch::TensorOptions().dtype(torch::kFloat64));
-  {
-    torch::NoGradGuard no_grad;
-    (*tensor)->copy_(source_tensor);
-    (*tensor)->mutable_grad() = torch::Tensor();
-  }
-  (*tensor)->set_requires_grad(req_grad);
   return reallocated;
 }
 
@@ -582,46 +578,117 @@ void torch_c_tensor_from_array_double(torch_c_tensor_t **tensor,
 void torch_c_free_string(char *content) { free(content); }
 
 /*******************************************************************************
- * \brief Reuses or creates a device tensor and reports reallocation.
+ * \brief Reusable pinned host staging buffers for batched host-to-device
+ * copies.
  ******************************************************************************/
-bool torch_c_tensor_reset_from_array_double_status(torch_c_tensor_t **tensor,
-                                                   const bool req_grad,
-                                                   const int ndims,
-                                                   const int64_t sizes[],
-                                                   double source[]) {
-  TORCH_C_TRY
-  return reset_tensor_from_array_double(tensor, req_grad, ndims, sizes, source);
-  TORCH_C_CATCH("torch_c_tensor_reset_from_array_double_status")
+struct staging_slot {
+  torch::Tensor tensor;
+  bool pinned = false;
+  bool in_use = false;
+};
+
+static std::mutex pinned_pool_mutex;
+// Intentionally leaked: static torch::Tensor objects would be destroyed after
+// the CUDA driver has shut down and would abort the process at exit.
+static std::vector<staging_slot> *pinned_pool = nullptr;
+static thread_local int pinned_current_slot = -1;
+
+static std::vector<staging_slot> &get_pinned_pool() {
+  if (pinned_pool == nullptr) {
+    pinned_pool = new std::vector<staging_slot>();
+  }
+  return *pinned_pool;
 }
 
-/*******************************************************************************
- * \brief Reusable pinned host staging buffer for batched host-to-device copies.
- ******************************************************************************/
-static std::mutex pinned_staging_mutex;
-// Intentionally leaked: a static torch::Tensor would be destroyed after the
-// CUDA driver has shut down and would abort the process at exit.
-static torch::Tensor *pinned_staging = nullptr;
+// Requires pinned_pool_mutex to be held.
+static void release_current_slot_locked() {
+  if (pinned_current_slot >= 0 && pinned_pool != nullptr &&
+      pinned_current_slot < static_cast<int>(pinned_pool->size())) {
+    (*pinned_pool)[pinned_current_slot].in_use = false;
+  }
+  pinned_current_slot = -1;
+}
+
+static torch::Tensor make_host_buffer(const int64_t n_doubles, bool &pinned) {
+  const auto opts = torch::TensorOptions().dtype(torch::kFloat64);
+  if (torch::cuda::is_available()) {
+    try {
+      auto buffer = torch::empty({n_doubles}, opts.pinned_memory(true));
+      pinned = true;
+      return buffer;
+    } catch (const c10::Error &) {
+      // Fall through to pageable memory under pinned-memory pressure.
+    }
+  }
+  pinned = false;
+  return torch::empty({n_doubles}, opts);
+}
 
 void torch_c_pinned_reserve(const int64_t n_doubles) {
   TORCH_C_TRY
-  std::lock_guard<std::mutex> lock(pinned_staging_mutex);
-  if (pinned_staging != nullptr && pinned_staging->numel() >= n_doubles &&
-      !pinned_staging->is_cuda()) {
-    return;
+  std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+  auto &slots = get_pinned_pool();
+  // A previous batch on this thread may not have called finish (e.g. after an
+  // early abort); release it instead of failing.
+  release_current_slot_locked();
+  int chosen = -1;
+  for (int i = 0; i < static_cast<int>(slots.size()); ++i) {
+    if (!slots[i].in_use && slots[i].tensor.defined() &&
+        slots[i].tensor.numel() >= n_doubles) {
+      chosen = i;
+      break;
+    }
   }
-  auto opts = torch::TensorOptions().dtype(torch::kFloat64);
-  if (torch::cuda::is_available()) {
-    opts = opts.pinned_memory(true);
+  if (chosen < 0) {
+    for (int i = 0; i < static_cast<int>(slots.size()); ++i) {
+      if (!slots[i].in_use) {
+        chosen = i;
+        break;
+      }
+    }
   }
-  delete pinned_staging;
-  pinned_staging = new torch::Tensor(torch::empty({n_doubles}, opts));
+  if (chosen < 0) {
+    slots.emplace_back();
+    chosen = static_cast<int>(slots.size()) - 1;
+  }
+  if (!slots[chosen].tensor.defined() ||
+      slots[chosen].tensor.numel() < n_doubles) {
+    bool pinned = false;
+    slots[chosen].tensor = make_host_buffer(n_doubles, pinned);
+    slots[chosen].pinned = pinned;
+  }
+  slots[chosen].in_use = true;
+  pinned_current_slot = chosen;
   TORCH_C_CATCH("torch_c_pinned_reserve")
 }
 
 /*******************************************************************************
- * \brief Uploads one double array through the shared pinned staging buffer.
- *        The host copy into the pinned buffer is synchronous; the device copy
- *        is asynchronous and must be followed by torch_c_stream_synchronize().
+ * \brief Returns the current thread's staging buffer to the pool.
+ ******************************************************************************/
+void torch_c_pinned_finish() {
+  TORCH_C_TRY
+  std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+  release_current_slot_locked();
+  TORCH_C_CATCH("torch_c_pinned_finish")
+}
+
+/*******************************************************************************
+ * \brief Releases all staging buffers (e.g. at environment teardown).
+ ******************************************************************************/
+void torch_c_pinned_release() {
+  TORCH_C_TRY
+  std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+  delete pinned_pool;
+  pinned_pool = nullptr;
+  pinned_current_slot = -1;
+  TORCH_C_CATCH("torch_c_pinned_release")
+}
+
+/*******************************************************************************
+ * \brief Uploads one double array through this thread's staging buffer.
+ *        The host copy into the staging buffer is synchronous; the device copy
+ *        is asynchronous (when pinned) and must be followed by
+ *        torch_c_stream_synchronize() and then torch_c_pinned_finish().
  ******************************************************************************/
 bool torch_c_tensor_upload_pinned(torch_c_tensor_t **tensor,
                                   const int64_t offset, const bool req_grad,
@@ -635,34 +702,34 @@ bool torch_c_tensor_upload_pinned(torch_c_tensor_t **tensor,
   for (int i = 0; i < ndims; i++) {
     count *= sizes[i];
   }
-  const bool requires_grad_changed = *tensor != nullptr &&
-                                     (*tensor)->defined() &&
-                                     (*tensor)->requires_grad() != req_grad;
   const bool reallocated =
-      requires_grad_changed ||
-      !tensor_matches(*tensor, torch::kFloat64, device, ndims, sizes);
-  if (reallocated) {
-    delete (*tensor);
-    const auto opts =
-        torch::TensorOptions().dtype(torch::kFloat64).device(device);
-    *tensor = new torch_c_tensor_t(torch::empty(sizes_ref, opts).detach());
-  }
+      prepare_target_tensor(tensor, req_grad, device, ndims, sizes);
   const auto source_tensor = torch::from_blob(
       source, sizes_ref, torch::TensorOptions().dtype(torch::kFloat64));
   if (device.is_cuda()) {
-    std::lock_guard<std::mutex> lock(pinned_staging_mutex);
-    torch_c_check(pinned_staging != nullptr &&
-                      pinned_staging->numel() >= offset + count,
-                  "Torch pinned staging buffer is too small");
-    auto pinned_slice =
-        pinned_staging->narrow(0, offset, count).view(sizes_ref);
+    torch::Tensor staging;
+    bool staged_pinned = false;
+    {
+      std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+      auto &slots = get_pinned_pool();
+      torch_c_check(pinned_current_slot >= 0 &&
+                        pinned_current_slot < static_cast<int>(slots.size()),
+                    "Torch staging buffer was not reserved for this thread");
+      auto &slot = slots[pinned_current_slot];
+      torch_c_check(slot.tensor.defined() &&
+                        slot.tensor.numel() >= offset + count,
+                    "Torch pinned staging buffer is too small");
+      staging = slot.tensor;
+      staged_pinned = slot.pinned;
+    }
+    auto staging_slice = staging.narrow(0, offset, count).view(sizes_ref);
     {
       torch::NoGradGuard no_grad;
-      pinned_slice.copy_(source_tensor);
+      staging_slice.copy_(source_tensor);
     }
     {
       torch::NoGradGuard no_grad;
-      (*tensor)->copy_(pinned_slice, /*non_blocking=*/true);
+      (*tensor)->copy_(staging_slice, /*non_blocking=*/staged_pinned);
       (*tensor)->mutable_grad() = torch::Tensor();
     }
   } else {
@@ -892,7 +959,7 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
                             const int count, torch_c_tensor_t **grads,
                             const bool synchronize) {
   c10::OptionalDeviceGuard guard;
-  const auto device = get_device_with_guard(guard);
+  get_device_with_guard(guard);
   torch_c_check(count > 0, "Torch gradient batch must be non-empty");
   for (int i = 0; i < count; ++i) {
     torch_c_check(tensors[i] != nullptr,
@@ -902,14 +969,32 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
 
   std::vector<torch::Tensor> sources(count);
   bool all_defined = true;
-  bool any_cuda = false;
+  bool all_cuda_same_device = true;
+  int source_device = -1;
   for (int i = 0; i < count; ++i) {
     sources[i] = tensors[i]->grad();
-    all_defined = all_defined && sources[i].defined();
-    any_cuda = any_cuda || (sources[i].defined() && sources[i].is_cuda());
+    if (!sources[i].defined()) {
+      all_defined = false;
+      all_cuda_same_device = false;
+      continue;
+    }
+    if (!sources[i].is_cuda()) {
+      all_cuda_same_device = false;
+      continue;
+    }
+    const int index = static_cast<int>(sources[i].get_device());
+    if (source_device < 0) {
+      source_device = index;
+    } else if (source_device != index) {
+      all_cuda_same_device = false;
+    }
   }
 
-  if (all_defined && any_cuda) {
+  if (all_defined && all_cuda_same_device) {
+    // Ensure copies and the readback synchronization use the sources' device,
+    // not merely the currently active device.
+    c10::DeviceGuard source_guard(torch::Device(
+        torch::kCUDA, static_cast<c10::DeviceIndex>(source_device)));
     // Reuse one pinned host buffer per leaf tensor; one synchronization for the
     // whole batch.
     std::lock_guard<std::mutex> lock(grad_pinned_mutex);
@@ -932,7 +1017,7 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
       hosts[i] = entry;
     }
     if (synchronize) {
-      torch::cuda::synchronize(device.index());
+      torch::cuda::synchronize(source_device);
     }
     for (int i = 0; i < count; ++i) {
       grads[i] = new torch_c_tensor_t(std::move(hosts[i]));
@@ -958,6 +1043,19 @@ void torch_c_tensor_grad_batch_deferred(const torch_c_tensor_t *const *tensors,
   TORCH_C_TRY
   grad_batch_impl(tensors, count, grads, /*synchronize=*/false);
   TORCH_C_CATCH("torch_c_tensor_grad_batch_deferred")
+}
+
+/*******************************************************************************
+ * \brief Releases the cached pinned gradient buffers (e.g. at environment
+ * teardown).
+ ******************************************************************************/
+void torch_c_grad_pool_clear() {
+  TORCH_C_TRY
+  std::lock_guard<std::mutex> lock(grad_pinned_mutex);
+  if (grad_pinned_pool != nullptr) {
+    grad_pinned_pool->clear();
+  }
+  TORCH_C_CATCH("torch_c_grad_pool_clear")
 }
 
 /*******************************************************************************
@@ -1274,17 +1372,51 @@ void torch_c_model_release(torch_c_model_t *model) {
  *        The returned char array has to be deallocated by caller!
  * \author Ole Schuett
  ******************************************************************************/
+/*******************************************************************************
+ * \brief Writes a size+mtime fingerprint of a file into a caller buffer.
+ ******************************************************************************/
+static std::string file_stamp(const char *filename) {
+  struct stat file_stat{};
+  if (stat(filename, &file_stat) != 0) {
+    return std::string();
+  }
+#if defined(__linux__)
+  return std::to_string(file_stat.st_size) + ":" +
+         std::to_string(file_stat.st_mtim.tv_sec) + ":" +
+         std::to_string(file_stat.st_mtim.tv_nsec);
+#else
+  return std::to_string(file_stat.st_size) + ":" +
+         std::to_string(file_stat.st_mtime);
+#endif
+}
+
+void torch_c_file_stamp(const char *filename, char *buf, int *length) {
+  TORCH_C_TRY
+  const std::string stamp = file_stamp(filename);
+  if (buf != nullptr && length != nullptr && *length > 0) {
+    const int n = std::min<int>(static_cast<int>(stamp.size()), *length - 1);
+    std::memcpy(buf, stamp.data(), n);
+    buf[n] = '\0';
+  }
+  if (length != nullptr) {
+    *length = static_cast<int>(stamp.size());
+  }
+  TORCH_C_CATCH("torch_c_file_stamp")
+}
+
 void torch_c_model_read_metadata(const char *filename, const char *key,
                                  char **content, int *length) {
   TORCH_C_TRY
 
   const std::string filename_key(filename);
+  const std::string stamp = file_stamp(filename);
   {
     std::lock_guard<std::mutex> lock(model_metadata_mutex);
     auto file_it = model_metadata_cache.find(filename_key);
-    if (file_it != model_metadata_cache.end()) {
-      auto key_it = file_it->second.find(key);
-      if (key_it != file_it->second.end()) {
+    if (file_it != model_metadata_cache.end() &&
+        file_it->second.stamp == stamp) {
+      auto key_it = file_it->second.files.find(key);
+      if (key_it != file_it->second.files.end()) {
         copy_string_to_c_buffer(key_it->second, content, length);
         return;
       }
@@ -1296,7 +1428,9 @@ void torch_c_model_read_metadata(const char *filename, const char *key,
   const std::string content_str = extra_files[key];
   {
     std::lock_guard<std::mutex> lock(model_metadata_mutex);
-    model_metadata_cache[filename_key][key] = content_str;
+    auto &entry = model_metadata_cache[filename_key];
+    entry.stamp = stamp;
+    entry.files[key] = content_str;
   }
   copy_string_to_c_buffer(content_str, content, length);
   TORCH_C_CATCH("torch_c_model_read_metadata")
