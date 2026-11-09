@@ -989,6 +989,23 @@ void torch_c_dict_insert(const torch_c_dict_t *dict, const char *key,
 }
 
 /*******************************************************************************
+ * \brief Inserts or replaces a Torch tensor in a Torch dictionary.
+ ******************************************************************************/
+void torch_c_dict_set(const torch_c_dict_t *dict, const char *key,
+                      const torch_c_tensor_t *tensor) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  const auto device = get_device_with_guard(guard);
+  auto *mutable_dict = const_cast<torch_c_dict_t *>(dict);
+  if (tensor->device() == device) {
+    mutable_dict->insert_or_assign(key, *tensor);
+  } else {
+    mutable_dict->insert_or_assign(key, tensor->to(device));
+  }
+  TORCH_C_CATCH("torch_c_dict_set")
+}
+
+/*******************************************************************************
  * \brief Retrieves a Torch tensor from a Torch dictionary.
  * \author Ole Schuett
  ******************************************************************************/

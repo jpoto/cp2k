@@ -55,13 +55,13 @@ MODULE skala_gpw_functional
    USE string_utilities,                ONLY: uppercase
    USE torch_api,                       ONLY: &
         torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, torch_dict_insert, &
-        torch_dict_release, torch_dict_type, torch_get_use_cuda, torch_pinned_reserve, &
-        torch_stream_synchronize, torch_tensor_accumulate, torch_tensor_backward_scalar, &
-        torch_tensor_data_ptr, torch_tensor_from_array, torch_tensor_grad, &
-        torch_tensor_grad_batch, torch_tensor_grad_batch3, torch_tensor_grad_batch3_deferred, &
-        torch_tensor_grad_batch_deferred, torch_tensor_item_double, torch_tensor_narrow, &
-        torch_tensor_release, torch_tensor_to_device_leaf, torch_tensor_type, &
-        torch_tensor_upload_pinned, torch_use_cuda
+        torch_dict_release, torch_dict_set, torch_dict_type, torch_get_use_cuda, &
+        torch_pinned_reserve, torch_stream_synchronize, torch_tensor_accumulate, &
+        torch_tensor_backward_scalar, torch_tensor_data_ptr, torch_tensor_from_array, &
+        torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3, &
+        torch_tensor_grad_batch3_deferred, torch_tensor_grad_batch_deferred, &
+        torch_tensor_item_double, torch_tensor_narrow, torch_tensor_release, &
+        torch_tensor_to_device_leaf, torch_tensor_type, torch_tensor_upload_pinned, torch_use_cuda
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -1513,6 +1513,7 @@ CONTAINS
          CALL torch_tensor_to_device_leaf(atomic_grid_sizes_t, .FALSE.)
          CALL timestop(phase_handle)
 
+         CALL torch_dict_create(inputs)
          DO ichunk = 1, nchunks
             atom_begin = chunk_atom_begin(ichunk)
             atom_count = chunk_atom_count(ichunk)
@@ -1543,17 +1544,16 @@ CONTAINS
                                          atomic_grid_size_bound_shape)
             CALL torch_tensor_to_device_leaf(atomic_grid_size_bound_shape_t, .FALSE.)
 
-            CALL torch_dict_create(inputs)
-            CALL torch_dict_insert(inputs, "grid_coords", grid_coords_chunk_t)
-            CALL torch_dict_insert(inputs, "grid_weights", grid_weights_chunk_t)
-            CALL torch_dict_insert(inputs, "atomic_grid_weights", atomic_grid_weights_chunk_t)
-            CALL torch_dict_insert(inputs, "atomic_grid_sizes", atomic_grid_sizes_chunk_t)
-            CALL torch_dict_insert(inputs, "atomic_grid_size_bound_shape", &
-                                   atomic_grid_size_bound_shape_t)
-            CALL torch_dict_insert(inputs, "density", density_chunk_t)
-            CALL torch_dict_insert(inputs, "grad", grad_chunk_t)
-            CALL torch_dict_insert(inputs, "kin", kin_chunk_t)
-            CALL torch_dict_insert(inputs, "coarse_0_atomic_coords", atomic_coords_chunk_t)
+            CALL torch_dict_set(inputs, "grid_coords", grid_coords_chunk_t)
+            CALL torch_dict_set(inputs, "grid_weights", grid_weights_chunk_t)
+            CALL torch_dict_set(inputs, "atomic_grid_weights", atomic_grid_weights_chunk_t)
+            CALL torch_dict_set(inputs, "atomic_grid_sizes", atomic_grid_sizes_chunk_t)
+            CALL torch_dict_set(inputs, "atomic_grid_size_bound_shape", &
+                                atomic_grid_size_bound_shape_t)
+            CALL torch_dict_set(inputs, "density", density_chunk_t)
+            CALL torch_dict_set(inputs, "grad", grad_chunk_t)
+            CALL torch_dict_set(inputs, "kin", kin_chunk_t)
+            CALL torch_dict_set(inputs, "coarse_0_atomic_coords", atomic_coords_chunk_t)
 
             CALL timeset("skala_atom_torch_forward", phase_handle)
             CALL skala_torch_model_get_exc_device(cached_model, inputs, grid_weights_chunk_t, &
@@ -1567,7 +1567,6 @@ CONTAINS
             END IF
 
             CALL torch_tensor_release(exc_tensor)
-            CALL torch_dict_release(inputs)
             CALL torch_tensor_release(grid_coords_chunk_t)
             CALL torch_tensor_release(grid_weights_chunk_t)
             CALL torch_tensor_release(atomic_grid_weights_chunk_t)
@@ -1579,6 +1578,7 @@ CONTAINS
             CALL torch_tensor_release(atomic_grid_size_bound_shape_t)
             DEALLOCATE (atomic_grid_size_bound_shape)
          END DO
+         CALL torch_dict_release(inputs)
          IF (nchunks > 0) THEN
             exc = exc + torch_tensor_item_double(exc_total_t)
             CALL torch_tensor_release(exc_total_t)

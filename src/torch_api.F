@@ -90,7 +90,7 @@ MODULE torch_api
    PUBLIC :: torch_tensor_to_device_leaf, torch_tensor_set_requires_grad
    PUBLIC :: torch_tensor_accumulate, torch_tensor_item_double, torch_tensor_weighted_sum
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
-   PUBLIC :: torch_dict_get, torch_dict_release
+   PUBLIC :: torch_dict_get, torch_dict_release, torch_dict_set
    PUBLIC :: torch_model_type, torch_model_load, torch_model_load_with_metadata, &
              torch_model_forward, torch_model_release
    PUBLIC :: torch_model_disable_parameter_gradients, torch_model_forward_mol_tensor, &
@@ -927,6 +927,37 @@ CONTAINS
       MARK_USED(tensor)
 #endif
    END SUBROUTINE torch_dict_insert
+
+! **************************************************************************************************
+!> \brief Inserts or replaces a Torch tensor in a Torch dictionary.
+! **************************************************************************************************
+   SUBROUTINE torch_dict_set(dict, key, tensor)
+      TYPE(torch_dict_type), INTENT(INOUT)               :: dict
+      CHARACTER(len=*), INTENT(IN)                       :: key
+      TYPE(torch_tensor_type), INTENT(IN)                :: tensor
+
+#if defined(__LIBTORCH)
+
+      INTERFACE
+         SUBROUTINE torch_c_dict_set(dict, key, tensor) &
+            BIND(C, name="torch_c_dict_set")
+            IMPORT :: C_CHAR, C_PTR
+            TYPE(C_PTR), VALUE                           :: dict
+            CHARACTER(kind=C_CHAR), DIMENSION(*)         :: key
+            TYPE(C_PTR), VALUE                           :: tensor
+         END SUBROUTINE torch_c_dict_set
+      END INTERFACE
+
+      CPASSERT(C_ASSOCIATED(dict%c_ptr))
+      CPASSERT(C_ASSOCIATED(tensor%c_ptr))
+      CALL torch_c_dict_set(dict=dict%c_ptr, key=TRIM(key)//C_NULL_CHAR, tensor=tensor%c_ptr)
+#else
+      CPABORT("CP2K compiled without the Torch library.")
+      MARK_USED(dict)
+      MARK_USED(key)
+      MARK_USED(tensor)
+#endif
+   END SUBROUTINE torch_dict_set
 
 ! **************************************************************************************************
 !> \brief Retrieves a Torch tensor from a Torch dictionary.
