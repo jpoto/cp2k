@@ -55,12 +55,13 @@ MODULE skala_gpw_functional
    USE string_utilities,                ONLY: uppercase
    USE torch_api,                       ONLY: &
         torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, torch_dict_insert, &
-        torch_dict_release, torch_dict_type, torch_get_use_cuda, torch_tensor_accumulate, &
-        torch_tensor_backward_scalar, torch_tensor_data_ptr, torch_tensor_from_array, &
-        torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3, &
-        torch_tensor_item_double, torch_tensor_narrow, torch_tensor_release, &
-        torch_tensor_reset_from_array, torch_tensor_to_device_leaf, torch_tensor_type, &
-        torch_use_cuda
+        torch_dict_release, torch_dict_type, torch_get_use_cuda, torch_pinned_reserve, &
+        torch_stream_synchronize, torch_tensor_accumulate, torch_tensor_backward_scalar, &
+        torch_tensor_data_ptr, torch_tensor_from_array, torch_tensor_grad, &
+        torch_tensor_grad_batch, torch_tensor_grad_batch3, torch_tensor_grad_batch3_deferred, &
+        torch_tensor_grad_batch_deferred, torch_tensor_item_double, torch_tensor_narrow, &
+        torch_tensor_release, torch_tensor_to_device_leaf, torch_tensor_type, &
+        torch_tensor_upload_pinned, torch_use_cuda
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -1065,6 +1066,7 @@ CONTAINS
                                                             selected_cuda_device
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
+      INTEGER(KIND=int_8)                                :: upload_offset, upload_total
       LOGICAL :: need_coord_grad, my_energy_only, native_grid_use_cuda, saved_use_cuda
       REAL(KIND=dp)                                      :: tmp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, grid_weights
@@ -1153,25 +1155,54 @@ CONTAINS
          END DO
       END DO
 
-      CALL torch_tensor_from_array(grid_coords_t, grid_coords)
-      CALL torch_tensor_to_device_leaf(grid_coords_t, need_coord_grad)
-      CALL torch_tensor_from_array(grid_weights_t, grid_weights)
-      CALL torch_tensor_to_device_leaf(grid_weights_t, .FALSE.)
-      CALL torch_tensor_from_array(atomic_grid_weights_t, atomic_grid_weights)
-      CALL torch_tensor_to_device_leaf(atomic_grid_weights_t, .FALSE.)
+      IF (native_grid_use_cuda) THEN
+         upload_total = INT(SIZE(grid_coords), KIND=int_8) + &
+                        INT(SIZE(grid_weights), KIND=int_8) + &
+                        INT(SIZE(atomic_grid_weights), KIND=int_8) + &
+                        INT(SIZE(coarse_0_atomic_coords), KIND=int_8) + &
+                        INT(SIZE(density), KIND=int_8) + INT(SIZE(grad), KIND=int_8) + &
+                        INT(SIZE(kin), KIND=int_8)
+         CALL torch_pinned_reserve(upload_total)
+         upload_offset = 0_int_8
+         CALL torch_tensor_upload_pinned(grid_coords_t, grid_coords, upload_offset, &
+                                         need_coord_grad)
+         upload_offset = upload_offset + INT(SIZE(grid_coords), KIND=int_8)
+         CALL torch_tensor_upload_pinned(grid_weights_t, grid_weights, upload_offset, .FALSE.)
+         upload_offset = upload_offset + INT(SIZE(grid_weights), KIND=int_8)
+         CALL torch_tensor_upload_pinned(atomic_grid_weights_t, atomic_grid_weights, &
+                                         upload_offset, .FALSE.)
+         upload_offset = upload_offset + INT(SIZE(atomic_grid_weights), KIND=int_8)
+         CALL torch_tensor_upload_pinned(coarse_0_atomic_coords_t, coarse_0_atomic_coords, &
+                                         upload_offset, need_coord_grad)
+         upload_offset = upload_offset + INT(SIZE(coarse_0_atomic_coords), KIND=int_8)
+         CALL torch_tensor_upload_pinned(density_t, density, upload_offset, &
+                                         .NOT. my_energy_only)
+         upload_offset = upload_offset + INT(SIZE(density), KIND=int_8)
+         CALL torch_tensor_upload_pinned(grad_t, grad, upload_offset,.NOT. my_energy_only)
+         upload_offset = upload_offset + INT(SIZE(grad), KIND=int_8)
+         CALL torch_tensor_upload_pinned(kin_t, kin, upload_offset,.NOT. my_energy_only)
+         CALL torch_stream_synchronize()
+      ELSE
+         CALL torch_tensor_from_array(grid_coords_t, grid_coords)
+         CALL torch_tensor_to_device_leaf(grid_coords_t, need_coord_grad)
+         CALL torch_tensor_from_array(grid_weights_t, grid_weights)
+         CALL torch_tensor_to_device_leaf(grid_weights_t, .FALSE.)
+         CALL torch_tensor_from_array(atomic_grid_weights_t, atomic_grid_weights)
+         CALL torch_tensor_to_device_leaf(atomic_grid_weights_t, .FALSE.)
+         CALL torch_tensor_from_array(coarse_0_atomic_coords_t, coarse_0_atomic_coords)
+         CALL torch_tensor_to_device_leaf(coarse_0_atomic_coords_t, need_coord_grad)
+         CALL torch_tensor_from_array(density_t, density)
+         CALL torch_tensor_to_device_leaf(density_t,.NOT. my_energy_only)
+         CALL torch_tensor_from_array(grad_t, grad)
+         CALL torch_tensor_to_device_leaf(grad_t,.NOT. my_energy_only)
+         CALL torch_tensor_from_array(kin_t, kin)
+         CALL torch_tensor_to_device_leaf(kin_t,.NOT. my_energy_only)
+      END IF
       CALL torch_tensor_from_array(atomic_grid_sizes_t, atomic_grid_sizes)
       CALL torch_tensor_to_device_leaf(atomic_grid_sizes_t, .FALSE.)
       CALL torch_tensor_from_array(atomic_grid_size_bound_shape_t, &
                                    atomic_grid_size_bound_shape)
       CALL torch_tensor_to_device_leaf(atomic_grid_size_bound_shape_t, .FALSE.)
-      CALL torch_tensor_from_array(coarse_0_atomic_coords_t, coarse_0_atomic_coords)
-      CALL torch_tensor_to_device_leaf(coarse_0_atomic_coords_t, need_coord_grad)
-      CALL torch_tensor_from_array(density_t, density)
-      CALL torch_tensor_to_device_leaf(density_t,.NOT. my_energy_only)
-      CALL torch_tensor_from_array(grad_t, grad)
-      CALL torch_tensor_to_device_leaf(grad_t,.NOT. my_energy_only)
-      CALL torch_tensor_from_array(kin_t, kin)
-      CALL torch_tensor_to_device_leaf(kin_t,.NOT. my_energy_only)
 
       CALL torch_dict_create(inputs)
       CALL torch_dict_insert(inputs, "grid_coords", grid_coords_t)
@@ -1191,9 +1222,20 @@ CONTAINS
          NULLIFY (atom_coord_grad, density_grad, grad_grad, grid_coord_grad, kin_grad)
          CALL torch_tensor_backward_scalar(exc_tensor)
          IF (need_coord_grad) THEN
-            CALL torch_tensor_grad_batch([grid_coords_t, coarse_0_atomic_coords_t], grad_batch_t)
+            CALL torch_tensor_grad_batch_deferred( &
+               [grid_coords_t, coarse_0_atomic_coords_t], grad_batch_t)
             CALL torch_tensor_data_ptr(grad_batch_t(1), grid_coord_grad)
             CALL torch_tensor_data_ptr(grad_batch_t(2), atom_coord_grad)
+         END IF
+         CALL torch_tensor_grad_batch3_deferred(density_t, grad_t, kin_t, density_grad_t, &
+                                                grad_grad_t, kin_grad_t)
+         CALL torch_tensor_data_ptr(density_grad_t, density_grad)
+         CALL torch_tensor_data_ptr(grad_grad_t, grad_grad)
+         CALL torch_tensor_data_ptr(kin_grad_t, kin_grad)
+         ! Both readbacks are issued asynchronously; synchronize once before use.
+         CALL torch_stream_synchronize()
+
+         IF (need_coord_grad) THEN
             IF (PRESENT(atom_force)) THEN
                atom_force(:) = atom_coord_grad(:, 1)
                DO row = 1, nflat
@@ -1217,11 +1259,6 @@ CONTAINS
                END DO
             END IF
          END IF
-         CALL torch_tensor_grad_batch3(density_t, grad_t, kin_t, density_grad_t, &
-                                       grad_grad_t, kin_grad_t)
-         CALL torch_tensor_data_ptr(density_grad_t, density_grad)
-         CALL torch_tensor_data_ptr(grad_grad_t, grad_grad)
-         CALL torch_tensor_data_ptr(kin_grad_t, kin_grad)
 
          row = 0
          DO ir = 1, nr
@@ -1319,6 +1356,7 @@ CONTAINS
       INTEGER :: atom_begin, atom_count, chunk_max_rows, chunk_row_count, chunk_row_start, &
                  ichunk, local_natom, local_nrow, max_grid_size, &
                  nchunks, omp_max_threads_restore, phase_handle, selected_cuda_device
+      INTEGER(KIND=int_8)                                :: upload_offset, upload_total
       INTEGER, DIMENSION(:), POINTER                     :: chunk_atom_begin, chunk_atom_count, &
                                                             chunk_row_begin, chunk_row_counts
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
@@ -1420,17 +1458,33 @@ CONTAINS
             density_t => cached_atom_cuda_tensors%density_t
             grad_t => cached_atom_cuda_tensors%grad_t
             kin_t => cached_atom_cuda_tensors%kin_t
-            CALL torch_tensor_reset_from_array( &
-               grid_coords_t, grid_coords, need_coordinate_derivatives)
-            CALL torch_tensor_reset_from_array( &
-               grid_weights_t, grid_weights, need_coordinate_derivatives)
-            CALL torch_tensor_reset_from_array( &
-               atomic_grid_weights_t, atomic_grid_weights, need_coordinate_derivatives)
-            CALL torch_tensor_reset_from_array( &
-               atomic_coords_t, atomic_coords, need_coordinate_derivatives)
-            CALL torch_tensor_reset_from_array(density_t, density, need_derivatives)
-            CALL torch_tensor_reset_from_array(grad_t, grad, need_derivatives)
-            CALL torch_tensor_reset_from_array(kin_t, kin, need_derivatives)
+            upload_total = INT(SIZE(grid_coords), KIND=int_8) + &
+                           INT(SIZE(grid_weights), KIND=int_8) + &
+                           INT(SIZE(atomic_grid_weights), KIND=int_8) + &
+                           INT(SIZE(atomic_coords), KIND=int_8) + &
+                           INT(SIZE(density), KIND=int_8) + &
+                           INT(SIZE(grad), KIND=int_8) + &
+                           INT(SIZE(kin), KIND=int_8)
+            CALL torch_pinned_reserve(upload_total)
+            upload_offset = 0_int_8
+            CALL torch_tensor_upload_pinned(grid_coords_t, grid_coords, upload_offset, &
+                                            need_coordinate_derivatives)
+            upload_offset = upload_offset + INT(SIZE(grid_coords), KIND=int_8)
+            CALL torch_tensor_upload_pinned(grid_weights_t, grid_weights, upload_offset, &
+                                            need_coordinate_derivatives)
+            upload_offset = upload_offset + INT(SIZE(grid_weights), KIND=int_8)
+            CALL torch_tensor_upload_pinned(atomic_grid_weights_t, atomic_grid_weights, &
+                                            upload_offset, need_coordinate_derivatives)
+            upload_offset = upload_offset + INT(SIZE(atomic_grid_weights), KIND=int_8)
+            CALL torch_tensor_upload_pinned(atomic_coords_t, atomic_coords, upload_offset, &
+                                            need_coordinate_derivatives)
+            upload_offset = upload_offset + INT(SIZE(atomic_coords), KIND=int_8)
+            CALL torch_tensor_upload_pinned(density_t, density, upload_offset, need_derivatives)
+            upload_offset = upload_offset + INT(SIZE(density), KIND=int_8)
+            CALL torch_tensor_upload_pinned(grad_t, grad, upload_offset, need_derivatives)
+            upload_offset = upload_offset + INT(SIZE(grad), KIND=int_8)
+            CALL torch_tensor_upload_pinned(kin_t, kin, upload_offset, need_derivatives)
+            CALL torch_stream_synchronize()
             cached_atom_cuda_tensors_active = .TRUE.
          ELSE
             grid_coords_t => grid_coords_local_t
@@ -1541,19 +1595,15 @@ CONTAINS
          IF (active_rank) THEN
             NULLIFY (density_grad, grad_grad, kin_grad)
             CALL timeset("skala_atom_grad_fetch", phase_handle)
-            CALL torch_tensor_grad_batch3(density_t, grad_t, kin_t, density_grad_t, &
-                                          grad_grad_t, kin_grad_t)
+            CALL torch_tensor_grad_batch3_deferred(density_t, grad_t, kin_t, density_grad_t, &
+                                                   grad_grad_t, kin_grad_t)
             CALL torch_tensor_data_ptr(density_grad_t, density_grad)
             CALL torch_tensor_data_ptr(grad_grad_t, grad_grad)
             CALL torch_tensor_data_ptr(kin_grad_t, kin_grad)
-            density_grad_out(:, :) = density_grad
-            grad_grad_out(:, :, :) = grad_grad
-            kin_grad_out(:, :) = kin_grad
             CALL timestop(phase_handle)
          END IF
 
          IF (need_coordinate_derivatives) THEN
-            IF (active_rank) CALL timeset("skala_atom_coord_grad_fetch", phase_handle)
             ALLOCATE (grid_coord_grad_out(3, local_nrow), grid_weight_grad_out(local_nrow), &
                       atomic_grid_weight_grad_out(local_nrow), atom_coord_grad_out(3, local_natom))
             grid_coord_grad_out = 0.0_dp
@@ -1562,13 +1612,25 @@ CONTAINS
             atom_coord_grad_out = 0.0_dp
             IF (active_rank) THEN
                NULLIFY (atomic_grid_weight_grad, atom_coord_grad, grid_coord_grad, grid_weight_grad)
-               CALL torch_tensor_grad_batch( &
+               CALL timeset("skala_atom_coord_grad_fetch", phase_handle)
+               CALL torch_tensor_grad_batch_deferred( &
                   [grid_coords_t, grid_weights_t, atomic_grid_weights_t, atomic_coords_t], &
                   grad_batch_t)
                CALL torch_tensor_data_ptr(grad_batch_t(1), grid_coord_grad)
                CALL torch_tensor_data_ptr(grad_batch_t(2), grid_weight_grad)
                CALL torch_tensor_data_ptr(grad_batch_t(3), atomic_grid_weight_grad)
                CALL torch_tensor_data_ptr(grad_batch_t(4), atom_coord_grad)
+               CALL timestop(phase_handle)
+            END IF
+         END IF
+
+         IF (active_rank) THEN
+            ! Both readbacks are issued asynchronously; synchronize once before use.
+            CALL torch_stream_synchronize()
+            density_grad_out(:, :) = density_grad
+            grad_grad_out(:, :, :) = grad_grad
+            kin_grad_out(:, :) = kin_grad
+            IF (need_coordinate_derivatives) THEN
                grid_coord_grad_out(:, :) = grid_coord_grad
                grid_weight_grad_out(:) = grid_weight_grad
                atomic_grid_weight_grad_out(:) = atomic_grid_weight_grad
@@ -1577,10 +1639,7 @@ CONTAINS
                CALL torch_tensor_release(grad_batch_t(2))
                CALL torch_tensor_release(grad_batch_t(3))
                CALL torch_tensor_release(grad_batch_t(4))
-               CALL timestop(phase_handle)
             END IF
-         END IF
-         IF (active_rank) THEN
             CALL torch_tensor_release(density_grad_t)
             CALL torch_tensor_release(grad_grad_t)
             CALL torch_tensor_release(kin_grad_t)

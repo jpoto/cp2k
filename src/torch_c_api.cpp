@@ -595,6 +595,101 @@ bool torch_c_tensor_reset_from_array_double_status(torch_c_tensor_t **tensor,
 }
 
 /*******************************************************************************
+ * \brief Reusable pinned host staging buffer for batched host-to-device copies.
+ ******************************************************************************/
+static std::mutex pinned_staging_mutex;
+// Intentionally leaked: a static torch::Tensor would be destroyed after the
+// CUDA driver has shut down and would abort the process at exit.
+static torch::Tensor *pinned_staging = nullptr;
+
+void torch_c_pinned_reserve(const int64_t n_doubles) {
+  TORCH_C_TRY
+  std::lock_guard<std::mutex> lock(pinned_staging_mutex);
+  if (pinned_staging != nullptr && pinned_staging->numel() >= n_doubles &&
+      !pinned_staging->is_cuda()) {
+    return;
+  }
+  auto opts = torch::TensorOptions().dtype(torch::kFloat64);
+  if (torch::cuda::is_available()) {
+    opts = opts.pinned_memory(true);
+  }
+  delete pinned_staging;
+  pinned_staging = new torch::Tensor(torch::empty({n_doubles}, opts));
+  TORCH_C_CATCH("torch_c_pinned_reserve")
+}
+
+/*******************************************************************************
+ * \brief Uploads one double array through the shared pinned staging buffer.
+ *        The host copy into the pinned buffer is synchronous; the device copy
+ *        is asynchronous and must be followed by torch_c_stream_synchronize().
+ ******************************************************************************/
+bool torch_c_tensor_upload_pinned(torch_c_tensor_t **tensor,
+                                  const int64_t offset, const bool req_grad,
+                                  const int ndims, const int64_t sizes[],
+                                  double source[]) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  const auto device = get_device_with_guard(guard);
+  const auto sizes_ref = c10::IntArrayRef(sizes, ndims);
+  int64_t count = 1;
+  for (int i = 0; i < ndims; i++) {
+    count *= sizes[i];
+  }
+  const bool requires_grad_changed = *tensor != nullptr &&
+                                     (*tensor)->defined() &&
+                                     (*tensor)->requires_grad() != req_grad;
+  const bool reallocated =
+      requires_grad_changed ||
+      !tensor_matches(*tensor, torch::kFloat64, device, ndims, sizes);
+  if (reallocated) {
+    delete (*tensor);
+    const auto opts =
+        torch::TensorOptions().dtype(torch::kFloat64).device(device);
+    *tensor = new torch_c_tensor_t(torch::empty(sizes_ref, opts).detach());
+  }
+  const auto source_tensor = torch::from_blob(
+      source, sizes_ref, torch::TensorOptions().dtype(torch::kFloat64));
+  if (device.is_cuda()) {
+    std::lock_guard<std::mutex> lock(pinned_staging_mutex);
+    torch_c_check(pinned_staging != nullptr &&
+                      pinned_staging->numel() >= offset + count,
+                  "Torch pinned staging buffer is too small");
+    auto pinned_slice =
+        pinned_staging->narrow(0, offset, count).view(sizes_ref);
+    {
+      torch::NoGradGuard no_grad;
+      pinned_slice.copy_(source_tensor);
+    }
+    {
+      torch::NoGradGuard no_grad;
+      (*tensor)->copy_(pinned_slice, /*non_blocking=*/true);
+      (*tensor)->mutable_grad() = torch::Tensor();
+    }
+  } else {
+    torch::NoGradGuard no_grad;
+    (*tensor)->copy_(source_tensor);
+    (*tensor)->mutable_grad() = torch::Tensor();
+  }
+  (*tensor)->set_requires_grad(req_grad);
+  return reallocated;
+  TORCH_C_CATCH("torch_c_tensor_upload_pinned")
+}
+
+/*******************************************************************************
+ * \brief Waits for all pending device copies issued by the upload/readback
+ * paths.
+ ******************************************************************************/
+void torch_c_stream_synchronize() {
+  TORCH_C_TRY
+  if (torch::cuda::is_available()) {
+    c10::OptionalDeviceGuard guard;
+    get_device_with_guard(guard);
+    torch::cuda::synchronize();
+  }
+  TORCH_C_CATCH("torch_c_stream_synchronize")
+}
+
+/*******************************************************************************
  * \brief Creates an expanded tensor view along one singleton dimension.
  ******************************************************************************/
 void torch_c_tensor_expand_dim(const torch_c_tensor_t *tensor,
@@ -786,9 +881,9 @@ void torch_c_tensor_grad(const torch_c_tensor_t *tensor,
   TORCH_C_CATCH("torch_c_tensor_grad")
 }
 
-void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
-                               const int count, torch_c_tensor_t **grads) {
-  TORCH_C_TRY
+static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
+                            const int count, torch_c_tensor_t **grads,
+                            const bool synchronize) {
   c10::OptionalDeviceGuard guard;
   const auto device = get_device_with_guard(guard);
   torch_c_check(count > 0, "Torch gradient batch must be non-empty");
@@ -816,7 +911,9 @@ void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
           sources[i].options().device(torch::kCPU).pinned_memory(true));
       hosts[i].copy_(sources[i], true);
     }
-    torch::cuda::synchronize(device.index());
+    if (synchronize) {
+      torch::cuda::synchronize(device.index());
+    }
     for (int i = 0; i < count; ++i) {
       grads[i] = new torch_c_tensor_t(std::move(hosts[i]));
     }
@@ -826,7 +923,21 @@ void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
           materialize_host_gradient(sources[i], *tensors[i]));
     }
   }
+}
+
+void torch_c_tensor_grad_batch(const torch_c_tensor_t *const *tensors,
+                               const int count, torch_c_tensor_t **grads) {
+  TORCH_C_TRY
+  grad_batch_impl(tensors, count, grads, /*synchronize=*/true);
   TORCH_C_CATCH("torch_c_tensor_grad_batch")
+}
+
+void torch_c_tensor_grad_batch_deferred(const torch_c_tensor_t *const *tensors,
+                                        const int count,
+                                        torch_c_tensor_t **grads) {
+  TORCH_C_TRY
+  grad_batch_impl(tensors, count, grads, /*synchronize=*/false);
+  TORCH_C_CATCH("torch_c_tensor_grad_batch_deferred")
 }
 
 /*******************************************************************************

@@ -57,6 +57,12 @@ MODULE torch_api
       #:endfor
    END INTERFACE torch_tensor_reset_from_array
 
+   INTERFACE torch_tensor_upload_pinned
+      #:for ndims  in range(1, max_dim+1)
+         MODULE PROCEDURE torch_tensor_upload_pinned_double_${ndims}$d
+      #:endfor
+   END INTERFACE torch_tensor_upload_pinned
+
    INTERFACE torch_tensor_data_ptr
       #:for ndims  in range(1, max_dim+1)
          MODULE PROCEDURE torch_tensor_data_ptr_int32_${ndims}$d
@@ -77,8 +83,10 @@ MODULE torch_api
    PUBLIC :: torch_tensor_type, torch_tensor_expand_dim, torch_tensor_from_array, &
              torch_tensor_narrow, torch_tensor_release
    PUBLIC :: torch_tensor_reset_from_array
+   PUBLIC :: torch_tensor_upload_pinned, torch_pinned_reserve, torch_stream_synchronize
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
    PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3
+   PUBLIC :: torch_tensor_grad_batch_deferred, torch_tensor_grad_batch3_deferred
    PUBLIC :: torch_tensor_to_device_leaf, torch_tensor_set_requires_grad
    PUBLIC :: torch_tensor_accumulate, torch_tensor_item_double, torch_tensor_weighted_sum
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
@@ -258,6 +266,69 @@ CONTAINS
          MARK_USED(reallocated)
 #endif
       END SUBROUTINE torch_tensor_reset_from_array_double_${ndims}$d
+
+   #:endfor
+
+   #:for ndims in range(1, max_dim+1)
+
+! **************************************************************************************************
+!> \brief Reuses or creates a device leaf tensor and uploads data through the shared
+!>        pinned staging buffer. The device copy is asynchronous; call
+!>        torch_stream_synchronize() before consuming the data.
+! **************************************************************************************************
+      SUBROUTINE torch_tensor_upload_pinned_double_${ndims}$d(tensor, source, offset, &
+                                                              requires_grad, reallocated)
+         TYPE(torch_tensor_type), INTENT(INOUT)             :: tensor
+         #:set arraydims = ", ".join(":" for i in range(ndims))
+         REAL(dp), DIMENSION(${arraydims}$), ALLOCATABLE, INTENT(IN)  :: source
+         INTEGER(kind=int_8), INTENT(IN)                    :: offset
+         LOGICAL, OPTIONAL, INTENT(IN)                      :: requires_grad
+         LOGICAL, OPTIONAL, INTENT(OUT)                     :: reallocated
+
+#if defined(__LIBTORCH)
+         INTEGER(kind=int_8), DIMENSION(${ndims}$)          :: sizes_c
+         LOGICAL                                            :: my_req_grad
+         LOGICAL(kind=C_BOOL)                               :: reallocated_c
+
+         INTERFACE
+            FUNCTION torch_c_tensor_upload_pinned(tensor, offset, req_grad, ndims, sizes, source) &
+               RESULT(reallocated_flag) BIND(C, name="torch_c_tensor_upload_pinned")
+               IMPORT :: C_PTR, C_INT, C_INT64_T, C_DOUBLE, C_BOOL
+               TYPE(C_PTR)                                  :: tensor
+               INTEGER(kind=C_INT64_T), VALUE               :: offset
+               LOGICAL(kind=C_BOOL), VALUE                  :: req_grad
+               INTEGER(kind=C_INT), VALUE                   :: ndims
+               INTEGER(kind=C_INT64_T), DIMENSION(*)        :: sizes
+               REAL(kind=C_DOUBLE), DIMENSION(*)            :: source
+               LOGICAL(kind=C_BOOL)                         :: reallocated_flag
+            END FUNCTION torch_c_tensor_upload_pinned
+         END INTERFACE
+
+         my_req_grad = .FALSE.
+         IF (PRESENT(requires_grad)) my_req_grad = requires_grad
+
+         #:for axis in range(ndims)
+            sizes_c(${axis + 1}$) = SIZE(source, ${ndims - axis}$) ! C arrays are stored row-major.
+         #:endfor
+
+         reallocated_c = torch_c_tensor_upload_pinned( &
+            tensor=tensor%c_ptr, &
+            offset=offset, &
+            req_grad=LOGICAL(my_req_grad, C_BOOL), &
+            ndims=${ndims}$, &
+            sizes=sizes_c, &
+            source=source)
+         IF (PRESENT(reallocated)) reallocated = reallocated_c
+         CPASSERT(C_ASSOCIATED(tensor%c_ptr))
+#else
+         CPABORT("CP2K compiled without the Torch library.")
+         MARK_USED(tensor)
+         MARK_USED(source)
+         MARK_USED(offset)
+         MARK_USED(requires_grad)
+         MARK_USED(reallocated)
+#endif
+      END SUBROUTINE torch_tensor_upload_pinned_double_${ndims}$d
 
    #:endfor
 
@@ -490,6 +561,41 @@ CONTAINS
    END FUNCTION torch_get_use_cuda
 
 ! **************************************************************************************************
+!> \brief Reserve capacity in the shared pinned host staging buffer.
+! **************************************************************************************************
+   SUBROUTINE torch_pinned_reserve(n_doubles)
+      INTEGER(kind=int_8), INTENT(IN)                    :: n_doubles
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_pinned_reserve(n_doubles) BIND(C, name="torch_c_pinned_reserve")
+            IMPORT :: C_INT64_T
+            INTEGER(kind=C_INT64_T), VALUE               :: n_doubles
+         END SUBROUTINE torch_c_pinned_reserve
+      END INTERFACE
+
+      CALL torch_c_pinned_reserve(n_doubles=n_doubles)
+#else
+      MARK_USED(n_doubles)
+#endif
+   END SUBROUTINE torch_pinned_reserve
+
+! **************************************************************************************************
+!> \brief Wait for all pending asynchronous device copies.
+! **************************************************************************************************
+   SUBROUTINE torch_stream_synchronize()
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_stream_synchronize() BIND(C, name="torch_c_stream_synchronize")
+         END SUBROUTINE torch_c_stream_synchronize
+      END INTERFACE
+
+      CALL torch_c_stream_synchronize()
+#endif
+   END SUBROUTINE torch_stream_synchronize
+
+! **************************************************************************************************
 !> \brief Returns the gradient of a Torch tensor which was computed by autograd.
 !> \author Ole Schuett
 ! **************************************************************************************************
@@ -524,6 +630,25 @@ CONTAINS
       grad3 = grads(3)
 
    END SUBROUTINE torch_tensor_grad_batch3
+
+! **************************************************************************************************
+!> \brief Copies three autograd gradients to CPU memory without synchronizing.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_grad_batch3_deferred(tensor1, tensor2, tensor3, grad1, grad2, grad3)
+      TYPE(torch_tensor_type), INTENT(IN)                :: tensor1, tensor2, tensor3
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: grad1, grad2, grad3
+
+      TYPE(torch_tensor_type), DIMENSION(3)              :: grads, tensors
+
+      tensors(1) = tensor1
+      tensors(2) = tensor2
+      tensors(3) = tensor3
+      CALL torch_tensor_grad_batch_deferred(tensors, grads)
+      grad1 = grads(1)
+      grad2 = grads(2)
+      grad3 = grads(3)
+
+   END SUBROUTINE torch_tensor_grad_batch3_deferred
 
 ! **************************************************************************************************
 !> \brief Copies several autograd gradients to CPU memory with one synchronization.
@@ -567,6 +692,50 @@ CONTAINS
       MARK_USED(grads)
 #endif
    END SUBROUTINE torch_tensor_grad_batch
+
+! **************************************************************************************************
+!> \brief Copies several autograd gradients to the pinned host buffers without synchronizing.
+!>        Call torch_stream_synchronize() before reading the gradients.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_grad_batch_deferred(tensors, grads)
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(IN)  :: tensors
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(INOUT) :: grads
+
+#if defined(__LIBTORCH)
+      INTEGER                                            :: i, n
+      TYPE(C_PTR), ALLOCATABLE, DIMENSION(:)             :: c_grads, c_tensors
+
+      INTERFACE
+         SUBROUTINE torch_c_tensor_grad_batch_deferred(tensors, count, grads) &
+            BIND(C, name="torch_c_tensor_grad_batch_deferred")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), DIMENSION(*)                    :: tensors
+            INTEGER(kind=C_INT), VALUE                   :: count
+            TYPE(C_PTR), DIMENSION(*)                    :: grads
+         END SUBROUTINE torch_c_tensor_grad_batch_deferred
+      END INTERFACE
+
+      n = SIZE(tensors)
+      CPASSERT(SIZE(grads) == n)
+      ALLOCATE (c_tensors(n), c_grads(n))
+      DO i = 1, n
+         CPASSERT(C_ASSOCIATED(tensors(i)%c_ptr))
+         c_tensors(i) = tensors(i)%c_ptr
+         CPASSERT(.NOT. C_ASSOCIATED(grads(i)%c_ptr))
+         c_grads(i) = C_NULL_PTR
+      END DO
+      CALL torch_c_tensor_grad_batch_deferred(tensors=c_tensors, count=INT(n, C_INT), grads=c_grads)
+      DO i = 1, n
+         CPASSERT(C_ASSOCIATED(c_grads(i)))
+         grads(i)%c_ptr = c_grads(i)
+      END DO
+      DEALLOCATE (c_tensors, c_grads)
+#else
+      CPABORT("CP2K compiled without the Torch library.")
+      MARK_USED(tensors)
+      MARK_USED(grads)
+#endif
+   END SUBROUTINE torch_tensor_grad_batch_deferred
 
 ! **************************************************************************************************
 !> \brief Returns the weighted sum of two Torch tensors.

@@ -23,9 +23,10 @@ MODULE skala_gpw_features
    USE pw_types,                        ONLY: pw_r3d_rs_type
    USE torch_api,                       ONLY: &
         torch_dict_clone, torch_dict_create, torch_dict_insert, torch_dict_release, &
-        torch_dict_type, torch_tensor_expand_dim, torch_tensor_from_array, torch_tensor_narrow, &
-        torch_tensor_release, torch_tensor_reset_from_array, torch_tensor_set_requires_grad, &
-        torch_tensor_to_device_leaf, torch_tensor_type
+        torch_dict_type, torch_pinned_reserve, torch_stream_synchronize, torch_tensor_expand_dim, &
+        torch_tensor_from_array, torch_tensor_narrow, torch_tensor_release, &
+        torch_tensor_set_requires_grad, torch_tensor_to_device_leaf, torch_tensor_type, &
+        torch_tensor_upload_pinned
    USE xc_rho_set_types,                ONLY: xc_rho_set_get,&
                                               xc_rho_set_type
 #include "../base/base_uses.f90"
@@ -2455,6 +2456,7 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: requires_weight_grad
 
       INTEGER                                            :: grad_mode
+      INTEGER(KIND=int_8)                                :: upload_offset, upload_total
       LOGICAL                                            :: dynamic_reallocated, &
                                                             my_requires_weight_grad, &
                                                             reallocated_density, reallocated_grad, &
@@ -2500,16 +2502,27 @@ CONTAINS
             cached_layout%chunk_dynamic_input_views_active = .FALSE.
          END IF
 
-         CALL torch_tensor_reset_from_array(cached_layout%chunk_density_t, &
-                                            features%chunk_density, requires_grad=requires_grad, &
-                                            reallocated=reallocated_density)
+         upload_total = INT(SIZE(features%chunk_density), KIND=int_8) + &
+                        INT(SIZE(features%chunk_grad), KIND=int_8) + &
+                        INT(SIZE(features%chunk_kin), KIND=int_8)
+         CALL torch_pinned_reserve(upload_total)
+         upload_offset = 0_int_8
+         CALL torch_tensor_upload_pinned(cached_layout%chunk_density_t, &
+                                         features%chunk_density, upload_offset, &
+                                         requires_grad=requires_grad, &
+                                         reallocated=reallocated_density)
+         upload_offset = upload_offset + INT(SIZE(features%chunk_density), KIND=int_8)
          features%density_t = cached_layout%chunk_density_t
-         CALL torch_tensor_reset_from_array(cached_layout%chunk_grad_t, features%chunk_grad, &
-                                            requires_grad=requires_grad, reallocated=reallocated_grad)
+         CALL torch_tensor_upload_pinned(cached_layout%chunk_grad_t, features%chunk_grad, &
+                                         upload_offset, requires_grad=requires_grad, &
+                                         reallocated=reallocated_grad)
+         upload_offset = upload_offset + INT(SIZE(features%chunk_grad), KIND=int_8)
          features%grad_t = cached_layout%chunk_grad_t
-         CALL torch_tensor_reset_from_array(cached_layout%chunk_kin_t, features%chunk_kin, &
-                                            requires_grad=requires_grad, reallocated=reallocated_kin)
+         CALL torch_tensor_upload_pinned(cached_layout%chunk_kin_t, features%chunk_kin, &
+                                         upload_offset, requires_grad=requires_grad, &
+                                         reallocated=reallocated_kin)
          features%kin_t = cached_layout%chunk_kin_t
+         CALL torch_stream_synchronize()
          dynamic_reallocated = reallocated_density .OR. reallocated_grad .OR. reallocated_kin
          IF (dynamic_reallocated) THEN
             IF (cached_layout%chunk_inputs_active) THEN
@@ -2576,15 +2589,26 @@ CONTAINS
          features%atomic_grid_sizes_t = cached_layout%atomic_grid_sizes_t
          features%atomic_grid_size_bound_shape_t = cached_layout%atomic_grid_size_bound_shape_t
 
-         CALL torch_tensor_reset_from_array(cached_layout%density_t, features%density, &
-                                            requires_grad=requires_grad, reallocated=reallocated_density)
+         upload_total = INT(SIZE(features%density), KIND=int_8) + &
+                        INT(SIZE(features%grad), KIND=int_8) + &
+                        INT(SIZE(features%kin), KIND=int_8)
+         CALL torch_pinned_reserve(upload_total)
+         upload_offset = 0_int_8
+         CALL torch_tensor_upload_pinned(cached_layout%density_t, features%density, &
+                                         upload_offset, requires_grad=requires_grad, &
+                                         reallocated=reallocated_density)
+         upload_offset = upload_offset + INT(SIZE(features%density), KIND=int_8)
          features%density_t = cached_layout%density_t
-         CALL torch_tensor_reset_from_array(cached_layout%grad_t, features%grad, &
-                                            requires_grad=requires_grad, reallocated=reallocated_grad)
+         CALL torch_tensor_upload_pinned(cached_layout%grad_t, features%grad, &
+                                         upload_offset, requires_grad=requires_grad, &
+                                         reallocated=reallocated_grad)
+         upload_offset = upload_offset + INT(SIZE(features%grad), KIND=int_8)
          features%grad_t = cached_layout%grad_t
-         CALL torch_tensor_reset_from_array(cached_layout%kin_t, features%kin, &
-                                            requires_grad=requires_grad, reallocated=reallocated_kin)
+         CALL torch_tensor_upload_pinned(cached_layout%kin_t, features%kin, &
+                                         upload_offset, requires_grad=requires_grad, &
+                                         reallocated=reallocated_kin)
          features%kin_t = cached_layout%kin_t
+         CALL torch_stream_synchronize()
          dynamic_reallocated = reallocated_density .OR. reallocated_grad .OR. reallocated_kin
          IF (dynamic_reallocated .AND. cached_layout%inputs_active) THEN
             CALL torch_dict_release(cached_layout%inputs)
