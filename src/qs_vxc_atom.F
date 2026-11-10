@@ -140,6 +140,15 @@ MODULE qs_vxc_atom
                                   native_grid_adjoint_max_bins_per_row = &
                                   native_grid_adjoint_max_tiles_per_direction**3
 
+   ! Geometry-scoped cache of the atom-composite interpolation adjoint bins. Rebuilt only when
+   ! the grid, cell, wrap flag, or composite point coordinates change.
+   INTEGER, PRIVATE :: adj_bin_nrows = -1, adj_bin_npts(3) = 0, adj_bin_perd(3) = 0, &
+                       adj_bin_tile_count(3) = 0
+   REAL(dp), DIMENSION(3, 3), PRIVATE :: adj_bin_dh_inv = 0.0_dp, adj_bin_hmat = 0.0_dp
+   INTEGER, ALLOCATABLE, DIMENSION(:), PRIVATE, TARGET :: adj_bin_offsets, adj_bin_rows
+   REAL(dp), ALLOCATABLE, DIMENSION(:, :), PRIVATE :: adj_bin_points
+   LOGICAL, PRIVATE :: adj_bin_ready = .FALSE., adj_bin_wrap = .FALSE.
+
    PUBLIC :: calculate_vxc_atom, &
              calculate_vxc_atom_epr, &
              gapw_cdft_one_center
@@ -266,11 +275,12 @@ CONTAINS
          num_pe, on, source_atom, target_atom, xc_deriv_method_id, xc_rho_smooth_id, zatom
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: composite_atomic_grid_sizes, &
                                                             composite_local_grid_sizes
-      INTEGER, ALLOCATABLE, DIMENSION(:) :: adjoint_bin_offsets, adjoint_bin_rows, &
-         composite_atom_end, composite_atom_kind, composite_atom_kind_index, composite_atom_start, &
-         composite_grid_atom, composite_local_atoms
+      INTEGER, ALLOCATABLE, DIMENSION(:) :: composite_atom_end, composite_atom_kind, &
+         composite_atom_kind_index, composite_atom_start, composite_grid_atom, &
+         composite_local_atoms
       INTEGER, DIMENSION(2, 3)                           :: bounds
-      INTEGER, DIMENSION(:), POINTER                     :: atom_list
+      INTEGER, DIMENSION(:), POINTER                     :: adjoint_bin_offsets, adjoint_bin_rows, &
+                                                            atom_list
       LOGICAL :: accint, atom_composite_active, atom_composite_diagnostic, &
          atom_composite_reference, direct_valence_atom_composite, donlcc, evaluate_hard, &
          evaluate_soft, gradient_f, image_partition_atom_composite, lsd, my_calculate_forces, &
@@ -1994,7 +2004,7 @@ CONTAINS
             smooth_density_adjoint_storage = 0.0_dp
             smooth_grad_adjoint_storage = 0.0_dp
             smooth_kin_adjoint_storage = 0.0_dp
-            CALL build_native_grid_adjoint_bins( &
+            CALL ensure_adjoint_bin_cache( &
                smooth_rho_r(1)%pw_grid, cell, composite_grid_coords, &
                image_partition_atom_composite, adjoint_tile_count, adjoint_bin_offsets, &
                adjoint_bin_rows)
@@ -2050,46 +2060,48 @@ CONTAINS
             END DO
 !$OMP END PARALLEL DO
             CALL timestop(adjoint_handle)
-            DEALLOCATE (adjoint_bin_offsets, adjoint_bin_rows)
-            smooth_input_contraction = 0.0_dp
+            NULLIFY (adjoint_bin_offsets, adjoint_bin_rows)
+            IF (atom_composite_diagnostic) THEN
+               smooth_input_contraction = 0.0_dp
 !$OMP PARALLEL DO SCHEDULE(STATIC) REDUCTION(+:smooth_input_contraction) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_smooth_density_value, composite_smooth_gradient_value, &
 !$OMP         composite_smooth_kin_value, idir, ispin) &
 !$OMP SHARED(composite_density_grad, composite_grad_grad, composite_kin_grad, composite_nflat, &
 !$OMP        composite_smooth_density_cache, composite_smooth_gradient_cache, &
 !$OMP        composite_smooth_kin_cache, lsd)
-            DO composite_row = 1, composite_nflat
-               composite_smooth_density_value = composite_smooth_density_cache(composite_row, :)
-               composite_smooth_gradient_value = &
-                  composite_smooth_gradient_cache(composite_row, :, :)
-               composite_smooth_kin_value = composite_smooth_kin_cache(composite_row, :)
-               DO ispin = 1, 2
-                  IF (lsd) THEN
-                     smooth_input_contraction = smooth_input_contraction + &
-                                                composite_density_grad(composite_row, ispin)* &
-                                                composite_smooth_density_value(ispin) + &
-                                                composite_kin_grad(composite_row, ispin)* &
-                                                composite_smooth_kin_value(ispin)
-                     DO idir = 1, 3
+               DO composite_row = 1, composite_nflat
+                  composite_smooth_density_value = composite_smooth_density_cache(composite_row, :)
+                  composite_smooth_gradient_value = &
+                     composite_smooth_gradient_cache(composite_row, :, :)
+                  composite_smooth_kin_value = composite_smooth_kin_cache(composite_row, :)
+                  DO ispin = 1, 2
+                     IF (lsd) THEN
                         smooth_input_contraction = smooth_input_contraction + &
-                                                   composite_grad_grad(composite_row, idir, ispin)* &
-                                                   composite_smooth_gradient_value(idir, ispin)
-                     END DO
-                  ELSE
-                     smooth_input_contraction = smooth_input_contraction + 0.5_dp*( &
-                                                composite_density_grad(composite_row, ispin)* &
-                                                composite_smooth_density_value(1) + &
-                                                composite_kin_grad(composite_row, ispin)* &
-                                                composite_smooth_kin_value(1))
-                     DO idir = 1, 3
-                        smooth_input_contraction = smooth_input_contraction + 0.5_dp* &
-                                                   composite_grad_grad(composite_row, idir, ispin)* &
-                                                   composite_smooth_gradient_value(idir, 1)
-                     END DO
-                  END IF
+                                                   composite_density_grad(composite_row, ispin)* &
+                                                   composite_smooth_density_value(ispin) + &
+                                                   composite_kin_grad(composite_row, ispin)* &
+                                                   composite_smooth_kin_value(ispin)
+                        DO idir = 1, 3
+                           smooth_input_contraction = smooth_input_contraction + &
+                                                      composite_grad_grad(composite_row, idir, ispin)* &
+                                                      composite_smooth_gradient_value(idir, ispin)
+                        END DO
+                     ELSE
+                        smooth_input_contraction = smooth_input_contraction + 0.5_dp*( &
+                                                   composite_density_grad(composite_row, ispin)* &
+                                                   composite_smooth_density_value(1) + &
+                                                   composite_kin_grad(composite_row, ispin)* &
+                                                   composite_smooth_kin_value(1))
+                        DO idir = 1, 3
+                           smooth_input_contraction = smooth_input_contraction + 0.5_dp* &
+                                                      composite_grad_grad(composite_row, idir, ispin)* &
+                                                      composite_smooth_gradient_value(idir, 1)
+                        END DO
+                     END IF
+                  END DO
                END DO
-            END DO
 !$OMP END PARALLEL DO
+            END IF
             smooth_density_adjoint => smooth_density_adjoint_storage
             smooth_grad_adjoint => smooth_grad_adjoint_storage
             smooth_kin_adjoint => smooth_kin_adjoint_storage
@@ -2098,7 +2110,7 @@ CONTAINS
             CALL para_env%sum(smooth_density_adjoint)
             CALL para_env%sum(smooth_grad_adjoint)
             CALL para_env%sum(smooth_kin_adjoint)
-            CALL para_env%sum(smooth_input_contraction)
+            IF (atom_composite_diagnostic) CALL para_env%sum(smooth_input_contraction)
             CALL build_vxc_from_feature_grads( &
                smooth_vxc_rho, smooth_vxc_tau, smooth_rho_r, auxbas_pw_pool, &
                smooth_density_adjoint, smooth_grad_adjoint, smooth_kin_adjoint, &
@@ -2367,16 +2379,18 @@ CONTAINS
                      CALL para_env%sum(vtau_s)
                      IF (.NOT. source_matrix_local) CYCLE
 
-                     one_center_rho_grad_field_contraction = &
-                        one_center_rho_grad_field_contraction + SUM(vxc_h*(rho_h - rho_s)) + &
-                        SUM(vxg_h*(drho_h(1:3, :, :, :) - drho_s(1:3, :, :, :)))
-                     one_center_density_field_contraction = one_center_density_field_contraction + &
-                                                            SUM(vxc_h*(rho_h - rho_s))
-                     one_center_gradient_field_contraction = one_center_gradient_field_contraction + &
-                                                             SUM(vxg_h*(drho_h(1:3, :, :, :) - &
-                                                                        drho_s(1:3, :, :, :)))
-                     one_center_tau_field_contraction = one_center_tau_field_contraction + &
-                                                        SUM(vtau_h*(tau_h - tau_s))
+                     IF (atom_composite_diagnostic) THEN
+                        one_center_rho_grad_field_contraction = &
+                           one_center_rho_grad_field_contraction + SUM(vxc_h*(rho_h - rho_s)) + &
+                           SUM(vxg_h*(drho_h(1:3, :, :, :) - drho_s(1:3, :, :, :)))
+                        one_center_density_field_contraction = one_center_density_field_contraction + &
+                                                               SUM(vxc_h*(rho_h - rho_s))
+                        one_center_gradient_field_contraction = one_center_gradient_field_contraction + &
+                                                                SUM(vxg_h*(drho_h(1:3, :, :, :) - &
+                                                                           drho_s(1:3, :, :, :)))
+                        one_center_tau_field_contraction = one_center_tau_field_contraction + &
+                                                           SUM(vtau_h*(tau_h - tau_s))
+                     END IF
 
                      ALLOCATE (composite_int_h(SIZE(int_hh(1)%r_coef, 1), &
                                                SIZE(int_hh(1)%r_coef, 2), nspins), &
@@ -2391,38 +2405,44 @@ CONTAINS
                      CALL gaVxcgb_noGC(vxc_h, vxc_s, int_hh, int_ss, &
                                        grid_atom, basis_1c, harmonics, nspins)
                      DO ispin = 1, nspins
-                        one_center_density_matrix_contraction = &
-                           one_center_density_matrix_contraction + &
-                           contract_one_center_matrix(cpc_h(ispin)%r_coef, &
-                                                      int_hh(ispin)%r_coef, &
-                                                      tau_basis_cache%n2oindex) - &
-                           contract_one_center_matrix(cpc_s(ispin)%r_coef, &
-                                                      int_ss(ispin)%r_coef, &
-                                                      tau_basis_cache%n2oindex)
+                        IF (atom_composite_diagnostic) THEN
+                           one_center_density_matrix_contraction = &
+                              one_center_density_matrix_contraction + &
+                              contract_one_center_matrix(cpc_h(ispin)%r_coef, &
+                                                         int_hh(ispin)%r_coef, &
+                                                         tau_basis_cache%n2oindex) - &
+                              contract_one_center_matrix(cpc_s(ispin)%r_coef, &
+                                                         int_ss(ispin)%r_coef, &
+                                                         tau_basis_cache%n2oindex)
+                        END IF
                         int_hh(ispin)%r_coef = 0.0_dp
                         int_ss(ispin)%r_coef = 0.0_dp
                      END DO
                      CALL gaVxcgb_GC(vxc_h, vxc_s, vxg_h, vxg_s, int_hh, int_ss, &
                                      grid_atom, basis_1c, harmonics, nspins)
                      DO ispin = 1, nspins
-                        one_center_rho_grad_matrix_contraction = &
-                           one_center_rho_grad_matrix_contraction + &
-                           contract_one_center_matrix(cpc_h(ispin)%r_coef, &
-                                                      int_hh(ispin)%r_coef, &
-                                                      tau_basis_cache%n2oindex) - &
-                           contract_one_center_matrix(cpc_s(ispin)%r_coef, &
-                                                      int_ss(ispin)%r_coef, &
-                                                      tau_basis_cache%n2oindex)
+                        IF (atom_composite_diagnostic) THEN
+                           one_center_rho_grad_matrix_contraction = &
+                              one_center_rho_grad_matrix_contraction + &
+                              contract_one_center_matrix(cpc_h(ispin)%r_coef, &
+                                                         int_hh(ispin)%r_coef, &
+                                                         tau_basis_cache%n2oindex) - &
+                              contract_one_center_matrix(cpc_s(ispin)%r_coef, &
+                                                         int_ss(ispin)%r_coef, &
+                                                         tau_basis_cache%n2oindex)
+                        END IF
                      END DO
                      CALL dgaVtaudgb(vtau_h, vtau_s, int_hh, int_ss, tau_basis_cache, nspins)
                      DO ispin = 1, nspins
-                        one_center_matrix_contraction = one_center_matrix_contraction + &
-                                                        contract_one_center_matrix(cpc_h(ispin)%r_coef, &
-                                                                                   int_hh(ispin)%r_coef, &
-                                                                                   tau_basis_cache%n2oindex) - &
-                                                        contract_one_center_matrix(cpc_s(ispin)%r_coef, &
-                                                                                   int_ss(ispin)%r_coef, &
-                                                                                   tau_basis_cache%n2oindex)
+                        IF (atom_composite_diagnostic) THEN
+                           one_center_matrix_contraction = one_center_matrix_contraction + &
+                                                           contract_one_center_matrix(cpc_h(ispin)%r_coef, &
+                                                                                      int_hh(ispin)%r_coef, &
+                                                                                      tau_basis_cache%n2oindex) - &
+                                                           contract_one_center_matrix(cpc_s(ispin)%r_coef, &
+                                                                                      int_ss(ispin)%r_coef, &
+                                                                                      tau_basis_cache%n2oindex)
+                        END IF
                         IF (.NOT. atom_composite_reference) THEN
                            int_hh(ispin)%r_coef = composite_int_h(:, :, ispin)
                            int_ss(ispin)%r_coef = composite_int_s(:, :, ispin)
@@ -2433,27 +2453,27 @@ CONTAINS
                   CALL release_tau_basis_cache(tau_basis_cache)
                END DO
             END IF
-            CALL para_env%sum(one_center_density_field_contraction)
-            CALL para_env%sum(one_center_density_matrix_contraction)
-            CALL para_env%sum(one_center_gradient_field_contraction)
-            CALL para_env%sum(one_center_matrix_contraction)
-            CALL para_env%sum(one_center_rho_grad_field_contraction)
-            CALL para_env%sum(one_center_rho_grad_matrix_contraction)
-            CALL para_env%sum(one_center_tau_field_contraction)
-            one_center_field_contraction = one_center_rho_grad_field_contraction + &
-                                           one_center_tau_field_contraction
-            one_center_gradient_matrix_contraction = one_center_rho_grad_matrix_contraction - &
-                                                     one_center_density_matrix_contraction
-            one_center_tau_matrix_contraction = one_center_matrix_contraction - &
-                                                one_center_rho_grad_matrix_contraction
-            feature_component_analytic(1) = SUM(composite_density_grad*composite_density)
-            feature_component_analytic(2) = SUM(composite_grad_grad*composite_grad)
-            feature_component_analytic(3) = SUM(composite_kin_grad*composite_kin)
-            feature_component_analytic(4) = SUM(feature_component_analytic(1:3))
-            CALL para_env%sum(feature_component_analytic)
-            one_center_tensor_contraction = feature_component_analytic(4) - &
-                                            smooth_input_contraction
             IF (atom_composite_diagnostic) THEN
+               CALL para_env%sum(one_center_density_field_contraction)
+               CALL para_env%sum(one_center_density_matrix_contraction)
+               CALL para_env%sum(one_center_gradient_field_contraction)
+               CALL para_env%sum(one_center_matrix_contraction)
+               CALL para_env%sum(one_center_rho_grad_field_contraction)
+               CALL para_env%sum(one_center_rho_grad_matrix_contraction)
+               CALL para_env%sum(one_center_tau_field_contraction)
+               one_center_field_contraction = one_center_rho_grad_field_contraction + &
+                                              one_center_tau_field_contraction
+               one_center_gradient_matrix_contraction = one_center_rho_grad_matrix_contraction - &
+                                                        one_center_density_matrix_contraction
+               one_center_tau_matrix_contraction = one_center_matrix_contraction - &
+                                                   one_center_rho_grad_matrix_contraction
+               feature_component_analytic(1) = SUM(composite_density_grad*composite_density)
+               feature_component_analytic(2) = SUM(composite_grad_grad*composite_grad)
+               feature_component_analytic(3) = SUM(composite_kin_grad*composite_kin)
+               feature_component_analytic(4) = SUM(feature_component_analytic(1:3))
+               CALL para_env%sum(feature_component_analytic)
+               one_center_tensor_contraction = feature_component_analytic(4) - &
+                                               smooth_input_contraction
                DO icomponent = 1, 4
                   SELECT CASE (icomponent)
                   CASE (1)
@@ -3064,6 +3084,60 @@ CONTAINS
       END DO
 
    END SUBROUTINE interpolate_native_grid_fields
+
+! **************************************************************************************************
+!> \brief Rebuild the atom-composite adjoint bins only when the grid/geometry changed.
+!> \param grid ...
+!> \param cell ...
+!> \param points ...
+!> \param wrap ...
+!> \param tile_count ...
+!> \param bin_offsets ...
+!> \param bin_rows ...
+! **************************************************************************************************
+   SUBROUTINE ensure_adjoint_bin_cache(grid, cell, points, wrap, tile_count, bin_offsets, bin_rows)
+      TYPE(pw_grid_type), INTENT(IN), POINTER            :: grid
+      TYPE(cell_type), INTENT(IN), POINTER               :: cell
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: points
+      LOGICAL, INTENT(IN)                                :: wrap
+      INTEGER, DIMENSION(3), INTENT(OUT)                 :: tile_count
+      INTEGER, DIMENSION(:), INTENT(OUT), POINTER        :: bin_offsets, bin_rows
+
+      LOGICAL                                            :: valid
+
+      valid = adj_bin_ready .AND. adj_bin_nrows == SIZE(points, 2)
+      IF (valid) THEN
+         valid = ALL(adj_bin_npts == grid%npts) .AND. ALL(adj_bin_dh_inv == grid%dh_inv)
+         valid = valid .AND. ALL(adj_bin_hmat == cell%hmat) .AND. ALL(adj_bin_perd == cell%perd)
+         valid = valid .AND. (adj_bin_wrap .EQV. wrap)
+      END IF
+      IF (valid .AND. ALLOCATED(adj_bin_points)) THEN
+         valid = SIZE(adj_bin_points, 2) == SIZE(points, 2)
+         IF (valid) valid = ALL(ABS(adj_bin_points - points) <= 1.0E-12_dp)
+      ELSE
+         valid = .FALSE.
+      END IF
+      IF (.NOT. valid) THEN
+         IF (ALLOCATED(adj_bin_offsets)) DEALLOCATE (adj_bin_offsets)
+         IF (ALLOCATED(adj_bin_rows)) DEALLOCATE (adj_bin_rows)
+         CALL build_native_grid_adjoint_bins(grid, cell, points, wrap, adj_bin_tile_count, &
+                                             adj_bin_offsets, adj_bin_rows)
+         IF (ALLOCATED(adj_bin_points)) DEALLOCATE (adj_bin_points)
+         ALLOCATE (adj_bin_points(3, SIZE(points, 2)))
+         adj_bin_points = points
+         adj_bin_npts = grid%npts
+         adj_bin_dh_inv = grid%dh_inv
+         adj_bin_hmat = cell%hmat
+         adj_bin_perd = cell%perd
+         adj_bin_wrap = wrap
+         adj_bin_nrows = SIZE(points, 2)
+         adj_bin_ready = .TRUE.
+      END IF
+      tile_count = adj_bin_tile_count
+      bin_offsets => adj_bin_offsets
+      bin_rows => adj_bin_rows
+
+   END SUBROUTINE ensure_adjoint_bin_cache
 
 ! **************************************************************************************************
 !> \brief Group atom-grid rows by the disjoint PW tiles touched by their interpolation stencils.
