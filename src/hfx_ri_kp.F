@@ -29,12 +29,13 @@ MODULE hfx_ri_kp
                                               cp_blacs_env_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_add, dbcsr_clear, dbcsr_copy, dbcsr_create, dbcsr_distribution_get, &
-        dbcsr_distribution_new, dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_filter, &
-        dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, dbcsr_iterator_blocks_left, &
-        dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_p_type, dbcsr_put_block, dbcsr_release, dbcsr_type, dbcsr_type_no_symmetry, &
-        dbcsr_type_symmetric
+        dbcsr_add, dbcsr_clear, dbcsr_copy, dbcsr_create, dbcsr_distribute, &
+        dbcsr_distribution_get, dbcsr_distribution_new, dbcsr_distribution_release, &
+        dbcsr_distribution_type, dbcsr_filter, dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, &
+        dbcsr_get_stored_coordinates, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
+        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, &
+        dbcsr_put_block, dbcsr_release, dbcsr_replicate_all, dbcsr_transposed, dbcsr_type, &
+        dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE cp_dbcsr_cholesky,               ONLY: cp_dbcsr_cholesky_decompose,&
                                               cp_dbcsr_cholesky_invert
    USE cp_dbcsr_contrib,                ONLY: dbcsr_dot
@@ -68,7 +69,9 @@ MODULE hfx_ri_kp
    USE kinds,                           ONLY: default_string_length,&
                                               dp,&
                                               int_8
-   USE kpoint_types,                    ONLY: get_kpoint_info,&
+   USE kpoint_types,                    ONLY: find_kpoint_rotation_slot,&
+                                              get_kpoint_info,&
+                                              kpoint_sym_type,&
                                               kpoint_type
    USE libint_2c_3c,                    ONLY: cutoff_screen_factor
    USE machine,                         ONLY: m_flush,&
@@ -121,6 +124,8 @@ MODULE hfx_ri_kp
    PUBLIC :: hfx_ri_update_ks_kp, hfx_ri_update_forces_kp
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'hfx_ri_kp'
+
+   LOGICAL, SAVE, PRIVATE :: image_sym_warned = .FALSE.
 CONTAINS
 
 ! **************************************************************************************************
@@ -478,31 +483,46 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'hfx_ri_update_ks_kp'
 
-      INTEGER :: b_img, batch_size, group_size, handle, handle2, i_batch, i_img, i_spin, iatom, &
-         iblk, igroup, iprint, jatom, mb_img, n_batch_nze, n_nze, natom, ngroups, nimg, nimg_nze
+      INTEGER :: b_img, batch_size, g, group_size, handle, handle2, i, i_batch, i_img, i_spin, &
+         iatom, iblk, igroup, iprint, jatom, mb_img, n_batch_nze, n_nze, natom, ngroups, nimg, &
+         nimg_nze, nops
       INTEGER(int_8)                                     :: mem, nflop, nze
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: batch_ranges_at, batch_ranges_nze, &
-                                                            idx_to_at_AO
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: iapc_pairs
-      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: sparsity_pattern
-      LOGICAL                                            :: estimate_mem, G_ready, print_progress, &
-                                                            use_delta_p
+                                                            ident_map, idx_to_at_AO, img_op, &
+                                                            img_rep, op_slot
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: iapc_pairs, ident_frac, op_map, &
+                                                            zero_shift
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: op_frac, op_shift, sparsity_pattern
+      LOGICAL                                            :: estimate_mem, G_ready, image_sym_usable, &
+                                                            print_progress, use_delta_p, &
+                                                            use_image_sym
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: img_computed, img_inv
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: filled
       REAL(dp)                                           :: etmp, fac, occ, pfac, pref, t1, t2, t3, &
                                                             t4
-      TYPE(dbcsr_type)                                   :: ks_desymm, rho_desymm, tmp
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(dbcsr_type)                                   :: ks_desymm, rho_desymm, sym_full, &
+                                                            sym_template, sym_tmp, sym_work, tmp
+      TYPE(dbcsr_type), ALLOCATABLE, DIMENSION(:)        :: ks_full
+      TYPE(dbt_type)                                     :: sym_atom
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:)          :: ks_t_split, t_2c_ao_tmp, t_3c_work_2
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:, :)       :: ks_t, ks_t_sub, t_3c_apc, t_3c_apc_sub
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(mp_para_env_type), POINTER                    :: para_env, para_env_sub
       TYPE(section_vals_type), POINTER                   :: hfx_section, print_section
 
-      NULLIFY (para_env, para_env_sub, hfx_section, print_section)
+      NULLIFY (para_env, para_env_sub, hfx_section, print_section, cell, kpoints, dft_control)
 
       CALL cite_reference(Bussy2024)
 
       CALL timeset(routineN, handle)
 
-      CALL get_qs_env(qs_env, para_env=para_env, natom=natom)
+      CALL get_qs_env(qs_env, para_env=para_env, natom=natom, kpoints=kpoints, cell=cell, &
+                      dft_control=dft_control)
 
+      use_image_sym = .FALSE.
+      image_sym_usable = .FALSE.
       IF (nspins == 1) THEN
          fac = 0.5_dp*hf_fraction
       ELSE
@@ -513,6 +533,7 @@ CONTAINS
       CALL section_vals_val_get(hfx_section, "KP_NGROUPS", i_val=ngroups)
       CALL section_vals_val_get(hfx_section, "KP_STACK_SIZE", i_val=batch_size)
       CALL section_vals_val_get(hfx_section, "KP_USE_DELTA_P", l_val=use_delta_p)
+      CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY", l_val=use_image_sym)
       ri_data%kp_stack_size = batch_size
       ri_data%kp_ngroups = ngroups
 
@@ -521,6 +542,35 @@ CONTAINS
       END IF
       nimg = ri_data%nimg
       nimg_nze = ri_data%nimg_nze
+
+      ALLOCATE (img_rep(nimg), img_op(nimg), img_inv(nimg), img_computed(nimg))
+      img_rep(:) = [(b_img, b_img=1, nimg)]
+      img_op(:) = 0
+      img_inv(:) = .FALSE.
+      ALLOCATE (op_slot(1), op_frac(3, 3, 1), op_map(1, 1), op_shift(3, 1, 1))
+      IF (use_image_sym) THEN
+         CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
+                                       img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot)
+         IF (.NOT. image_sym_usable) THEN
+            IF (.NOT. image_sym_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: no usable symmetry; full image sum")
+               image_sym_warned = .TRUE.
+            END IF
+            use_image_sym = .FALSE.
+            img_rep(:) = [(b_img, b_img=1, nimg)]
+            img_op(:) = 0
+            img_inv(:) = .FALSE.
+         END IF
+      END IF
+      img_computed(:) = (img_rep(:) == [(b_img, b_img=1, nimg)])
+      IF (use_image_sym) THEN
+         ! The Hermitian completion of a representative needs its opposite image.
+         DO b_img = 1, nimg
+            IF (img_rep(b_img) /= b_img) CYCLE
+            mb_img = get_opp_index(b_img, qs_env)
+            IF (mb_img > 0 .AND. mb_img <= nimg) img_computed(mb_img) = .TRUE.
+         END DO
+      END IF
 
       !We need to calculate the KS matrix for each periodic cell with index b: F_mu^0,nu^b
       !F_mu^0,nu^b = -0.5 sum_a,c P_sigma^0,lambda^c (mu^0, sigma^a| P^0) V_P^0,Q^b (Q^b| nu^b lambda^a+c)
@@ -610,6 +660,18 @@ CONTAINS
       END DO
       CALL contract_pmat_3c(t_3c_apc, ri_data%rho_ao_t, ri_data, qs_env)
 
+      IF (use_image_sym) THEN
+         CALL hfx_check_block_coverage(qs_env, kpoints, sparsity_pattern, nimg, natom, img_rep, &
+                                       img_op, img_inv, op_frac, op_map, op_shift, usable=image_sym_usable)
+         IF (.NOT. image_sym_usable) THEN
+            IF (.NOT. image_sym_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: representative orbits do not cover all blocks; full image sum")
+               image_sym_warned = .TRUE.
+            END IF
+            use_image_sym = .FALSE.
+            img_computed(:) = .TRUE.
+         END IF
+      END IF
       !Get all the required tensors in the subgroups
       ALLOCATE (ks_t_sub(nspins, nimg), t_2c_ao_tmp(1), ks_t_split(2))
       CALL get_subgroup_ks_tensors(t_2c_ao_tmp, ks_t_split, ks_t_sub, para_env_sub, ri_data)
@@ -677,6 +739,7 @@ CONTAINS
       ri_data%kp_cost(:, :, :) = 0.0_dp
       DO b_img = 1, nimg
          IF (print_progress) CALL print_progress_bar(b_img, nimg, iprint, ri_data)
+         IF (use_image_sym .AND. .NOT. img_computed(b_img)) CYCLE
          CALL get_iapc_pairs(iapc_pairs, b_img, ri_data, qs_env)
          CALL dbt_batched_contract_init(ks_t_split(1))
          CALL dbt_batched_contract_init(ks_t_split(2))
@@ -769,17 +832,87 @@ CONTAINS
       !ks_t also hold that diff, while only having half the blocks => need to add to prev ks_t and symmetrize
       !We need the full thing for the energy, on the next SCF step
       CALL get_pmat_images(ri_data%rho_ao_t, rho_ao, 0.0_dp, ri_data, qs_env)
-      DO i_spin = 1, nspins
+      IF (use_image_sym) THEN
+         CALL dbcsr_create(sym_full, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_work, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_tmp, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(sym_template, template=ks_matrix(1, 1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbt_create(sym_template, sym_atom)
+         ALLOCATE (ks_full(nimg))
          DO b_img = 1, nimg
-            CALL dbt_copy(ks_t(i_spin, b_img), ri_data%ks_t(i_spin, b_img), summation=.TRUE.)
-
-            !desymmetrize
-            mb_img = get_opp_index(b_img, qs_env)
-            IF (mb_img > 0 .AND. mb_img <= nimg) THEN
-               CALL dbt_copy(ks_t(i_spin, mb_img), ri_data%ks_t(i_spin, b_img), order=[2, 1], summation=.TRUE.)
-            END IF
+            CALL dbcsr_create(ks_full(b_img), template=ks_matrix(1, 1)%matrix, &
+                              matrix_type=dbcsr_type_no_symmetry)
          END DO
-      END DO
+         ALLOCATE (filled(natom, natom, nimg))
+         ALLOCATE (ident_map(natom), ident_frac(3, 3), zero_shift(3, natom))
+         ident_map(:) = [(i, i=1, natom)]
+         ident_frac(:, :) = 0
+         ident_frac(1, 1) = 1
+         ident_frac(2, 2) = 1
+         ident_frac(3, 3) = 1
+         zero_shift(:, :) = 0
+         ! Expand representative images block by block over the full space-group
+         ! orbit, including atom permutations and cell shifts.
+         DO i_spin = 1, nspins
+            DO b_img = 1, nimg
+               CALL dbcsr_clear(ks_full(b_img))
+            END DO
+            filled(:, :, :) = .FALSE.
+            DO b_img = 1, nimg
+               IF (img_rep(b_img) /= b_img) CYCLE
+               CALL hfx_full_image_matrix(ks_t, i_spin, b_img, nimg, qs_env, &
+                                          sym_full, sym_tmp, sym_work)
+               CALL dbcsr_replicate_all(sym_full)
+               DO i_img = 1, nimg
+                  IF (img_rep(i_img) /= b_img) CYCLE
+                  IF (i_img == b_img) THEN
+                     CALL hfx_expand_image_blocks(kpoints, dft_control%do_admm, 0, ident_map, &
+                                                  zero_shift, ident_frac, b_img, .FALSE., nimg, &
+                                                  sym_full, ks_full, filled)
+                  ELSE
+                     g = img_op(i_img)
+                     CALL hfx_expand_image_blocks(kpoints, dft_control%do_admm, op_slot(g), &
+                                                  op_map(:, g), op_shift(:, :, g), op_frac(:, :, g), &
+                                                  b_img, img_inv(i_img), nimg, sym_full, ks_full, filled)
+                  END IF
+               END DO
+               CALL dbcsr_distribute(sym_full)
+            END DO
+            DO b_img = 1, nimg
+               CALL dbcsr_finalize(ks_full(b_img))
+               CALL dbt_copy_matrix_to_tensor(ks_full(b_img), sym_atom)
+               CALL dbt_copy(sym_atom, ri_data%ks_t(i_spin, b_img), summation=.TRUE.)
+            END DO
+         END DO
+      ELSE
+         DO i_spin = 1, nspins
+            DO b_img = 1, nimg
+               CALL dbt_copy(ks_t(i_spin, b_img), ri_data%ks_t(i_spin, b_img), summation=.TRUE.)
+
+               !desymmetrize
+               mb_img = get_opp_index(b_img, qs_env)
+               IF (mb_img > 0 .AND. mb_img <= nimg) THEN
+                  CALL dbt_copy(ks_t(i_spin, mb_img), ri_data%ks_t(i_spin, b_img), order=[2, 1], summation=.TRUE.)
+               END IF
+            END DO
+         END DO
+      END IF
+      IF (use_image_sym) THEN
+         DO b_img = 1, nimg
+            CALL dbcsr_release(ks_full(b_img))
+         END DO
+         DEALLOCATE (ks_full, filled, ident_map, ident_frac, zero_shift)
+         DEALLOCATE (op_frac, op_map, op_shift, op_slot)
+         CALL dbt_destroy(sym_atom)
+         CALL dbcsr_release(sym_full)
+         CALL dbcsr_release(sym_template)
+         CALL dbcsr_release(sym_tmp)
+         CALL dbcsr_release(sym_work)
+      END IF
       DO b_img = 1, nimg
          DO i_spin = 1, nspins
             CALL dbt_destroy(ks_t(i_spin, b_img))
@@ -5302,5 +5435,416 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE get_force_from_3c_trace
+
+! **************************************************************************************************
+!> \brief Collect the crystal point-group operations that act as pure image rotations and build
+!>        representative image orbits. An image `b` is represented by `rep(b)` and generated via
+!>        `target_cell = (-1)^inv * R_op * rep_cell`.
+!> \param kpoints k-point environment
+!> \param cell simulation cell
+!> \param nimg number of HFX image cells
+!> \param usable whether the reduction can be applied
+!> \param rep representative image for each image
+!> \param op rotation slot for each image (0 = identity rotation)
+!> \param inv whether the rotated representative is transposed (image inversion)
+! **************************************************************************************************
+   SUBROUTINE hfx_image_symmetry_setup(kpoints, cell, nimg, usable, rep, op, inv, &
+                                       nops, op_frac, op_map, op_shift, op_slot)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(cell_type), POINTER                           :: cell
+      INTEGER, INTENT(IN)                                :: nimg
+      LOGICAL, INTENT(OUT)                               :: usable
+      INTEGER, DIMENSION(:), INTENT(OUT)                 :: rep, op
+      LOGICAL, DIMENSION(:), INTENT(OUT)                 :: inv
+      INTEGER, INTENT(OUT)                               :: nops
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :), &
+         INTENT(OUT)                                     :: op_frac
+      INTEGER, ALLOCATABLE, DIMENSION(:, :), INTENT(OUT) :: op_map
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :), &
+         INTENT(OUT)                                     :: op_shift
+      INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(OUT)    :: op_slot
+
+      INTEGER                                            :: b, g, ik, img, is, natom, nmax, rot_slot
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: slot_t
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: map_t
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: frac_t, shift_t
+      INTEGER, DIMENSION(3)                              :: bcell, ycell
+      INTEGER, DIMENSION(3, 3)                           :: rfrac
+      LOGICAL                                            :: duplicate, found
+      TYPE(kpoint_sym_type), POINTER                     :: kpsym
+
+      usable = .FALSE.
+      nops = 0
+      rep(:) = 0
+      op(:) = 0
+      inv(:) = .FALSE.
+
+      IF (.NOT. ASSOCIATED(kpoints)) RETURN
+      IF (.NOT. ASSOCIATED(kpoints%ibrot) .OR. .NOT. ASSOCIATED(kpoints%atype) .OR. &
+          .NOT. ASSOCIATED(kpoints%cell_to_index) .OR. .NOT. ASSOCIATED(kpoints%index_to_cell)) RETURN
+      IF (kpoints%nkp <= 0) RETURN
+      natom = SIZE(kpoints%atype)
+
+      nmax = 0
+      DO ik = 1, kpoints%nkp
+         IF (.NOT. ASSOCIATED(kpoints%kp_sym(ik)%kpoint_sym)) CYCLE
+         kpsym => kpoints%kp_sym(ik)%kpoint_sym
+         IF (kpsym%apply_symmetry) nmax = nmax + SIZE(kpsym%rotp)
+      END DO
+      IF (nmax < 1) RETURN
+
+      ALLOCATE (frac_t(3, 3, nmax), shift_t(3, natom, nmax), map_t(natom, nmax), slot_t(nmax))
+      DO ik = 1, kpoints%nkp
+         IF (.NOT. ASSOCIATED(kpoints%kp_sym(ik)%kpoint_sym)) CYCLE
+         kpsym => kpoints%kp_sym(ik)%kpoint_sym
+         IF (.NOT. kpsym%apply_symmetry) CYCLE
+         DO is = 1, SIZE(kpsym%rotp)
+            rfrac = NINT(MATMUL(cell%h_inv, MATMUL(kpsym%rot(:, :, is), cell%hmat)))
+            duplicate = .FALSE.
+            DO g = 1, nops
+               IF (ALL(frac_t(:, :, g) == rfrac) .AND. &
+                   ALL(map_t(:, g) == kpsym%f0(:, is)) .AND. &
+                   ALL(shift_t(:, :, g) == kpsym%fcell_gauge(:, :, is))) THEN
+                  duplicate = .TRUE.
+                  EXIT
+               END IF
+            END DO
+            IF (duplicate) CYCLE
+            rot_slot = find_kpoint_rotation_slot(kpoints, kpsym%rotp(is))
+            IF (rot_slot <= 0) RETURN
+            nops = nops + 1
+            frac_t(:, :, nops) = rfrac
+            map_t(:, nops) = kpsym%f0(:, is)
+            shift_t(:, :, nops) = kpsym%fcell_gauge(:, :, is)
+            slot_t(nops) = rot_slot
+         END DO
+      END DO
+      IF (nops < 1) RETURN
+
+      ! image representatives and the operation that connects them to the representative
+      DO b = 1, nimg
+         IF (rep(b) /= 0) CYCLE
+         rep(b) = b
+         bcell = kpoints%index_to_cell(:, b)
+         DO g = 1, nops
+            ycell = MATMUL(TRANSPOSE(frac_t(:, :, g)), bcell)
+            CALL hfx_image_from_cell(kpoints, ycell, img, found)
+            IF (found .AND. img >= 1 .AND. img <= nimg) THEN
+               IF (rep(img) == 0) THEN
+                  rep(img) = b
+                  op(img) = g
+                  inv(img) = .FALSE.
+               ELSE IF (rep(img) /= b) THEN
+                  RETURN
+               END IF
+            END IF
+            ycell = -ycell
+            CALL hfx_image_from_cell(kpoints, ycell, img, found)
+            IF (found .AND. img >= 1 .AND. img <= nimg) THEN
+               IF (rep(img) == 0) THEN
+                  rep(img) = b
+                  op(img) = g
+                  inv(img) = .TRUE.
+               ELSE IF (rep(img) /= b) THEN
+                  RETURN
+               END IF
+            END IF
+         END DO
+      END DO
+
+      ALLOCATE (op_frac(3, 3, nops), op_map(natom, nops), op_shift(3, natom, nops), &
+                op_slot(nops))
+      op_frac(:, :, :) = frac_t(:, :, 1:nops)
+      op_map(:, :) = map_t(:, 1:nops)
+      op_shift(:, :, :) = shift_t(:, :, 1:nops)
+      op_slot(:) = slot_t(1:nops)
+      usable = .TRUE.
+   END SUBROUTINE hfx_image_symmetry_setup
+
+! **************************************************************************************************
+!> \brief Map an integer cell index to an HFX image index.
+! **************************************************************************************************
+   SUBROUTINE hfx_image_from_cell(kpoints, cell_index, img, found)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, DIMENSION(3), INTENT(IN)                  :: cell_index
+      INTEGER, INTENT(OUT)                               :: img
+      LOGICAL, INTENT(OUT)                               :: found
+
+      img = 0
+      found = .FALSE.
+      IF (.NOT. ASSOCIATED(kpoints%cell_to_index)) RETURN
+      IF (ANY(cell_index < LBOUND(kpoints%cell_to_index)) .OR. &
+          ANY(cell_index > UBOUND(kpoints%cell_to_index))) RETURN
+      img = kpoints%cell_to_index(cell_index(1), cell_index(2), cell_index(3))
+      IF (img <= 0 .OR. img >= 1000000) THEN
+         img = 0
+         RETURN
+      END IF
+      found = .TRUE.
+   END SUBROUTINE hfx_image_from_cell
+
+! **************************************************************************************************
+!> \brief Rotate the AO blocks of an atom-block tensor and optionally transpose the result.
+!> \param kpoints k-point environment (kind rotation matrices)
+!> \param rot_slot rotation slot in kpoint%kind_rotmat (0 = identity)
+!> \param src source atom-block tensor
+!> \param tgt destination atom-block tensor
+!> \param invert transpose the rotated matrix (image inversion)
+! **************************************************************************************************
+   SUBROUTINE hfx_rotate_atom_tensor(kpoints, aux_fit, rot_slot, src, tgt, invert)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      LOGICAL, INTENT(IN)                                :: aux_fit
+      INTEGER, INTENT(IN)                                :: rot_slot
+      TYPE(dbt_type), INTENT(INOUT)                      :: src, tgt
+      LOGICAL, INTENT(IN)                                :: invert
+
+      INTEGER                                            :: kind_i, kind_j, ni, nj
+      INTEGER, DIMENSION(2)                              :: blk_size, ind, ind_out, size_out
+      LOGICAL                                            :: found
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: block, left_t, rblock, right_t, tmp2, &
+                                                            work
+      REAL(dp), DIMENSION(:, :), POINTER                 :: left_rot, right_rot
+      TYPE(dbt_iterator_type)                            :: iter
+
+      IF (rot_slot == 0 .AND. .NOT. invert) THEN
+         CALL dbt_copy(src, tgt)
+         RETURN
+      END IF
+
+      CALL dbt_iterator_start(iter, src)
+      DO WHILE (dbt_iterator_blocks_left(iter))
+         CALL dbt_iterator_next_block(iter, ind, blk_size)
+         CALL dbt_get_block(src, ind, block, found)
+         IF (.NOT. found) CYCLE
+         ni = blk_size(1)
+         nj = blk_size(2)
+         kind_i = kpoints%atype(ind(1))
+         kind_j = kpoints%atype(ind(2))
+
+         IF (rot_slot > 0) THEN
+            IF (aux_fit) THEN
+               left_rot => kpoints%kind_rotmat_aux(rot_slot, kind_i)%rmat
+               right_rot => kpoints%kind_rotmat_aux(rot_slot, kind_j)%rmat
+            ELSE
+               left_rot => kpoints%kind_rotmat(rot_slot, kind_i)%rmat
+               right_rot => kpoints%kind_rotmat(rot_slot, kind_j)%rmat
+            END IF
+            CPASSERT(ASSOCIATED(left_rot))
+            CPASSERT(ASSOCIATED(right_rot))
+            ALLOCATE (left_t(SIZE(left_rot, 2), SIZE(left_rot, 1)), &
+                      right_t(SIZE(right_rot, 2), SIZE(right_rot, 1)))
+            left_t(:, :) = TRANSPOSE(left_rot)
+            right_t(:, :) = TRANSPOSE(right_rot)
+            ALLOCATE (rblock(ni, nj), work(SIZE(left_t, 1), nj))
+            work(:, :) = MATMUL(left_t, block)
+            rblock(:, :) = MATMUL(work, TRANSPOSE(right_t))
+            DEALLOCATE (left_t, right_t, work)
+         ELSE
+            ALLOCATE (rblock(ni, nj))
+            rblock(:, :) = block
+         END IF
+
+         IF (invert) THEN
+            ind_out = [ind(2), ind(1)]
+            size_out = [nj, ni]
+            ALLOCATE (tmp2(nj, ni))
+            tmp2(:, :) = TRANSPOSE(rblock)
+            CALL dbt_put_block(tgt, ind_out, size_out, tmp2, summation=.TRUE.)
+            DEALLOCATE (tmp2)
+         ELSE
+            CALL dbt_put_block(tgt, ind, blk_size, rblock, summation=.TRUE.)
+         END IF
+         DEALLOCATE (rblock)
+         DEALLOCATE (block)
+      END DO
+      CALL dbt_iterator_stop(iter)
+   END SUBROUTINE hfx_rotate_atom_tensor
+
+! **************************************************************************************************
+!> \brief Determinant of a 3x3 integer matrix (debug helper).
+! **************************************************************************************************
+   PURE FUNCTION determinant3(mat) RESULT(det)
+      INTEGER, DIMENSION(3, 3), INTENT(IN)               :: mat
+      INTEGER                                            :: det
+
+      det = mat(1, 1)*(mat(2, 2)*mat(3, 3) - mat(2, 3)*mat(3, 2)) - &
+            mat(1, 2)*(mat(2, 1)*mat(3, 3) - mat(2, 3)*mat(3, 1)) + &
+            mat(1, 3)*(mat(2, 1)*mat(3, 2) - mat(2, 2)*mat(3, 1))
+   END FUNCTION determinant3
+
+! **************************************************************************************************
+!> \brief Build the full (both block orientations) exchange matrix of one image from the
+!>        stored half matrices of the image and its opposite.
+! **************************************************************************************************
+   SUBROUTINE hfx_full_image_matrix(ks_t, ispin, image, nimg, qs_env, full, tmp, work)
+      TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: ks_t
+      INTEGER, INTENT(IN)                                :: ispin, image, nimg
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: full, tmp, work
+
+      INTEGER                                            :: mb_img
+
+      CALL dbt_copy_tensor_to_matrix(ks_t(ispin, image), full)
+      mb_img = get_opp_index(image, qs_env)
+      IF (mb_img > 0 .AND. mb_img <= nimg) THEN
+         CALL dbt_copy_tensor_to_matrix(ks_t(ispin, mb_img), tmp)
+         CALL dbcsr_transposed(work, tmp)
+         CALL dbcsr_add(full, work, 1.0_dp, 1.0_dp)
+         CALL dbcsr_transposed(work, tmp)
+      END IF
+   END SUBROUTINE hfx_full_image_matrix
+
+! **************************************************************************************************
+!> \brief Rotate a full per-image AO matrix under a crystal operation.
+! **************************************************************************************************
+   SUBROUTINE hfx_expand_image_blocks(kpoints, aux_fit, rot_slot, atom_map, cell_shift, rfrac, &
+                                      src_image, invert, nimg, src, ks_full, filled)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      LOGICAL, INTENT(IN)                                :: aux_fit
+      INTEGER, INTENT(IN)                                :: rot_slot, atom_map(:)
+      INTEGER, DIMENSION(:, :), INTENT(IN)               :: cell_shift
+      INTEGER, DIMENSION(3, 3), INTENT(IN)               :: rfrac
+      INTEGER, INTENT(IN)                                :: src_image
+      LOGICAL, INTENT(IN)                                :: invert
+      INTEGER, INTENT(IN)                                :: nimg
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: src, ks_full(:)
+      LOGICAL, INTENT(INOUT)                             :: filled(:, :, :)
+
+      INTEGER                                            :: icol, ip, irow, jp, kind_i, kind_j, &
+                                                            mynode, owner, ximg
+      INTEGER, DIMENSION(3)                              :: bcell, xcell
+      LOGICAL                                            :: found
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rblock, tblock, work
+      REAL(dp), DIMENSION(:, :), POINTER                 :: block, left_rot, right_rot
+      TYPE(dbcsr_distribution_type)                      :: dist
+      TYPE(dbcsr_iterator_type)                          :: iter
+
+      bcell = kpoints%index_to_cell(:, src_image)
+      CALL dbcsr_iterator_start(iter, src)
+      DO WHILE (dbcsr_iterator_blocks_left(iter))
+         CALL dbcsr_iterator_next_block(iter, irow, icol, block)
+         xcell = MATMUL(TRANSPOSE(rfrac), bcell) + cell_shift(:, icol) - cell_shift(:, irow)
+         IF (.NOT. invert) THEN
+            ip = atom_map(irow)
+            jp = atom_map(icol)
+         ELSE
+            ip = atom_map(icol)
+            jp = atom_map(irow)
+            xcell = -xcell
+         END IF
+         CALL hfx_image_from_cell(kpoints, xcell, ximg, found)
+         IF (.NOT. found .OR. ximg < 1 .OR. ximg > nimg) CYCLE
+         IF (filled(ip, jp, ximg)) CYCLE
+
+         kind_i = kpoints%atype(irow)
+         kind_j = kpoints%atype(icol)
+         IF (rot_slot > 0) THEN
+            IF (aux_fit) THEN
+               left_rot => kpoints%kind_rotmat_aux(rot_slot, kind_i)%rmat
+               right_rot => kpoints%kind_rotmat_aux(rot_slot, kind_j)%rmat
+            ELSE
+               left_rot => kpoints%kind_rotmat(rot_slot, kind_i)%rmat
+               right_rot => kpoints%kind_rotmat(rot_slot, kind_j)%rmat
+            END IF
+            ALLOCATE (rblock(SIZE(block, 1), SIZE(block, 2)), &
+                      work(SIZE(block, 1), SIZE(block, 2)))
+            work(:, :) = MATMUL(TRANSPOSE(left_rot), block)
+            rblock(:, :) = MATMUL(work, right_rot)
+            DEALLOCATE (work)
+         ELSE
+            ALLOCATE (rblock(SIZE(block, 1), SIZE(block, 2)))
+            rblock(:, :) = block
+         END IF
+         IF (invert) THEN
+            ALLOCATE (tblock(SIZE(rblock, 2), SIZE(rblock, 1)))
+            tblock(:, :) = TRANSPOSE(rblock)
+            DEALLOCATE (rblock)
+            CALL dbcsr_get_info(ks_full(ximg), distribution=dist)
+            CALL dbcsr_distribution_get(dist, mynode=mynode)
+            CALL dbcsr_get_stored_coordinates(ks_full(ximg), ip, jp, owner)
+            IF (owner == mynode) THEN
+               CALL dbcsr_put_block(ks_full(ximg), ip, jp, tblock)
+               filled(ip, jp, ximg) = .TRUE.
+            END IF
+            DEALLOCATE (tblock)
+         ELSE
+            CALL dbcsr_get_info(ks_full(ximg), distribution=dist)
+            CALL dbcsr_distribution_get(dist, mynode=mynode)
+            CALL dbcsr_get_stored_coordinates(ks_full(ximg), ip, jp, owner)
+            IF (owner == mynode) THEN
+               CALL dbcsr_put_block(ks_full(ximg), ip, jp, rblock)
+               filled(ip, jp, ximg) = .TRUE.
+            END IF
+            DEALLOCATE (rblock)
+         END IF
+      END DO
+      CALL dbcsr_iterator_stop(iter)
+   END SUBROUTINE hfx_expand_image_blocks
+
+! **************************************************************************************************
+!> \brief Check that expanding the representative blocks covers every present block.
+! **************************************************************************************************
+   SUBROUTINE hfx_check_block_coverage(qs_env, kpoints, sparsity_pattern, nimg, natom, img_rep, &
+                                       img_op, img_inv, op_frac, op_map, op_shift, usable)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, INTENT(IN)                                :: sparsity_pattern(:, :, :), nimg, natom, &
+                                                            img_rep(:), img_op(:)
+      LOGICAL, INTENT(IN)                                :: img_inv(:)
+      INTEGER, INTENT(IN)                                :: op_frac(:, :, :), op_map(:, :), &
+                                                            op_shift(:, :, :)
+      LOGICAL, INTENT(OUT)                               :: usable
+
+      INTEGER                                            :: b, g, i, ip, j, jp, mb_img, r, ximg
+      INTEGER, DIMENSION(3)                              :: bcell, xcell
+      LOGICAL                                            :: found
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: covered, present
+
+      usable = .FALSE.
+      ALLOCATE (PRESENT(natom, natom, nimg), covered(natom, natom, nimg))
+      PRESENT(:, :, :) = .FALSE.
+      covered(:, :, :) = .FALSE.
+      DO b = 1, nimg
+         mb_img = get_opp_index(b, qs_env)
+         DO j = 1, natom
+            DO i = 1, natom
+               PRESENT(i, j, b) = sparsity_pattern(i, j, b) >= 0
+               IF (mb_img > 0 .AND. mb_img <= nimg) &
+                  PRESENT(i, j, b) = PRESENT(i, j, b) .OR. sparsity_pattern(j, i, mb_img) >= 0
+            END DO
+         END DO
+      END DO
+
+      DO r = 1, nimg
+         IF (img_rep(r) /= r) CYCLE
+         bcell = kpoints%index_to_cell(:, r)
+         DO b = 1, nimg
+            IF (img_rep(b) /= r) CYCLE
+            IF (b == r) THEN
+               covered(:, :, r) = covered(:, :, r) .OR. PRESENT(:, :, r)
+               CYCLE
+            END IF
+            g = img_op(b)
+            DO j = 1, natom
+               DO i = 1, natom
+                  IF (.NOT. PRESENT(i, j, r)) CYCLE
+                  xcell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + op_shift(:, j, g) - op_shift(:, i, g)
+                  IF (img_inv(b)) THEN
+                     ip = op_map(j, g)
+                     jp = op_map(i, g)
+                     xcell = -xcell
+                  ELSE
+                     ip = op_map(i, g)
+                     jp = op_map(j, g)
+                  END IF
+                  CALL hfx_image_from_cell(kpoints, xcell, ximg, found)
+                  IF (found .AND. ximg >= 1 .AND. ximg <= nimg) covered(ip, jp, ximg) = .TRUE.
+               END DO
+            END DO
+         END DO
+      END DO
+      usable = ALL(covered .OR. .NOT. present)
+      DEALLOCATE (present, covered)
+   END SUBROUTINE hfx_check_block_coverage
 
 END MODULE hfx_ri_kp
