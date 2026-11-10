@@ -254,16 +254,16 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calculate_vxc_atom'
 
-      INTEGER :: adjoint_bin, adjoint_entry, adjoint_nbins, adjoint_nchannels, &
+      INTEGER :: adjoint_bin, adjoint_entry, adjoint_handle, adjoint_nbins, adjoint_nchannels, &
          adjoint_tile_count(3), adjoint_tile_lower(3), adjoint_tile_upper(3), &
          atom_composite_components, bo(2), composite_descriptor_target_image, &
          composite_image_periodicity(3), composite_local_atom, composite_local_natom, &
          composite_nflat, composite_partition_target_image, composite_pw_nflat, composite_row, &
-         gapw_density_partition, gapw_representation, handle, ia, iat, iatom, icomponent, idir, &
-         ikind, image_i1, image_i2, image_i3, image_lower(3), image_shell(3), image_shift(3), &
-         image_upper(3), ir, ispin, iw, jdir, myfun, na
-      INTEGER :: natom, nr, nspins, num_pe, on, source_atom, target_atom, xc_deriv_method_id, &
-         xc_rho_smooth_id, zatom
+         force_handle, gapw_density_partition, gapw_representation, gather_handle, handle, ia, &
+         iat, iatom, icomponent, idir, ikind, image_i1, image_i2, image_i3, image_lower(3), &
+         image_shell(3), image_shift(3)
+      INTEGER :: image_upper(3), interp_handle, ir, ispin, iw, jdir, myfun, na, natom, nr, nspins, &
+         num_pe, on, source_atom, target_atom, xc_deriv_method_id, xc_rho_smooth_id, zatom
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: composite_atomic_grid_sizes, &
                                                             composite_local_grid_sizes
       INTEGER, ALLOCATABLE, DIMENSION(:) :: adjoint_bin_offsets, adjoint_bin_rows, &
@@ -690,6 +690,7 @@ CONTAINS
                                    tau_cutoff=section_get_rval(my_xc_section, "tau_cutoff"))
             CALL xc_rho_set_update(smooth_rho_set, smooth_rho_r, smooth_rho_g, smooth_tau_r, needs, &
                                    xc_deriv_method_id, xc_rho_smooth_id, auxbas_pw_pool)
+            CALL timeset("calculate_vxc_atom_gather", gather_handle)
             IF (lsd) THEN
                CALL xc_rho_set_get(smooth_rho_set, rhoa=smooth_rhoa, rhob=smooth_rhob, &
                                    drhoa=smooth_drhoa, drhob=smooth_drhob, &
@@ -723,6 +724,7 @@ CONTAINS
                                                 composite_smooth_drho(idir)%array)
                END DO
             END IF
+            CALL timestop(gather_handle)
          END IF
 
          ! Initialize energy contribution from the one center XC terms to zero
@@ -889,6 +891,7 @@ CONTAINS
                         composite_image_periodicity, composite_descriptor_image_coords, &
                         composite_descriptor_target_image)
                   END IF
+                  CALL timeset("calculate_vxc_atom_interp", interp_handle)
 !$OMP PARALLEL DO COLLAPSE(2) IF (image_partition_atom_composite) SCHEDULE(STATIC) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_row, composite_point, composite_smooth_density_value, &
 !$OMP         composite_smooth_gradient_value, composite_smooth_kin_value, &
@@ -1064,6 +1067,7 @@ CONTAINS
                      END DO
                   END DO
 !$OMP END PARALLEL DO
+                  CALL timestop(interp_handle)
                   IF (image_partition_atom_composite) THEN
                      DEALLOCATE (composite_descriptor_image_coords, composite_partition_image_coords)
                   END IF
@@ -1413,6 +1417,7 @@ CONTAINS
                composite_feature_virial = 0.0_dp
                composite_interpolation_virial = 0.0_dp
                composite_partition_strain_virial = 0.0_dp
+               CALL timeset("calculate_vxc_atom_force", force_handle)
 !$OMP PARALLEL DO IF (image_partition_atom_composite) SCHEDULE(STATIC) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_local_atom, composite_row, composite_smooth_gradient_value, &
 !$OMP         iatom, idir, ispin, jdir) &
@@ -1664,6 +1669,7 @@ CONTAINS
                            partition_included_private, &
                            partition_weight_grad, partition_weights_private)
 !$OMP END PARALLEL
+               CALL timestop(force_handle)
                ! The target atom grids can overlap augmentation regions of other atoms
                ! and periodic images. Differentiate the same discrete interpolation used
                ! in the forward composite fields, including the explicit image strain.
@@ -1993,6 +1999,7 @@ CONTAINS
                image_partition_atom_composite, adjoint_tile_count, adjoint_bin_offsets, &
                adjoint_bin_rows)
             adjoint_nbins = SIZE(adjoint_bin_offsets) - 1
+            CALL timeset("calculate_vxc_atom_adjoint", adjoint_handle)
 !$OMP PARALLEL DO SCHEDULE(DYNAMIC) DEFAULT(NONE) &
 !$OMP PRIVATE(adjoint_entry, composite_row, composite_smooth_density_adjoint_value, &
 !$OMP         composite_smooth_gradient_adjoint_value, composite_smooth_kin_adjoint_value, &
@@ -2042,6 +2049,7 @@ CONTAINS
                END DO
             END DO
 !$OMP END PARALLEL DO
+            CALL timestop(adjoint_handle)
             DEALLOCATE (adjoint_bin_offsets, adjoint_bin_rows)
             smooth_input_contraction = 0.0_dp
 !$OMP PARALLEL DO SCHEDULE(STATIC) REDUCTION(+:smooth_input_contraction) DEFAULT(NONE) &
