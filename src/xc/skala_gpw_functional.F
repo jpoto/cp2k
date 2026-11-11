@@ -88,7 +88,7 @@ MODULE skala_gpw_functional
                                            atom_chunk_auto_min_rows = 100000, &
                                            atom_chunk_auto_row_quantum = 100000, &
                                            ncollapsed_grad_per_point = 5, &
-                                           ncoord_grad_per_point = 5, ngrad_per_point = 10
+                                           ngrad_per_point = 10
    INTEGER, PARAMETER, PUBLIC           :: skala_gapw_density_partition_hard_minus_soft = 1, &
                                            skala_gapw_density_partition_hard_only = 2, &
                                            skala_gapw_density_partition_soft_only = 3, &
@@ -1571,10 +1571,8 @@ CONTAINS
             DEALLOCATE (atomic_grid_size_bound_shape)
          END DO
          CALL torch_dict_release(inputs)
-         IF (nchunks > 0) THEN
-            exc = exc + torch_tensor_item_double(exc_total_t)
-            CALL torch_tensor_release(exc_total_t)
-         END IF
+         exc = exc + torch_tensor_item_double(exc_total_t)
+         CALL torch_tensor_release(exc_total_t)
       END IF
       CALL group%sum(exc)
 
@@ -2995,22 +2993,20 @@ CONTAINS
 !> \param grad_grad ...
 !> \param kin_grad ...
 !> \param xc_deriv_method_id ...
-!> \param global_grid_layout ...
 ! **************************************************************************************************
    SUBROUTINE build_vxc_from_feature_grads(vxc_rho, vxc_tau, rho_r, pw_pool, &
                                            density_grad, grad_grad, kin_grad, &
-                                           xc_deriv_method_id, global_grid_layout)
+                                           xc_deriv_method_id)
       TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: vxc_rho, vxc_tau, rho_r
       TYPE(pw_pool_type), POINTER                        :: pw_pool
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: density_grad
       REAL(KIND=dp), DIMENSION(:, :, :), INTENT(IN)      :: grad_grad
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: kin_grad
       INTEGER, INTENT(IN)                                :: xc_deriv_method_id
-      LOGICAL, INTENT(IN), OPTIONAL                      :: global_grid_layout
 
       INTEGER                                            :: i, ipt, ispin, j, k, nspins
       INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL                                            :: my_global_grid_layout, valid_spin_shape
+      LOGICAL                                            :: valid_spin_shape
       REAL(KIND=dp)                                      :: dvol_inv
       TYPE(pw_c1d_gs_type)                               :: tmp_g, vxc_g
       TYPE(pw_r3d_rs_type), DIMENSION(3)                 :: grad_pw
@@ -3018,11 +3014,6 @@ CONTAINS
       nspins = SIZE(rho_r)
       bo = rho_r(1)%pw_grid%bounds_local
       dvol_inv = 1.0_dp/rho_r(1)%pw_grid%dvol
-      my_global_grid_layout = .FALSE.
-      IF (PRESENT(global_grid_layout)) my_global_grid_layout = global_grid_layout
-      IF (my_global_grid_layout) THEN
-         CPASSERT(SIZE(density_grad, 1) == PRODUCT(rho_r(1)%pw_grid%npts))
-      END IF
       CPASSERT(SIZE(kin_grad, 2) == SIZE(density_grad, 2))
       CPASSERT(SIZE(grad_grad, 3) == SIZE(density_grad, 2))
       CPASSERT(SIZE(grad_grad, 2) == 3)
@@ -3053,15 +3044,7 @@ CONTAINS
          DO k = bo(1, 3), bo(2, 3)
             DO j = bo(1, 2), bo(2, 2)
                DO i = bo(1, 1), bo(2, 1)
-                  IF (my_global_grid_layout) THEN
-                     ipt = 1 + i - rho_r(1)%pw_grid%bounds(1, 1) + &
-                           rho_r(1)%pw_grid%npts(1)*( &
-                           j - rho_r(1)%pw_grid%bounds(1, 2) + &
-                           rho_r(1)%pw_grid%npts(2)*( &
-                           k - rho_r(1)%pw_grid%bounds(1, 3)))
-                  ELSE
-                     ipt = ipt + 1
-                  END IF
+                  ipt = ipt + 1
                   IF (nspins == 1) THEN
                      IF (SIZE(density_grad, 2) == 1) THEN
                         vxc_rho(1)%array(i, j, k) = 0.5_dp*dvol_inv*density_grad(ipt, 1)

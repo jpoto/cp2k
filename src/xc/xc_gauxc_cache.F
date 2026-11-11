@@ -199,36 +199,15 @@ CONTAINS
       IF (params%use_self_runtime) THEN
          ! SKALA can request a replicated molecular runtime for reproducible
          ! open-shell densities across CP2K MPI ranks.
-         cache%grid = gauxc_create_grid( &
-                      cache%molecule, &
-                      cache%basisset, &
-                      params%grid_type, &
-                      params%radial_quadrature, &
-                      params%pruning_scheme, &
-                      params%lb_exec_space, &
-                      params%batch_size, &
-                      params%device_runtime_fill_fraction, &
-                      status, &
-                      mpi_comm=mp_comm_self%get_handle(), &
-                      force_new_runtime=.TRUE., &
-                      int_exec_space=params%int_exec_space)
+         cache%grid = create_cached_grid(cache%molecule, cache%basisset, params, status, &
+                                         mp_comm_self%get_handle(), .TRUE.)
       ELSE
          ! Use the QS force-evaluation communicator rather than GauXC's global
          ! runtime.  In mixed CDFT the diabatic states can be built on disjoint
          ! MPI subgroups; using the global communicator would make GauXC wait
          ! for ranks that are working on another state.
-         cache%grid = gauxc_create_grid( &
-                      cache%molecule, &
-                      cache%basisset, &
-                      params%grid_type, &
-                      params%radial_quadrature, &
-                      params%pruning_scheme, &
-                      params%lb_exec_space, &
-                      params%batch_size, &
-                      params%device_runtime_fill_fraction, &
-                      status, &
-                      mpi_comm=para_env%get_handle(), &
-                      int_exec_space=params%int_exec_space)
+         cache%grid = create_cached_grid(cache%molecule, cache%basisset, params, status, &
+                                         para_env%get_handle(), .FALSE.)
       END IF
       IF (status%status%code /= 0) THEN
          CALL cleanup_after_grid()
@@ -364,6 +343,32 @@ CONTAINS
    END SUBROUTINE gauxc_cache_init
 
 ! **************************************************************************************************
+!> \brief Create a GauXC grid from the cached parameter set.
+!> \param molecule ...
+!> \param basisset ...
+!> \param params ...
+!> \param status ...
+!> \param mpi_comm communicator to build the runtime on
+!> \param force_new force a freshly created runtime
+!> \return the new grid
+! **************************************************************************************************
+   FUNCTION create_cached_grid(molecule, basisset, params, status, mpi_comm, force_new) RESULT(grid)
+      TYPE(cp_gauxc_molecule_type), INTENT(IN)           :: molecule
+      TYPE(cp_gauxc_basisset_type), INTENT(IN)           :: basisset
+      TYPE(cp_gauxc_cache_params), INTENT(IN)            :: params
+      TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
+      INTEGER, INTENT(IN)                                :: mpi_comm
+      LOGICAL, INTENT(IN)                                :: force_new
+      TYPE(cp_gauxc_grid_type)                           :: grid
+
+      grid = gauxc_create_grid(molecule, basisset, params%grid_type, params%radial_quadrature, &
+                               params%pruning_scheme, params%lb_exec_space, params%batch_size, &
+                               params%device_runtime_fill_fraction, status, mpi_comm=mpi_comm, &
+                               force_new_runtime=force_new, int_exec_space=params%int_exec_space)
+
+   END FUNCTION create_cached_grid
+
+! **************************************************************************************************
 !> \brief Release all GauXC objects in a cache and deallocate arrays
 !> \param cache ...
 ! **************************************************************************************************
@@ -457,19 +462,8 @@ CONTAINS
       IF (.NOT. cache%is_init) RETURN
       IF (cache%gradient_is_init) RETURN
 
-      cache%gradient_grid = gauxc_create_grid( &
-                            cache%molecule, &
-                            cache%basisset, &
-                            params%grid_type, &
-                            params%radial_quadrature, &
-                            params%pruning_scheme, &
-                            params%lb_exec_space, &
-                            params%batch_size, &
-                            params%device_runtime_fill_fraction, &
-                            status, &
-                            mpi_comm=mp_comm_self%get_handle(), &
-                            force_new_runtime=.TRUE., &
-                            int_exec_space=params%int_exec_space)
+      cache%gradient_grid = create_cached_grid(cache%molecule, cache%basisset, params, status, &
+                                               mp_comm_self%get_handle(), .TRUE.)
       IF (status%status%code /= 0) THEN
          error_code = status%status%code
          CALL gauxc_destroy_grid(cache%gradient_grid, status)

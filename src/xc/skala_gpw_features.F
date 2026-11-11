@@ -1311,30 +1311,6 @@ CONTAINS
    END SUBROUTINE build_chunk_static_layout_tensors
 
 ! **************************************************************************************************
-!> \brief Release the cached atom-chunk static Torch tensors.
-!> \param cache ...
-! **************************************************************************************************
-   SUBROUTINE release_chunk_static_layout_tensors(cache)
-      TYPE(skala_gpw_layout_cache_type), INTENT(INOUT)   :: cache
-
-      IF (cache%chunk_inputs_active) THEN
-         CALL torch_dict_release(cache%chunk_inputs)
-         cache%chunk_inputs_active = .FALSE.
-      END IF
-      IF (.NOT. cache%chunk_static_tensors_active) RETURN
-      CALL torch_dict_release(cache%chunk_static_inputs)
-      CALL torch_tensor_release(cache%chunk_grid_coords_t)
-      CALL torch_tensor_release(cache%chunk_grid_weights_t)
-      CALL torch_tensor_release(cache%chunk_atomic_grid_weights_t)
-      CALL torch_tensor_release(cache%chunk_atomic_grid_sizes_t)
-      CALL torch_tensor_release(cache%chunk_coarse_0_atomic_coords_t)
-      CALL torch_tensor_release(cache%chunk_atomic_grid_size_bound_shape_t)
-      cache%chunk_static_tensors_active = .FALSE.
-      cache%chunk_static_grad_mode = 0
-
-   END SUBROUTINE release_chunk_static_layout_tensors
-
-! **************************************************************************************************
 !> \brief Ensure the chunk static Torch tensors expose the requested differentiability.
 !> \param grad_mode ...
 ! **************************************************************************************************

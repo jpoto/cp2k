@@ -31,7 +31,6 @@ MODULE xc_gauxc_interface
       c_int32_t, &
       c_int64_t, &
       c_null_char, &
-      c_null_ptr, &
       c_ptr, &
       c_size_t
    USE particle_types, ONLY: &
@@ -39,8 +38,6 @@ MODULE xc_gauxc_interface
    USE qs_kind_types, ONLY: &
       get_qs_kind, &
       qs_kind_type
-   USE cp_dbcsr_api, ONLY: &
-      dbcsr_p_type
    USE cp_log_handling, ONLY: &
       cp_logger_get_default_io_unit
 
@@ -48,14 +45,10 @@ MODULE xc_gauxc_interface
 
    USE kinds, ONLY: &
       default_path_length, &
-      default_string_length, &
       dp
-   USE physcon, ONLY: &
-      bohr
    USE atomic_kind_types, ONLY: &
       atomic_kind_type, &
-      get_atomic_kind, &
-      get_atomic_kind_set
+      get_atomic_kind
    USE qs_integral_utils, ONLY: &
       basis_set_list_setup
    USE basis_set_types, ONLY: &
@@ -199,7 +192,6 @@ MODULE xc_gauxc_interface
 
    TYPE cp_gauxc_runtime_type
       TYPE(gauxc_runtime_environment_type) :: rt
-      LOGICAL :: is_device = .FALSE.
    END TYPE cp_gauxc_runtime_type
 
    TYPE cp_gauxc_integrator_type
@@ -268,11 +260,9 @@ CONTAINS
       TYPE(cp_gauxc_status_type)                         :: status
 
 #ifdef __GAUXC
-      CHARACTER(kind=c_char), POINTER                    :: s(:)
       CHARACTER(len=32)                                  :: stderr_env
-      INTEGER                                            :: i, ierr, iw
+      INTEGER                                            :: ierr, iw
       LOGICAL                                            :: print_to_stderr
-      INTEGER, PARAMETER                                 :: status_message_length = 4096
 
       iw = cp_logger_get_default_io_unit()
       ierr = error_unit
@@ -286,42 +276,44 @@ CONTAINS
       CASE DEFAULT
          print_to_stderr = .TRUE.
       END SELECT
-      IF (iw > 0) THEN
-         WRITE (UNIT=iw, FMT='(a,1x,i0)') "GauXC returned with status code", status%status%code
-         IF (c_associated(status%status%message)) THEN
-            WRITE (UNIT=iw, FMT='(a)', ADVANCE='no') "GauXC status message: ["
-
-            CALL c_f_pointer(status%status%message, s, [status_message_length])
-            DO i = 1, SIZE(s)
-               IF (s(i) == c_null_char) EXIT
-               WRITE (UNIT=iw, FMT='(A)', ADVANCE='no') s(i)
-            END DO
-
-            WRITE (UNIT=iw, FMT='(a)') "]"
-         ELSE
-            WRITE (UNIT=iw, FMT='(a)') "GauXC status message: [null]"
-         END IF
-      END IF
-      IF (print_to_stderr) THEN
-         WRITE (UNIT=ierr, FMT='(a,1x,i0)') "GauXC returned with status code", status%status%code
-         IF (c_associated(status%status%message)) THEN
-            WRITE (UNIT=ierr, FMT='(a)', ADVANCE='no') "GauXC status message: ["
-
-            CALL c_f_pointer(status%status%message, s, [status_message_length])
-            DO i = 1, SIZE(s)
-               IF (s(i) == c_null_char) EXIT
-               WRITE (UNIT=ierr, FMT='(A)', ADVANCE='no') s(i)
-            END DO
-
-            WRITE (UNIT=ierr, FMT='(a)') "]"
-         ELSE
-            WRITE (UNIT=ierr, FMT='(a)') "GauXC status message: [null]"
-         END IF
-      END IF
+      IF (iw > 0) CALL write_gauxc_status_message(iw, status)
+      IF (print_to_stderr) CALL write_gauxc_status_message(ierr, status)
 #else
       MARK_USED(status)
 #endif
    END SUBROUTINE print_gauxc_status_message
+
+! **************************************************************************************************
+!> \brief Write the GauXC status code and message to one unit.
+!> \param unit ...
+!> \param status ...
+! **************************************************************************************************
+   SUBROUTINE write_gauxc_status_message(unit, status)
+      INTEGER, INTENT(IN)                                :: unit
+      TYPE(cp_gauxc_status_type)                         :: status
+
+#ifdef __GAUXC
+      CHARACTER(kind=c_char), POINTER                    :: s(:)
+      INTEGER                                            :: i
+      INTEGER, PARAMETER                                 :: status_message_length = 4096
+
+      WRITE (UNIT=unit, FMT='(a,1x,i0)') "GauXC returned with status code", status%status%code
+      IF (c_associated(status%status%message)) THEN
+         WRITE (UNIT=unit, FMT='(a)', ADVANCE='no') "GauXC status message: ["
+         CALL c_f_pointer(status%status%message, s, [status_message_length])
+         DO i = 1, SIZE(s)
+            IF (s(i) == c_null_char) EXIT
+            WRITE (UNIT=unit, FMT='(A)', ADVANCE='no') s(i)
+         END DO
+         WRITE (UNIT=unit, FMT='(a)') "]"
+      ELSE
+         WRITE (UNIT=unit, FMT='(a)') "GauXC status message: [null]"
+      END IF
+#else
+      MARK_USED(unit)
+      MARK_USED(status)
+#endif
+   END SUBROUTINE write_gauxc_status_message
 
 ! **************************************************************************************************
 !> \brief ...
@@ -536,7 +528,6 @@ CONTAINS
       INTEGER(c_int)                                     :: int_exec_requested, lb_exec_space_local
       LOGICAL                                            :: use_device_runtime
 
-      runtime%is_device = .FALSE.
       lb_exec_space_local = read_execution_space(lb_exec_space)
       int_exec_requested = read_execution_space(int_exec_space)
       use_device_runtime = (lb_exec_space_local == gauxc_executionspace%device) .OR. &
@@ -559,7 +550,6 @@ CONTAINS
          runtime%rt = gauxc_device_runtime_environment_new( &
                       status%status, device_runtime_fill_fraction)
 #endif
-         runtime%is_device = .TRUE.
 #else
          MARK_USED(device_runtime_fill_fraction)
          MARK_USED(mpi_comm)
@@ -595,7 +585,6 @@ CONTAINS
 
 #ifdef __GAUXC
       CALL gauxc_runtime_environment_delete(status%status, runtime%rt)
-      runtime%is_device = .FALSE.
 #else
       MARK_USED(runtime)
       MARK_USED(status)

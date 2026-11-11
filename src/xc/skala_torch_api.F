@@ -16,7 +16,6 @@ MODULE skala_torch_api
 #endif
    USE kinds, ONLY: default_string_length, &
                     dp
-   USE string_utilities, ONLY: uppercase
    USE torch_api, ONLY: &
       torch_dict_type, torch_model_disable_parameter_gradients, torch_model_forward_mol_tensor, &
       torch_model_freeze_preserving_method, torch_model_load_with_metadata, torch_model_release, &
@@ -37,8 +36,6 @@ MODULE skala_torch_api
    TYPE skala_torch_model_type
       PRIVATE
       INTEGER                                            :: protocol_version = -1
-      CHARACTER(len=default_string_length), ALLOCATABLE, &
-         DIMENSION(:)                                    :: features
       TYPE(torch_model_type)                             :: torch_model
    END TYPE skala_torch_model_type
 
@@ -70,7 +67,11 @@ CONTAINS
          CPABORT("Unsupported SKALA TorchScript protocol version")
       END IF
 
-      CALL parse_feature_list(features_json, model%features)
+      BLOCK
+         CHARACTER(len=default_string_length), ALLOCATABLE :: features(:)
+         CALL parse_feature_list(features_json, features)
+         DEALLOCATE (features)
+      END BLOCK
       use_fp64 = .TRUE.
       IF (PRESENT(fp64)) use_fp64 = fp64
       IF (use_fp64) CALL torch_model_promote_float32(model%torch_model)
@@ -87,7 +88,6 @@ CONTAINS
       TYPE(skala_torch_model_type), INTENT(INOUT)        :: model
 
       CALL torch_model_release(model%torch_model)
-      IF (ALLOCATED(model%features)) DEALLOCATE (model%features)
       model%protocol_version = -1
 
    END SUBROUTINE skala_torch_model_release
@@ -107,21 +107,7 @@ CONTAINS
       TYPE(torch_tensor_type), INTENT(INOUT)             :: exc_tensor
       REAL(KIND=dp), INTENT(OUT)                         :: exc
 
-      TYPE(torch_tensor_type)                            :: exc_density
-
-#if defined (__HAS_IEEE_EXCEPTIONS)
-      LOGICAL, DIMENSION(5)                              :: ieee_halt
-
-      CALL ieee_get_halting_mode(IEEE_ALL, ieee_halt)
-      CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
-#endif
-      CALL torch_model_forward_mol_tensor(model%torch_model, "get_exc_density", inputs, exc_density)
-      CALL torch_tensor_weighted_sum(exc_density, grid_weights, exc_tensor)
-      CALL torch_tensor_release(exc_density)
-      exc = torch_tensor_item_double(exc_tensor)
-#if defined (__HAS_IEEE_EXCEPTIONS)
-      CALL ieee_set_halting_mode(IEEE_ALL, ieee_halt)
-#endif
+      CALL skala_torch_model_get_exc_impl(model, inputs, grid_weights, exc_tensor, .TRUE., exc)
 
    END SUBROUTINE skala_torch_model_get_exc
 
@@ -138,6 +124,29 @@ CONTAINS
       TYPE(torch_tensor_type), INTENT(IN)                :: grid_weights
       TYPE(torch_tensor_type), INTENT(INOUT)             :: exc_tensor
 
+      REAL(KIND=dp)                                      :: exc
+
+      CALL skala_torch_model_get_exc_impl(model, inputs, grid_weights, exc_tensor, .FALSE., exc)
+
+   END SUBROUTINE skala_torch_model_get_exc_device
+
+! **************************************************************************************************
+!> \brief Shared implementation of the weighted SKALA energy; optionally read it back.
+!> \param model ...
+!> \param inputs ...
+!> \param grid_weights ...
+!> \param exc_tensor ...
+!> \param read_exc whether to read the scalar energy back to the host
+!> \param exc scalar energy (0 when read_exc is false)
+! **************************************************************************************************
+   SUBROUTINE skala_torch_model_get_exc_impl(model, inputs, grid_weights, exc_tensor, read_exc, exc)
+      TYPE(skala_torch_model_type), INTENT(INOUT)        :: model
+      TYPE(torch_dict_type), INTENT(IN)                  :: inputs
+      TYPE(torch_tensor_type), INTENT(IN)                :: grid_weights
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: exc_tensor
+      LOGICAL, INTENT(IN)                                :: read_exc
+      REAL(KIND=dp), INTENT(OUT)                         :: exc
+
       TYPE(torch_tensor_type)                            :: exc_density
 
 #if defined (__HAS_IEEE_EXCEPTIONS)
@@ -149,11 +158,13 @@ CONTAINS
       CALL torch_model_forward_mol_tensor(model%torch_model, "get_exc_density", inputs, exc_density)
       CALL torch_tensor_weighted_sum(exc_density, grid_weights, exc_tensor)
       CALL torch_tensor_release(exc_density)
+      exc = 0.0_dp
+      IF (read_exc) exc = torch_tensor_item_double(exc_tensor)
 #if defined (__HAS_IEEE_EXCEPTIONS)
       CALL ieee_set_halting_mode(IEEE_ALL, ieee_halt)
 #endif
 
-   END SUBROUTINE skala_torch_model_get_exc_device
+   END SUBROUTINE skala_torch_model_get_exc_impl
 
 ! **************************************************************************************************
 !> \brief Parse a TorchScript extra_files JSON list of feature names.

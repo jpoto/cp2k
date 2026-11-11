@@ -934,20 +934,6 @@ static torch::Tensor materialize_host_gradient(const torch::Tensor &source,
   return host;
 }
 
-/*******************************************************************************
- * \brief Returns the gradient of a Torch tensor which was computed by autograd.
- * \author Ole Schuett
- ******************************************************************************/
-void torch_c_tensor_grad(const torch_c_tensor_t *tensor,
-                         torch_c_tensor_t **grad) {
-  TORCH_C_TRY
-  c10::OptionalDeviceGuard guard;
-  get_device_with_guard(guard);
-  const torch::Tensor maybe_grad = tensor->grad();
-  *grad = new torch_c_tensor_t(materialize_host_gradient(maybe_grad, *tensor));
-  TORCH_C_CATCH("torch_c_tensor_grad")
-}
-
 // Reusable pinned host buffers for gradient readbacks, one per leaf tensor.
 // The map is intentionally leaked (raw pointer, never destroyed) because a
 // static torch::Tensor would be destroyed after the CUDA driver has shut down.

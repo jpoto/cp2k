@@ -2194,7 +2194,7 @@ CONTAINS
             CALL build_vxc_from_feature_grads( &
                smooth_vxc_rho, smooth_vxc_tau, smooth_rho_r, auxbas_pw_pool, &
                smooth_density_adjoint_storage, smooth_grad_adjoint_storage, &
-               smooth_kin_adjoint_storage, xc_deriv_method_id, global_grid_layout=.FALSE.)
+               smooth_kin_adjoint_storage, xc_deriv_method_id)
             DEALLOCATE (smooth_density_adjoint_storage, smooth_grad_adjoint_storage, &
                         smooth_kin_adjoint_storage)
             smooth_grid_contraction = 0.0_dp

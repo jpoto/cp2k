@@ -71,11 +71,8 @@ MODULE xc_gauxc_functional
 
    PRIVATE
 
-   LOGICAL, PARAMETER :: debug_this_module = .TRUE.
-   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'xc_gauxc_functional'
-
    PUBLIC :: apply_gauxc, gauxc_gapw_all_all_electron, gauxc_gapw_all_pseudopotentials, &
-             gauxc_gapw_has_paw_pseudopotentials, gauxc_gapw_has_pseudopotentials, skala_info
+             gauxc_gapw_has_paw_pseudopotentials, skala_info
 
 CONTAINS
 
