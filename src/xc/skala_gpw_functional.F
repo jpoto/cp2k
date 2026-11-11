@@ -56,13 +56,13 @@ MODULE skala_gpw_functional
    USE torch_api,                       ONLY: &
         staged_upload, torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, &
         torch_dict_insert, torch_dict_release, torch_dict_set, torch_dict_type, torch_file_stamp, &
-        torch_get_use_cuda, torch_grad_pool_clear, torch_pinned_finish, torch_pinned_release, &
-        torch_pinned_reserve, torch_stream_synchronize, torch_tensor_accumulate, &
-        torch_tensor_backward_scalar, torch_tensor_data_ptr, torch_tensor_from_array, &
-        torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3, &
-        torch_tensor_grad_batch3_deferred, torch_tensor_grad_batch_deferred, &
-        torch_tensor_item_double, torch_tensor_narrow, torch_tensor_release, &
-        torch_tensor_to_device_leaf, torch_tensor_type, torch_use_cuda
+        torch_get_num_threads, torch_get_use_cuda, torch_grad_pool_clear, torch_pinned_finish, &
+        torch_pinned_release, torch_pinned_reserve, torch_set_default_threads, &
+        torch_stream_synchronize, torch_tensor_accumulate, torch_tensor_backward_scalar, &
+        torch_tensor_data_ptr, torch_tensor_from_array, torch_tensor_grad, &
+        torch_tensor_grad_batch, torch_tensor_grad_batch3, torch_tensor_grad_batch3_deferred, &
+        torch_tensor_grad_batch_deferred, torch_tensor_item_double, torch_tensor_narrow, &
+        torch_tensor_release, torch_tensor_to_device_leaf, torch_tensor_type, torch_use_cuda
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -111,6 +111,7 @@ MODULE skala_gpw_functional
    TYPE(skala_torch_model_type), SAVE                  :: cached_model
    TYPE(skala_gapw_atom_cuda_tensor_cache_type), SAVE, TARGET :: cached_atom_cuda_tensors
    LOGICAL, SAVE                                       :: cached_atom_cuda_tensors_active = .FALSE.
+   LOGICAL, SAVE                                       :: logged_torch_threads = .FALSE.
    CHARACTER(len=default_path_length), SAVE            :: cached_model_path = ""
    CHARACTER(len=default_path_length), SAVE            :: cached_model_stamp = ""
    LOGICAL, SAVE                                       :: cached_model_loaded = .FALSE.
@@ -137,6 +138,25 @@ MODULE skala_gpw_functional
 
 CONTAINS
 
+! **************************************************************************************************
+!> \brief Align the Torch CPU intra-op thread count with CP2K's per-process OpenMP budget.
+! **************************************************************************************************
+   SUBROUTINE ensure_skala_torch_threads()
+      INTEGER                                            :: iw, omp_threads, torch_threads
+
+      IF (logged_torch_threads) RETURN
+      logged_torch_threads = .TRUE.
+      omp_threads = omp_get_max_threads()
+      CALL torch_set_default_threads(omp_threads)
+      torch_threads = torch_get_num_threads()
+      iw = cp_logger_get_default_io_unit()
+      IF (iw > 0) THEN
+         WRITE (UNIT=iw, FMT="(T2,A,I0,A,I0,A)") &
+            "SKALA| Torch intra-op threads: ", torch_threads, &
+            " (CP2K OpenMP threads per rank: ", omp_threads, ")"
+      END IF
+
+   END SUBROUTINE ensure_skala_torch_threads
 ! **************************************************************************************************
 !> \brief Read the shared SKALA_NATIVE chunk/partition controls in one place.
 !> \param xc_section ...
@@ -3155,6 +3175,7 @@ CONTAINS
 #if defined(__LIBTORCH_CUDA)
       save_auto_cuda = .TRUE.
 #endif
+      CALL ensure_skala_torch_threads()
       use_cuda = skala_gpu_mode_use_cuda(gpu_mode, save_auto_cuda)
 
       IF (use_cuda) THEN

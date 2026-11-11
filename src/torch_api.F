@@ -89,6 +89,7 @@ MODULE torch_api
    PUBLIC :: torch_tensor_accumulate, torch_tensor_item_double, torch_tensor_weighted_sum
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
    PUBLIC :: torch_dict_get, torch_dict_release, torch_dict_set
+   PUBLIC :: torch_set_num_threads, torch_get_num_threads, torch_set_default_threads
    PUBLIC :: torch_model_type, torch_model_load, torch_model_load_with_metadata, &
              torch_model_forward, torch_model_release
    PUBLIC :: torch_model_disable_parameter_gradients, torch_model_forward_mol_tensor, &
@@ -98,6 +99,9 @@ MODULE torch_api
    PUBLIC :: torch_cuda_device_count, torch_cuda_is_available
    PUBLIC :: torch_allow_tf32, torch_model_freeze, torch_model_freeze_preserving_method, &
              torch_use_cuda, torch_get_use_cuda
+
+   ! Set once so the per-process Torch thread count follows CP2K's OpenMP budget.
+   LOGICAL, SAVE :: torch_default_threads_set = .FALSE.
 
 CONTAINS
 
@@ -547,6 +551,60 @@ CONTAINS
       use_cuda = .FALSE.
 #endif
    END FUNCTION torch_get_use_cuda
+
+! **************************************************************************************************
+!> \brief Set the Torch CPU intra-op thread count (honours CP2K_TORCH_NUM_THREADS).
+!> \param num_threads ...
+! **************************************************************************************************
+   SUBROUTINE torch_set_num_threads(num_threads)
+      INTEGER, INTENT(IN)                                :: num_threads
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_set_num_threads(num_threads) BIND(C, name="torch_c_set_num_threads")
+            IMPORT :: C_INT
+            INTEGER(kind=C_INT), VALUE                   :: num_threads
+         END SUBROUTINE torch_c_set_num_threads
+      END INTERFACE
+
+      CALL torch_c_set_num_threads(num_threads=INT(num_threads, C_INT))
+#else
+      MARK_USED(num_threads)
+#endif
+   END SUBROUTINE torch_set_num_threads
+
+! **************************************************************************************************
+!> \brief Return the current Torch CPU intra-op thread count.
+!> \return ...
+! **************************************************************************************************
+   FUNCTION torch_get_num_threads() RESULT(num_threads)
+      INTEGER                                            :: num_threads
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         FUNCTION torch_c_get_num_threads() BIND(C, name="torch_c_get_num_threads")
+            IMPORT :: C_INT
+            INTEGER(kind=C_INT)                          :: torch_c_get_num_threads
+         END FUNCTION torch_c_get_num_threads
+      END INTERFACE
+
+      num_threads = INT(torch_c_get_num_threads())
+#else
+      num_threads = 1
+#endif
+   END FUNCTION torch_get_num_threads
+
+! **************************************************************************************************
+!> \brief Set the Torch intra-op thread count once, using the supplied per-process budget.
+!> \param num_threads desired intra-op thread count
+! **************************************************************************************************
+   SUBROUTINE torch_set_default_threads(num_threads)
+      INTEGER, INTENT(IN)                                :: num_threads
+
+      IF (torch_default_threads_set) RETURN
+      torch_default_threads_set = .TRUE.
+      CALL torch_set_num_threads(num_threads)
+   END SUBROUTINE torch_set_default_threads
 
 ! **************************************************************************************************
 !> \brief Reserve capacity in the shared pinned host staging buffer.

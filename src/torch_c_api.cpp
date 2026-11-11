@@ -193,6 +193,25 @@ static void initialize_torch_threads_from_env() {
   }
 }
 
+// Set the Torch CPU intra-op thread count. An explicit CP2K_TORCH_NUM_THREADS
+// environment variable takes precedence and is never overridden here.
+extern "C" void torch_c_set_num_threads(const int num_threads) {
+  TORCH_C_TRY
+  int env_threads = 0;
+  if (num_threads <= 0)
+    return;
+  if (get_positive_int_env("CP2K_TORCH_NUM_THREADS", env_threads))
+    return;
+  at::set_num_threads(num_threads);
+  TORCH_C_CATCH("torch_c_set_num_threads")
+}
+
+// Return the current Torch CPU intra-op thread count.
+extern "C" int torch_c_get_num_threads(void) {
+  initialize_torch_threads_from_env();
+  return at::get_num_threads();
+}
+
 static torch::Device get_device() {
   initialize_torch_threads_from_env();
   if (!use_cuda_if_available || !torch::cuda::is_available()) {
