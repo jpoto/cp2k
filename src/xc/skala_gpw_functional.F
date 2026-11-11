@@ -138,6 +138,46 @@ MODULE skala_gpw_functional
 CONTAINS
 
 ! **************************************************************************************************
+!> \brief Read the shared SKALA_NATIVE chunk/partition controls in one place.
+!> \param xc_section ...
+!> \param atom_chunks ...
+!> \param max_rows ...
+!> \param atom_partition optional mapped partition id
+! **************************************************************************************************
+   SUBROUTINE read_skala_native_controls(xc_section, atom_chunks, max_rows, atom_partition)
+      TYPE(section_vals_type), POINTER                   :: xc_section
+      LOGICAL, INTENT(OUT)                               :: atom_chunks
+      INTEGER, INTENT(OUT)                               :: max_rows
+      INTEGER, INTENT(OUT), OPTIONAL                     :: atom_partition
+
+      INTEGER                                            :: partition
+      TYPE(section_vals_type), POINTER                   :: native_section
+
+      atom_chunks = .TRUE.
+      max_rows = -1
+      partition = skala_gpw_atom_partition_smooth
+      native_section => get_skala_native_section(xc_section)
+      IF (ASSOCIATED(native_section)) THEN
+         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", l_val=atom_chunks)
+         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", i_val=max_rows)
+         CALL section_vals_val_get(native_section, "ATOM_PARTITION", i_val=partition)
+      END IF
+      SELECT CASE (partition)
+      CASE (1)
+         partition = skala_gpw_atom_partition_hard
+      CASE (2)
+         partition = skala_gpw_atom_partition_smooth
+      CASE DEFAULT
+         CALL cp_abort(__LOCATION__, "Unknown SKALA_NATIVE%ATOM_PARTITION value.")
+      END SELECT
+      IF (max_rows < -1) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "SKALA_NATIVE%ATOM_CHUNK_MAX_ROWS must be -1, zero, or positive.")
+      END IF
+      IF (PRESENT(atom_partition)) atom_partition = partition
+
+   END SUBROUTINE read_skala_native_controls
+! **************************************************************************************************
 !> \brief Return the pseudopotential GAPW representation selected for an active model.
 !> \param xc_section ...
 !> \return ...
@@ -433,31 +473,9 @@ CONTAINS
       lsd = (nspins /= 1)
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
-      native_grid_atom_chunks = .TRUE.
-      native_grid_atom_chunk_max_rows = -1
-      native_grid_atom_partition = skala_gpw_atom_partition_smooth
+      CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, &
+                                      native_grid_atom_chunk_max_rows, native_grid_atom_partition)
       native_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(native_section)) THEN
-         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", &
-                                   l_val=native_grid_atom_chunks)
-         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", &
-                                   i_val=native_grid_atom_chunk_max_rows)
-         CALL section_vals_val_get(native_section, "ATOM_PARTITION", &
-                                   i_val=native_grid_atom_partition)
-      END IF
-      SELECT CASE (native_grid_atom_partition)
-      CASE (1)
-         native_grid_atom_partition = skala_gpw_atom_partition_hard
-      CASE (2)
-         native_grid_atom_partition = skala_gpw_atom_partition_smooth
-      CASE DEFAULT
-         CALL cp_abort(__LOCATION__, &
-                       "Unknown SKALA_NATIVE%ATOM_PARTITION value.")
-      END SELECT
-      IF (native_grid_atom_chunk_max_rows < -1) THEN
-         CALL cp_abort(__LOCATION__, &
-                       "SKALA_NATIVE%ATOM_CHUNK_MAX_ROWS must be -1, zero, or positive.")
-      END IF
       IF (needs_atom_force .OR. compute_virial) THEN
          IF (native_grid_atom_partition == skala_gpw_atom_partition_hard) THEN
             CALL cp_abort(__LOCATION__, &
@@ -824,7 +842,6 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: grid_weight_grad
-      TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(skala_gpw_feature_type)                       :: subchunk
       TYPE(skala_gpw_feature_type), POINTER              :: features
       TYPE(torch_tensor_type)                            :: exc_tensor, grid_weight_grad_t
@@ -841,32 +858,9 @@ CONTAINS
       lsd = (nspins /= 1)
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
-      native_grid_atom_partition = skala_gpw_atom_partition_smooth
-      native_grid_atom_chunks = .TRUE.
-      chunk_max_rows = -1
-      native_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(native_section)) THEN
-         CALL section_vals_val_get(native_section, "ATOM_PARTITION", &
-                                   i_val=native_grid_atom_partition)
-         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", &
-                                   l_val=native_grid_atom_chunks)
-         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", &
-                                   i_val=chunk_max_rows)
-      END IF
-      IF (chunk_max_rows < -1) THEN
-         CALL cp_abort(__LOCATION__, &
-                       "SKALA_NATIVE%ATOM_CHUNK_MAX_ROWS must be -1, zero, or positive.")
-      END IF
+      CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, chunk_max_rows, &
+                                      native_grid_atom_partition)
       IF (.NOT. native_grid_atom_chunks) chunk_max_rows = 0
-      SELECT CASE (native_grid_atom_partition)
-      CASE (1)
-         native_grid_atom_partition = skala_gpw_atom_partition_hard
-      CASE (2)
-         native_grid_atom_partition = skala_gpw_atom_partition_smooth
-      CASE DEFAULT
-         CALL cp_abort(__LOCATION__, &
-                       "Unknown SKALA_NATIVE%ATOM_PARTITION value.")
-      END SELECT
       IF (native_grid_atom_partition == skala_gpw_atom_partition_hard) THEN
          CALL cp_abort(__LOCATION__, &
                        "SKALA_NATIVE%ATOM_PARTITION HARD supports energy/VXC only. "// &
@@ -1363,7 +1357,6 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad, density_grad, &
                                                             grid_coord_grad, kin_grad
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad
-      TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(torch_dict_type)                              :: inputs
       TYPE(torch_tensor_type), DIMENSION(4)              :: grad_batch_t
       TYPE(torch_tensor_type)                            :: exc_total_t
@@ -1414,19 +1407,7 @@ CONTAINS
 
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
-      native_grid_atom_chunks = .TRUE.
-      chunk_max_rows = -1
-      native_section => get_skala_native_section(xc_section)
-      IF (ASSOCIATED(native_section)) THEN
-         CALL section_vals_val_get(native_section, "ATOM_CHUNKS", &
-                                   l_val=native_grid_atom_chunks)
-         CALL section_vals_val_get(native_section, "ATOM_CHUNK_MAX_ROWS", &
-                                   i_val=chunk_max_rows)
-      END IF
-      IF (chunk_max_rows < -1) THEN
-         CALL cp_abort(__LOCATION__, &
-                       "SKALA_NATIVE%ATOM_CHUNK_MAX_ROWS must be -1, zero, or positive.")
-      END IF
+      CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, chunk_max_rows)
       IF (.NOT. native_grid_atom_chunks) chunk_max_rows = 0
       IF (chunk_max_rows == -1) THEN
          chunk_max_rows = auto_atom_composite_chunk_max_rows(atomic_grid_sizes, group)
