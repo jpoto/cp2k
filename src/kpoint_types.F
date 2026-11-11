@@ -243,6 +243,8 @@ MODULE kpoint_types
          POINTER                              :: kind_rotmat => Null()
       TYPE(kind_rotmat_type), DIMENSION(:, :), &
          POINTER                              :: kind_rotmat_aux => Null()
+      TYPE(kind_rotmat_type), DIMENSION(:, :), &
+         POINTER                              :: kind_rotmat_ri => Null()
       ! pools
       TYPE(qs_matrix_pools_type), POINTER     :: mpools => Null()
       TYPE(qs_diis_buffer_type_kp), POINTER   :: scf_diis_buffer => Null()
@@ -400,6 +402,17 @@ CONTAINS
             DEALLOCATE (kpoint%kind_rotmat_aux)
          END IF
 
+         IF (ASSOCIATED(kpoint%kind_rotmat_ri)) THEN
+            DO i = 1, SIZE(kpoint%kind_rotmat_ri, 1)
+               DO j = 1, SIZE(kpoint%kind_rotmat_ri, 2)
+                  IF (ASSOCIATED(kpoint%kind_rotmat_ri(i, j)%rmat)) THEN
+                     DEALLOCATE (kpoint%kind_rotmat_ri(i, j)%rmat)
+                  END IF
+               END DO
+            END DO
+            DEALLOCATE (kpoint%kind_rotmat_ri)
+         END IF
+
          IF (ASSOCIATED(kpoint%scf_diis_buffer)) THEN
             CALL qs_diis_b_release_kp(kpoint%scf_diis_buffer)
             DEALLOCATE (kpoint%scf_diis_buffer)
@@ -542,6 +555,19 @@ CONTAINS
          END DO
          DEALLOCATE (kpoint%kind_rotmat_aux)
          NULLIFY (kpoint%kind_rotmat_aux)
+      END IF
+
+      IF (ASSOCIATED(kpoint%kind_rotmat_ri)) THEN
+         DO i = 1, SIZE(kpoint%kind_rotmat_ri, 1)
+            DO j = 1, SIZE(kpoint%kind_rotmat_ri, 2)
+               IF (ASSOCIATED(kpoint%kind_rotmat_ri(i, j)%rmat)) THEN
+                  DEALLOCATE (kpoint%kind_rotmat_ri(i, j)%rmat)
+                  NULLIFY (kpoint%kind_rotmat_ri(i, j)%rmat)
+               END IF
+            END DO
+         END DO
+         DEALLOCATE (kpoint%kind_rotmat_ri)
+         NULLIFY (kpoint%kind_rotmat_ri)
       END IF
 
       IF (ASSOCIATED(kpoint%scf_diis_buffer)) THEN

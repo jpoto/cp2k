@@ -500,6 +500,12 @@ CONTAINS
                   NULLIFY (kpoint%kind_rotmat_aux(i, j)%rmat)
                END DO
             END DO
+            ALLOCATE (kpoint%kind_rotmat_ri(ns, nkind))
+            DO i = 1, ns
+               DO j = 1, nkind
+                  NULLIFY (kpoint%kind_rotmat_ri(i, j)%rmat)
+               END DO
+            END DO
             ALLOCATE (kpoint%ibrot(ns))
             kpoint%ibrot(1:ns) = crys_sym%ibrot(1:ns)
          END IF
@@ -612,6 +618,12 @@ CONTAINS
             DO i = 1, ns
                DO j = 1, nkind
                   NULLIFY (kpoint%kind_rotmat_aux(i, j)%rmat)
+               END DO
+            END DO
+            ALLOCATE (kpoint%kind_rotmat_ri(ns, nkind))
+            DO i = 1, ns
+               DO j = 1, nkind
+                  NULLIFY (kpoint%kind_rotmat_ri(i, j)%rmat)
                END DO
             END DO
             ALLOCATE (kpoint%ibrot(ns))

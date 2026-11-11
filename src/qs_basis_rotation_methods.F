@@ -83,6 +83,8 @@ CONTAINS
       END IF
       IF (TRIM(my_storage) == "AUX_FIT") THEN
          rotmat_store => kpoints%kind_rotmat_aux
+      ELSE IF (TRIM(my_storage) == "RI") THEN
+         rotmat_store => kpoints%kind_rotmat_ri
       ELSE
          rotmat_store => kpoints%kind_rotmat
       END IF

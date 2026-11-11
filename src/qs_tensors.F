@@ -2757,10 +2757,11 @@ CONTAINS
 !> \param basis_j ...
 !> \param potential_parameter ...
 !> \param do_kpoints ...
+!> \param do_image ...
 ! **************************************************************************************************
    SUBROUTINE build_2c_derivatives(t2c_der, filter_eps, qs_env, &
                                    nl_2c, basis_i, basis_j, &
-                                   potential_parameter, do_kpoints)
+                                   potential_parameter, do_kpoints, do_image)
 
       TYPE(dbcsr_type), DIMENSION(:, :), INTENT(INOUT)   :: t2c_der
       REAL(KIND=dp), INTENT(IN)                          :: filter_eps
@@ -2770,6 +2771,7 @@ CONTAINS
       TYPE(gto_basis_set_p_type), DIMENSION(:)           :: basis_i, basis_j
       TYPE(libint_potential_type), INTENT(IN)            :: potential_parameter
       LOGICAL, INTENT(IN), OPTIONAL                      :: do_kpoints
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_image
 
       CHARACTER(len=*), PARAMETER :: routineN = 'build_2c_derivatives'
 
@@ -2893,6 +2895,11 @@ CONTAINS
                 ANY([cell_j(1), cell_j(2), cell_j(3)] > kp_index_ubounds)) CYCLE
             img = cell_to_index(cell_j(1), cell_j(2), cell_j(3))
             IF (img > nimg .OR. img < 1) CYCLE
+            IF (PRESENT(do_image)) THEN
+               IF (img <= SIZE(do_image)) THEN
+                  IF (.NOT. do_image(img)) CYCLE
+               END IF
+            END IF
          ELSE
             img = 1
          END IF
@@ -3177,11 +3184,12 @@ CONTAINS
 !> this routine requires that libint has been static initialised somewhere else
 !> \param ext_kpoints ...
 !> \param regularization_RI ...
+!> \param do_image ...
 ! **************************************************************************************************
    SUBROUTINE build_2c_integrals(t2c, filter_eps, qs_env, &
                                  nl_2c, basis_i, basis_j, &
                                  potential_parameter, do_kpoints, &
-                                 do_hfx_kpoints, ext_kpoints, regularization_RI)
+                                 do_hfx_kpoints, ext_kpoints, regularization_RI, do_image)
 
       TYPE(dbcsr_type), DIMENSION(:), INTENT(INOUT)      :: t2c
       REAL(KIND=dp), INTENT(IN)                          :: filter_eps
@@ -3193,6 +3201,7 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: do_kpoints, do_hfx_kpoints
       TYPE(kpoint_type), OPTIONAL, POINTER               :: ext_kpoints
       REAL(KIND=dp), OPTIONAL                            :: regularization_RI
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_image
 
       CHARACTER(len=*), PARAMETER :: routineN = 'build_2c_integrals'
 
@@ -3320,6 +3329,11 @@ CONTAINS
                 ANY([cell_j(1), cell_j(2), cell_j(3)] > kp_index_ubounds)) CYCLE
             img = cell_to_index(cell_j(1), cell_j(2), cell_j(3))
             IF (img > nimg .OR. img < 1) CYCLE
+            IF (PRESENT(do_image)) THEN
+               IF (img <= SIZE(do_image)) THEN
+                  IF (.NOT. do_image(img)) CYCLE
+               END IF
+            END IF
          ELSE
             img = 1
          END IF

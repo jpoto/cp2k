@@ -443,14 +443,17 @@ CONTAINS
 !> \param t_2c_int_pot K_1(P, R)
 !> \param t_3c_int int_3c(mu, lambda, P)
 !> \param do_kpoints ...
+!> \param do_2c_image ...
 !> \notes the integral tensor arrays are already allocated on entry
 ! **************************************************************************************************
-   SUBROUTINE hfx_ri_pre_scf_calc_tensors(qs_env, ri_data, t_2c_int_RI, t_2c_int_pot, t_3c_int, do_kpoints)
+   SUBROUTINE hfx_ri_pre_scf_calc_tensors(qs_env, ri_data, t_2c_int_RI, t_2c_int_pot, t_3c_int, do_kpoints, &
+                                          do_2c_image)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
       TYPE(dbcsr_type), DIMENSION(:), INTENT(OUT)        :: t_2c_int_RI, t_2c_int_pot
       TYPE(dbt_type), DIMENSION(:, :)                    :: t_3c_int
       LOGICAL, INTENT(IN), OPTIONAL                      :: do_kpoints
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_2c_image
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'hfx_ri_pre_scf_calc_tensors'
 
@@ -699,7 +702,8 @@ CONTAINS
       CALL dbcsr_distribution_release(dbcsr_dist)
 
       CALL build_2c_integrals(t_2c_int_pot, ri_data%filter_eps_2c, qs_env, nl_2c_pot, basis_set_RI, basis_set_RI, &
-                              ri_data%hfx_pot, do_kpoints=do_kpoints_prv, do_hfx_kpoints=do_kpoints_prv)
+                              ri_data%hfx_pot, do_kpoints=do_kpoints_prv, do_hfx_kpoints=do_kpoints_prv, &
+                              do_image=do_2c_image)
       CALL release_neighbor_list_sets(nl_2c_pot)
 
       IF (.NOT. ri_data%same_op) THEN
@@ -708,7 +712,8 @@ CONTAINS
                                       dist_2d=dist_2d)
 
          CALL build_2c_integrals(t_2c_int_RI, ri_data%filter_eps_2c, qs_env, nl_2c_RI, basis_set_RI, basis_set_RI, &
-                                 ri_data%ri_metric, do_kpoints=do_kpoints_prv, do_hfx_kpoints=do_kpoints_prv)
+                                 ri_data%ri_metric, do_kpoints=do_kpoints_prv, do_hfx_kpoints=do_kpoints_prv, &
+                                 do_image=do_2c_image)
 
          CALL release_neighbor_list_sets(nl_2c_RI)
       END IF
