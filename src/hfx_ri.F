@@ -444,16 +444,17 @@ CONTAINS
 !> \param t_3c_int int_3c(mu, lambda, P)
 !> \param do_kpoints ...
 !> \param do_2c_image ...
+!> \param do_3c_image ...
 !> \notes the integral tensor arrays are already allocated on entry
 ! **************************************************************************************************
    SUBROUTINE hfx_ri_pre_scf_calc_tensors(qs_env, ri_data, t_2c_int_RI, t_2c_int_pot, t_3c_int, do_kpoints, &
-                                          do_2c_image)
+                                          do_2c_image, do_3c_image)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
       TYPE(dbcsr_type), DIMENSION(:), INTENT(OUT)        :: t_2c_int_RI, t_2c_int_pot
       TYPE(dbt_type), DIMENSION(:, :)                    :: t_3c_int
       LOGICAL, INTENT(IN), OPTIONAL                      :: do_kpoints
-      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_2c_image
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_2c_image, do_3c_image
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'hfx_ri_pre_scf_calc_tensors'
 
@@ -649,7 +650,8 @@ CONTAINS
                                     ri_data%ri_metric, int_eps=ri_data%eps_schwarz, op_pos=2, &
                                     desymmetrize=.FALSE., do_kpoints=.TRUE., do_hfx_kpoints=.TRUE., &
                                     bounds_k=[starts_array_mc_block_int(i_mem), ends_array_mc_block_int(i_mem)], &
-                                    RI_range=RI_range, img_to_RI_cell=ri_data%img_to_RI_cell)
+                                    RI_range=RI_range, img_to_RI_cell=ri_data%img_to_RI_cell, &
+                                    do_image=do_3c_image)
 
             DO i_img = 1, nimg
                !we start with (mu^0 sigma^i | P^j) and finish with (P^i | mu^0 sigma^j)

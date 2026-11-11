@@ -926,13 +926,14 @@ CONTAINS
 !> \param bounds_k ...
 !> \param RI_range ...
 !> \param img_to_RI_cell ...
+!> \param do_image ...
 ! **************************************************************************************************
    SUBROUTINE build_3c_derivatives(t3c_der_i, t3c_der_k, filter_eps, qs_env, &
                                    nl_3c, basis_i, basis_j, basis_k, &
                                    potential_parameter, der_eps, &
                                    op_pos, do_kpoints, do_hfx_kpoints, &
                                    bounds_i, bounds_j, bounds_k, &
-                                   RI_range, img_to_RI_cell)
+                                   RI_range, img_to_RI_cell, do_image)
 
       TYPE(dbt_type), DIMENSION(:, :, :), INTENT(INOUT)  :: t3c_der_i, t3c_der_k
       REAL(KIND=dp), INTENT(IN)                          :: filter_eps
@@ -946,6 +947,7 @@ CONTAINS
       INTEGER, DIMENSION(2), INTENT(IN), OPTIONAL        :: bounds_i, bounds_j, bounds_k
       REAL(dp), INTENT(IN), OPTIONAL                     :: RI_range
       INTEGER, DIMENSION(:), INTENT(IN), OPTIONAL        :: img_to_RI_cell
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_image
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_3c_derivatives'
 
@@ -1220,7 +1222,7 @@ CONTAINS
 !$OMP SHARED (nthread,do_kpoints_prv,kp_index_lbounds,kp_index_ubounds,maxli,maxlk,maxlj,bounds_i,&
 !$OMP         bounds_j,bounds_k,nimg,basis_i,basis_j,basis_k,dr_ij,dr_jk,dr_ik,ncoset,op_pos_prv,&
 !$OMP         potential_parameter,der_eps,tspj,spi,spk,cell_to_index,RI_range,natom,nl_3c,&
-!$OMP         t3c_der_i,t3c_der_k,t3c_der_j,ncell_RI,img_to_RI_cell_prv,do_hfx_kpoints_prv) &
+!$OMP         t3c_der_i,t3c_der_k,t3c_der_j,ncell_RI,img_to_RI_cell_prv,do_hfx_kpoints_prv,do_image) &
 !$OMP PRIVATE (lib,nl_3c_iter,ikind,jkind,kkind,iatom,jatom,katom,rij,rjk,rik,cell_j,cell_k,&
 !$OMP          prefac,jcell,kcell,first_sgf_i,lmax_i,lmin_i,npgfi,nseti,nsgfi,rpgf_i,set_radius_i,&
 !$OMP          sphi_i,zeti,kind_radius_i,first_sgf_j,lmax_j,lmin_j,npgfj,nsetj,nsgfj,rpgf_j,&
@@ -1290,6 +1292,11 @@ CONTAINS
 
             jcell = cell_to_index(cell_j(1), cell_j(2), cell_j(3))
             IF (jcell > nimg .OR. jcell < 1) CYCLE
+            IF (PRESENT(do_image)) THEN
+               IF (jcell <= SIZE(do_image)) THEN
+                  IF (.NOT. do_image(jcell)) CYCLE
+               END IF
+            END IF
 
             IF (ANY([cell_k(1), cell_k(2), cell_k(3)] < kp_index_lbounds) .OR. &
                 ANY([cell_k(1), cell_k(2), cell_k(3)] > kp_index_ubounds)) CYCLE
@@ -2122,13 +2129,14 @@ CONTAINS
 !> \param RI_range ...
 !> \param img_to_RI_cell ...
 !> \param cell_to_index_ext ...
+!> \param do_image ...
 ! **************************************************************************************************
    SUBROUTINE build_3c_integrals(t3c, filter_eps, qs_env, &
                                  nl_3c, basis_i, basis_j, basis_k, &
                                  potential_parameter, int_eps, &
                                  op_pos, do_kpoints, do_hfx_kpoints, desymmetrize, cell_sym, &
                                  bounds_i, bounds_j, bounds_k, &
-                                 RI_range, img_to_RI_cell, cell_to_index_ext)
+                                 RI_range, img_to_RI_cell, cell_to_index_ext, do_image)
 
       TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: t3c
       REAL(KIND=dp), INTENT(IN)                          :: filter_eps
@@ -2144,6 +2152,7 @@ CONTAINS
       REAL(dp), INTENT(IN), OPTIONAL                     :: RI_range
       INTEGER, DIMENSION(:), INTENT(IN), OPTIONAL        :: img_to_RI_cell
       INTEGER, DIMENSION(:, :, :), OPTIONAL, POINTER     :: cell_to_index_ext
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_image
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_3c_integrals'
 
@@ -2453,7 +2462,8 @@ CONTAINS
 !$OMP         bounds_j,bounds_k,nimg,basis_i,basis_j,basis_k,dr_ij,dr_jk,dr_ik,ncoset,&
 !$OMP         potential_parameter,int_eps,t3c,tspj,spi,spk,debug,cell_to_index,&
 !$OMP         natom,nl_3c,cell,op_pos_prv,do_hfx_kpoints_prv,RI_range,ncell_RI, &
-!$OMP         img_to_RI_cell_prv, cell_sym_prv, max_sphi_norm_i, max_sphi_norm_j, max_sphi_norm_k) &
+!$OMP         img_to_RI_cell_prv, cell_sym_prv, max_sphi_norm_i, max_sphi_norm_j, max_sphi_norm_k, &
+!$OMP         do_image) &
 !$OMP PRIVATE (lib,nl_3c_iter,ikind,jkind,kkind,iatom,jatom,katom,rij,rjk,rik,cell_j,cell_k,&
 !$OMP          prefac,jcell,kcell,first_sgf_i,lmax_i,lmin_i,npgfi,nseti,nsgfi,rpgf_i,set_radius_i,&
 !$OMP          sphi_i,zeti,kind_radius_i,first_sgf_j,lmax_j,lmin_j,npgfj,nsetj,nsgfj,rpgf_j,&
@@ -2509,6 +2519,11 @@ CONTAINS
 
             jcell = cell_to_index(cell_j(1), cell_j(2), cell_j(3))
             IF (jcell > nimg .OR. jcell < 1) CYCLE
+            IF (PRESENT(do_image)) THEN
+               IF (jcell <= SIZE(do_image)) THEN
+                  IF (.NOT. do_image(jcell)) CYCLE
+               END IF
+            END IF
 
             IF (ANY([cell_k(1), cell_k(2), cell_k(3)] < kp_index_lbounds) .OR. &
                 ANY([cell_k(1), cell_k(2), cell_k(3)] > kp_index_ubounds)) CYCLE
