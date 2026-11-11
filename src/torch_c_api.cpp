@@ -12,6 +12,7 @@
 #if defined(__LIBTORCH_CUDA)
 #include <ATen/cuda/CUDAContextLight.h>
 #include <c10/cuda/CUDAAllocatorConfig.h>
+#include <c10/cuda/CUDAStream.h>
 #endif
 #include <c10/core/DeviceGuard.h>
 #include <torch/csrc/api/include/torch/cuda.h>
@@ -770,7 +771,7 @@ void torch_c_stream_synchronize() {
   if (torch::cuda::is_available()) {
     c10::OptionalDeviceGuard guard;
     get_device_with_guard(guard);
-    torch::cuda::synchronize();
+    c10::cuda::getCurrentCUDAStream().synchronize();
   }
   TORCH_C_CATCH("torch_c_stream_synchronize")
 }
@@ -1002,27 +1003,33 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
         torch::kCUDA, static_cast<c10::DeviceIndex>(source_device)));
     // Reuse one pinned host buffer per leaf tensor; one synchronization for the
     // whole batch.
-    std::lock_guard<std::mutex> lock(grad_pinned_mutex);
-    if (grad_pinned_pool == nullptr) {
-      grad_pinned_pool =
-          new std::unordered_map<const torch_c_tensor_t *, torch::Tensor>();
-    }
     std::vector<torch::Tensor> hosts(count);
-    for (int i = 0; i < count; ++i) {
-      auto &entry = (*grad_pinned_pool)[tensors[i]];
-      const auto sizes = sources[i].sizes();
-      const bool reuse = entry.defined() && entry.sizes() == sizes &&
-                         entry.scalar_type() == sources[i].scalar_type();
-      if (!reuse) {
-        entry = torch::empty(
-            sizes,
-            sources[i].options().device(torch::kCPU).pinned_memory(true));
+    {
+      std::lock_guard<std::mutex> lock(grad_pinned_mutex);
+      if (grad_pinned_pool == nullptr) {
+        grad_pinned_pool =
+            new std::unordered_map<const torch_c_tensor_t *, torch::Tensor>();
       }
-      entry.copy_(sources[i], true);
-      hosts[i] = entry;
+      for (int i = 0; i < count; ++i) {
+        auto &entry = (*grad_pinned_pool)[tensors[i]];
+        const auto sizes = sources[i].sizes();
+        const bool reuse = entry.defined() && entry.sizes() == sizes &&
+                           entry.scalar_type() == sources[i].scalar_type();
+        if (!reuse) {
+          entry = torch::empty(
+              sizes,
+              sources[i].options().device(torch::kCPU).pinned_memory(true));
+        }
+        entry.copy_(sources[i], true);
+        hosts[i] = entry;
+      }
     }
     if (synchronize) {
-      torch::cuda::synchronize(source_device);
+      // The copies above were issued on the sources' current stream, so waiting
+      // on that stream is sufficient and avoids stalling unrelated device work.
+      c10::cuda::getCurrentCUDAStream(
+          static_cast<c10::DeviceIndex>(source_device))
+          .synchronize();
     }
     for (int i = 0; i < count; ++i) {
       grads[i] = new torch_c_tensor_t(std::move(hosts[i]));
@@ -1067,7 +1074,17 @@ void torch_c_grad_pool_clear() {
  * \brief Releases a Torch tensor and all its ressources.
  * \author Ole Schuett
  ******************************************************************************/
-void torch_c_tensor_release(torch_c_tensor_t *tensor) { delete (tensor); }
+void torch_c_tensor_release(torch_c_tensor_t *tensor) {
+  if (tensor == nullptr)
+    return;
+  {
+    std::lock_guard<std::mutex> lock(grad_pinned_mutex);
+    if (grad_pinned_pool != nullptr) {
+      grad_pinned_pool->erase(tensor);
+    }
+  }
+  delete (tensor);
+}
 
 /*******************************************************************************
  * \brief Creates an empty Torch dictionary.
@@ -1325,6 +1342,32 @@ void torch_c_tensor_weighted_sum(const torch_c_tensor_t *values,
                 "Torch weighted sum: value/weight size mismatch");
   *result = new torch_c_tensor_t(torch::dot(flat_values, flat_weights));
   TORCH_C_CATCH("torch_c_tensor_weighted_sum")
+}
+
+/*******************************************************************************
+ * \brief Returns the weighted sum over a flat element range (segmented energy).
+ ******************************************************************************/
+void torch_c_tensor_weighted_sum_range(const torch_c_tensor_t *values,
+                                       const torch_c_tensor_t *weights,
+                                       const int64_t start,
+                                       const int64_t length,
+                                       torch_c_tensor_t **result) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  get_device_with_guard(guard);
+  const auto weights_on_device =
+      weights->to(values->device()).to(values->dtype());
+  const auto flat_values = values->flatten();
+  const auto flat_weights = weights_on_device.flatten();
+  torch_c_check(flat_values.numel() == flat_weights.numel(),
+                "Torch weighted sum: value/weight size mismatch");
+  torch_c_check(start >= 0 && length >= 0 &&
+                    start + length <= flat_values.numel(),
+                "Torch weighted sum range is out of bounds");
+  *result =
+      new torch_c_tensor_t(torch::dot(flat_values.narrow(0, start, length),
+                                      flat_weights.narrow(0, start, length)));
+  TORCH_C_CATCH("torch_c_tensor_weighted_sum_range")
 }
 
 /*******************************************************************************

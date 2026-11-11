@@ -49,6 +49,7 @@ MODULE skala_gpw_functional
                                               xc_section_uses_gauxc_model
    USE skala_torch_api,                 ONLY: skala_torch_model_get_exc,&
                                               skala_torch_model_get_exc_device,&
+                                              skala_torch_model_get_exc_segments,&
                                               skala_torch_model_load,&
                                               skala_torch_model_release,&
                                               skala_torch_model_type
@@ -101,7 +102,7 @@ MODULE skala_gpw_functional
    END TYPE skala_gapw_atom_cuda_tensor_cache_type
 
    PUBLIC :: build_vxc_from_feature_grads, ensure_native_skala_grid_scope, &
-             skala_gapw_atom_composite_energy, skala_gapw_atom_vxc_of_r, &
+             skala_gapw_atom_composite_energy, skala_gapw_atom_vxc_of_r_pair, &
              native_skala_gapw_atom_composite_requested, &
              native_skala_uses_atom_composite_grid, &
              native_skala_gapw_composite_direct_ao, native_skala_gapw_composite_reference, &
@@ -1035,63 +1036,86 @@ CONTAINS
    END SUBROUTINE skala_gpw_weight_derivative
 
 ! **************************************************************************************************
-!> \brief Evaluate SKALA on a GAPW one-center atomic grid.
+!> \brief Evaluate the hard and soft one-center densities of one atom in a single model pass.
+!>        Both blocks share the atom grid but keep separate energies, potentials and grads.
 !> \param xc_section ...
 !> \param grid_atom ...
 !> \param group ...
 !> \param atom_coord ...
-!> \param rho ...
-!> \param drho ...
-!> \param tau ...
-!> \param weights ...
+!> \param rho_h ...
+!> \param drho_h ...
+!> \param tau_h ...
+!> \param rho_s ...
+!> \param drho_s ...
+!> \param tau_s ...
+!> \param weight_h ...
+!> \param weight_s ...
 !> \param lsd ...
 !> \param nspins ...
 !> \param na ...
 !> \param nr ...
-!> \param exc ...
-!> \param vxc ...
-!> \param vxg ...
-!> \param vtau ...
+!> \param evaluate_hard ...
+!> \param evaluate_soft ...
+!> \param exc_h ...
+!> \param vxc_h ...
+!> \param vxg_h ...
+!> \param vtau_h ...
+!> \param exc_s ...
+!> \param vxc_s ...
+!> \param vxg_s ...
+!> \param vtau_s ...
 !> \param energy_only ...
-!> \param atom_force ...
-!> \param atom_virial ...
+!> \param atom_force_h ...
+!> \param atom_virial_h ...
+!> \param atom_force_s ...
+!> \param atom_virial_s ...
 ! **************************************************************************************************
-   SUBROUTINE skala_gapw_atom_vxc_of_r(xc_section, grid_atom, group, atom_coord, &
-                                       rho, drho, tau, weights, lsd, nspins, na, nr, &
-                                       exc, vxc, vxg, vtau, energy_only, atom_force, atom_virial)
+   SUBROUTINE skala_gapw_atom_vxc_of_r_pair(xc_section, grid_atom, group, atom_coord, &
+                                            rho_h, drho_h, tau_h, rho_s, drho_s, tau_s, &
+                                            weight_h, weight_s, lsd, nspins, na, nr, &
+                                            evaluate_hard, evaluate_soft, &
+                                            exc_h, vxc_h, vxg_h, vtau_h, &
+                                            exc_s, vxc_s, vxg_s, vtau_s, &
+                                            energy_only, atom_force_h, atom_virial_h, &
+                                            atom_force_s, atom_virial_s)
       TYPE(section_vals_type), POINTER                   :: xc_section
       TYPE(grid_atom_type), POINTER                      :: grid_atom
 
       CLASS(mp_comm_type), INTENT(IN)                    :: group
       REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: atom_coord
-      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: rho, tau, vxc, vtau
-      REAL(KIND=dp), DIMENSION(:, :, :, :), POINTER      :: drho, vxg
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: weights
+      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: rho_h, tau_h, vxc_h, vtau_h, &
+                                                            rho_s, tau_s, vxc_s, vtau_s
+      REAL(KIND=dp), DIMENSION(:, :, :, :), POINTER      :: drho_h, vxg_h, drho_s, vxg_s
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: weight_h, weight_s
       LOGICAL, INTENT(IN)                                :: lsd
       INTEGER, INTENT(IN)                                :: nspins, na, nr
-      REAL(KIND=dp), INTENT(OUT)                         :: exc
+      LOGICAL, INTENT(IN)                                :: evaluate_hard, evaluate_soft
+      REAL(KIND=dp), INTENT(OUT)                         :: exc_h, exc_s
       LOGICAL, INTENT(IN), OPTIONAL                      :: energy_only
       REAL(KIND=dp), DIMENSION(3), INTENT(OUT), &
-         OPTIONAL                                        :: atom_force
+         OPTIONAL                                        :: atom_force_h, atom_force_s
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(OUT), &
-         OPTIONAL                                        :: atom_virial
+         OPTIONAL                                        :: atom_virial_h, atom_virial_s
 
       CHARACTER(len=default_path_length)                 :: model_path
-      INTEGER                                            :: ia, idir, ir, &
-                                                            jdir, nflat, omp_max_threads_restore, row, &
-                                                            selected_cuda_device
-      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes
+      INTEGER                                            :: ia, idir, iblock, ir, jdir, nblocks, &
+                                                            nflat, nflat_tot, omp_max_threads_restore, &
+                                                            row, row_in_block, selected_cuda_device
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes, seg_lengths, &
+                                                            seg_offsets
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
       INTEGER(KIND=int_8)                                :: upload_offset, upload_total
-      LOGICAL :: need_coord_grad, my_energy_only, native_grid_use_cuda, saved_use_cuda
+      LOGICAL :: is_hard, need_coord_grad, my_energy_only, native_grid_use_cuda, saved_use_cuda
       REAL(KIND=dp)                                      :: tmp
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, grid_weights
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, exc_segments, &
+                                                            grid_weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: coarse_0_atomic_coords, density, &
-                                                            grid_coords, kin
+                                                            grid_coords, kin, weight_b
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: grad
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad, density_grad, &
                                                             grid_coord_grad, kin_grad
-      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad
+      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: rho_b, tau_b, vtau_b, vxc_b, grad_grad
+      REAL(KIND=dp), DIMENSION(:, :, :, :), POINTER      :: drho_b, vxg_b
       TYPE(torch_dict_type)                              :: inputs
       TYPE(torch_tensor_type), DIMENSION(2)              :: grad_batch_t
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
@@ -1101,25 +1125,49 @@ CONTAINS
                                                             density_grad_t, exc_tensor, grad_t, &
                                                             grad_grad_t, grid_coords_t, grid_weights_t, &
                                                             kin_t, kin_grad_t
+      INTEGER                                            :: iblock_h, iblock_s
 
       CPASSERT(ASSOCIATED(xc_section))
       CPASSERT(ASSOCIATED(grid_atom))
-      CPASSERT(ASSOCIATED(rho))
-      CPASSERT(ASSOCIATED(drho))
-      CPASSERT(ASSOCIATED(tau))
+      CPASSERT(ASSOCIATED(rho_h))
+      CPASSERT(ASSOCIATED(drho_h))
+      CPASSERT(ASSOCIATED(tau_h))
+      CPASSERT(ASSOCIATED(rho_s))
+      CPASSERT(ASSOCIATED(drho_s))
+      CPASSERT(ASSOCIATED(tau_s))
       omp_max_threads_restore = omp_get_max_threads()
 
       my_energy_only = .FALSE.
       IF (PRESENT(energy_only)) my_energy_only = energy_only
-      need_coord_grad = PRESENT(atom_force) .OR. PRESENT(atom_virial)
-      exc = 0.0_dp
-      IF (PRESENT(atom_force)) atom_force = 0.0_dp
-      IF (PRESENT(atom_virial)) atom_virial = 0.0_dp
+      need_coord_grad = PRESENT(atom_force_h) .OR. PRESENT(atom_virial_h) .OR. &
+                        PRESENT(atom_force_s) .OR. PRESENT(atom_virial_s)
+      exc_h = 0.0_dp
+      exc_s = 0.0_dp
+      IF (PRESENT(atom_force_h)) atom_force_h = 0.0_dp
+      IF (PRESENT(atom_force_s)) atom_force_s = 0.0_dp
+      IF (PRESENT(atom_virial_h)) atom_virial_h = 0.0_dp
+      IF (PRESENT(atom_virial_s)) atom_virial_s = 0.0_dp
       IF (.NOT. my_energy_only) THEN
-         vxc = 0.0_dp
-         vxg = 0.0_dp
-         vtau = 0.0_dp
+         vxc_h = 0.0_dp
+         vxg_h = 0.0_dp
+         vtau_h = 0.0_dp
+         vxc_s = 0.0_dp
+         vxg_s = 0.0_dp
+         vtau_s = 0.0_dp
       END IF
+
+      iblock_h = 0
+      iblock_s = 0
+      nblocks = 0
+      IF (evaluate_hard) THEN
+         nblocks = nblocks + 1
+         iblock_h = nblocks
+      END IF
+      IF (evaluate_soft) THEN
+         nblocks = nblocks + 1
+         iblock_s = nblocks
+      END IF
+      IF (nblocks == 0) RETURN
 
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
@@ -1130,44 +1178,60 @@ CONTAINS
       CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
 
       nflat = na*nr
-      ALLOCATE (density(nflat, 2), grad(nflat, 3, 2), kin(nflat, 2), &
-                grid_coords(3, nflat), grid_weights(nflat), &
-                atomic_grid_weights(nflat), atomic_grid_sizes(1), &
-                coarse_0_atomic_coords(3, 1), atomic_grid_size_bound_shape(0, nflat))
+      nflat_tot = nblocks*nflat
+      ALLOCATE (density(nflat_tot, 2), grad(nflat_tot, 3, 2), kin(nflat_tot, 2), &
+                grid_coords(3, nflat_tot), grid_weights(nflat_tot), &
+                atomic_grid_weights(nflat_tot), atomic_grid_sizes(nblocks), &
+                coarse_0_atomic_coords(3, nblocks), &
+                atomic_grid_size_bound_shape(0, nflat_tot), weight_b(na, nr))
       density = 0.0_dp
       grad = 0.0_dp
       kin = 0.0_dp
       grid_coords = 0.0_dp
       grid_weights = 0.0_dp
       atomic_grid_weights = 0.0_dp
-      atomic_grid_sizes(1) = INT(nflat, KIND=int_8)
       atomic_grid_size_bound_shape = 0_int_8
-      coarse_0_atomic_coords(:, 1) = atom_coord
 
-      row = 0
-      DO ir = 1, nr
-         DO ia = 1, na
-            row = row + 1
-            grid_coords(1, row) = atom_coord(1) + grid_atom%rad(ir)* &
-                                  grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
-            grid_coords(2, row) = atom_coord(2) + grid_atom%rad(ir)* &
-                                  grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
-            grid_coords(3, row) = atom_coord(3) + grid_atom%rad(ir)*grid_atom%cos_pol(ia)
-            grid_weights(row) = weights(ia, ir)
-            atomic_grid_weights(row) = weights(ia, ir)
-            IF (nspins == 1) THEN
-               density(row, :) = 0.5_dp*rho(ia, ir, 1)
-               DO idir = 1, 3
-                  grad(row, idir, :) = 0.5_dp*drho(idir, ia, ir, 1)
-               END DO
-               kin(row, :) = 0.5_dp*tau(ia, ir, 1)
-            ELSE
-               density(row, :) = rho(ia, ir, 1:2)
-               DO idir = 1, 3
-                  grad(row, idir, :) = drho(idir, ia, ir, 1:2)
-               END DO
-               kin(row, :) = tau(ia, ir, 1:2)
-            END IF
+      DO iblock = 1, nblocks
+         is_hard = (evaluate_hard .AND. iblock == iblock_h)
+         IF (is_hard) THEN
+            rho_b => rho_h
+            drho_b => drho_h
+            tau_b => tau_h
+            weight_b = weight_h
+         ELSE
+            rho_b => rho_s
+            drho_b => drho_s
+            tau_b => tau_s
+            weight_b = weight_s
+         END IF
+         coarse_0_atomic_coords(:, iblock) = atom_coord
+         atomic_grid_sizes(iblock) = INT(nflat, KIND=int_8)
+         DO ir = 1, nr
+            DO ia = 1, na
+               row_in_block = (ir - 1)*na + ia
+               row = (iblock - 1)*nflat + row_in_block
+               grid_coords(1, row) = atom_coord(1) + grid_atom%rad(ir)* &
+                                     grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
+               grid_coords(2, row) = atom_coord(2) + grid_atom%rad(ir)* &
+                                     grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
+               grid_coords(3, row) = atom_coord(3) + grid_atom%rad(ir)*grid_atom%cos_pol(ia)
+               grid_weights(row) = weight_b(ia, ir)
+               atomic_grid_weights(row) = weight_b(ia, ir)
+               IF (nspins == 1) THEN
+                  density(row, :) = 0.5_dp*rho_b(ia, ir, 1)
+                  DO idir = 1, 3
+                     grad(row, idir, :) = 0.5_dp*drho_b(idir, ia, ir, 1)
+                  END DO
+                  kin(row, :) = 0.5_dp*tau_b(ia, ir, 1)
+               ELSE
+                  density(row, :) = rho_b(ia, ir, 1:2)
+                  DO idir = 1, 3
+                     grad(row, idir, :) = drho_b(idir, ia, ir, 1:2)
+                  END DO
+                  kin(row, :) = tau_b(ia, ir, 1:2)
+               END IF
+            END DO
          END DO
       END DO
 
@@ -1227,7 +1291,15 @@ CONTAINS
       CALL torch_dict_insert(inputs, "kin", kin_t)
       CALL torch_dict_insert(inputs, "coarse_0_atomic_coords", coarse_0_atomic_coords_t)
 
-      CALL skala_torch_model_get_exc(cached_model, inputs, grid_weights_t, exc_tensor, exc)
+      ALLOCATE (seg_offsets(nblocks), seg_lengths(nblocks), exc_segments(nblocks))
+      DO iblock = 1, nblocks
+         seg_offsets(iblock) = INT((iblock - 1)*nflat, KIND=int_8)
+         seg_lengths(iblock) = INT(nflat, KIND=int_8)
+      END DO
+      CALL skala_torch_model_get_exc_segments(cached_model, inputs, grid_weights_t, &
+                                              seg_offsets, seg_lengths, exc_tensor, exc_segments)
+      IF (evaluate_hard) exc_h = exc_segments(iblock_h)
+      IF (evaluate_soft) exc_s = exc_segments(iblock_s)
 
       IF (.NOT. my_energy_only) THEN
          NULLIFY (atom_coord_grad, density_grad, grad_grad, grid_coord_grad, kin_grad)
@@ -1246,49 +1318,85 @@ CONTAINS
          ! Both readbacks are issued asynchronously; synchronize once before use.
          CALL torch_stream_synchronize()
 
-         IF (need_coord_grad) THEN
-            IF (PRESENT(atom_force)) THEN
-               atom_force(:) = atom_coord_grad(:, 1)
-               DO row = 1, nflat
-                  atom_force(:) = atom_force(:) + grid_coord_grad(:, row)
-               END DO
+         DO iblock = 1, nblocks
+            is_hard = (evaluate_hard .AND. iblock == iblock_h)
+            IF (is_hard) THEN
+               vxc_b => vxc_h
+               vxg_b => vxg_h
+               vtau_b => vtau_h
+            ELSE
+               vxc_b => vxc_s
+               vxg_b => vxg_s
+               vtau_b => vtau_s
             END IF
-            IF (PRESENT(atom_virial)) THEN
-               DO row = 1, nflat
-                  DO idir = 1, 3
-                     DO jdir = 1, 3
-                        tmp = grid_coord_grad(idir, row)*coarse_0_atomic_coords(jdir, 1)
-                        atom_virial(idir, jdir) = atom_virial(idir, jdir) + tmp
+            IF (need_coord_grad) THEN
+               IF (is_hard .AND. PRESENT(atom_force_h)) THEN
+                  atom_force_h(:) = atom_coord_grad(:, iblock)
+                  DO row_in_block = 1, nflat
+                     atom_force_h(:) = atom_force_h(:) + &
+                                       grid_coord_grad(:, (iblock - 1)*nflat + row_in_block)
+                  END DO
+               ELSE IF (.NOT. is_hard .AND. PRESENT(atom_force_s)) THEN
+                  atom_force_s(:) = atom_coord_grad(:, iblock)
+                  DO row_in_block = 1, nflat
+                     atom_force_s(:) = atom_force_s(:) + &
+                                       grid_coord_grad(:, (iblock - 1)*nflat + row_in_block)
+                  END DO
+               END IF
+               IF (is_hard .AND. PRESENT(atom_virial_h)) THEN
+                  DO row_in_block = 1, nflat
+                     row = (iblock - 1)*nflat + row_in_block
+                     DO idir = 1, 3
+                        DO jdir = 1, 3
+                           tmp = grid_coord_grad(idir, row)*coarse_0_atomic_coords(jdir, iblock)
+                           atom_virial_h(idir, jdir) = atom_virial_h(idir, jdir) + tmp
+                        END DO
                      END DO
                   END DO
-               END DO
-               DO idir = 1, 3
-                  DO jdir = 1, 3
-                     tmp = atom_coord_grad(idir, 1)*coarse_0_atomic_coords(jdir, 1)
-                     atom_virial(idir, jdir) = atom_virial(idir, jdir) + tmp
-                  END DO
-               END DO
-            END IF
-         END IF
-
-         row = 0
-         DO ir = 1, nr
-            DO ia = 1, na
-               row = row + 1
-               IF (lsd) THEN
-                  vxc(ia, ir, 1:2) = density_grad(row, 1:2)
                   DO idir = 1, 3
-                     vxg(idir, ia, ir, 1:2) = grad_grad(row, idir, 1:2)
+                     DO jdir = 1, 3
+                        tmp = atom_coord_grad(idir, iblock)*coarse_0_atomic_coords(jdir, iblock)
+                        atom_virial_h(idir, jdir) = atom_virial_h(idir, jdir) + tmp
+                     END DO
                   END DO
-                  vtau(ia, ir, 1:2) = kin_grad(row, 1:2)
-               ELSE
-                  vxc(ia, ir, 1) = 0.5_dp*(density_grad(row, 1) + density_grad(row, 2))
+               ELSE IF (.NOT. is_hard .AND. PRESENT(atom_virial_s)) THEN
+                  DO row_in_block = 1, nflat
+                     row = (iblock - 1)*nflat + row_in_block
+                     DO idir = 1, 3
+                        DO jdir = 1, 3
+                           tmp = grid_coord_grad(idir, row)*coarse_0_atomic_coords(jdir, iblock)
+                           atom_virial_s(idir, jdir) = atom_virial_s(idir, jdir) + tmp
+                        END DO
+                     END DO
+                  END DO
                   DO idir = 1, 3
-                     vxg(idir, ia, ir, 1) = &
-                        0.5_dp*(grad_grad(row, idir, 1) + grad_grad(row, idir, 2))
+                     DO jdir = 1, 3
+                        tmp = atom_coord_grad(idir, iblock)*coarse_0_atomic_coords(jdir, iblock)
+                        atom_virial_s(idir, jdir) = atom_virial_s(idir, jdir) + tmp
+                     END DO
                   END DO
-                  vtau(ia, ir, 1) = 0.5_dp*(kin_grad(row, 1) + kin_grad(row, 2))
                END IF
+            END IF
+
+            DO ir = 1, nr
+               DO ia = 1, na
+                  row_in_block = (ir - 1)*na + ia
+                  row = (iblock - 1)*nflat + row_in_block
+                  IF (lsd) THEN
+                     vxc_b(ia, ir, 1:2) = density_grad(row, 1:2)
+                     DO idir = 1, 3
+                        vxg_b(idir, ia, ir, 1:2) = grad_grad(row, idir, 1:2)
+                     END DO
+                     vtau_b(ia, ir, 1:2) = kin_grad(row, 1:2)
+                  ELSE
+                     vxc_b(ia, ir, 1) = 0.5_dp*(density_grad(row, 1) + density_grad(row, 2))
+                     DO idir = 1, 3
+                        vxg_b(idir, ia, ir, 1) = &
+                           0.5_dp*(grad_grad(row, idir, 1) + grad_grad(row, idir, 2))
+                     END DO
+                     vtau_b(ia, ir, 1) = 0.5_dp*(kin_grad(row, 1) + kin_grad(row, 2))
+                  END IF
+               END DO
             END DO
          END DO
 
@@ -1313,11 +1421,12 @@ CONTAINS
       CALL torch_tensor_release(coarse_0_atomic_coords_t)
       CALL torch_dict_release(inputs)
       DEALLOCATE (atomic_grid_size_bound_shape, atomic_grid_sizes, atomic_grid_weights, &
-                  coarse_0_atomic_coords, density, grad, grid_coords, grid_weights, kin)
+                  coarse_0_atomic_coords, density, grad, grid_coords, grid_weights, kin, &
+                  seg_offsets, seg_lengths, exc_segments, weight_b)
       CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
-   END SUBROUTINE skala_gapw_atom_vxc_of_r
+   END SUBROUTINE skala_gapw_atom_vxc_of_r_pair
 
 ! **************************************************************************************************
 !> \brief Evaluate a rank-local set of complete atom blocks and sum their SKALA energies.

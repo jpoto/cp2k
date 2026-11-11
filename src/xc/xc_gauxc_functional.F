@@ -16,7 +16,6 @@ MODULE xc_gauxc_functional
    USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: dbcsr_create,&
-                                              dbcsr_finalize,&
                                               dbcsr_get_info,&
                                               dbcsr_p_type
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
@@ -1180,8 +1179,8 @@ CONTAINS
          int_exec_space_key, lb_exec_space_key, lwd_kernel_key, pruning_key, skala_runtime, &
          skala_runtime_key, xc_fun_key
       INTEGER                                            :: assembly_handle, density_handle, &
-                                                            gpu_mode, ikind, img, ispin, &
-                                                            model_handle, nimages
+                                                            gpu_mode, ikind, img, model_handle, &
+                                                            nimages
       LOGICAL :: auto_cuda, do_kpoints, external_density, gapw_method, gapw_paw_pseudopotentials, &
          gapw_pseudopotentials, grid_explicit, hdf5_output, int_space_explicit, is_periodic, &
          lb_space_explicit, low_spin_scope, molecular_virial, molecular_virial_debug, &
@@ -1777,9 +1776,6 @@ CONTAINS
          energy%exc = exc_value
          CALL set_ks_env(ks_env, matrix_vxc=matrix_vxc)
       END IF
-      DO ispin = 1, params%nspins
-         CALL dbcsr_finalize(matrix_vxc(ispin)%matrix)
-      END DO
 
    END SUBROUTINE apply_gauxc
 

@@ -15,13 +15,14 @@ MODULE skala_torch_api
                               ieee_set_halting_mode
 #endif
    USE kinds, ONLY: default_string_length, &
-                    dp
+                    dp, &
+                    int_8
    USE torch_api, ONLY: &
       torch_dict_type, torch_model_disable_parameter_gradients, torch_model_forward_mol_tensor, &
       torch_model_freeze_preserving_method, torch_model_load_with_metadata, torch_model_release, &
       torch_model_remap_device_constants, torch_model_promote_float32, torch_model_type, &
       torch_tensor_item_double, torch_tensor_release, torch_tensor_type, &
-      torch_tensor_weighted_sum
+      torch_tensor_weighted_sum, torch_tensor_weighted_sum_range
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -32,6 +33,7 @@ MODULE skala_torch_api
 
    PUBLIC :: skala_torch_model_type, skala_torch_model_load, skala_torch_model_release
    PUBLIC :: skala_torch_model_get_exc, skala_torch_model_get_exc_device
+   PUBLIC :: skala_torch_model_get_exc_segments
 
    TYPE skala_torch_model_type
       PRIVATE
@@ -165,6 +167,53 @@ CONTAINS
 #endif
 
    END SUBROUTINE skala_torch_model_get_exc_impl
+
+! **************************************************************************************************
+!> \brief Weighted SKALA energy per contiguous flat segment, sharing one model forward pass.
+!> \param model ...
+!> \param inputs ...
+!> \param grid_weights ...
+!> \param seg_offsets zero-based flat offsets of the segments
+!> \param seg_lengths segment lengths in flat elements
+!> \param exc_tensor total weighted energy (differentiable, used for backward)
+!> \param exc_segments per-segment weighted energies
+! **************************************************************************************************
+   SUBROUTINE skala_torch_model_get_exc_segments(model, inputs, grid_weights, seg_offsets, &
+                                                 seg_lengths, exc_tensor, exc_segments)
+      TYPE(skala_torch_model_type), INTENT(INOUT)        :: model
+      TYPE(torch_dict_type), INTENT(IN)                  :: inputs
+      TYPE(torch_tensor_type), INTENT(IN)                :: grid_weights
+      INTEGER(KIND=int_8), DIMENSION(:), INTENT(IN)      :: seg_offsets, seg_lengths
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: exc_tensor
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: exc_segments
+
+      INTEGER                                            :: iseg
+      TYPE(torch_tensor_type)                            :: exc_density, segment_tensor
+#if defined (__HAS_IEEE_EXCEPTIONS)
+      LOGICAL, DIMENSION(5)                              :: ieee_halt
+#endif
+
+      CPASSERT(SIZE(seg_offsets) == SIZE(seg_lengths))
+      CPASSERT(SIZE(exc_segments) == SIZE(seg_offsets))
+
+#if defined (__HAS_IEEE_EXCEPTIONS)
+      CALL ieee_get_halting_mode(IEEE_ALL, ieee_halt)
+      CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
+#endif
+      CALL torch_model_forward_mol_tensor(model%torch_model, "get_exc_density", inputs, exc_density)
+      CALL torch_tensor_weighted_sum(exc_density, grid_weights, exc_tensor)
+      DO iseg = 1, SIZE(exc_segments)
+         CALL torch_tensor_weighted_sum_range(exc_density, grid_weights, seg_offsets(iseg), &
+                                              seg_lengths(iseg), segment_tensor)
+         exc_segments(iseg) = torch_tensor_item_double(segment_tensor)
+         CALL torch_tensor_release(segment_tensor)
+      END DO
+      CALL torch_tensor_release(exc_density)
+#if defined (__HAS_IEEE_EXCEPTIONS)
+      CALL ieee_set_halting_mode(IEEE_ALL, ieee_halt)
+#endif
+
+   END SUBROUTINE skala_torch_model_get_exc_segments
 
 ! **************************************************************************************************
 !> \brief Parse a TorchScript extra_files JSON list of feature names.

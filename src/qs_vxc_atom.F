@@ -97,7 +97,7 @@ MODULE qs_vxc_atom
    USE skala_gpw_functional,            ONLY: build_vxc_from_feature_grads,&
                                               native_skala_gapw_density_partition,&
                                               skala_gapw_atom_composite_energy,&
-                                              skala_gapw_atom_vxc_of_r,&
+                                              skala_gapw_atom_vxc_of_r_pair,&
                                               skala_gapw_density_partition_hard_minus_soft,&
                                               skala_gapw_density_partition_hard_only,&
                                               skala_gapw_density_partition_none,&
@@ -1181,53 +1181,75 @@ CONTAINS
                   evaluate_soft = .FALSE.
                END IF
 
-               !-------------------!
-               ! hard atom density !
-               !-------------------!
-               CALL xc_dset_zero_all(deriv_set)
-               IF (.NOT. evaluate_hard) THEN
-                  exc_h = 0.0_dp
-                  IF (.NOT. energy_only) THEN
-                     vxc_h = 0.0_dp
-                     IF (ASSOCIATED(vxg_h)) vxg_h = 0.0_dp
-                     IF (ASSOCIATED(vtau_h)) vtau_h = 0.0_dp
+               IF (skala_atom_grid) THEN
+                  ! Evaluate hard and soft densities in a single model pass.
+                  IF (.NOT. evaluate_hard) THEN
+                     exc_h = 0.0_dp
+                     IF (.NOT. energy_only) THEN
+                        vxc_h = 0.0_dp
+                        IF (ASSOCIATED(vxg_h)) vxg_h = 0.0_dp
+                        IF (ASSOCIATED(vtau_h)) vtau_h = 0.0_dp
+                     END IF
                   END IF
-               ELSE IF (skala_atom_grid) THEN
-                  CALL skala_gapw_atom_vxc_of_r( &
-                     my_xc_section, grid_atom, para_env, particle_set(iatom)%r, &
-                     rho_h, drho_h, tau_h, weight_h, lsd, nspins, na, nr, &
-                     exc_h, vxc_h, vxg_h, vtau_h, energy_only=energy_only, &
-                     atom_force=skala_atom_force_h, atom_virial=skala_atom_virial_h)
+                  IF (.NOT. evaluate_soft) THEN
+                     exc_s = 0.0_dp
+                     IF (.NOT. energy_only) THEN
+                        vxc_s = 0.0_dp
+                        IF (ASSOCIATED(vxg_s)) vxg_s = 0.0_dp
+                        IF (ASSOCIATED(vtau_s)) vtau_s = 0.0_dp
+                     END IF
+                  END IF
+                  IF (evaluate_hard .OR. evaluate_soft) THEN
+                     CALL skala_gapw_atom_vxc_of_r_pair( &
+                        my_xc_section, grid_atom, para_env, particle_set(iatom)%r, &
+                        rho_h, drho_h, tau_h, rho_s, drho_s, tau_s, &
+                        weight_h, weight_s, lsd, nspins, na, nr, &
+                        evaluate_hard, evaluate_soft, &
+                        exc_h, vxc_h, vxg_h, vtau_h, &
+                        exc_s, vxc_s, vxg_s, vtau_s, &
+                        energy_only=energy_only, &
+                        atom_force_h=skala_atom_force_h, atom_virial_h=skala_atom_virial_h, &
+                        atom_force_s=skala_atom_force_s, atom_virial_s=skala_atom_virial_s)
+                  END IF
+                  rho_atom%exc_h = rho_atom%exc_h + exc_h
+                  rho_atom%exc_s = rho_atom%exc_s + exc_s
                ELSE
-                  CALL vxc_of_r_new(xc_fun_section, rho_set_h, deriv_set, 1, needs, weight_h, &
-                                    lsd, na, nr, exc_h, vxc_h, vxg_h, vtau_h, energy_only=energy_only, &
-                                    adiabatic_rescale_factor=my_adiabatic_rescale_factor)
-               END IF
-               rho_atom%exc_h = rho_atom%exc_h + exc_h
+                  !-------------------!
+                  ! hard atom density !
+                  !-------------------!
+                  CALL xc_dset_zero_all(deriv_set)
+                  IF (.NOT. evaluate_hard) THEN
+                     exc_h = 0.0_dp
+                     IF (.NOT. energy_only) THEN
+                        vxc_h = 0.0_dp
+                        IF (ASSOCIATED(vxg_h)) vxg_h = 0.0_dp
+                        IF (ASSOCIATED(vtau_h)) vtau_h = 0.0_dp
+                     END IF
+                  ELSE
+                     CALL vxc_of_r_new(xc_fun_section, rho_set_h, deriv_set, 1, needs, weight_h, &
+                                       lsd, na, nr, exc_h, vxc_h, vxg_h, vtau_h, energy_only=energy_only, &
+                                       adiabatic_rescale_factor=my_adiabatic_rescale_factor)
+                  END IF
+                  rho_atom%exc_h = rho_atom%exc_h + exc_h
 
-               !-------------------!
-               ! soft atom density !
-               !-------------------!
-               CALL xc_dset_zero_all(deriv_set)
-               IF (.NOT. evaluate_soft) THEN
-                  exc_s = 0.0_dp
-                  IF (.NOT. energy_only) THEN
-                     vxc_s = 0.0_dp
-                     IF (ASSOCIATED(vxg_s)) vxg_s = 0.0_dp
-                     IF (ASSOCIATED(vtau_s)) vtau_s = 0.0_dp
+                  !-------------------!
+                  ! soft atom density !
+                  !-------------------!
+                  CALL xc_dset_zero_all(deriv_set)
+                  IF (.NOT. evaluate_soft) THEN
+                     exc_s = 0.0_dp
+                     IF (.NOT. energy_only) THEN
+                        vxc_s = 0.0_dp
+                        IF (ASSOCIATED(vxg_s)) vxg_s = 0.0_dp
+                        IF (ASSOCIATED(vtau_s)) vtau_s = 0.0_dp
+                     END IF
+                  ELSE
+                     CALL vxc_of_r_new(xc_fun_section, rho_set_s, deriv_set, 1, needs, weight_s, &
+                                       lsd, na, nr, exc_s, vxc_s, vxg_s, vtau_s, energy_only=energy_only, &
+                                       adiabatic_rescale_factor=my_adiabatic_rescale_factor)
                   END IF
-               ELSE IF (skala_atom_grid) THEN
-                  CALL skala_gapw_atom_vxc_of_r( &
-                     my_xc_section, grid_atom, para_env, particle_set(iatom)%r, &
-                     rho_s, drho_s, tau_s, weight_s, lsd, nspins, na, nr, &
-                     exc_s, vxc_s, vxg_s, vtau_s, energy_only=energy_only, &
-                     atom_force=skala_atom_force_s, atom_virial=skala_atom_virial_s)
-               ELSE
-                  CALL vxc_of_r_new(xc_fun_section, rho_set_s, deriv_set, 1, needs, weight_s, &
-                                    lsd, na, nr, exc_s, vxc_s, vxg_s, vtau_s, energy_only=energy_only, &
-                                    adiabatic_rescale_factor=my_adiabatic_rescale_factor)
+                  rho_atom%exc_s = rho_atom%exc_s + exc_s
                END IF
-               rho_atom%exc_s = rho_atom%exc_s + exc_s
 
                ! Add contributions to the exc energy
 
