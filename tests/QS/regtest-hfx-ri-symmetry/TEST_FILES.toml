@@ -1,0 +1,38 @@
+# HFX-RI / ADMM k-point tests with and without point-group symmetry.
+#
+# The *_kpsym / *_imgsym / *_nosym variants describe the same physical system,
+# so they intentionally share reference values. KP_IMAGE_SYMMETRY TRUE must
+# reproduce the same result as the explicit (FALSE) image sum.
+
+# K-point HFX-RI without ADMM
+"diamond_hfx_ri_nosym.inp"                = [{matcher = "M011", tol = 1.0E-10, ref = -8.128239211260716}]
+"diamond_hfx_ri_kpsym.inp"                = [{matcher = "M011", tol = 1.0E-10, ref = -8.128239211227628}]
+"diamond_hfx_ri_imgsym.inp"               = [{matcher = "M011", tol = 1.0E-10, ref = -8.128239211227628}]
+"hBN_hfx_ri_imgsym.inp"                   = [{matcher = "M011", tol = 1.0E-10, ref = -11.615352808149758}]
+
+# K-point ADMM
+"H2_admm_nosym.inp"                       = [{matcher = "M011", tol = 1.0E-6, ref = -0.546176445420311}]
+"H2_admm_kpsym.inp"                       = [
+  {matcher = "M011", tol = 1.0E-7, ref = -0.546176445420311},
+  {matcher = "M031", tol = 1.0E-5, ref = 1.87169299033E+04},
+  {matcher = "M072", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_1_x", tol = 1.0E-3, ref = -2.03665739E-01},
+  {matcher = "Atomic_force_1_y", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_1_z", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_2_x", tol = 1.0E-3, ref = 2.03665739E-01},
+  {matcher = "Atomic_force_2_y", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_2_z", tol = 1.0E-6, ref = 0.0}
+]
+"H2_admm_imgsym.inp"                      = [
+  {matcher = "M011", tol = 1.0E-7, ref = -0.546176445420311},
+  {matcher = "M031", tol = 1.0E-5, ref = 1.87169299033E+04},
+  {matcher = "M072", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_1_x", tol = 1.0E-3, ref = -2.03665739E-01},
+  {matcher = "Atomic_force_1_y", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_1_z", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_2_x", tol = 1.0E-3, ref = 2.03665739E-01},
+  {matcher = "Atomic_force_2_y", tol = 1.0E-6, ref = 0.0},
+  {matcher = "Atomic_force_2_z", tol = 1.0E-6, ref = 0.0}
+]
+"LiH_rhombohedral_admm_kpsym.inp"         = [{matcher = "M011", tol = 1.0E-4, ref = -5.420043336715053}]
+"LiH_rhombohedral_admm_imgsym.inp"        = [{matcher = "M011", tol = 1.0E-4, ref = -5.420043336715053}]
