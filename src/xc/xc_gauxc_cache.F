@@ -281,6 +281,15 @@ CONTAINS
       cache%use_gradient_self_runtime = params%use_gradient_self_runtime
       cache%use_self_runtime = params%use_self_runtime
       cache%use_fd_gradient = params%use_fd_gradient
+      cache%nimages = params%nimages
+      cache%nkind = params%nkind
+      cache%cell_hmat = params%cell_hmat
+      cache%cell_perd = params%cell_perd
+      IF (ALLOCATED(cache%kind_basis_names)) DEALLOCATE (cache%kind_basis_names)
+      IF (ALLOCATED(params%kind_basis_names)) THEN
+         ALLOCATE (cache%kind_basis_names(SIZE(params%kind_basis_names)))
+         cache%kind_basis_names = params%kind_basis_names
+      END IF
       IF (ALLOCATED(cache%last_positions)) THEN
          DEALLOCATE (cache%last_positions)
       END IF
@@ -385,6 +394,7 @@ CONTAINS
 #endif
 
       IF (ALLOCATED(cache%last_positions)) DEALLOCATE (cache%last_positions)
+      IF (ALLOCATED(cache%kind_basis_names)) DEALLOCATE (cache%kind_basis_names)
       IF (ALLOCATED(cache%xc_result%vxc_scalar)) DEALLOCATE (cache%xc_result%vxc_scalar)
       IF (ALLOCATED(cache%xc_result%vxc_zeta)) DEALLOCATE (cache%xc_result%vxc_zeta)
       IF (ALLOCATED(cache%xc_result%scratch_rks)) DEALLOCATE (cache%xc_result%scratch_rks)
