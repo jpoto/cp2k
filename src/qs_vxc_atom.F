@@ -161,6 +161,17 @@ MODULE qs_vxc_atom
    END TYPE native_need_entry_type
    TYPE(native_need_entry_type), ALLOCATABLE, PRIVATE :: native_need_bucket_entry(:)
 
+   ! Geometry-scoped cache of the density-independent atom-composite data (point coordinates and
+   ! grid/partition weights). It only changes with the atom positions/cell, so it is computed once
+   ! per geometry and reused across the SCF iterations. The atom coordinates are replicated on
+   ! every rank, so the validity decision is identical everywhere without a collective.
+   INTEGER, PRIVATE :: native_comp_nrows = -1, native_comp_perd(3) = 0
+   LOGICAL, PRIVATE :: native_comp_ready = .FALSE., native_comp_image = .FALSE.
+   REAL(dp), PRIVATE :: native_comp_hmat(3, 3) = 0.0_dp
+   REAL(dp), ALLOCATABLE, PRIVATE :: native_comp_atoms(:, :), native_comp_coords(:, :), &
+                                     native_comp_base_w(:), native_comp_atomic_w(:), &
+                                     native_comp_grid_w(:)
+
    PUBLIC :: calculate_vxc_atom, &
              calculate_vxc_atom_epr, &
              gapw_cdft_one_center
@@ -292,12 +303,12 @@ CONTAINS
       INTEGER, DIMENSION(2, 3)                           :: bounds
       INTEGER, DIMENSION(:), POINTER                     :: atom_list
       LOGICAL :: accint, atom_composite_active, atom_composite_diagnostic, &
-         atom_composite_reference, direct_valence_atom_composite, donlcc, evaluate_hard, &
-         evaluate_soft, gradient_f, image_partition_atom_composite, lsd, my_calculate_forces, &
-         native_grid_diagnostics, nlcc, one_center_kind, paw_atom, paw_pseudopotentials, &
-         requested_atom_composite_grid, rho_g_valid, skala_atom_grid, source_matrix_local, tau_f, &
-         tau_r_valid, use_atom_composite_density, use_atom_composite_gradient, &
-         use_atom_composite_tau, use_virial
+         atom_composite_reference, comp_geometry_valid, direct_valence_atom_composite, donlcc, &
+         evaluate_hard, evaluate_soft, gradient_f, image_partition_atom_composite, lsd, &
+         my_calculate_forces, native_grid_diagnostics, nlcc, one_center_kind, paw_atom, &
+         paw_pseudopotentials, requested_atom_composite_grid, rho_g_valid, skala_atom_grid, &
+         source_matrix_local, tau_f, tau_r_valid, use_atom_composite_density, &
+         use_atom_composite_gradient, use_atom_composite_tau, use_virial
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: composite_partition_included, &
                                                             partition_included_private
       REAL(dp) :: agr, alpha, atom_composite_exc, atom_composite_nelec, coefficient, &
@@ -708,27 +719,98 @@ CONTAINS
             CALL xc_rho_set_update(smooth_rho_set, smooth_rho_r, smooth_rho_g, smooth_tau_r, needs, &
                                    xc_deriv_method_id, xc_rho_smooth_id, auxbas_pw_pool)
             CALL timeset("calculate_vxc_atom_gather", gather_handle)
-            ! Fill the local composite coordinates before the sparse gather so the needed
-            ! stencil points can be collected in one pass.
-            DO composite_local_atom = 1, composite_local_natom
-               iatom = composite_local_atoms(composite_local_atom)
-               CALL get_qs_kind(my_kind_set(composite_atom_kind(iatom)), grid_atom=grid_atom)
-               nr = grid_atom%nr
-               na = grid_atom%ng_sphere
-               DO ir = 1, nr
-                  DO ia = 1, na
-                     composite_row = composite_atom_start(iatom) + (ir - 1)*na + ia - 1
-                     composite_grid_coords(1, composite_row) = &
-                        particle_set(iatom)%r(1) + grid_atom%rad(ir)* &
-                        grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
-                     composite_grid_coords(2, composite_row) = &
-                        particle_set(iatom)%r(2) + grid_atom%rad(ir)* &
-                        grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
-                     composite_grid_coords(3, composite_row) = &
-                        particle_set(iatom)%r(3) + grid_atom%rad(ir)*grid_atom%cos_pol(ia)
+            ! Density-independent atom-composite geometry (point coordinates and grid/partition
+            ! weights). It only changes with the atom positions and cell, so it is computed once
+            ! per geometry and reused across the SCF iterations. The atom coordinates are
+            ! replicated on every rank, so this decision is identical everywhere without a
+            ! collective.
+            comp_geometry_valid = native_comp_ready .AND. native_comp_nrows == composite_nflat
+            IF (comp_geometry_valid) THEN
+               comp_geometry_valid = ALL(SHAPE(native_comp_atoms) == SHAPE(composite_atom_coords))
+               IF (comp_geometry_valid) comp_geometry_valid = ALL(native_comp_atoms == composite_atom_coords)
+               comp_geometry_valid = comp_geometry_valid .AND. ALL(native_comp_hmat == cell%hmat)
+               comp_geometry_valid = comp_geometry_valid .AND. ALL(native_comp_perd == cell%perd)
+               comp_geometry_valid = comp_geometry_valid .AND. &
+                                     (native_comp_image .EQV. image_partition_atom_composite)
+            ELSE
+               comp_geometry_valid = .FALSE.
+            END IF
+            IF (comp_geometry_valid) THEN
+               composite_grid_coords = native_comp_coords
+               composite_base_grid_weights = native_comp_base_w
+               composite_atomic_grid_weights = native_comp_atomic_w
+               composite_grid_weights = native_comp_grid_w
+            ELSE
+               IF (ALLOCATED(native_comp_atoms)) THEN
+                  DEALLOCATE (native_comp_atoms, native_comp_coords, native_comp_base_w, &
+                              native_comp_atomic_w, native_comp_grid_w)
+               END IF
+               ALLOCATE (native_comp_atoms(SIZE(composite_atom_coords, 1), SIZE(composite_atom_coords, 2)), &
+                         native_comp_coords(3, composite_nflat), &
+                         native_comp_base_w(composite_nflat), &
+                         native_comp_atomic_w(composite_nflat), &
+                         native_comp_grid_w(composite_nflat))
+               DO composite_local_atom = 1, composite_local_natom
+                  iatom = composite_local_atoms(composite_local_atom)
+                  CALL get_qs_kind(my_kind_set(composite_atom_kind(iatom)), grid_atom=grid_atom)
+                  nr = grid_atom%nr
+                  na = grid_atom%ng_sphere
+                  IF (image_partition_atom_composite) THEN
+                     CALL build_periodic_atom_image_layout( &
+                        composite_atom_coords, cell, iatom, composite_image_periodicity, &
+                        composite_partition_image_coords, composite_partition_target_image)
+                     CALL build_periodic_atom_image_layout( &
+                        composite_atom_coords(:, iatom:iatom), cell, 1, &
+                        composite_image_periodicity, composite_descriptor_image_coords, &
+                        composite_descriptor_target_image)
+                  END IF
+                  DO ir = 1, nr
+                     DO ia = 1, na
+                        composite_row = composite_atom_start(iatom) + (ir - 1)*na + ia - 1
+                        composite_point(1) = particle_set(iatom)%r(1) + grid_atom%rad(ir)* &
+                                             grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
+                        composite_point(2) = particle_set(iatom)%r(2) + grid_atom%rad(ir)* &
+                                             grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
+                        composite_point(3) = particle_set(iatom)%r(3) + &
+                                             grid_atom%rad(ir)*grid_atom%cos_pol(ia)
+                        IF (image_partition_atom_composite) THEN
+                           CALL periodic_atom_image_partition_from_layout( &
+                              composite_point, composite_partition_image_coords, &
+                              composite_partition_target_image, partition_weight)
+                           CALL periodic_atom_image_partition_from_layout( &
+                              composite_point, composite_descriptor_image_coords, &
+                              composite_descriptor_target_image, descriptor_window_weight)
+                           partition_scale = smooth_partition_atomic_weight_scale( &
+                                             descriptor_window_weight)
+                        ELSE
+                           CALL smooth_atom_partition( &
+                              composite_point, composite_atom_coords, cell, &
+                              composite_partition_weights, composite_partition_atom_coords, &
+                              composite_distances)
+                           partition_weight = composite_partition_weights(iatom)
+                           partition_scale = 1.0_dp
+                        END IF
+                        composite_grid_coords(:, composite_row) = composite_point
+                        composite_base_grid_weights(composite_row) = grid_atom%weight(ia, ir)
+                        composite_atomic_grid_weights(composite_row) = &
+                           composite_base_grid_weights(composite_row)*partition_scale
+                        composite_grid_weights(composite_row) = &
+                           composite_base_grid_weights(composite_row)*partition_weight
+                     END DO
                   END DO
                END DO
-            END DO
+               native_comp_coords = composite_grid_coords
+               native_comp_base_w = composite_base_grid_weights
+               native_comp_atomic_w = composite_atomic_grid_weights
+               native_comp_grid_w = composite_grid_weights
+               native_comp_atoms = composite_atom_coords
+               native_comp_hmat = cell%hmat
+               native_comp_perd = cell%perd
+               native_comp_image = image_partition_atom_composite
+               native_comp_nrows = composite_nflat
+               native_comp_ready = .TRUE.
+            END IF
+
             CALL native_grid_build_needed(smooth_rho_r(1)%pw_grid, cell, smooth_rho_r(1)%pw_grid%para%group, &
                                           image_partition_atom_composite, composite_nflat, &
                                           composite_grid_coords, composite_atom_coords)
@@ -917,15 +999,6 @@ CONTAINS
                END IF
 
                IF (atom_composite_active) THEN
-                  IF (image_partition_atom_composite) THEN
-                     CALL build_periodic_atom_image_layout( &
-                        composite_atom_coords, cell, iatom, composite_image_periodicity, &
-                        composite_partition_image_coords, composite_partition_target_image)
-                     CALL build_periodic_atom_image_layout( &
-                        composite_atom_coords(:, iatom:iatom), cell, 1, &
-                        composite_image_periodicity, composite_descriptor_image_coords, &
-                        composite_descriptor_target_image)
-                  END IF
                   CALL timeset("calculate_vxc_atom_interp", interp_handle)
 !$OMP PARALLEL DO COLLAPSE(2) IF (image_partition_atom_composite) SCHEDULE(STATIC) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_row, composite_point, composite_smooth_density_value, &
@@ -948,38 +1021,7 @@ CONTAINS
                   DO ir = 1, nr
                      DO ia = 1, na
                         composite_row = composite_atom_start(iatom) + (ir - 1)*na + ia - 1
-                        composite_point(1) = particle_set(iatom)%r(1) + grid_atom%rad(ir)* &
-                                             grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
-                        composite_point(2) = particle_set(iatom)%r(2) + grid_atom%rad(ir)* &
-                                             grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
-                        composite_point(3) = particle_set(iatom)%r(3) + &
-                                             grid_atom%rad(ir)*grid_atom%cos_pol(ia)
-                        composite_grid_coords(:, composite_row) = composite_point
-                        IF (image_partition_atom_composite) THEN
-                           CALL periodic_atom_image_partition_from_layout( &
-                              composite_point, composite_partition_image_coords, &
-                              composite_partition_target_image, partition_weight)
-                           ! The self-image partition defines a smooth atom-centered periodic
-                           ! descriptor domain without truncating it at neighboring atoms.
-                           CALL periodic_atom_image_partition_from_layout( &
-                              composite_point, composite_descriptor_image_coords, &
-                              composite_descriptor_target_image, descriptor_window_weight)
-                           partition_scale = smooth_partition_atomic_weight_scale( &
-                                             descriptor_window_weight)
-                        ELSE
-                           CALL smooth_atom_partition( &
-                              composite_point, composite_atom_coords, cell, &
-                              composite_partition_weights, composite_partition_atom_coords, &
-                              composite_distances)
-                           partition_weight = composite_partition_weights(iatom)
-                           partition_scale = 1.0_dp
-                        END IF
-                        composite_base_grid_weights(composite_row) = grid_atom%weight(ia, ir)
-                        composite_atomic_grid_weights(composite_row) = &
-                           composite_base_grid_weights(composite_row)*partition_scale
-                        composite_grid_weights(composite_row) = &
-                           composite_base_grid_weights(composite_row)* &
-                           partition_weight
+                        composite_point = composite_grid_coords(:, composite_row)
                         IF (.NOT. fetch_native_grid_stencil(qs_env%native_grid_cache, composite_row, &
                                                             composite_point, interpolation_stencil)) THEN
                            CALL create_native_grid_interpolation_stencil( &
@@ -1094,9 +1136,6 @@ CONTAINS
                   END DO
 !$OMP END PARALLEL DO
                   CALL timestop(interp_handle)
-                  IF (image_partition_atom_composite) THEN
-                     DEALLOCATE (composite_descriptor_image_coords, composite_partition_image_coords)
-                  END IF
                   CPASSERT(nr*na == composite_atom_end(iatom) - composite_atom_start(iatom) + 1)
                END IF
 
@@ -1446,34 +1485,32 @@ CONTAINS
                CALL timeset("calculate_vxc_atom_force", force_handle)
 !$OMP PARALLEL DO IF (image_partition_atom_composite) SCHEDULE(STATIC) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_local_atom, composite_row, composite_smooth_gradient_value, &
-!$OMP         iatom, idir, ispin, jdir) &
+!$OMP         iatom, idir, ispin, jdir, interpolation_stencil) &
 !$OMP SHARED(cell, composite_atom_end, composite_atom_start, composite_grad_grad, &
 !$OMP        composite_grid_coords, composite_local_atoms, composite_local_natom, &
-!$OMP        image_partition_atom_composite, lsd, smooth_rho_r) &
+!$OMP        image_partition_atom_composite, lsd, qs_env, smooth_rho_r) &
 !$OMP REDUCTION(+:composite_feature_virial)
                DO composite_local_atom = 1, composite_local_natom
                   iatom = composite_local_atoms(composite_local_atom)
                   DO composite_row = composite_atom_start(iatom), composite_atom_end(iatom)
+                     IF (.NOT. fetch_native_grid_stencil(qs_env%native_grid_cache, composite_row, &
+                                                         composite_grid_coords(:, composite_row), &
+                                                         interpolation_stencil)) THEN
+                        CALL create_native_grid_interpolation_stencil( &
+                           interpolation_stencil, smooth_rho_r(1)%pw_grid, cell, &
+                           composite_grid_coords(:, composite_row), image_partition_atom_composite)
+                     END IF
                      IF (lsd) THEN
                         DO jdir = 1, 3
                            composite_smooth_gradient_value(jdir, 1) = &
-                              interpolate_native_grid_value_compact( &
-                              4 + jdir, smooth_rho_r(1)%pw_grid, &
-                              cell, composite_grid_coords(:, composite_row), &
-                              image_partition_atom_composite)
+                              interpolate_native_grid_value_compact(4 + jdir, interpolation_stencil)
                            composite_smooth_gradient_value(jdir, 2) = &
-                              interpolate_native_grid_value_compact( &
-                              7 + jdir, smooth_rho_r(1)%pw_grid, &
-                              cell, composite_grid_coords(:, composite_row), &
-                              image_partition_atom_composite)
+                              interpolate_native_grid_value_compact(7 + jdir, interpolation_stencil)
                         END DO
                      ELSE
                         DO jdir = 1, 3
                            composite_smooth_gradient_value(jdir, :) = 0.5_dp* &
-                                                                      interpolate_native_grid_value_compact( &
-                                                                      2 + jdir, smooth_rho_r(1)%pw_grid, &
-                                                                      cell, composite_grid_coords(:, composite_row), &
-                                                                      image_partition_atom_composite)
+                                                              interpolate_native_grid_value_compact(2 + jdir, interpolation_stencil)
                         END DO
                      END IF
                      DO ispin = 1, 2
@@ -1498,7 +1535,7 @@ CONTAINS
 !$OMP         local_descriptor_dstrain, local_partition_datom, local_partition_dstrain, &
 !$OMP         local_partition_weight, partition_column_sum, partition_included_private, &
 !$OMP         partition_weight_grad, partition_weights_private, sgp_potential, source_atom, &
-!$OMP         spatial_derivative, target_atom, target_partition_adjoint) &
+!$OMP         spatial_derivative, target_atom, target_partition_adjoint, interpolation_stencil) &
 !$OMP REDUCTION(+:composite_interpolation_virial, composite_partition_strain_virial) &
 !$OMP SHARED(cell, composite_atom_coord_grad, composite_atom_coords, composite_atom_end, &
 !$OMP        composite_atom_kind, composite_atom_start, composite_atomic_grid_weight_grad, &
@@ -1510,7 +1547,7 @@ CONTAINS
 !$OMP        composite_nlcc_center_force, composite_nlcc_target_force, composite_partition_force, &
 !$OMP        composite_partition_included, &
 !$OMP        composite_partition_weights, image_partition_atom_composite, lsd, my_kind_set, &
-!$OMP        nlcc, particle_set, smooth_rho_r)
+!$OMP        nlcc, particle_set, qs_env, smooth_rho_r)
                ALLOCATE (composite_nlcc_center_force_local(3, SIZE(particle_set)), &
                          composite_partition_force_local(3, SIZE(particle_set)), &
                          local_partition_datom(3, SIZE(particle_set)), &
@@ -1529,63 +1566,51 @@ CONTAINS
                      composite_grid_coord_force(:, iatom) = &
                         composite_grid_coord_force(:, iatom) + &
                         composite_grid_coord_grad(:, composite_row)
+                     IF (.NOT. fetch_native_grid_stencil(qs_env%native_grid_cache, composite_row, &
+                                                         composite_grid_coords(:, composite_row), &
+                                                         interpolation_stencil)) THEN
+                        CALL create_native_grid_interpolation_stencil( &
+                           interpolation_stencil, smooth_rho_r(1)%pw_grid, cell, &
+                           composite_grid_coords(:, composite_row), image_partition_atom_composite)
+                     END IF
                      IF (lsd) THEN
                         spatial_derivative = &
                            composite_density_grad(composite_row, 1)* &
-                           interpolate_native_grid_gradient_compact( &
-                           1, smooth_rho_r(1)%pw_grid, cell, &
-                           composite_grid_coords(:, composite_row), &
-                           image_partition_atom_composite) + &
+                           interpolate_native_grid_gradient_compact(1, smooth_rho_r(1)%pw_grid, &
+                                                                    interpolation_stencil) + &
                            composite_density_grad(composite_row, 2)* &
-                           interpolate_native_grid_gradient_compact( &
-                           2, smooth_rho_r(1)%pw_grid, cell, &
-                           composite_grid_coords(:, composite_row), &
-                           image_partition_atom_composite) + &
+                           interpolate_native_grid_gradient_compact(2, smooth_rho_r(1)%pw_grid, &
+                                                                    interpolation_stencil) + &
                            composite_kin_grad(composite_row, 1)* &
-                           interpolate_native_grid_gradient_compact( &
-                           3, smooth_rho_r(1)%pw_grid, cell, &
-                           composite_grid_coords(:, composite_row), &
-                           image_partition_atom_composite) + &
+                           interpolate_native_grid_gradient_compact(3, smooth_rho_r(1)%pw_grid, &
+                                                                    interpolation_stencil) + &
                            composite_kin_grad(composite_row, 2)* &
-                           interpolate_native_grid_gradient_compact( &
-                           4, smooth_rho_r(1)%pw_grid, cell, &
-                           composite_grid_coords(:, composite_row), &
-                           image_partition_atom_composite)
+                           interpolate_native_grid_gradient_compact(4, smooth_rho_r(1)%pw_grid, &
+                                                                    interpolation_stencil)
                         DO idir = 1, 3
                            spatial_derivative = spatial_derivative + &
                                                 composite_grad_grad(composite_row, idir, 1)* &
-                                                interpolate_native_grid_gradient_compact( &
-                                                4 + idir, &
-                                                smooth_rho_r(1)%pw_grid, cell, &
-                                                composite_grid_coords(:, composite_row), &
-                                                image_partition_atom_composite) + &
+                                                interpolate_native_grid_gradient_compact(4 + idir, &
+                                                                                         smooth_rho_r(1)%pw_grid, &
+                                                                                         interpolation_stencil) + &
                                                 composite_grad_grad(composite_row, idir, 2)* &
-                                                interpolate_native_grid_gradient_compact( &
-                                                7 + idir, &
-                                                smooth_rho_r(1)%pw_grid, cell, &
-                                                composite_grid_coords(:, composite_row), &
-                                                image_partition_atom_composite)
+                                                interpolate_native_grid_gradient_compact(7 + idir, &
+                                                                                         smooth_rho_r(1)%pw_grid, &
+                                                                                         interpolation_stencil)
                         END DO
                      ELSE
-                        spatial_derivative = 0.5_dp*SUM( &
-                                             composite_density_grad(composite_row, :))* &
-                                             interpolate_native_grid_gradient_compact( &
-                                             1, smooth_rho_r(1)%pw_grid, cell, &
-                                             composite_grid_coords(:, composite_row), &
-                                             image_partition_atom_composite) + &
+                        spatial_derivative = 0.5_dp*SUM(composite_density_grad(composite_row, :))* &
+                                             interpolate_native_grid_gradient_compact(1, smooth_rho_r(1)%pw_grid, &
+                                                                                      interpolation_stencil) + &
                                              0.5_dp*SUM(composite_kin_grad(composite_row, :))* &
-                                             interpolate_native_grid_gradient_compact( &
-                                             2, smooth_rho_r(1)%pw_grid, cell, &
-                                             composite_grid_coords(:, composite_row), &
-                                             image_partition_atom_composite)
+                                             interpolate_native_grid_gradient_compact(2, smooth_rho_r(1)%pw_grid, &
+                                                                                      interpolation_stencil)
                         DO idir = 1, 3
-                           spatial_derivative = spatial_derivative + 0.5_dp*SUM( &
-                                                composite_grad_grad(composite_row, idir, :))* &
-                                                interpolate_native_grid_gradient_compact( &
-                                                2 + idir, &
-                                                smooth_rho_r(1)%pw_grid, &
-                                                cell, composite_grid_coords(:, composite_row), &
-                                                image_partition_atom_composite)
+                           spatial_derivative = spatial_derivative + &
+                                                0.5_dp*SUM(composite_grad_grad(composite_row, idir, :))* &
+                                                interpolate_native_grid_gradient_compact(2 + idir, &
+                                                                                         smooth_rho_r(1)%pw_grid, &
+                                                                                         interpolation_stencil)
                         END DO
                      END IF
                      DO idir = 1, 3
@@ -3518,73 +3543,38 @@ CONTAINS
    END SUBROUTINE interpolate_native_grid_fields_compact
 
 ! **************************************************************************************************
-!> \brief Interpolate one compact field at a Cartesian point.
+!> \brief Interpolate one compact field value from a precomputed stencil (cached weights).
 !> \param slot field slot
-!> \param pw_grid auxiliary grid
-!> \param cell current cell
-!> \param point Cartesian point
-!> \param wrap_auxiliary_cell wrap the auxiliary cell in nonperiodic directions
+!> \param stencil precomputed interpolation stencil
 !> \return interpolated value
 ! **************************************************************************************************
-   FUNCTION interpolate_native_grid_value_compact(slot, pw_grid, cell, point, &
-                                                  wrap_auxiliary_cell) RESULT(value)
+   FUNCTION interpolate_native_grid_value_compact(slot, stencil) RESULT(value)
       INTEGER, INTENT(IN)                                :: slot
-      TYPE(pw_grid_type), INTENT(IN), POINTER            :: pw_grid
-      TYPE(cell_type), INTENT(IN), POINTER               :: cell
-      REAL(dp), DIMENSION(3), INTENT(IN)                 :: point
-      LOGICAL, INTENT(IN), OPTIONAL                      :: wrap_auxiliary_cell
+      TYPE(native_grid_interpolation_stencil_type), &
+         INTENT(IN)                                      :: stencil
       REAL(dp)                                           :: value
 
-      INTEGER                                            :: corner_x, corner_y, corner_z, idir, pos, &
-                                                            relative_index(3)
+      INTEGER                                            :: inode_x, inode_y, inode_z, pos
       INTEGER(int_8)                                     :: lin
-      INTEGER, DIMENSION(3)                              :: base
-      LOGICAL                                            :: wrap_grid
       REAL(dp)                                           :: coefficient
-      REAL(dp), DIMENSION(3)                             :: fraction, relative
-      REAL(dp), DIMENSION(native_grid_interp_npts, 3)    :: weights
-
-      CPASSERT(ASSOCIATED(pw_grid))
-      CPASSERT(ASSOCIATED(cell))
-      wrap_grid = ANY(cell%perd == 0)
-      IF (PRESENT(wrap_auxiliary_cell)) wrap_grid = wrap_auxiliary_cell
-      relative = MATMUL(pw_grid%dh_inv, point)
-      DO idir = 1, 3
-         IF (cell%perd(idir) == 1 .OR. wrap_grid) THEN
-            relative(idir) = MODULO(relative(idir), REAL(pw_grid%npts(idir), KIND=dp))
-         ELSE IF (relative(idir) <= -REAL(native_grid_interp_offset_max, dp) .OR. &
-                  relative(idir) >= REAL(pw_grid%npts(idir) - &
-                                         native_grid_interp_offset_min, KIND=dp)) THEN
-            value = 0.0_dp
-            RETURN
-         END IF
-         base(idir) = FLOOR(relative(idir))
-         FRACTION(idir) = relative(idir) - REAL(base(idir), KIND=dp)
-         CALL native_grid_lagrange_weights(FRACTION(idir), weights(:, idir))
-      END DO
 
       value = 0.0_dp
-      DO corner_z = native_grid_interp_offset_min, native_grid_interp_offset_max
-         DO corner_y = native_grid_interp_offset_min, native_grid_interp_offset_max
-            DO corner_x = native_grid_interp_offset_min, native_grid_interp_offset_max
-               relative_index = base + [corner_x, corner_y, corner_z]
-               coefficient = weights(corner_x - native_grid_interp_offset_min + 1, 1)* &
-                             weights(corner_y - native_grid_interp_offset_min + 1, 2)* &
-                             weights(corner_z - native_grid_interp_offset_min + 1, 3)
-               DO idir = 1, 3
-                  IF (cell%perd(idir) == 1 .OR. wrap_grid) THEN
-                     relative_index(idir) = MODULO(relative_index(idir), pw_grid%npts(idir))
-                  ELSE IF (relative_index(idir) < 0 .OR. &
-                           relative_index(idir) >= pw_grid%npts(idir)) THEN
-                     coefficient = 0.0_dp
-                  END IF
-               END DO
-               IF (coefficient == 0.0_dp) CYCLE
-               lin = 1_int_8 + INT(relative_index(1), int_8) + INT(pw_grid%npts(1), int_8)*( &
-                     INT(relative_index(2), int_8) + INT(pw_grid%npts(2), int_8)* &
-                     INT(relative_index(3), int_8))
+      IF (.NOT. stencil%active) RETURN
+      DO inode_z = 1, native_grid_interp_npts
+         IF (.NOT. stencil%valid(inode_z, 3)) CYCLE
+         DO inode_y = 1, native_grid_interp_npts
+            IF (.NOT. stencil%valid(inode_y, 2)) CYCLE
+            DO inode_x = 1, native_grid_interp_npts
+               IF (.NOT. stencil%valid(inode_x, 1)) CYCLE
+               lin = 1_int_8 + INT(stencil%relative_index(inode_x, 1), int_8) + &
+                     INT(native_need_npts(1), int_8)*( &
+                     INT(stencil%relative_index(inode_y, 2), int_8) + &
+                     INT(native_need_npts(2), int_8)*INT(stencil%relative_index(inode_z, 3), int_8))
                pos = native_need_lookup(lin)
                CPASSERT(pos > 0)
+               coefficient = stencil%weight(inode_x, 1)* &
+                             stencil%weight(inode_y, 2)* &
+                             stencil%weight(inode_z, 3)
                value = value + coefficient*native_need_values(slot, pos)
             END DO
          END DO
@@ -3593,84 +3583,57 @@ CONTAINS
    END FUNCTION interpolate_native_grid_value_compact
 
 ! **************************************************************************************************
-!> \brief Interpolate the Cartesian gradient of one compact field at a Cartesian point.
+!> \brief Interpolate the Cartesian gradient of one compact field from a precomputed stencil.
 !> \param slot field slot
-!> \param pw_grid auxiliary grid
-!> \param cell current cell
-!> \param point Cartesian point
-!> \param wrap_auxiliary_cell wrap the auxiliary cell in nonperiodic directions
+!> \param pw_grid auxiliary grid (for the incremental cell matrix)
+!> \param stencil precomputed interpolation stencil
 !> \return interpolated gradient
 ! **************************************************************************************************
-   FUNCTION interpolate_native_grid_gradient_compact(slot, pw_grid, cell, point, &
-                                                     wrap_auxiliary_cell) RESULT(gradient)
+   FUNCTION interpolate_native_grid_gradient_compact(slot, pw_grid, stencil) RESULT(gradient)
       INTEGER, INTENT(IN)                                :: slot
       TYPE(pw_grid_type), INTENT(IN), POINTER            :: pw_grid
-      TYPE(cell_type), INTENT(IN), POINTER               :: cell
-      REAL(dp), DIMENSION(3), INTENT(IN)                 :: point
-      LOGICAL, INTENT(IN), OPTIONAL                      :: wrap_auxiliary_cell
+      TYPE(native_grid_interpolation_stencil_type), &
+         INTENT(IN)                                      :: stencil
       REAL(dp), DIMENSION(3)                             :: gradient
 
-      INTEGER                                            :: corner_index(3), corner_x, corner_y, &
-                                                            corner_z, idir, jdir, pos, &
-                                                            relative_index(3)
+      INTEGER                                            :: idir, inode_x, inode_y, inode_z, pos
       INTEGER(int_8)                                     :: lin
-      INTEGER, DIMENSION(3)                              :: base
-      LOGICAL                                            :: valid_corner, wrap_grid
       REAL(dp)                                           :: coefficient
-      REAL(dp), DIMENSION(3)                             :: fraction, gradient_relative, relative
-      REAL(dp), DIMENSION(native_grid_interp_npts, 3)    :: derivative_weights, weights
+      REAL(dp), DIMENSION(3)                             :: gradient_relative
 
       CPASSERT(ASSOCIATED(pw_grid))
-      CPASSERT(ASSOCIATED(cell))
-      wrap_grid = ANY(cell%perd == 0)
-      IF (PRESENT(wrap_auxiliary_cell)) wrap_grid = wrap_auxiliary_cell
-      relative = MATMUL(pw_grid%dh_inv, point)
-      DO idir = 1, 3
-         IF (cell%perd(idir) == 1 .OR. wrap_grid) THEN
-            relative(idir) = MODULO(relative(idir), REAL(pw_grid%npts(idir), KIND=dp))
-         ELSE IF (relative(idir) <= -REAL(native_grid_interp_offset_max, dp) .OR. &
-                  relative(idir) >= REAL(pw_grid%npts(idir) - &
-                                         native_grid_interp_offset_min, KIND=dp)) THEN
-            gradient = 0.0_dp
-            RETURN
-         END IF
-         base(idir) = FLOOR(relative(idir))
-         FRACTION(idir) = relative(idir) - REAL(base(idir), KIND=dp)
-         CALL native_grid_lagrange_weights( &
-            FRACTION(idir), weights(:, idir), derivative_weights(:, idir))
-      END DO
-
+      gradient = 0.0_dp
+      IF (.NOT. stencil%active) RETURN
       gradient_relative = 0.0_dp
-      DO corner_z = native_grid_interp_offset_min, native_grid_interp_offset_max
-         DO corner_y = native_grid_interp_offset_min, native_grid_interp_offset_max
-            DO corner_x = native_grid_interp_offset_min, native_grid_interp_offset_max
-               relative_index = base + [corner_x, corner_y, corner_z]
-               corner_index = [corner_x, corner_y, corner_z] - &
-                              native_grid_interp_offset_min + 1
-               valid_corner = .TRUE.
-               DO idir = 1, 3
-                  IF (cell%perd(idir) == 1 .OR. wrap_grid) THEN
-                     relative_index(idir) = MODULO(relative_index(idir), pw_grid%npts(idir))
-                  ELSE IF (relative_index(idir) < 0 .OR. &
-                           relative_index(idir) >= pw_grid%npts(idir)) THEN
-                     valid_corner = .FALSE.
-                  END IF
-               END DO
-               IF (.NOT. valid_corner) CYCLE
-               lin = 1_int_8 + INT(relative_index(1), int_8) + INT(pw_grid%npts(1), int_8)*( &
-                     INT(relative_index(2), int_8) + INT(pw_grid%npts(2), int_8)* &
-                     INT(relative_index(3), int_8))
+      DO inode_z = 1, native_grid_interp_npts
+         IF (.NOT. stencil%valid(inode_z, 3)) CYCLE
+         DO inode_y = 1, native_grid_interp_npts
+            IF (.NOT. stencil%valid(inode_y, 2)) CYCLE
+            DO inode_x = 1, native_grid_interp_npts
+               IF (.NOT. stencil%valid(inode_x, 1)) CYCLE
+               lin = 1_int_8 + INT(stencil%relative_index(inode_x, 1), int_8) + &
+                     INT(native_need_npts(1), int_8)*( &
+                     INT(stencil%relative_index(inode_y, 2), int_8) + &
+                     INT(native_need_npts(2), int_8)*INT(stencil%relative_index(inode_z, 3), int_8))
                pos = native_need_lookup(lin)
                CPASSERT(pos > 0)
                DO idir = 1, 3
                   coefficient = 1.0_dp
-                  DO jdir = 1, 3
-                     IF (jdir == idir) THEN
-                        coefficient = coefficient*derivative_weights(corner_index(jdir), jdir)
-                     ELSE
-                        coefficient = coefficient*weights(corner_index(jdir), jdir)
-                     END IF
-                  END DO
+                  IF (idir == 1) THEN
+                     coefficient = coefficient*stencil%derivative_weight(inode_x, 1)
+                  ELSE
+                     coefficient = coefficient*stencil%weight(inode_x, 1)
+                  END IF
+                  IF (idir == 2) THEN
+                     coefficient = coefficient*stencil%derivative_weight(inode_y, 2)
+                  ELSE
+                     coefficient = coefficient*stencil%weight(inode_y, 2)
+                  END IF
+                  IF (idir == 3) THEN
+                     coefficient = coefficient*stencil%derivative_weight(inode_z, 3)
+                  ELSE
+                     coefficient = coefficient*stencil%weight(inode_z, 3)
+                  END IF
                   gradient_relative(idir) = gradient_relative(idir) + &
                                             coefficient*native_need_values(slot, pos)
                END DO
@@ -3709,6 +3672,7 @@ CONTAINS
       stencil%active = .FALSE.
       stencil%valid = .FALSE.
       stencil%weight = 0.0_dp
+      stencil%derivative_weight = 0.0_dp
       build_weights = .TRUE.
       IF (PRESENT(indices_only)) build_weights = .NOT. indices_only
       wrap_grid = ANY(cell%perd == 0)
@@ -3725,7 +3689,8 @@ CONTAINS
          base(idir) = FLOOR(relative(idir))
          FRACTION(idir) = relative(idir) - REAL(base(idir), KIND=dp)
          IF (build_weights) THEN
-            CALL native_grid_lagrange_weights(FRACTION(idir), stencil%weight(:, idir))
+            CALL native_grid_lagrange_weights(FRACTION(idir), stencil%weight(:, idir), &
+                                              stencil%derivative_weight(:, idir))
          END IF
          DO inode = 1, native_grid_interp_npts
             relative_index = base(idir) + native_grid_interp_offset_min + inode - 1
