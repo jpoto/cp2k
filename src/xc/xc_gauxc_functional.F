@@ -432,26 +432,24 @@ CONTAINS
 !> \param qs_kind_set ...
 !> \param do_kpoints ...
 !> \param periodic_reference ...
+!> \param is_periodic ...
 !> \note This path keeps isolated validation cells usable under PERIODIC XYZ.
 !>       It intentionally does not implement compact periodic GauXC quadrature.
 ! **************************************************************************************************
    SUBROUTINE ensure_gauxc_periodic_reference_scope( &
-      dft_control, cell, qs_kind_set, do_kpoints, periodic_reference)
+      dft_control, cell, qs_kind_set, do_kpoints, periodic_reference, is_periodic)
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(cell_type), POINTER                           :: cell
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      LOGICAL, INTENT(IN)                                :: do_kpoints, periodic_reference
+      LOGICAL, INTENT(IN)                                :: do_kpoints, periodic_reference, &
+                                                            is_periodic
 
       INTEGER                                            :: ikind
-      LOGICAL                                            :: is_periodic
       TYPE(gth_potential_type), POINTER                  :: gth_potential
       TYPE(sgp_potential_type), POINTER                  :: sgp_potential
 
       CPASSERT(ASSOCIATED(dft_control))
       CPASSERT(ASSOCIATED(qs_kind_set))
-
-      is_periodic = .FALSE.
-      IF (ASSOCIATED(cell)) is_periodic = ANY(cell%perd /= 0)
 
       IF (do_kpoints) THEN
          CALL cp_abort(__LOCATION__, &
@@ -1373,7 +1371,7 @@ CONTAINS
          END IF
       END IF
       CALL ensure_gauxc_periodic_reference_scope( &
-         dft_control, cell, qs_kind_set, do_kpoints, periodic_reference)
+         dft_control, cell, qs_kind_set, do_kpoints, periodic_reference, is_periodic)
       IF (is_periodic .AND. periodic_reference .AND. para_env%mepos == 0) THEN
          IF (ASSOCIATED(scf_env)) THEN
             IF (scf_env%iter_count == 1) THEN

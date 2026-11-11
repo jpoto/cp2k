@@ -246,8 +246,7 @@ CONTAINS
          ndynamic_local_per_point, nflat, nflat_local, nspins, phase_handle, real_base, row
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: collapse_spin_dynamics, my_compute_diagnostics, my_requires_coordinate_grad, &
-         my_requires_grad, my_requires_stress_grad, my_requires_weight_grad, my_use_atom_chunks, &
-         use_atom_chunk_protocol
+         my_requires_grad, my_requires_stress_grad, my_requires_weight_grad, my_use_atom_chunks
       REAL(KIND=dp)                                      :: grid_weight_local
       REAL(KIND=dp), DIMENSION(3)                        :: integrals
       REAL(KIND=dp), DIMENSION(:), POINTER               :: global_dynamic, local_dynamic
@@ -291,17 +290,16 @@ CONTAINS
       CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL timestop(phase_handle)
 
-      use_atom_chunk_protocol = my_use_atom_chunks
       CALL timeset("skala_gpw_layout_cache", phase_handle)
       CALL ensure_layout_cache(pw_grid, particle_set, cell, weights, my_atom_partition, &
-                               needs_full_static_tensors=.NOT. use_atom_chunk_protocol, &
-                               needs_local_static=use_atom_chunk_protocol .AND. &
+                               needs_full_static_tensors=.NOT. my_use_atom_chunks, &
+                               needs_local_static=my_use_atom_chunks .AND. &
                                (my_requires_coordinate_grad .OR. my_requires_stress_grad .OR. &
                                 my_requires_weight_grad), &
                                cuda_device=cuda_device)
       CALL timestop(phase_handle)
       nflat = cached_layout%nflat
-      collapse_spin_dynamics = nspins == 1 .AND. use_atom_chunk_protocol
+      collapse_spin_dynamics = nspins == 1 .AND. my_use_atom_chunks
       ndynamic_local_per_point = ndynamic_per_point
       IF (collapse_spin_dynamics) ndynamic_local_per_point = nrks_dynamic_per_point
       CALL ensure_real_1d(gpw_scratch%local_dynamic, ndynamic_local_per_point*nflat_local)
@@ -361,7 +359,7 @@ CONTAINS
       CALL timestop(phase_handle)
 
       CALL timeset("skala_gpw_copy_layout", phase_handle)
-      CALL copy_cached_layout(features, use_atom_chunk_protocol, &
+      CALL copy_cached_layout(features, my_use_atom_chunks, &
                               my_requires_coordinate_grad .OR. my_requires_stress_grad .OR. &
                               my_requires_weight_grad, &
                               my_requires_stress_grad .OR. &
@@ -370,7 +368,7 @@ CONTAINS
                                 my_requires_weight_grad)))
       CALL timestop(phase_handle)
 
-      IF (use_atom_chunk_protocol) THEN
+      IF (my_use_atom_chunks) THEN
          CALL timeset("skala_gpw_route_dyn", phase_handle)
          CALL route_atom_chunk_dynamics(features, local_dynamic, pw_grid%para%group, &
                                         collapse_spin_dynamics)
@@ -445,7 +443,7 @@ CONTAINS
             features%spin_moment = SUM((features%density(:, 1) - features%density(:, 2))* &
                                        features%grid_weights)
          END IF
-         IF (use_atom_chunk_protocol) THEN
+         IF (my_use_atom_chunks) THEN
             grid_weight_local = 0.0_dp
             IF (ALLOCATED(cached_layout%chunk_grid_weights)) THEN
                grid_weight_local = SUM(cached_layout%chunk_grid_weights)
@@ -610,12 +608,10 @@ CONTAINS
       IF (cached_layout%cuda_device /= cuda_device) RETURN
       IF (cached_layout%atom_partition /= my_atom_partition) RETURN
       IF (cached_layout%natom /= SIZE(particle_set)) RETURN
-      IF (cached_layout%nflat_local /= pw_grid%ngpts_local) RETURN
       IF (cached_layout%nproc /= pw_grid%para%group%num_pe) RETURN
       IF (ANY(cached_layout%bo /= pw_grid%bounds_local)) RETURN
       IF (ANY(cached_layout%bounds /= pw_grid%bounds)) RETURN
       IF (ANY(cached_layout%npts /= pw_grid%npts)) RETURN
-      IF (ABS(cached_layout%dvol - pw_grid%dvol) > layout_tol) RETURN
       IF (ANY(ABS(cached_layout%dh - pw_grid%dh) > layout_tol)) RETURN
       IF (.NOT. skala_gpw_layout_metadata_matches(cached_layout%cell_hmat, &
                                                   cached_layout%cell_perd, &

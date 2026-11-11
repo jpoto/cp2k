@@ -53,8 +53,7 @@ MODULE xc_gauxc_interface
       basis_set_list_setup
    USE basis_set_types, ONLY: &
       gto_basis_set_p_type, &
-      gto_basis_set_type, &
-      write_gto_basis_set
+      gto_basis_set_type
    USE periodic_table, ONLY: &
       get_ptable_info
    USE offload_api, ONLY: &
@@ -443,7 +442,6 @@ CONTAINS
          CALL get_atomic_kind(atomic_kind, kind_number=ikind)
          gto_basis => basis_set_list(ikind)%gto_basis_set
          CPASSERT(ASSOCIATED(gto_basis))
-         ! CALL write_gto_basis_set(gto_basis, 6, "–––––GAUXC-CREATE-BASISSET–––––")
          nshell_total = nshell_total + SUM(gto_basis%nshell)
       END DO
 

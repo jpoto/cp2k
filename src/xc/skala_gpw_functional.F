@@ -120,10 +120,10 @@ MODULE skala_gpw_functional
                                                           logged_cuda_device_count = -1, &
                                                           logged_cuda_nproc = -1
 
-   ! Persistent feature bundle reused across SCF steps (keeps the host arrays
-   ! allocated; the Torch objects are still recreated per call). The common-grid
-   ! evaluation and the accurate-XCINT weight derivative are never nested, so a
-   ! single bundle is shared to bound the persistent memory.
+   ! Persistent feature bundle reused across SCF steps: both the host arrays and
+   ! the cached layout's Torch (static/dynamic) tensors are kept and refreshed in
+   ! place. The common-grid evaluation and the accurate-XCINT weight derivative are
+   ! never nested, so a single bundle is shared to bound the persistent memory.
    TYPE(skala_gpw_feature_type), SAVE, TARGET          :: cached_features
 
    ! Cached atom-composite chunk layout, keyed on the per-atom grid sizes.

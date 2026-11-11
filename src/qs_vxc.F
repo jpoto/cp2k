@@ -679,7 +679,7 @@ CONTAINS
          END IF
 
          IF (native_gapw_composite_reference .AND. native_grid_diagnostics .AND. &
-             .NOT. my_just_energy) THEN
+             .NOT. native_gapw_composite_direct_ao .AND. .NOT. my_just_energy) THEN
             IF (uf_grid) THEN
                diagnostics_pw_pool => xc_pw_pool
             ELSE
