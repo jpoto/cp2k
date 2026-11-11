@@ -214,6 +214,113 @@ CONTAINS
 
    END SUBROUTINE dbcsr_to_dense
 
+! **************************************************************************************************
+!> \brief Fill two dense matrices from two identically distributed DBCSR matrices in one iterator pass.
+!> \param dbcsr_a ...
+!> \param dense_a ...
+!> \param dbcsr_b ...
+!> \param dense_b ...
+!> \param para_env ...
+! **************************************************************************************************
+   SUBROUTINE dbcsr_to_dense_pair(dbcsr_a, dense_a, dbcsr_b, dense_b, para_env)
+      USE cp_dbcsr_api, ONLY: dbcsr_distribution_get, dbcsr_distribution_type, dbcsr_get_info, &
+                              dbcsr_get_matrix_type, dbcsr_iterator_blocks_left, &
+                              dbcsr_iterator_next_block, dbcsr_iterator_readonly_start, &
+                              dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_type_antisymmetric, &
+                              dbcsr_type_symmetric
+      TYPE(dbcsr_p_type), INTENT(IN)                     :: dbcsr_a
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :), &
+         INTENT(INOUT)                                   :: dense_a
+      TYPE(dbcsr_p_type), INTENT(IN)                     :: dbcsr_b
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :), &
+         INTENT(INOUT)                                   :: dense_b
+      TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
+
+      CHARACTER                                          :: matrix_type_a, matrix_type_b
+      INTEGER :: col_end, col_start, col_start_b, icol, icol_b, irow, irow_b, ncol, ncol_b, ncols, &
+         nrow, nrow_b, nrows, numnodes, row_end, row_start, row_start_b
+      LOGICAL                                            :: has_symmetry_a, has_symmetry_b, &
+                                                            transposed_a, transposed_b
+      REAL(c_double), POINTER                            :: block_a(:, :), block_b(:, :)
+      REAL(KIND=dp)                                      :: symmetry_sign_a, symmetry_sign_b
+      TYPE(dbcsr_distribution_type)                      :: dist
+      TYPE(dbcsr_iterator_type)                          :: iter_a, iter_b
+
+      CALL dbcsr_get_info(dbcsr_a%matrix, nfullrows_total=nrows, nfullcols_total=ncols, &
+                          distribution=dist)
+      CALL dbcsr_distribution_get(dist, numnodes=numnodes)
+      matrix_type_a = dbcsr_get_matrix_type(dbcsr_a%matrix)
+      matrix_type_b = dbcsr_get_matrix_type(dbcsr_b%matrix)
+      has_symmetry_a = matrix_type_a == dbcsr_type_symmetric .OR. &
+                       matrix_type_a == dbcsr_type_antisymmetric
+      has_symmetry_b = matrix_type_b == dbcsr_type_symmetric .OR. &
+                       matrix_type_b == dbcsr_type_antisymmetric
+      symmetry_sign_a = MERGE(-1.0_dp, 1.0_dp, matrix_type_a == dbcsr_type_antisymmetric)
+      symmetry_sign_b = MERGE(-1.0_dp, 1.0_dp, matrix_type_b == dbcsr_type_antisymmetric)
+
+      IF (.NOT. ALLOCATED(dense_a)) THEN
+         ALLOCATE (dense_a(nrows, ncols))
+      ELSE IF (.NOT. ALL(SHAPE(dense_a) == [nrows, ncols])) THEN
+         DEALLOCATE (dense_a)
+         ALLOCATE (dense_a(nrows, ncols))
+      END IF
+      IF (.NOT. ALLOCATED(dense_b)) THEN
+         ALLOCATE (dense_b(nrows, ncols))
+      ELSE IF (.NOT. ALL(SHAPE(dense_b) == [nrows, ncols])) THEN
+         DEALLOCATE (dense_b)
+         ALLOCATE (dense_b(nrows, ncols))
+      END IF
+      dense_a = 0._dp
+      dense_b = 0._dp
+
+      IF (numnodes == 1 .AND. para_env%num_pe > 1 .AND. para_env%mepos /= 0) RETURN
+
+!$OMP PARALLEL DEFAULT(NONE) &
+!$OMP SHARED(dbcsr_a, dbcsr_b, dense_a, dense_b, has_symmetry_a, has_symmetry_b, &
+!$OMP        symmetry_sign_a, symmetry_sign_b) &
+!$OMP PRIVATE(iter_a, iter_b, irow, icol, irow_b, icol_b, block_a, block_b, transposed_a, &
+!$OMP         transposed_b, row_start, col_start, row_start_b, col_start_b, nrow, ncol, nrow_b, &
+!$OMP         ncol_b, row_end, col_end)
+      CALL dbcsr_iterator_readonly_start(iter_a, dbcsr_a%matrix)
+      CALL dbcsr_iterator_readonly_start(iter_b, dbcsr_b%matrix)
+      DO WHILE (dbcsr_iterator_blocks_left(iter_a))
+         CPASSERT(dbcsr_iterator_blocks_left(iter_b))
+         CALL dbcsr_iterator_next_block(iter_a, irow, icol, block_a, transposed=transposed_a, &
+                                        row_size=nrow, col_size=ncol, row_offset=row_start, &
+                                        col_offset=col_start)
+         CALL dbcsr_iterator_next_block(iter_b, irow_b, icol_b, block_b, transposed=transposed_b, &
+                                        row_size=nrow_b, col_size=ncol_b, row_offset=row_start_b, &
+                                        col_offset=col_start_b)
+         CPASSERT(irow_b == irow .AND. icol_b == icol)
+         CPASSERT(nrow_b == nrow .AND. ncol_b == ncol)
+         row_end = row_start + nrow - 1
+         col_end = col_start + ncol - 1
+         IF (transposed_a) THEN
+            dense_a(row_start:row_end, col_start:col_end) = symmetry_sign_a*TRANSPOSE(block_a)
+         ELSE
+            dense_a(row_start:row_end, col_start:col_end) = block_a
+         END IF
+         IF (has_symmetry_a .AND. irow /= icol) THEN
+            dense_a(col_start:col_end, row_start:row_end) = &
+               symmetry_sign_a*TRANSPOSE(dense_a(row_start:row_end, col_start:col_end))
+         END IF
+         IF (transposed_b) THEN
+            dense_b(row_start:row_end, col_start:col_end) = symmetry_sign_b*TRANSPOSE(block_b)
+         ELSE
+            dense_b(row_start:row_end, col_start:col_end) = block_b
+         END IF
+         IF (has_symmetry_b .AND. irow /= icol) THEN
+            dense_b(col_start:col_end, row_start:row_end) = &
+               symmetry_sign_b*TRANSPOSE(dense_b(row_start:row_end, col_start:col_end))
+         END IF
+      END DO
+      CPASSERT(.NOT. dbcsr_iterator_blocks_left(iter_b))
+      CALL dbcsr_iterator_stop(iter_a)
+      CALL dbcsr_iterator_stop(iter_b)
+!$OMP END PARALLEL
+
+   END SUBROUTINE dbcsr_to_dense_pair
+
 ! ******, ***********************************************************************************
 !> \brief Fill a DBCSR matrix from a dense symmetric matrix with full upper block structure.
 !>        This creates all upper-triangular blocks, not just those present in a template,
@@ -241,11 +348,12 @@ CONTAINS
       TYPE(dbcsr_p_type), INTENT(INOUT)                  :: dbcsr_mat
 
       INTEGER :: col, icol, irow, mcols, mrows, mynode, mypcol, myprow, nblkcols_total, &
-         nblkrows_total, ncols, nlocal_cols, nlocal_rows, nrows, row
+         nblkrows_total, nc, ncols, nlocal_cols, nlocal_rows, nr, nrows, row
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, local_cols, local_rows, &
                                                             r_offset
       INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, col_dist, row_blk_size, &
                                                             row_dist
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: blk
       TYPE(dbcsr_distribution_type)                      :: dist
 
       CALL dbcsr_get_info(template_dbcsr%matrix, &
@@ -309,6 +417,9 @@ CONTAINS
          END IF
       END DO
 
+      ! Reused workspace so the symmetric averaging (A + A^T)/2 needs no per-block temporary.
+      ALLOCATE (blk(MAXVAL(row_blk_size), MAXVAL(col_blk_size)))
+
       ! Non-transposed blocks (even row+column).
       DO row = 1, nlocal_rows
          irow = local_rows(row)
@@ -316,12 +427,14 @@ CONTAINS
             icol = local_cols(col)
             IF (irow > icol) CYCLE
             IF (BTEST(irow + icol, 0)) CYCLE
-            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, &
-                                 0.5_dp*( &
-                                 dense_mat(r_offset(irow):r_offset(irow) + row_blk_size(irow) - 1, &
-                                           c_offset(icol):c_offset(icol) + col_blk_size(icol) - 1) + &
-                                 TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
-                                                     c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1))))
+            nr = row_blk_size(irow)
+            nc = col_blk_size(icol)
+            blk(1:nr, 1:nc) = 0.5_dp*( &
+                              dense_mat(r_offset(irow):r_offset(irow) + nr - 1, &
+                                        c_offset(icol):c_offset(icol) + nc - 1) + &
+                              TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
+                                                  c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1)))
+            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, blk(1:nr, 1:nc))
          END DO
       END DO
 
@@ -332,18 +445,20 @@ CONTAINS
             icol = local_rows(row)
             IF (irow > icol) CYCLE
             IF (.NOT. BTEST(irow + icol, 0)) CYCLE
-            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, &
-                                 0.5_dp*( &
-                                 dense_mat(r_offset(irow):r_offset(irow) + row_blk_size(irow) - 1, &
-                                           c_offset(icol):c_offset(icol) + col_blk_size(icol) - 1) + &
-                                 TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
-                                                     c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1))))
+            nr = row_blk_size(irow)
+            nc = col_blk_size(icol)
+            blk(1:nr, 1:nc) = 0.5_dp*( &
+                              dense_mat(r_offset(irow):r_offset(irow) + nr - 1, &
+                                        c_offset(icol):c_offset(icol) + nc - 1) + &
+                              TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
+                                                  c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1)))
+            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, blk(1:nr, 1:nc))
          END DO
       END DO
 
       CALL dbcsr_finalize(dbcsr_mat%matrix)
 
-      DEALLOCATE (r_offset, c_offset, local_rows, local_cols)
+      DEALLOCATE (r_offset, c_offset, local_rows, local_cols, blk)
    END SUBROUTINE dense_to_dbcsr_into
 
 ! **************************************************************************************************
@@ -1064,14 +1179,15 @@ CONTAINS
       CHARACTER(len=default_string_length) :: gradient_runtime, gradient_runtime_key, grid_key, &
          int_exec_space_key, lb_exec_space_key, lwd_kernel_key, pruning_key, skala_runtime, &
          skala_runtime_key, xc_fun_key
-      INTEGER                                            :: gpu_mode, ikind, img, ispin, nimages
+      INTEGER                                            :: assembly_handle, density_handle, &
+                                                            gpu_mode, ikind, img, ispin, &
+                                                            model_handle, nimages
       LOGICAL :: auto_cuda, do_kpoints, external_density, gapw_method, gapw_paw_pseudopotentials, &
          gapw_pseudopotentials, grid_explicit, hdf5_output, int_space_explicit, is_periodic, &
          lb_space_explicit, low_spin_scope, molecular_virial, molecular_virial_debug, &
          need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, use_skala_model, &
          write_hdf5_output
       REAL(KIND=dp)                                      :: exc_value, molecular_virial_debug_dx
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: density_scalar, density_zeta
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_gauxc_cache_params)                        :: params
@@ -1478,21 +1594,25 @@ CONTAINS
          IF (img > 1) THEN
             CPABORT("UNIMPLEMENTED: Handling nimg>1 in k-point integration")
          END IF
-         CALL dbcsr_to_dense(rho_ao(1, img), density_scalar, para_env)
-         CALL para_env%sum(density_scalar)
          IF (params%nspins == 1) THEN
+            CALL timeset("gauxc_density_dense", density_handle)
+            CALL dbcsr_to_dense(rho_ao(1, img), cache%density_scalar, para_env)
+            CALL para_env%sum(cache%density_scalar)
+            CALL timestop(density_handle)
+            CALL timeset("gauxc_model_eval", model_handle)
             CALL gauxc_compute_xc( &
                cache%integrator, &
-               density_scalar, &
+               cache%density_scalar, &
                cache%xc_result, &
                nspins=params%nspins, &
                status=gauxc_status, &
                model=TRIM(params%model_eval_name))
             CALL gauxc_check_status(gauxc_status)
+            CALL timestop(model_handle)
             IF (need_xc_gradient) THEN
                IF (params%use_fd_gradient) THEN
                   CALL gauxc_xc_gradient_fd( &
-                     particle_set, qs_kind_set, density_scalar, params%nspins, params%model_eval_name, &
+                     particle_set, qs_kind_set, cache%density_scalar, params%nspins, params%model_eval_name, &
                      params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
                      params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
                      params%device_runtime_fill_fraction, gapw_fd_gradient_dx, para_env, &
@@ -1500,7 +1620,7 @@ CONTAINS
                ELSE IF (params%use_gradient_self_runtime) THEN
                   CALL gauxc_compute_xc_gradient( &
                      cache%gradient_integrator, &
-                     density_scalar, &
+                     cache%density_scalar, &
                      cache%xc_gradient, &
                      nspins=params%nspins, &
                      natom=params%natom, &
@@ -1509,7 +1629,7 @@ CONTAINS
                ELSE
                   CALL gauxc_compute_xc_gradient( &
                      cache%integrator, &
-                     density_scalar, &
+                     cache%density_scalar, &
                      cache%xc_gradient, &
                      nspins=params%nspins, &
                      natom=params%natom, &
@@ -1529,7 +1649,7 @@ CONTAINS
                END IF
                IF (molecular_virial_debug) THEN
                   CALL debug_gauxc_molecular_virial( &
-                     cache%xc_gradient%exc_grad, particle_set, qs_kind_set, density_scalar, params%nspins, &
+                     cache%xc_gradient%exc_grad, particle_set, qs_kind_set, cache%density_scalar, params%nspins, &
                     params%model_eval_name, params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
                      params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
                      params%device_runtime_fill_fraction, molecular_virial_debug_dx, para_env)
@@ -1540,38 +1660,44 @@ CONTAINS
             ! In here:
             ! scalar <- rho_ao(1, :) + rho_ao(2, :)
             ! zeta   <- rho_ao(1, :) - rho_ao(2, :)
-            CALL dbcsr_to_dense(rho_ao(2, img), density_zeta, para_env)
-            CALL para_env%sum(density_zeta)
+            CALL timeset("gauxc_density_dense", density_handle)
+            CALL dbcsr_to_dense_pair(rho_ao(1, img), cache%density_scalar, rho_ao(2, img), &
+                                     cache%density_zeta, para_env)
+            CALL para_env%sum(cache%density_scalar)
+            CALL para_env%sum(cache%density_zeta)
+            CALL timestop(density_handle)
             ! Do NOT reorder the following lines!
-            density_scalar(:, :) = density_scalar(:, :) + density_zeta(:, :)
+            cache%density_scalar(:, :) = cache%density_scalar(:, :) + cache%density_zeta(:, :)
             ! Factor two because the next line is evaluated after the above line.
             ! We need to subtract density_zeta once to undo the above line and
             ! a second time because that is what UKS requires.
             ! This style lowers memory footprint.
-            density_zeta(:, :) = density_scalar(:, :) - 2.0_dp*density_zeta(:, :)
+            cache%density_zeta(:, :) = cache%density_scalar(:, :) - 2.0_dp*cache%density_zeta(:, :)
+            CALL timeset("gauxc_model_eval", model_handle)
             CALL gauxc_compute_xc( &
                cache%integrator, &
-               density_scalar, &
+               cache%density_scalar, &
                cache%xc_result, &
-               density_zeta, &
+               cache%density_zeta, &
                params%nspins, &
                gauxc_status, &
                model=TRIM(params%model_eval_name))
             CALL gauxc_check_status(gauxc_status)
+            CALL timestop(model_handle)
             IF (need_xc_gradient) THEN
                IF (params%use_fd_gradient) THEN
                   CALL gauxc_xc_gradient_fd( &
-                     particle_set, qs_kind_set, density_scalar, params%nspins, params%model_eval_name, &
+                     particle_set, qs_kind_set, cache%density_scalar, params%nspins, params%model_eval_name, &
                      params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
                      params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
                      params%device_runtime_fill_fraction, gapw_fd_gradient_dx, para_env, &
-                     cache%xc_gradient%exc_grad, density_zeta=density_zeta)
+                     cache%xc_gradient%exc_grad, density_zeta=cache%density_zeta)
                ELSE IF (params%use_gradient_self_runtime) THEN
                   CALL gauxc_compute_xc_gradient( &
                      cache%gradient_integrator, &
-                     density_scalar, &
+                     cache%density_scalar, &
                      cache%xc_gradient, &
-                     density_zeta, &
+                     cache%density_zeta, &
                      params%nspins, &
                      params%natom, &
                      gauxc_status, &
@@ -1579,9 +1705,9 @@ CONTAINS
                ELSE
                   CALL gauxc_compute_xc_gradient( &
                      cache%integrator, &
-                     density_scalar, &
+                     cache%density_scalar, &
                      cache%xc_gradient, &
-                     density_zeta, &
+                     cache%density_zeta, &
                      params%nspins, &
                      params%natom, &
                      gauxc_status, &
@@ -1600,11 +1726,11 @@ CONTAINS
                END IF
                IF (molecular_virial_debug) THEN
                   CALL debug_gauxc_molecular_virial( &
-                     cache%xc_gradient%exc_grad, particle_set, qs_kind_set, density_scalar, params%nspins, &
+                     cache%xc_gradient%exc_grad, particle_set, qs_kind_set, cache%density_scalar, params%nspins, &
                     params%model_eval_name, params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
                      params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
                      params%device_runtime_fill_fraction, molecular_virial_debug_dx, para_env, &
-                     density_zeta=density_zeta)
+                     density_zeta=cache%density_zeta)
                END IF
             END IF
          END IF
@@ -1613,8 +1739,10 @@ CONTAINS
 
          IF (params%nspins == 1) THEN
             IF (img == 1) THEN
+               CALL timeset("gauxc_vxc_assembly", assembly_handle)
                CALL dense_to_dbcsr_into(cache%xc_result%vxc_scalar, rho_ao(1, img), &
                                         matrix_vxc(1))
+               CALL timestop(assembly_handle)
             ELSE
                CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
             END IF
@@ -1632,16 +1760,15 @@ CONTAINS
             cache%xc_result%vxc_zeta(:, :) = cache%xc_result%vxc_scalar(:, :) - &
                                              cache%xc_result%vxc_zeta(:, :)
             IF (img == 1) THEN
+               CALL timeset("gauxc_vxc_assembly", assembly_handle)
                CALL dense_to_dbcsr_into(cache%vxc_channel, rho_ao(1, 1), matrix_vxc(1))
                CALL dense_to_dbcsr_into(cache%xc_result%vxc_zeta, rho_ao(2, 1), matrix_vxc(2))
+               CALL timestop(assembly_handle)
             ELSE
                CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
             END IF
          END IF
       END DO
-
-      DEALLOCATE (density_scalar)
-      IF (ALLOCATED(density_zeta)) DEALLOCATE (density_zeta)
 
       IF (external_density) THEN
          exc_external = exc_value
