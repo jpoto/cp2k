@@ -973,19 +973,28 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'hfx_ri_update_forces_kp'
 
-      INTEGER :: b_img, batch_size, group_size, handle, handle2, i_batch, i_img, i_loop, i_spin, &
-         i_xyz, iatom, iblk, igroup, j_xyz, jatom, k_xyz, n_batch, natom, ngroups, nimg, nimg_nze
+      INTEGER :: b_img, batch_size, g_img, group_size, handle, handle2, i_batch, i_img, i_img2, &
+         i_kind, i_loop, i_opp, i_spin, i_xyz, iat_max, iatom, iblk, igroup, imap, isrc, j_xyz, &
+         jatom, k_xyz, n_batch, natom, ngroups, nimg, nimg_nze, nops
       INTEGER(int_8)                                     :: nflop, nze
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: atom_of_kind, batch_ranges_at, &
                                                             batch_ranges_nze, dist1, dist2, &
                                                             i_images, idx_to_at_AO, idx_to_at_RI, &
-                                                            kind_of
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: iapc_pairs
-      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: force_pattern, sparsity_pattern
+                                                            img_op, img_opp, img_rep, kind_of, op_slot
+      INTEGER, DIMENSION(3)                              :: i_cell
+      INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: iapc_pairs, op_map
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: force_pattern, op_frac, op_shift, &
+                                                            sparsity_pattern
       INTEGER, DIMENSION(2, 1)                           :: bounds_iat, bounds_jat
-      LOGICAL                                            :: use_virial_prv
+      LOGICAL                                            :: image_sym_usable, img_ok, use_image_sym, &
+                                                            use_virial_prv
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: img_computed, img_inv
       REAL(dp)                                           :: fac, occ, pref, t1, t2
-      REAL(dp), DIMENSION(3, 3)                          :: work_virial
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: f_delta
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :, :)          :: f_snap, f_star, w_star
+      REAL(dp), DIMENSION(3, 3)                          :: rmap, w_delta, w_snap, work_virial
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env_sub
@@ -1000,6 +1009,7 @@ CONTAINS
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:, :) :: rho_ao_t, rho_ao_t_sub, t_2c_der_metric, &
          t_2c_der_metric_sub, t_3c_apc, t_3c_apc_sub, t_3c_der_AO, t_3c_der_AO_sub, t_3c_der_RI, &
          t_3c_der_RI_sub
+      TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(mp_para_env_type), POINTER                    :: para_env, para_env_sub
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
@@ -1007,7 +1017,7 @@ CONTAINS
       TYPE(virial_type), POINTER                         :: virial
 
       NULLIFY (para_env, para_env_sub, hfx_section, blacs_env_sub, dbcsr_template, force, atomic_kind_set, &
-               virial, particle_set, cell)
+               virial, particle_set, cell, kpoints, index_to_cell, cell_to_index)
 
       CALL timeset(routineN, handle)
 
@@ -1021,7 +1031,7 @@ CONTAINS
       END IF
 
       CALL get_qs_env(qs_env, natom=natom, para_env=para_env, force=force, cell=cell, virial=virial, &
-                      atomic_kind_set=atomic_kind_set, particle_set=particle_set)
+                      atomic_kind_set=atomic_kind_set, particle_set=particle_set, kpoints=kpoints)
       CALL get_atomic_kind_set(atomic_kind_set, kind_of=kind_of, atom_of_kind=atom_of_kind)
 
       ALLOCATE (idx_to_at_AO(SIZE(ri_data%bsizes_AO_split)))
@@ -1074,6 +1084,69 @@ CONTAINS
       ALLOCATE (sparsity_pattern(natom, natom, nimg))
       CALL get_sparsity_pattern(sparsity_pattern, ri_data, qs_env)
       CALL get_sub_dist(sparsity_pattern, ngroups, ri_data)
+
+      !Image symmetry: compute only one representative per real-space image orbit
+      !and rotate its force/virial contribution to the remaining orbit members.
+      use_image_sym = .FALSE.
+      image_sym_usable = .FALSE.
+      CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY", l_val=use_image_sym)
+      ALLOCATE (img_rep(nimg), img_op(nimg), img_inv(nimg))
+      img_rep(:) = [(b_img, b_img=1, nimg)]
+      img_op(:) = 0
+      img_inv(:) = .FALSE.
+      ALLOCATE (op_slot(1), op_frac(3, 3, 1), op_map(1, 1), op_shift(3, 1, 1))
+      IF (use_image_sym) THEN
+         CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
+                                       img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot)
+         IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0)) THEN
+            IF (.NOT. image_sym_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: no usable symmetry for forces; full image sum")
+               image_sym_warned = .TRUE.
+            END IF
+            use_image_sym = .FALSE.
+            img_rep(:) = [(b_img, b_img=1, nimg)]
+            img_op(:) = 0
+            img_inv(:) = .FALSE.
+         END IF
+      END IF
+
+      ALLOCATE (img_opp(nimg), img_computed(nimg))
+      img_opp(:) = 0
+      img_computed(:) = .TRUE.
+      IF (use_image_sym) THEN
+         !The point-group orbit links an image to its representative, but the
+         !opposite image (-b) is a separate physical contribution. Mark the
+         !representatives and their opposites as explicitly computed and check
+         !that every remaining image can be generated from one of them.
+         CALL get_kpoint_info(kpoints, index_to_cell=index_to_cell, cell_to_index=cell_to_index)
+         img_computed(:) = .FALSE.
+         DO b_img = 1, nimg
+            IF (img_rep(b_img) /= b_img) CYCLE
+            img_computed(b_img) = .TRUE.
+            IF (ASSOCIATED(cell_to_index) .AND. ASSOCIATED(index_to_cell)) THEN
+               i_cell(:) = -index_to_cell(:, b_img)
+               IF (ALL(i_cell >= LBOUND(cell_to_index)) .AND. ALL(i_cell <= UBOUND(cell_to_index))) THEN
+                  i_opp = cell_to_index(i_cell(1), i_cell(2), i_cell(3))
+                  IF (i_opp >= 1 .AND. i_opp <= nimg .AND. img_rep(i_opp) == b_img) img_opp(b_img) = i_opp
+               END IF
+            END IF
+            IF (img_opp(b_img) > 0) img_computed(img_opp(b_img)) = .TRUE.
+         END DO
+         img_ok = .TRUE.
+         DO b_img = 1, nimg
+            IF (img_rep(b_img) <= 0) img_ok = .FALSE.
+            IF (.NOT. img_computed(b_img) .AND. img_inv(b_img)) THEN
+               IF (img_opp(img_rep(b_img)) <= 0) img_ok = .FALSE.
+            END IF
+         END DO
+         IF (.NOT. img_ok) THEN
+            use_image_sym = .FALSE.
+            IF (.NOT. image_sym_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: incomplete image orbit for forces; full image sum")
+               image_sym_warned = .TRUE.
+            END IF
+         END IF
+      END IF
 
       !Get the 2-center quantities in the subgroups (note: main group derivs are deleted wihtin)
       ALLOCATE (t_2c_inv(natom), mat_2c_pot(nimg), rho_ao_t_sub(nspins, nimg), t_2c_work(5), &
@@ -1139,10 +1212,23 @@ CONTAINS
       ALLOCATE (iapc_pairs(nimg, 2), i_images(nimg))
       ALLOCATE (force_pattern(natom, natom, nimg))
       force_pattern(:, :, :) = -1
+      ALLOCATE (f_snap(3, MAXVAL(atom_of_kind), SIZE(force)), f_delta(3, natom), &
+                f_star(3, natom, nimg), w_star(3, 3, nimg))
+      !The force-pattern pass only needs the SCF sparsity/cost model, not the
+      !force contributions, so prepare it before the image loop.
+      CALL update_pattern_to_forces(force_pattern, sparsity_pattern, ngroups, ri_data, qs_env)
       !We proceed with 2 loops: one over the sparsity pattern from the SCF, one over the rest
       !We use the SCF cost model for the first loop, while we calculate the cost of the upcoming loop
-      DO i_loop = 1, 2
-         DO b_img = 1, nimg
+      DO b_img = 1, nimg
+         IF (use_image_sym .AND. .NOT. img_computed(b_img)) CYCLE
+         IF (use_image_sym) THEN
+            DO i_kind = 1, SIZE(force)
+               iat_max = SIZE(force(i_kind)%fock_4c, 2)
+               f_snap(:, 1:iat_max, i_kind) = force(i_kind)%fock_4c(:, 1:iat_max)
+            END DO
+            w_snap(:, :) = work_virial(:, :)
+         END IF
+         DO i_loop = 1, 2
             DO jatom = 1, natom
                DO iatom = 1, natom
 
@@ -1478,12 +1564,73 @@ CONTAINS
                   CALL timestop(handle2)
                END DO !iatom
             END DO !jatom
-         END DO !b_img
+         END DO !i_loop
 
-         IF (i_loop == 1) THEN
-            CALL update_pattern_to_forces(force_pattern, sparsity_pattern, ngroups, ri_data, qs_env)
+         IF (use_image_sym) THEN
+            DO iatom = 1, natom
+               i_kind = kind_of(iatom)
+               iat_max = atom_of_kind(iatom)
+               f_delta(:, iatom) = force(i_kind)%fock_4c(:, iat_max) - f_snap(:, iat_max, i_kind)
+            END DO
+            w_delta(:, :) = work_virial(:, :) - w_snap(:, :)
+            !Store this computed image's contribution and restore the accumulation.
+            !The full image star is assembled after all computed images are done,
+            !so both a representative and its opposite image are available.
+            DO iatom = 1, natom
+               f_star(:, iatom, b_img) = f_delta(:, iatom)
+            END DO
+            w_star(:, :, b_img) = w_delta(:, :)
+            DO i_kind = 1, SIZE(force)
+               iat_max = SIZE(force(i_kind)%fock_4c, 2)
+               force(i_kind)%fock_4c(:, 1:iat_max) = f_snap(:, 1:iat_max, i_kind)
+            END DO
+            work_virial(:, :) = w_snap(:, :)
          END IF
-      END DO !i_loop
+      END DO !b_img
+
+      IF (use_image_sym) THEN
+         !Assemble the full image star from the computed representatives and their
+         !opposite images. Each remaining orbit member is a point-group rotation
+         !of either the representative (inv=.FALSE.) or its opposite (inv=.TRUE.).
+         DO i_img = 1, nimg
+            IF (img_rep(i_img) /= i_img) CYCLE
+            DO iatom = 1, natom
+               i_kind = kind_of(iatom)
+               iat_max = atom_of_kind(iatom)
+               force(i_kind)%fock_4c(:, iat_max) = force(i_kind)%fock_4c(:, iat_max) + &
+                                                   f_star(:, iatom, i_img)
+            END DO
+            work_virial(:, :) = work_virial(:, :) + w_star(:, :, i_img)
+            i_opp = img_opp(i_img)
+            IF (i_opp > 0 .AND. i_opp /= i_img) THEN
+               DO iatom = 1, natom
+                  i_kind = kind_of(iatom)
+                  iat_max = atom_of_kind(iatom)
+                  force(i_kind)%fock_4c(:, iat_max) = force(i_kind)%fock_4c(:, iat_max) + &
+                                                       f_star(:, iatom, i_opp)
+               END DO
+               work_virial(:, :) = work_virial(:, :) + w_star(:, :, i_opp)
+            END IF
+            DO i_img2 = 1, nimg
+               IF (img_rep(i_img2) /= i_img) CYCLE
+               IF (i_img2 == i_img) CYCLE
+               IF (i_opp /= i_img .AND. i_img2 == i_opp) CYCLE
+               g_img = img_op(i_img2)
+               rmap(:, :) = MATMUL(cell%hmat, MATMUL(TRANSPOSE(REAL(op_frac(:, :, g_img), dp)), &
+                                                     cell%h_inv))
+               isrc = MERGE(i_opp, i_img, img_inv(i_img2))
+               DO iatom = 1, natom
+                  imap = op_map(iatom, g_img)
+                  i_kind = kind_of(imap)
+                  iat_max = atom_of_kind(imap)
+                  force(i_kind)%fock_4c(:, iat_max) = force(i_kind)%fock_4c(:, iat_max) + &
+                                                      MATMUL(rmap, f_star(:, iatom, isrc))
+               END DO
+               work_virial(:, :) = work_virial(:, :) + &
+                                   MATMUL(rmap, MATMUL(w_star(:, :, isrc), TRANSPOSE(rmap)))
+            END DO
+         END DO
+      END IF
 
       CALL dbt_batched_contract_finalize(t_3c_work_3(1))
       CALL dbt_batched_contract_finalize(t_3c_work_3(2))
