@@ -6096,9 +6096,9 @@ CONTAINS
          atom_first_RI(:), blk_ord_AO(:), atom_first_AO(:)
       LOGICAL, OPTIONAL                                  :: general
 
-      INTEGER                                            :: b, g, i, xyz, xyz2
+      INTEGER                                            :: b, g, i, xyz
       REAL(dp)                                           :: rmap(3, 3)
-      TYPE(dbt_type)                                     :: out, tmp, work(3)
+      TYPE(dbt_type)                                     :: out(3), work(3)
 
       IF (PRESENT(general)) THEN
          IF (general) THEN
@@ -6121,9 +6121,8 @@ CONTAINS
          IF (img_rep(b) /= b) CYCLE
          DO xyz = 1, 3
             CALL dbt_create(t3c_der(b, xyz), work(xyz))
+            CALL dbt_create(t3c_der(b, xyz), out(xyz))
          END DO
-         CALL dbt_create(work(1), out)
-         CALL dbt_create(work(1), tmp)
          DO i = 1, nimg
             IF (img_rep(i) /= b) CYCLE
             IF (i == b) CYCLE
@@ -6134,26 +6133,17 @@ CONTAINS
                CALL hfx_rotate_3c_work(work(xyz), kpoints, ri_data, g, op_slot, nblk_RI, &
                                        blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
             END DO
+            CALL hfx_3c_mix_deriv_blocks(work, rmap, out)
             DO xyz = 1, 3
-               DO xyz2 = 1, 3
-                  CALL dbt_copy(work(xyz2), tmp)
-                  CALL dbt_scale(tmp, rmap(xyz, xyz2))
-                  IF (xyz2 == 1) THEN
-                     CALL dbt_copy(tmp, out, summation=.FALSE.)
-                  ELSE
-                     CALL dbt_copy(tmp, out, summation=.TRUE.)
-                  END IF
-               END DO
-               CALL dbt_reshape(out, t3c_der(i, xyz), summation=.FALSE., move_data=.TRUE., &
+               CALL dbt_reshape(out(xyz), t3c_der(i, xyz), summation=.FALSE., move_data=.TRUE., &
                                 index_map=imaps(:, :, g))
                CALL dbt_finalize(t3c_der(i, xyz))
                CALL dbt_filter(t3c_der(i, xyz), filter_eps)
             END DO
          END DO
-         CALL dbt_destroy(out)
-         CALL dbt_destroy(tmp)
          DO xyz = 1, 3
             CALL dbt_destroy(work(xyz))
+            CALL dbt_destroy(out(xyz))
          END DO
       END DO
       ! Representatives were built with the looser threshold used for the expansion.
@@ -6634,7 +6624,7 @@ CONTAINS
       REAL(dp), INTENT(IN)                               :: filter_eps
 
       INTEGER                                            :: b, first, g, hi, iatom, img, jatom, jb, &
-                                                            last, lo, mdim, nblk1, t, xyz, xyz2
+                                                            last, lo, mdim, nblk1, t, xyz
       INTEGER, DIMENSION(2, 3)                           :: bounds
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: map1
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: imap
@@ -6644,7 +6634,7 @@ CONTAINS
       LOGICAL, ALLOCATABLE, DIMENSION(:, :)              :: gmask
       LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: written
       REAL(dp)                                           :: rmap(3, 3)
-      TYPE(dbt_type)                                     :: out(3), tmp, work(3)
+      TYPE(dbt_type)                                     :: out(3), work(3)
 
       nblk1 = ri_data%ncell_RI*nblk_RI
       mdim = MAX(nblk1, nblk_AO)
@@ -6659,7 +6649,6 @@ CONTAINS
             CALL dbt_create(t3c_der(b, xyz), work(xyz))
             CALL dbt_create(t3c_der(b, xyz), out(xyz))
          END DO
-         CALL dbt_create(t3c_der(b, 1), tmp)
          written(:, :, :) = .FALSE.
          started(:) = .FALSE.
          bcell = kpoints%index_to_cell(:, b)
@@ -6670,17 +6659,7 @@ CONTAINS
                CALL hfx_rotate_3c_work(work(xyz), kpoints, ri_data, g, op_slot, nblk_RI, &
                                        blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
             END DO
-            DO xyz = 1, 3
-               DO xyz2 = 1, 3
-                  CALL dbt_copy(work(xyz2), tmp)
-                  CALL dbt_scale(tmp, rmap(xyz, xyz2))
-                  IF (xyz2 == 1) THEN
-                     CALL dbt_copy(tmp, out(xyz), summation=.FALSE.)
-                  ELSE
-                     CALL dbt_copy(tmp, out(xyz), summation=.TRUE.)
-                  END IF
-               END DO
-            END DO
+            CALL hfx_3c_mix_deriv_blocks(work, rmap, out)
             DO iatom = 1, natom
                first = atom_first_AO(iatom)
                IF (iatom < natom) THEN
@@ -6732,7 +6711,6 @@ CONTAINS
                CALL dbt_filter(t3c_der(t, xyz), filter_eps)
             END DO
          END DO
-         CALL dbt_destroy(tmp)
          DO xyz = 1, 3
             CALL dbt_destroy(work(xyz))
             CALL dbt_destroy(out(xyz))
@@ -6806,6 +6784,54 @@ CONTAINS
       END DO
       CALL dbt_iterator_stop(iter)
    END SUBROUTINE hfx_rotate_3c_work
+
+! **************************************************************************************************
+!> \brief Mix the three Cartesian derivative components blockwise: out(xyz) = sum_x rmap(xyz,x) work(x).
+!>        Replaces nine full-tensor copy/scale passes per target image.
+! **************************************************************************************************
+   SUBROUTINE hfx_3c_mix_deriv_blocks(work, rmap, out)
+      TYPE(dbt_type), INTENT(INOUT)                      :: work(:)
+      REAL(dp), INTENT(IN)                               :: rmap(3, 3)
+      TYPE(dbt_type), INTENT(INOUT)                      :: out(:)
+
+      INTEGER                                            :: xyz, xyz2
+      INTEGER, DIMENSION(3)                              :: ind, sizes
+      LOGICAL                                            :: found
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :, :)          :: block, mixed
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :, :, :)       :: components
+      TYPE(dbt_iterator_type)                            :: iter
+
+      DO xyz = 1, 3
+         CALL dbt_clear(out(xyz))
+         CALL dbt_reserve_blocks(work(1), out(xyz))
+      END DO
+
+      CALL dbt_iterator_start(iter, work(1))
+      DO WHILE (dbt_iterator_blocks_left(iter))
+         CALL dbt_iterator_next_block(iter, ind, blk_size=sizes)
+         ALLOCATE (components(sizes(1), sizes(2), sizes(3), 3))
+         components(:, :, :, :) = 0.0_dp
+         DO xyz2 = 1, 3
+            CALL dbt_get_block(work(xyz2), ind, block, found)
+            IF (.NOT. found) CYCLE
+            components(:, :, :, xyz2) = block
+            DEALLOCATE (block)
+         END DO
+         ALLOCATE (mixed(sizes(1), sizes(2), sizes(3)))
+         DO xyz = 1, 3
+            mixed(:, :, :) = rmap(xyz, 1)*components(:, :, :, 1) + &
+                             rmap(xyz, 2)*components(:, :, :, 2) + &
+                             rmap(xyz, 3)*components(:, :, :, 3)
+            CALL dbt_put_block(out(xyz), ind, SHAPE(mixed), mixed)
+         END DO
+         DEALLOCATE (components, mixed)
+      END DO
+      CALL dbt_iterator_stop(iter)
+
+      DO xyz = 1, 3
+         CALL dbt_finalize(out(xyz))
+      END DO
+   END SUBROUTINE hfx_3c_mix_deriv_blocks
 
 ! **************************************************************************************************
 !> \brief Expand representative 3-center integral images over their image orbits.
