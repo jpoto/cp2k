@@ -1314,7 +1314,10 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: grad_mode
 
       CPASSERT(cached_layout%chunk_static_tensors_active)
-      IF (cached_layout%chunk_static_grad_mode == grad_mode) RETURN
+      ! Always reset the static leaves, even when the differentiability mode is
+      ! unchanged. torch_tensor_set_requires_grad also clears the accumulated
+      ! gradient, so repeated evaluations in the same mode cannot add stale
+      ! adjoints from a previous forward/backward pass.
       CALL torch_tensor_set_requires_grad(cached_layout%chunk_grid_coords_t, grad_mode >= 2)
       CALL torch_tensor_set_requires_grad(cached_layout%chunk_grid_weights_t, grad_mode >= 1)
       CALL torch_tensor_set_requires_grad(cached_layout%chunk_atomic_grid_weights_t, &
@@ -3289,58 +3292,23 @@ CONTAINS
       LOGICAL, DIMENSION(:), INTENT(OUT)                 :: included
 
       INTEGER                                            :: iatom, jatom, natom
-      REAL(KIND=dp)                                      :: included_sum, mu, rab, rsum, switch, &
-                                                            total
-      REAL(KIND=dp), DIMENSION(3)                        :: pair
+      REAL(KIND=dp)                                      :: included_sum, rsum
       REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2))  :: partition_atom_coords
-      REAL(KIND=dp), DIMENSION(SIZE(atom_coords, 2))     :: distances, raw_weights
+      REAL(KIND=dp), DIMENSION(SIZE(atom_coords, 2))     :: distances
 
       natom = SIZE(atom_coords, 2)
       CPASSERT(SIZE(weights) == natom)
       CPASSERT(SIZE(included) == natom)
 
-      weights = 0.0_dp
-      included = .FALSE.
-      raw_weights = 1.0_dp
+      ! smooth_atom_partition already performs the Becke product and full
+      ! normalization (including the degenerate nearest-atom fallback). Reuse it
+      ! and only add the sparse-support mask and the renormalization over the
+      ! retained atoms.
+      CALL smooth_atom_partition(grid_point, atom_coords, cell, weights, &
+                                 partition_atom_coords, distances)
+      included = weights > smooth_partition_eps
+      included_sum = SUM(weights, MASK=included)
 
-      DO iatom = 1, natom
-         partition_atom_coords(:, iatom) = &
-            nearest_atom_image_coordinate(atom_coords(:, iatom), grid_point, cell)
-         distances(iatom) = SQRT(SUM((grid_point - partition_atom_coords(:, iatom))**2))
-      END DO
-
-      DO iatom = 1, natom - 1
-         DO jatom = iatom + 1, natom
-            pair = partition_atom_coords(:, iatom) - partition_atom_coords(:, jatom)
-            rab = SQRT(SUM(pair**2))
-            IF (rab <= layout_tol) CYCLE
-            mu = (distances(iatom) - distances(jatom))/rab
-            mu = MAX(-1.0_dp, MIN(1.0_dp, mu))
-            switch = 0.5_dp*(1.0_dp - becke_shape(mu))
-            raw_weights(iatom) = raw_weights(iatom)*switch
-            raw_weights(jatom) = raw_weights(jatom)*(1.0_dp - switch)
-         END DO
-      END DO
-
-      total = SUM(raw_weights)
-      IF (total > 0.0_dp) THEN
-         weights = raw_weights/total
-         included = weights > smooth_partition_eps
-      ELSE
-         rsum = HUGE(1.0_dp)
-         jatom = 1
-         DO iatom = 1, natom
-            IF (distances(iatom) < rsum) THEN
-               rsum = distances(iatom)
-               jatom = iatom
-            END IF
-         END DO
-         included(jatom) = .TRUE.
-         weights(jatom) = 1.0_dp
-         RETURN
-      END IF
-
-      included_sum = SUM(raw_weights, MASK=included)
       IF (included_sum <= 0.0_dp) THEN
          rsum = HUGE(1.0_dp)
          jatom = 1
@@ -3358,7 +3326,7 @@ CONTAINS
       END IF
 
       DO iatom = 1, natom
-         IF (included(iatom)) weights(iatom) = raw_weights(iatom)/included_sum
+         IF (included(iatom)) weights(iatom) = weights(iatom)/included_sum
       END DO
 
    END SUBROUTINE smooth_partition_weights

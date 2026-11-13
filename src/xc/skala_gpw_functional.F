@@ -822,14 +822,18 @@ CONTAINS
    END SUBROUTINE skala_gpw_eval
 
 ! **************************************************************************************************
-!> \brief Evaluate the derivative of native SKALA XC energy with respect to CP2K's external
-!>        real-space integration-weight multiplier.
+!> \brief Evaluate the native SKALA XC energy density on the real-space grid.
+!>        On return weight_deriv_r holds the unweighted energy density
+!>        sum_atom w_atom * eps_atom, i.e. the quantity xc_density expects before
+!>        the caller multiplies by dvol. Do not interpret it as dE/d(multiplier):
+!>        the optional weights pointer only enters the feature grid weights and is
+!>        expected to be unassociated for the accurate-XCINT force path.
 !> \param weight_deriv_r ...
 !> \param rho_r ...
 !> \param rho_g ...
 !> \param tau ...
 !> \param xc_section ...
-!> \param weights ...
+!> \param weights optional external integration weights (may be unassociated)
 !> \param pw_pool ...
 !> \param particle_set ...
 !> \param cell ...
@@ -932,8 +936,14 @@ CONTAINS
             chunk_max_rows = auto_atom_chunk_max_rows(features, rho_r(1)%pw_grid%para%group)
          END IF
          nsubchunks = 1
-         IF (features%chunk_feature_count > 0 .AND. chunk_max_rows > 0) THEN
-            nsubchunks = skala_gpw_atom_subchunk_count(chunk_max_rows)
+         IF (chunk_max_rows > 0) THEN
+            ! Every rank must enter this collective, including ranks that own no
+            ! atom chunk after the atom blocks were distributed. Skipping it on
+            ! the idle ranks deadlocks the active ranks here while they wait for
+            ! the others to join the subgroup maximum.
+            IF (features%chunk_feature_count > 0) THEN
+               nsubchunks = skala_gpw_atom_subchunk_count(chunk_max_rows)
+            END IF
             CALL rho_r(1)%pw_grid%para%group%max(nsubchunks)
          END IF
          IF (nsubchunks > 1) THEN
@@ -1183,7 +1193,7 @@ CONTAINS
                 grid_coords(3, nflat_tot), grid_weights(nflat_tot), &
                 atomic_grid_weights(nflat_tot), atomic_grid_sizes(nblocks), &
                 coarse_0_atomic_coords(3, nblocks), &
-                atomic_grid_size_bound_shape(0, nflat_tot), weight_b(na, nr))
+                atomic_grid_size_bound_shape(0, nflat), weight_b(na, nr))
       density = 0.0_dp
       grad = 0.0_dp
       kin = 0.0_dp
