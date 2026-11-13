@@ -128,6 +128,7 @@ MODULE hfx_ri_kp
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'hfx_ri_kp'
 
    LOGICAL, SAVE, PRIVATE :: image_sym_warned = .FALSE.
+   LOGICAL, SAVE, PRIVATE :: force_gauge_warned = .FALSE.
    ! Fractional-coordinate residual above which the atom mapping is not a symmetry.
    REAL(dp), PARAMETER, PRIVATE :: hfx_image_symmetry_eps = 1.0E-8_dp
 CONTAINS
@@ -1175,13 +1176,20 @@ CONTAINS
          IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0)) THEN
             CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry for forces; set KP_IMAGE_SYMMETRY FALSE")
          END IF
-         ! The force/virial star assembly assumes a cell-only orbit. Reject an
-         ! atom-dependent gauge explicitly instead of producing wrong forces.
+         ! The per-image force sum is not gauge-covariant when the shift differs
+         ! between atoms: the same image contributes to different target images
+         ! for different atom pairs. Compute every image's force here; the
+         ! (dominant) 2c/3c integrals and derivatives remain symmetry-reduced.
          IF (natom > 1) THEN
             DO b_img = 1, nops
                IF (ANY(op_shift(:, 2:natom, b_img) /= &
                        SPREAD(op_shift(:, 1, b_img), 2, natom - 1))) THEN
-                  CPABORT("KP_IMAGE_SYMMETRY: atom-dependent gauge unsupported for forces; set FALSE")
+                  IF (.NOT. force_gauge_warned) THEN
+                     CPWARN("KP_IMAGE_SYMMETRY: atom-dependent gauge; full force image sum")
+                     force_gauge_warned = .TRUE.
+                  END IF
+                  use_image_sym = .FALSE.
+                  EXIT
                END IF
             END DO
          END IF
