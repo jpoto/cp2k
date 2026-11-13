@@ -304,6 +304,8 @@ CONTAINS
       kpsym%apply_symmetry = .TRUE.
       ALLOCATE (kpsym%rot(3, 3, ns), kpsym%xkp(3, ns), kpsym%rotp(ns))
       ALLOCATE (kpsym%f0(natom, ns), kpsym%fcell(3, natom, ns), kpsym%fcell_gauge(3, natom, ns))
+      ALLOCATE (kpsym%sym_error(ns))
+      kpsym%sym_error(:) = 0.0_dp
       ALLOCATE (kpsym%phase_mode(ns))
       kpsym%phase_mode(:) = 0
       kpoint%phases_calibrated = .FALSE.
@@ -328,6 +330,9 @@ CONTAINS
                kpsym%fcell_gauge(1:3, j, nr) = kpsym%fcell(1:3, j, nr) + &
                                                MATMUL(frot, agauge(1:3, j)) - &
                                                agauge(1:3, kpsym%f0(j, nr))
+               diff(1:3) = srot(1:3) - scoord(1:3, kpsym%f0(j, nr)) - &
+                           REAL(kpsym%fcell(1:3, j, nr), KIND=dp)
+               kpsym%sym_error(nr) = MAX(kpsym%sym_error(nr), NORM2(diff(1:3)))
             END DO
             EXIT
          END DO
@@ -360,6 +365,9 @@ CONTAINS
                   kpsym%fcell_gauge(1:3, j, nr) = kpsym%fcell(1:3, j, nr) + &
                                                   MATMUL(frot, agauge(1:3, j)) - &
                                                   agauge(1:3, kpsym%f0(j, nr))
+                  diff(1:3) = srot(1:3) - scoord(1:3, kpsym%f0(j, nr)) - &
+                              REAL(kpsym%fcell(1:3, j, nr), KIND=dp)
+                  kpsym%sym_error(nr) = MAX(kpsym%sym_error(nr), NORM2(diff(1:3)))
                END DO
             END DO
          END DO

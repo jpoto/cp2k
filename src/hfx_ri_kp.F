@@ -128,6 +128,8 @@ MODULE hfx_ri_kp
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'hfx_ri_kp'
 
    LOGICAL, SAVE, PRIVATE :: image_sym_warned = .FALSE.
+   ! Fractional-coordinate residual above which the atom mapping is not a symmetry.
+   REAL(dp), PARAMETER, PRIVATE :: hfx_image_symmetry_eps = 1.0E-8_dp
 CONTAINS
 
 ! **************************************************************************************************
@@ -249,8 +251,7 @@ CONTAINS
          blk_ord_AO, blk_ord_RI, first_AO, first_RI, img_op, img_rep, op_slot
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: op_map
       INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: imaps_3c, op_frac, op_shift
-      LOGICAL                                            :: image_sym_usable, use_3c_image, &
-                                                            use_image_sym
+      LOGICAL :: general_3c, image_sym_check, image_sym_usable, use_3c_image, use_image_sym
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: do_2c_image, do_3c_image, img_inv
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dbcsr_type), ALLOCATABLE, DIMENSION(:)        :: t_2c_op_pot, t_2c_op_RI
@@ -283,6 +284,7 @@ CONTAINS
       hfx_section => section_vals_get_subs_vals(qs_env%input, "DFT%XC%HF%RI")
       use_image_sym = .FALSE.
       CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY", l_val=use_image_sym)
+      CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY_CHECK", l_val=image_sym_check)
       ALLOCATE (img_rep(nimg), img_op(nimg), img_inv(nimg), do_2c_image(nimg))
       img_rep(:) = [(i_img, i_img=1, nimg)]
       img_op(:) = 0
@@ -294,19 +296,11 @@ CONTAINS
                                        img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot, &
                                        inversion_pairs=.FALSE.)
          IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
-            use_image_sym = .FALSE.
-         ELSE
-            CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
-            IF (.NOT. image_sym_usable) use_image_sym = .FALSE.
+            CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry for 2c integrals; set KP_IMAGE_SYMMETRY FALSE")
          END IF
-         IF (.NOT. use_image_sym) THEN
-            IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: no usable symmetry for 2c integrals; full image sum")
-               image_sym_warned = .TRUE.
-            END IF
-            img_rep(:) = [(i_img, i_img=1, nimg)]
-            img_op(:) = 0
-            img_inv(:) = .FALSE.
+         CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
+         IF (.NOT. image_sym_usable) THEN
+            CPABORT("KP_IMAGE_SYMMETRY: missing basis rotations; set KP_IMAGE_SYMMETRY FALSE")
          END IF
       END IF
       do_2c_image(:) = .TRUE.
@@ -317,19 +311,21 @@ CONTAINS
       END IF
 
       use_3c_image = .FALSE.
+      general_3c = .FALSE.
       ALLOCATE (do_3c_image(nimg))
       do_3c_image(:) = .TRUE.
       IF (use_image_sym) THEN
          CALL hfx_3c_plan(kpoints, ri_data, natom, nops, op_frac, op_map, op_shift, op_slot, &
                           img_rep, img_op, nimg, image_sym_usable, imaps_3c, nblk_RI_3c, nblk_AO_3c, &
                           blk_atom_RI, blk_off_RI, blk_ord_RI, first_RI, &
-                          blk_atom_AO, blk_off_AO, blk_ord_AO, first_AO)
-         IF (image_sym_usable) THEN
-            use_3c_image = .TRUE.
-            DO i_img = 1, nimg
-               do_3c_image(i_img) = (img_rep(i_img) == i_img)
-            END DO
+                          blk_atom_AO, blk_off_AO, blk_ord_AO, first_AO, general_3c, image_sym_check)
+         IF (.NOT. image_sym_usable) THEN
+            CPABORT("KP_IMAGE_SYMMETRY: 3c image orbit not usable; set KP_IMAGE_SYMMETRY FALSE")
          END IF
+         use_3c_image = .TRUE.
+         DO i_img = 1, nimg
+            do_3c_image(i_img) = (img_rep(i_img) == i_img)
+         END DO
       END IF
 
       !Calculate the integrals
@@ -346,7 +342,9 @@ CONTAINS
       IF (use_3c_image) THEN
          CALL hfx_expand_3c_images(kpoints, ri_data, nimg, natom, img_rep, img_op, op_slot, &
                                    imaps_3c, nblk_RI_3c, blk_atom_RI, blk_off_RI, blk_atom_AO, &
-                                   blk_off_AO, t_3c_int(1, :), ri_data%filter_eps)
+                                   blk_off_AO, t_3c_int(1, :), ri_data%filter_eps, cell, op_frac, &
+                                   op_map, op_shift, nops, blk_ord_RI, first_RI, blk_ord_AO, &
+                                   first_AO, general_3c)
       END IF
       DEALLOCATE (img_rep, img_op, img_inv, do_2c_image, do_3c_image)
       DEALLOCATE (op_slot, op_frac, op_map, op_shift)
@@ -641,14 +639,7 @@ CONTAINS
          CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
                                        img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot)
          IF (.NOT. image_sym_usable) THEN
-            IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: no usable symmetry; full image sum")
-               image_sym_warned = .TRUE.
-            END IF
-            use_image_sym = .FALSE.
-            img_rep(:) = [(b_img, b_img=1, nimg)]
-            img_op(:) = 0
-            img_inv(:) = .FALSE.
+            CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry; set KP_IMAGE_SYMMETRY FALSE")
          END IF
       END IF
       img_computed(:) = (img_rep(:) == [(b_img, b_img=1, nimg)])
@@ -753,12 +744,7 @@ CONTAINS
          CALL hfx_check_block_coverage(qs_env, kpoints, sparsity_pattern, nimg, natom, img_rep, &
                                        img_op, img_inv, op_frac, op_map, op_shift, usable=image_sym_usable)
          IF (.NOT. image_sym_usable) THEN
-            IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: representative orbits do not cover all blocks; full image sum")
-               image_sym_warned = .TRUE.
-            END IF
-            use_image_sym = .FALSE.
-            img_computed(:) = .TRUE.
+            CPABORT("KP_IMAGE_SYMMETRY: orbits do not cover all blocks; set KP_IMAGE_SYMMETRY FALSE")
          END IF
       END IF
       !Get all the required tensors in the subgroups
@@ -5135,20 +5121,22 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'precalc_derivatives'
 
-      INTEGER                                            :: handle, handle2, i_img, i_mem, i_RI, &
-                                                            i_xyz, iatom, n_mem, natom, nblks_RI, &
-                                                            ncell_RI, nimg, nkind, nops, nthreads
+      INTEGER :: handle, handle2, i_img, i_mem, i_RI, i_xyz, iatom, n_mem, natom, nblk_AO_3c, &
+         nblk_RI_3c, nblks_RI, ncell_RI, nimg, nkind, nops, nthreads
       INTEGER(int_8)                                     :: nze
-      INTEGER, ALLOCATABLE, DIMENSION(:) :: bsizes_RI_ext, bsizes_RI_ext_split, dist_AO_1, &
-         dist_AO_2, dist_RI, dist_RI_ext, dummy_end, dummy_start, end_blocks, img_op, img_rep, &
-         op_slot, start_blocks
+      INTEGER, ALLOCATABLE, DIMENSION(:) :: blk_atom_AO, blk_atom_RI, blk_off_AO, blk_off_RI, &
+         blk_ord_AO, blk_ord_RI, bsizes_RI_ext, bsizes_RI_ext_split, dist_AO_1, dist_AO_2, &
+         dist_RI, dist_RI_ext, dummy_end, dummy_start, end_blocks, first_AO, first_RI, img_op, &
+         img_rep, op_slot, start_blocks
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: op_map
-      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: op_frac, op_shift
+      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: imaps_3c, op_frac, op_shift
       INTEGER, DIMENSION(3)                              :: pcoord, pdims
       INTEGER, DIMENSION(:), POINTER                     :: col_bsize, row_bsize
-      LOGICAL                                            :: image_sym_usable, use_image_sym
-      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: do_deriv_image, img_inv
-      REAL(dp)                                           :: occ
+      LOGICAL :: general_3c_deriv, image_sym_check, image_sym_usable, use_3c_deriv_image, &
+         use_image_sym
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: do_3c_deriv_image, do_deriv_image, &
+                                                            img_inv
+      REAL(dp)                                           :: build_filter_eps, occ
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dbcsr_distribution_type)                      :: dbcsr_dist
       TYPE(dbcsr_type)                                   :: dbcsr_template
@@ -5189,6 +5177,60 @@ CONTAINS
       CALL get_particle_set(particle_set, qs_kind_set, basis=basis_set_RI)
       CALL basis_set_list_setup(basis_set_AO, ri_data%orb_basis_type, qs_kind_set)
       CALL get_particle_set(particle_set, qs_kind_set, basis=basis_set_AO)
+
+      !Image symmetry for the 2-center derivatives.
+      CALL hfx_ri_basis_rotations(qs_env, ri_data)
+      hfx_section => section_vals_get_subs_vals(qs_env%input, "DFT%XC%HF%RI")
+      use_image_sym = .FALSE.
+      CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY", l_val=use_image_sym)
+      CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY_CHECK", l_val=image_sym_check)
+      ALLOCATE (img_rep(nimg), img_op(nimg), img_inv(nimg), do_deriv_image(nimg))
+      img_rep(:) = [(i_img, i_img=1, nimg)]
+      img_op(:) = 0
+      img_inv(:) = .FALSE.
+      ALLOCATE (op_slot(1), op_frac(3, 3, 1), op_map(1, 1), op_shift(3, 1, 1))
+      image_sym_usable = .FALSE.
+      IF (use_image_sym) THEN
+         CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
+                                       img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot, &
+                                       inversion_pairs=.FALSE.)
+         IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
+            CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry for 2c derivatives; set KP_IMAGE_SYMMETRY FALSE")
+         END IF
+         CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
+         IF (.NOT. image_sym_usable) THEN
+            CPABORT("KP_IMAGE_SYMMETRY: missing basis rotations; set KP_IMAGE_SYMMETRY FALSE")
+         END IF
+      END IF
+      do_deriv_image(:) = .TRUE.
+      IF (use_image_sym) THEN
+         DO i_img = 1, nimg
+            do_deriv_image(i_img) = (img_rep(i_img) == i_img)
+         END DO
+      END IF
+
+      use_3c_deriv_image = .FALSE.
+      general_3c_deriv = .FALSE.
+      ALLOCATE (do_3c_deriv_image(nimg))
+      do_3c_deriv_image(:) = .TRUE.
+      IF (use_image_sym) THEN
+         CALL hfx_3c_plan(kpoints, ri_data, natom, nops, op_frac, op_map, op_shift, op_slot, &
+                          img_rep, img_op, nimg, image_sym_usable, imaps_3c, nblk_RI_3c, nblk_AO_3c, &
+                          blk_atom_RI, blk_off_RI, blk_ord_RI, first_RI, &
+                          blk_atom_AO, blk_off_AO, blk_ord_AO, first_AO, general_3c_deriv, &
+                          image_sym_check)
+         IF (.NOT. image_sym_usable) THEN
+            CPABORT("KP_IMAGE_SYMMETRY: 3c derivative orbit not usable; set KP_IMAGE_SYMMETRY FALSE")
+         END IF
+         use_3c_deriv_image = .TRUE.
+         DO i_img = 1, nimg
+            do_3c_deriv_image(i_img) = (img_rep(i_img) == i_img)
+         END DO
+      END IF
+      ! Keep sub-threshold representative blocks so rotationally equivalent images can retain
+      ! them; every image is filtered at the regular threshold after the expansion.
+      build_filter_eps = ri_data%filter_eps
+      IF (use_3c_deriv_image) build_filter_eps = 1.0E-3_dp*ri_data%filter_eps
 
       !Dealing with the 3c derivatives
       nthreads = 1
@@ -5252,12 +5294,13 @@ CONTAINS
       END DO
 
       DO i_mem = 1, n_mem
-         CALL build_3c_derivatives(t_3c_der_AO_prv, t_3c_der_RI_prv, ri_data%filter_eps, qs_env, &
+         CALL build_3c_derivatives(t_3c_der_AO_prv, t_3c_der_RI_prv, build_filter_eps, qs_env, &
                                    nl_3c, basis_set_AO, basis_set_AO, basis_set_RI, &
                                    ri_data%ri_metric, der_eps=ri_data%eps_schwarz_forces, op_pos=2, &
                                    do_kpoints=.TRUE., do_hfx_kpoints=.TRUE., &
                                    bounds_k=[start_blocks(i_mem), end_blocks(i_mem)], &
-                                   RI_range=ri_data%kp_RI_range, img_to_RI_cell=ri_data%img_to_RI_cell)
+                                   RI_range=ri_data%kp_RI_range, img_to_RI_cell=ri_data%img_to_RI_cell, &
+                                   do_image=do_3c_deriv_image)
 
          CALL timeset(routineN//"_cpy", handle2)
          !We go from (mu^0 sigma^i | P^j) to (P^i| sigma^j mu^0) and finally to (P^i| mu^0 sigma^j)
@@ -5268,7 +5311,7 @@ CONTAINS
                IF (nze > 0) THEN
                   CALL dbt_copy(t_3c_der_AO_prv(i_img, 1, i_xyz), t_3c_template, &
                                 order=[3, 2, 1], move_data=.TRUE.)
-                  CALL dbt_filter(t_3c_template, ri_data%filter_eps)
+                  CALL dbt_filter(t_3c_template, build_filter_eps)
                   CALL dbt_copy(t_3c_template, t_3c_der_AO(i_img, i_xyz), &
                                 order=[1, 3, 2], move_data=.TRUE., summation=.TRUE.)
                END IF
@@ -5278,7 +5321,7 @@ CONTAINS
                IF (nze > 0) THEN
                   CALL dbt_copy(t_3c_der_RI_prv(i_img, 1, i_xyz), t_3c_template, &
                                 order=[3, 2, 1], move_data=.TRUE.)
-                  CALL dbt_filter(t_3c_template, ri_data%filter_eps)
+                  CALL dbt_filter(t_3c_template, build_filter_eps)
                   CALL dbt_copy(t_3c_template, t_3c_der_RI(i_img, i_xyz), &
                                 order=[1, 3, 2], move_data=.TRUE., summation=.TRUE.)
                END IF
@@ -5296,6 +5339,19 @@ CONTAINS
          END DO
       END DO
       DEALLOCATE (t_3c_der_RI_prv, t_3c_der_AO_prv)
+
+      IF (use_3c_deriv_image) THEN
+         CALL hfx_expand_3c_deriv_images(kpoints, cell, ri_data, nimg, natom, img_rep, img_op, &
+                                         op_frac, op_slot, imaps_3c, nblk_RI_3c, blk_atom_RI, &
+                                         blk_off_RI, blk_atom_AO, blk_off_AO, t_3c_der_AO, &
+                                         ri_data%filter_eps, op_map, op_shift, nops, blk_ord_RI, &
+                                         first_RI, blk_ord_AO, first_AO, general_3c_deriv)
+         CALL hfx_expand_3c_deriv_images(kpoints, cell, ri_data, nimg, natom, img_rep, img_op, &
+                                         op_frac, op_slot, imaps_3c, nblk_RI_3c, blk_atom_RI, &
+                                         blk_off_RI, blk_atom_AO, blk_off_AO, t_3c_der_RI, &
+                                         ri_data%filter_eps, op_map, op_shift, nops, blk_ord_RI, &
+                                         first_RI, blk_ord_AO, first_AO, general_3c_deriv)
+      END IF
 
       !Reorder 3c derivatives to be consistant with ints
       CALL reorder_3c_derivs(t_3c_der_RI, ri_data)
@@ -5323,44 +5379,6 @@ CONTAINS
       END DO
       CALL dbcsr_release(dbcsr_template)
 
-      !Image symmetry for the 2-center derivatives.
-      CALL hfx_ri_basis_rotations(qs_env, ri_data)
-      hfx_section => section_vals_get_subs_vals(qs_env%input, "DFT%XC%HF%RI")
-      use_image_sym = .FALSE.
-      CALL section_vals_val_get(hfx_section, "KP_IMAGE_SYMMETRY", l_val=use_image_sym)
-      ALLOCATE (img_rep(nimg), img_op(nimg), img_inv(nimg), do_deriv_image(nimg))
-      img_rep(:) = [(i_img, i_img=1, nimg)]
-      img_op(:) = 0
-      img_inv(:) = .FALSE.
-      ALLOCATE (op_slot(1), op_frac(3, 3, 1), op_map(1, 1), op_shift(3, 1, 1))
-      image_sym_usable = .FALSE.
-      IF (use_image_sym) THEN
-         CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
-                                       img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot, &
-                                       inversion_pairs=.FALSE.)
-         IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
-            use_image_sym = .FALSE.
-         ELSE
-            CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
-            IF (.NOT. image_sym_usable) use_image_sym = .FALSE.
-         END IF
-         IF (.NOT. use_image_sym) THEN
-            IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: no usable symmetry for 2c derivatives; full image sum")
-               image_sym_warned = .TRUE.
-            END IF
-            img_rep(:) = [(i_img, i_img=1, nimg)]
-            img_op(:) = 0
-            img_inv(:) = .FALSE.
-         END IF
-      END IF
-      do_deriv_image(:) = .TRUE.
-      IF (use_image_sym) THEN
-         DO i_img = 1, nimg
-            do_deriv_image(i_img) = (img_rep(i_img) == i_img)
-         END DO
-      END IF
-
       !HFX potential derivatives
       CALL build_2c_neighbor_lists(nl_2c, basis_set_RI, basis_set_RI, ri_data%hfx_pot, &
                                    "HFX_2c_nl_pot", qs_env, sym_ij=.FALSE., dist_2d=dist_2d)
@@ -5384,8 +5402,15 @@ CONTAINS
          CALL hfx_expand_2c_deriv_images(kpoints, cell, nimg, natom, img_rep, img_op, op_frac, op_map, &
                                          op_shift, op_slot, mat_der_metric, ri_data%filter_eps_2c)
       END IF
-      DEALLOCATE (img_rep, img_op, img_inv, do_deriv_image)
+      DEALLOCATE (img_rep, img_op, img_inv, do_deriv_image, do_3c_deriv_image)
       DEALLOCATE (op_slot, op_frac, op_map, op_shift)
+      IF (ALLOCATED(imaps_3c)) DEALLOCATE (imaps_3c)
+      IF (ALLOCATED(blk_atom_RI)) THEN
+         DEALLOCATE (blk_atom_RI, blk_off_RI, blk_ord_RI, first_RI)
+      END IF
+      IF (ALLOCATED(blk_atom_AO)) THEN
+         DEALLOCATE (blk_atom_AO, blk_off_AO, blk_ord_AO, first_AO)
+      END IF
 
       !Get into extended RI basis and tensor format
       DO i_xyz = 1, 3
@@ -6036,6 +6061,111 @@ CONTAINS
    END SUBROUTINE hfx_expand_2c_deriv_images
 
 ! **************************************************************************************************
+!> \brief Expand representative 3-center derivative images and rotate the Cartesian components.
+!> \param kpoints ...
+!> \param cell ...
+!> \param ri_data ...
+!> \param nimg ...
+!> \param natom ...
+!> \param img_rep ...
+!> \param img_op ...
+!> \param op_frac ...
+!> \param op_slot ...
+!> \param imaps ...
+!> \param nblk_RI ...
+!> \param blk_atom_RI ...
+!> \param blk_off_RI ...
+!> \param blk_atom_AO ...
+!> \param blk_off_AO ...
+!> \param t3c_der ...
+!> \param filter_eps ...
+! **************************************************************************************************
+   SUBROUTINE hfx_expand_3c_deriv_images(kpoints, cell, ri_data, nimg, natom, img_rep, img_op, &
+                                         op_frac, op_slot, imaps, nblk_RI, blk_atom_RI, blk_off_RI, &
+                                         blk_atom_AO, blk_off_AO, t3c_der, filter_eps, op_map, &
+                                         op_shift, nops, blk_ord_RI, atom_first_RI, blk_ord_AO, &
+                                         atom_first_AO, general)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN) :: nimg, natom, img_rep(:), img_op(:), op_frac(:, :, :), op_slot(:), &
+         imaps(:, :, :), nblk_RI, blk_atom_RI(:), blk_off_RI(:), blk_atom_AO(:), blk_off_AO(:)
+      TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: t3c_der
+      REAL(dp), INTENT(IN)                               :: filter_eps
+      INTEGER, OPTIONAL :: op_map(:, :), op_shift(:, :, :), nops, blk_ord_RI(:), &
+         atom_first_RI(:), blk_ord_AO(:), atom_first_AO(:)
+      LOGICAL, OPTIONAL                                  :: general
+
+      INTEGER                                            :: b, g, i, xyz, xyz2
+      REAL(dp)                                           :: rmap(3, 3)
+      TYPE(dbt_type)                                     :: out, tmp, work(3)
+
+      IF (PRESENT(general)) THEN
+         IF (general) THEN
+            CALL hfx_expand_3c_deriv_images_general(kpoints, cell, ri_data, nimg, natom, img_rep, &
+                                                    op_frac, op_map, op_shift, op_slot, nops, nblk_RI, &
+                                                    SIZE(blk_atom_AO), blk_atom_RI, blk_off_RI, &
+                                                    blk_atom_AO, blk_off_AO, blk_ord_RI, atom_first_RI, &
+                                                    blk_ord_AO, atom_first_AO, t3c_der, filter_eps)
+            DO i = 1, nimg
+               IF (img_rep(i) /= i) CYCLE
+               DO xyz = 1, 3
+                  CALL dbt_filter(t3c_der(i, xyz), filter_eps)
+               END DO
+            END DO
+            RETURN
+         END IF
+      END IF
+
+      DO b = 1, nimg
+         IF (img_rep(b) /= b) CYCLE
+         DO xyz = 1, 3
+            CALL dbt_create(t3c_der(b, xyz), work(xyz))
+         END DO
+         CALL dbt_create(work(1), out)
+         CALL dbt_create(work(1), tmp)
+         DO i = 1, nimg
+            IF (img_rep(i) /= b) CYCLE
+            IF (i == b) CYCLE
+            g = img_op(i)
+            rmap(:, :) = MATMUL(cell%hmat, MATMUL(TRANSPOSE(REAL(op_frac(:, :, g), dp)), cell%h_inv))
+            DO xyz = 1, 3
+               CALL dbt_copy(t3c_der(b, xyz), work(xyz))
+               CALL hfx_rotate_3c_work(work(xyz), kpoints, ri_data, g, op_slot, nblk_RI, &
+                                       blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
+            END DO
+            DO xyz = 1, 3
+               DO xyz2 = 1, 3
+                  CALL dbt_copy(work(xyz2), tmp)
+                  CALL dbt_scale(tmp, rmap(xyz, xyz2))
+                  IF (xyz2 == 1) THEN
+                     CALL dbt_copy(tmp, out, summation=.FALSE.)
+                  ELSE
+                     CALL dbt_copy(tmp, out, summation=.TRUE.)
+                  END IF
+               END DO
+               CALL dbt_reshape(out, t3c_der(i, xyz), summation=.FALSE., move_data=.TRUE., &
+                                index_map=imaps(:, :, g))
+               CALL dbt_finalize(t3c_der(i, xyz))
+               CALL dbt_filter(t3c_der(i, xyz), filter_eps)
+            END DO
+         END DO
+         CALL dbt_destroy(out)
+         CALL dbt_destroy(tmp)
+         DO xyz = 1, 3
+            CALL dbt_destroy(work(xyz))
+         END DO
+      END DO
+      ! Representatives were built with the looser threshold used for the expansion.
+      DO i = 1, nimg
+         IF (img_rep(i) /= i) CYCLE
+         DO xyz = 1, 3
+            CALL dbt_filter(t3c_der(i, xyz), filter_eps)
+         END DO
+      END DO
+   END SUBROUTINE hfx_expand_3c_deriv_images
+
+! **************************************************************************************************
 !> \brief Build split-block -> (atom, sgf offset, within-atom block ordinal) maps.
 !> \param nblk ...
 !> \param bsizes_split ...
@@ -6146,13 +6276,15 @@ CONTAINS
    SUBROUTINE hfx_3c_plan(kpoints, ri_data, natom, nops, op_frac, op_map, op_shift, op_slot, &
                           img_rep, img_op, nimg, ready, imaps, nblk_RI, nblk_AO, &
                           blk_atom_RI, blk_off_RI, blk_ord_RI, atom_first_RI, &
-                          blk_atom_AO, blk_off_AO, blk_ord_AO, atom_first_AO)
+                          blk_atom_AO, blk_off_AO, blk_ord_AO, atom_first_AO, general, check)
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
       INTEGER, INTENT(IN)                                :: natom, nops, op_frac(:, :, :), &
                                                             op_map(:, :), op_shift(:, :, :), &
                                                             op_slot(:), img_rep(:), img_op(:), nimg
       LOGICAL, INTENT(OUT)                               :: ready
+      LOGICAL, INTENT(OUT), OPTIONAL                     :: general
+      LOGICAL, INTENT(IN), OPTIONAL                      :: check
       INTEGER, ALLOCATABLE, DIMENSION(:, :, :), &
          INTENT(OUT)                                     :: imaps
       INTEGER, INTENT(OUT)                               :: nblk_RI, nblk_AO
@@ -6189,6 +6321,28 @@ CONTAINS
          IF (img_rep(img) < 1 .OR. img_op(img) < 1 .OR. img_op(img) > nops) RETURN
       END DO
 
+      ! A gauge shift that differs between atoms couples the RI cell index and the
+      ! target image, so it needs the general per-block remap in the expansion.
+      IF (PRESENT(general)) THEN
+         general = .FALSE.
+         IF (natom > 1) THEN
+            DO g = 1, nops
+               IF (ANY(op_shift(:, 2:natom, g) /= SPREAD(op_shift(:, 1, g), 2, natom - 1))) THEN
+                  general = .TRUE.
+                  EXIT
+               END IF
+            END DO
+         END IF
+      END IF
+      IF (PRESENT(general)) THEN
+         IF (general) THEN
+            CALL hfx_3c_plan_general(ready, kpoints, ri_data, natom, nops, op_frac, op_map, &
+                                     op_shift, op_slot, img_rep, nimg, nblk_RI, blk_atom_RI, &
+                                     blk_ord_RI, atom_first_RI, check)
+            RETURN
+         END IF
+      END IF
+
       DO g = 1, nops
          is_used = .FALSE.
          DO img = 1, nimg
@@ -6196,7 +6350,11 @@ CONTAINS
             IF (img_op(img) == g) is_used = .TRUE.
          END DO
          IF (.NOT. is_used) CYCLE
-         IF (ANY(op_shift(:, :, g) /= 0)) RETURN
+         ! A common gauge shift of all atoms is a pure origin translation: it cancels in
+         ! the atom-pair and RI-cell differences, so the image orbit stays valid.
+         IF (natom > 1) THEN
+            IF (ANY(op_shift(:, 2:natom, g) /= SPREAD(op_shift(:, 1, g), 2, natom - 1))) RETURN
+         END IF
          slot = op_slot(g)
          IF (slot > 0) THEN
             DO iatom = 1, natom
@@ -6234,6 +6392,354 @@ CONTAINS
       END DO
       ready = .TRUE.
    END SUBROUTINE hfx_3c_plan
+
+! **************************************************************************************************
+!> \brief Validate the general (atom-dependent gauge) case for the 3c image expansion.
+!>        Every block of a representative must map to an image inside the representative's orbit
+!>        and every shifted RI cell must stay inside the finite RI-cell set. Otherwise the caller
+!>        falls back to the full image sum.
+! **************************************************************************************************
+   SUBROUTINE hfx_3c_plan_general(ready, kpoints, ri_data, natom, nops, op_frac, op_map, &
+                                  op_shift, op_slot, img_rep, nimg, nblk_RI, blk_atom_RI, &
+                                  blk_ord_RI, atom_first_RI, check)
+      LOGICAL, INTENT(OUT)                               :: ready
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN)                                :: natom, nops, op_frac(:, :, :), &
+                                                            op_map(:, :), op_shift(:, :, :), &
+                                                            op_slot(:), img_rep(:), nimg, nblk_RI, &
+                                                            blk_atom_RI(:), blk_ord_RI(:), &
+                                                            atom_first_RI(:)
+      LOGICAL, INTENT(IN), OPTIONAL                      :: check
+
+      INTEGER                                            :: a, b, g, iatom, img, jatom, kc, kc2, &
+                                                            kind, m, nblk1, rb, slot, ta, tgt_rb
+      INTEGER, DIMENSION(3)                              :: bcell, cell, ycell
+      INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+      LOGICAL                                            :: check_prv, found
+
+      check_prv = .FALSE.
+      IF (PRESENT(check)) check_prv = check
+
+      ready = .FALSE.
+      CALL get_kpoint_info(kpoints, index_to_cell=index_to_cell, cell_to_index=cell_to_index)
+      nblk1 = ri_data%ncell_RI*nblk_RI
+
+      ! Rotation matrices are required for every atom kind used by an operation.
+      DO g = 1, nops
+         slot = op_slot(g)
+         IF (slot <= 0) CYCLE
+         DO iatom = 1, natom
+            kind = kpoints%atype(iatom)
+            IF (.NOT. ASSOCIATED(kpoints%kind_rotmat(slot, kind)%rmat)) RETURN
+            IF (.NOT. ASSOCIATED(kpoints%kind_rotmat_ri(slot, kind)%rmat)) RETURN
+         END DO
+      END DO
+
+      ! The exhaustive closure sweeps are opt-in: the exactness check in
+      ! hfx_image_symmetry_setup already guarantees a valid mapping.
+      IF (check_prv) THEN
+         ! Atom-pair images must stay inside the representative's image orbit.
+         DO b = 1, nimg
+            IF (img_rep(b) /= b) CYCLE
+            bcell = index_to_cell(:, b)
+            DO g = 1, nops
+               DO a = 1, natom
+                  DO jatom = 1, natom
+                     ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + &
+                             op_shift(:, jatom, g) - op_shift(:, a, g)
+                     CALL hfx_image_from_cell(kpoints, ycell, img, found)
+                     IF (.NOT. found .OR. img < 1 .OR. img > nimg) RETURN
+                     IF (img /= b .AND. img_rep(img) /= b) RETURN
+                  END DO
+               END DO
+            END DO
+         END DO
+
+         ! Shifted extended-RI cells must stay inside the finite RI-cell set.
+         DO g = 1, nops
+            DO a = 1, natom
+               DO m = 1, nblk1
+                  kc = (m - 1)/nblk_RI + 1
+                  rb = m - (kc - 1)*nblk_RI
+                  ta = op_map(blk_atom_RI(rb), g)
+                  tgt_rb = atom_first_RI(ta) + blk_ord_RI(rb)
+                  IF (tgt_rb < 1 .OR. tgt_rb > nblk_RI) RETURN
+                  IF (ri_data%bsizes_RI_split(tgt_rb) /= ri_data%bsizes_RI_split(rb)) RETURN
+                  cell = index_to_cell(:, ri_data%RI_cell_to_img(kc))
+                  ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), cell) + &
+                          op_shift(:, blk_atom_RI(rb), g) - op_shift(:, a, g)
+                  IF (ANY(ycell < LBOUND(cell_to_index)) .OR. ANY(ycell > UBOUND(cell_to_index))) RETURN
+                  img = cell_to_index(ycell(1), ycell(2), ycell(3))
+                  IF (img < 1 .OR. img > SIZE(ri_data%img_to_RI_cell)) RETURN
+                  kc2 = ri_data%img_to_RI_cell(img)
+                  IF (kc2 < 1 .OR. kc2 > ri_data%ncell_RI) RETURN
+               END DO
+            END DO
+         END DO
+      END IF
+
+      ready = .TRUE.
+   END SUBROUTINE hfx_3c_plan_general
+
+! **************************************************************************************************
+!> \brief Build the extended-RI source->target block map for one operation and one AO anchor atom.
+!>        The anchor atom contributes the `-op_shift(atom)` term of the coupled cell/atom remap.
+! **************************************************************************************************
+   SUBROUTINE hfx_3c_general_ri_map(kpoints, ri_data, g, op_frac, op_map, op_shift, si, &
+                                    nblk_RI, blk_atom_RI, blk_ord_RI, atom_first_RI, map1)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN) :: g, op_frac(:, :, :), op_map(:, :), op_shift(:, :, :), si(:), nblk_RI, &
+         blk_atom_RI(:), blk_ord_RI(:), atom_first_RI(:)
+      INTEGER, INTENT(OUT)                               :: map1(:)
+
+      INTEGER                                            :: img, kc, kc2, m, nblk1, rb, ta, tgt_rb
+      INTEGER, DIMENSION(3)                              :: cell, ycell
+      INTEGER, DIMENSION(:, :), POINTER                  :: index_to_cell
+      INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
+
+      CALL get_kpoint_info(kpoints, index_to_cell=index_to_cell, cell_to_index=cell_to_index)
+      nblk1 = ri_data%ncell_RI*nblk_RI
+      DO m = 1, nblk1
+         kc = (m - 1)/nblk_RI + 1
+         rb = m - (kc - 1)*nblk_RI
+         ta = op_map(blk_atom_RI(rb), g)
+         tgt_rb = atom_first_RI(ta) + blk_ord_RI(rb)
+         cell = index_to_cell(:, ri_data%RI_cell_to_img(kc))
+         ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), cell) + &
+                 op_shift(:, blk_atom_RI(rb), g) - si
+         img = cell_to_index(ycell(1), ycell(2), ycell(3))
+         kc2 = ri_data%img_to_RI_cell(img)
+         map1(m) = (kc2 - 1)*nblk_RI + tgt_rb
+      END DO
+   END SUBROUTINE hfx_3c_general_ri_map
+
+! **************************************************************************************************
+!> \brief General 3c image expansion for an atom-dependent gauge shift. Blocks are routed to the
+!>        image selected by their own atom pair and each target block is written exactly once.
+! **************************************************************************************************
+   SUBROUTINE hfx_expand_3c_images_general(kpoints, cell, ri_data, nimg, natom, img_rep, &
+                                           op_frac, op_map, op_shift, op_slot, nops, nblk_RI, &
+                                           nblk_AO, blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO, &
+                                           blk_ord_RI, atom_first_RI, blk_ord_AO, atom_first_AO, &
+                                           t3c, filter_eps)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN) :: nimg, natom, img_rep(:), op_frac(:, :, :), op_map(:, :), &
+         op_shift(:, :, :), op_slot(:), nops, nblk_RI, nblk_AO, blk_atom_RI(:), blk_off_RI(:), &
+         blk_atom_AO(:), blk_off_AO(:), blk_ord_RI(:), atom_first_RI(:), blk_ord_AO(:), &
+         atom_first_AO(:)
+      TYPE(dbt_type), DIMENSION(:), INTENT(INOUT)        :: t3c
+      REAL(dp), INTENT(IN)                               :: filter_eps
+
+      INTEGER                                            :: b, first, g, hi, iatom, img, jatom, jb, &
+                                                            last, lo, mdim, nblk1, t
+      INTEGER, DIMENSION(2, 3)                           :: bounds
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: map1
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: imap
+      INTEGER, DIMENSION(3)                              :: bcell, si, ycell
+      LOGICAL                                            :: anymask, found
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: started
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :)              :: gmask
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: written
+      TYPE(dbt_type)                                     :: work
+
+      nblk1 = ri_data%ncell_RI*nblk_RI
+      mdim = MAX(nblk1, nblk_AO)
+      ALLOCATE (map1(nblk1), imap(mdim, 3), gmask(1, nblk_AO), written(nimg, natom, natom), &
+                started(nimg))
+      bounds(1, :) = [0, 0, 0]
+      bounds(2, :) = [HUGE(bounds(1, 1)), HUGE(bounds(1, 1)), HUGE(bounds(1, 1))]
+
+      DO b = 1, nimg
+         IF (img_rep(b) /= b) CYCLE
+         CALL dbt_create(t3c(b), work)
+         written(:, :, :) = .FALSE.
+         started(:) = .FALSE.
+         bcell = kpoints%index_to_cell(:, b)
+         DO g = 1, nops
+            CALL dbt_copy(t3c(b), work)
+            CALL hfx_rotate_3c_work(work, kpoints, ri_data, g, op_slot, nblk_RI, &
+                                    blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
+            DO iatom = 1, natom
+               first = atom_first_AO(iatom)
+               IF (iatom < natom) THEN
+                  last = atom_first_AO(iatom + 1) - 1
+               ELSE
+                  last = nblk_AO
+               END IF
+               lo = SUM(ri_data%bsizes_AO_split(1:first - 1))
+               hi = SUM(ri_data%bsizes_AO_split(1:last)) - 1
+               bounds(1, 2) = lo
+               bounds(2, 2) = hi
+               si = op_shift(:, iatom, g)
+               CALL hfx_3c_general_ri_map(kpoints, ri_data, g, op_frac, op_map, op_shift, si, &
+                                          nblk_RI, blk_atom_RI, blk_ord_RI, atom_first_RI, map1)
+               imap(:, 1) = map1
+               imap(:, 2) = op_map(:, g)
+               imap(:, 3) = op_map(:, g)
+               DO t = 1, nimg
+                  IF (t == b .OR. img_rep(t) /= b) CYCLE
+                  gmask(1, :) = .FALSE.
+                  anymask = .FALSE.
+                  DO jb = 1, nblk_AO
+                     jatom = blk_atom_AO(jb)
+                     IF (written(t, iatom, jatom)) CYCLE
+                     ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + &
+                             op_shift(:, jatom, g) - si
+                     CALL hfx_image_from_cell(kpoints, ycell, img, found)
+                     IF (.NOT. found .OR. img /= t) CYCLE
+                     gmask(1, jb) = .TRUE.
+                     anymask = .TRUE.
+                  END DO
+                  IF (.NOT. anymask) CYCLE
+                  CALL dbt_reshape(work, t3c(t), summation=started(t), bounds=bounds, &
+                                   index_map=imap, group_mask=gmask, group_dim=3)
+                  started(t) = .TRUE.
+                  DO jb = 1, nblk_AO
+                     IF (gmask(1, jb)) written(t, iatom, blk_atom_AO(jb)) = .TRUE.
+                  END DO
+               END DO
+            END DO
+         END DO
+         CALL dbt_destroy(work)
+         DO t = 1, nimg
+            IF (.NOT. started(t)) CYCLE
+            CALL dbt_finalize(t3c(t))
+            CALL dbt_filter(t3c(t), filter_eps)
+         END DO
+      END DO
+      DEALLOCATE (map1, imap, gmask, written, started)
+   END SUBROUTINE hfx_expand_3c_images_general
+
+! **************************************************************************************************
+!> \brief General 3c derivative image expansion for an atom-dependent gauge shift.
+! **************************************************************************************************
+   SUBROUTINE hfx_expand_3c_deriv_images_general(kpoints, cell, ri_data, nimg, natom, img_rep, &
+                                                 op_frac, op_map, op_shift, op_slot, nops, nblk_RI, &
+                                                 nblk_AO, blk_atom_RI, blk_off_RI, blk_atom_AO, &
+                                                 blk_off_AO, blk_ord_RI, atom_first_RI, blk_ord_AO, &
+                                                 atom_first_AO, t3c_der, filter_eps)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN) :: nimg, natom, img_rep(:), op_frac(:, :, :), op_map(:, :), &
+         op_shift(:, :, :), op_slot(:), nops, nblk_RI, nblk_AO, blk_atom_RI(:), blk_off_RI(:), &
+         blk_atom_AO(:), blk_off_AO(:), blk_ord_RI(:), atom_first_RI(:), blk_ord_AO(:), &
+         atom_first_AO(:)
+      TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: t3c_der
+      REAL(dp), INTENT(IN)                               :: filter_eps
+
+      INTEGER                                            :: b, first, g, hi, iatom, img, jatom, jb, &
+                                                            last, lo, mdim, nblk1, t, xyz, xyz2
+      INTEGER, DIMENSION(2, 3)                           :: bounds
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: map1
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: imap
+      INTEGER, DIMENSION(3)                              :: bcell, si, ycell
+      LOGICAL                                            :: anymask, found
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: started
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :)              :: gmask
+      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: written
+      REAL(dp)                                           :: rmap(3, 3)
+      TYPE(dbt_type)                                     :: out(3), tmp, work(3)
+
+      nblk1 = ri_data%ncell_RI*nblk_RI
+      mdim = MAX(nblk1, nblk_AO)
+      ALLOCATE (map1(nblk1), imap(mdim, 3), gmask(1, nblk_AO), written(nimg, natom, natom), &
+                started(nimg))
+      bounds(1, :) = [0, 0, 0]
+      bounds(2, :) = [HUGE(bounds(1, 1)), HUGE(bounds(1, 1)), HUGE(bounds(1, 1))]
+
+      DO b = 1, nimg
+         IF (img_rep(b) /= b) CYCLE
+         DO xyz = 1, 3
+            CALL dbt_create(t3c_der(b, xyz), work(xyz))
+            CALL dbt_create(t3c_der(b, xyz), out(xyz))
+         END DO
+         CALL dbt_create(t3c_der(b, 1), tmp)
+         written(:, :, :) = .FALSE.
+         started(:) = .FALSE.
+         bcell = kpoints%index_to_cell(:, b)
+         DO g = 1, nops
+            rmap(:, :) = MATMUL(cell%hmat, MATMUL(TRANSPOSE(REAL(op_frac(:, :, g), dp)), cell%h_inv))
+            DO xyz = 1, 3
+               CALL dbt_copy(t3c_der(b, xyz), work(xyz))
+               CALL hfx_rotate_3c_work(work(xyz), kpoints, ri_data, g, op_slot, nblk_RI, &
+                                       blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
+            END DO
+            DO xyz = 1, 3
+               DO xyz2 = 1, 3
+                  CALL dbt_copy(work(xyz2), tmp)
+                  CALL dbt_scale(tmp, rmap(xyz, xyz2))
+                  IF (xyz2 == 1) THEN
+                     CALL dbt_copy(tmp, out(xyz), summation=.FALSE.)
+                  ELSE
+                     CALL dbt_copy(tmp, out(xyz), summation=.TRUE.)
+                  END IF
+               END DO
+            END DO
+            DO iatom = 1, natom
+               first = atom_first_AO(iatom)
+               IF (iatom < natom) THEN
+                  last = atom_first_AO(iatom + 1) - 1
+               ELSE
+                  last = nblk_AO
+               END IF
+               lo = SUM(ri_data%bsizes_AO_split(1:first - 1))
+               hi = SUM(ri_data%bsizes_AO_split(1:last)) - 1
+               bounds(1, 2) = lo
+               bounds(2, 2) = hi
+               si = op_shift(:, iatom, g)
+               CALL hfx_3c_general_ri_map(kpoints, ri_data, g, op_frac, op_map, op_shift, si, &
+                                          nblk_RI, blk_atom_RI, blk_ord_RI, atom_first_RI, map1)
+               imap(:, 1) = map1
+               imap(:, 2) = op_map(:, g)
+               imap(:, 3) = op_map(:, g)
+               DO t = 1, nimg
+                  IF (t == b .OR. img_rep(t) /= b) CYCLE
+                  gmask(1, :) = .FALSE.
+                  anymask = .FALSE.
+                  DO jb = 1, nblk_AO
+                     jatom = blk_atom_AO(jb)
+                     IF (written(t, iatom, jatom)) CYCLE
+                     ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + &
+                             op_shift(:, jatom, g) - si
+                     CALL hfx_image_from_cell(kpoints, ycell, img, found)
+                     IF (.NOT. found .OR. img /= t) CYCLE
+                     gmask(1, jb) = .TRUE.
+                     anymask = .TRUE.
+                  END DO
+                  IF (.NOT. anymask) CYCLE
+                  DO xyz = 1, 3
+                     CALL dbt_reshape(out(xyz), t3c_der(t, xyz), summation=started(t), &
+                                      bounds=bounds, index_map=imap, group_mask=gmask, &
+                                      group_dim=3)
+                  END DO
+                  started(t) = .TRUE.
+                  DO jb = 1, nblk_AO
+                     IF (gmask(1, jb)) written(t, iatom, blk_atom_AO(jb)) = .TRUE.
+                  END DO
+               END DO
+            END DO
+         END DO
+         DO t = 1, nimg
+            IF (.NOT. started(t)) CYCLE
+            DO xyz = 1, 3
+               CALL dbt_finalize(t3c_der(t, xyz))
+               CALL dbt_filter(t3c_der(t, xyz), filter_eps)
+            END DO
+         END DO
+         CALL dbt_destroy(tmp)
+         DO xyz = 1, 3
+            CALL dbt_destroy(work(xyz))
+            CALL dbt_destroy(out(xyz))
+         END DO
+      END DO
+      DEALLOCATE (map1, imap, gmask, written, started)
+   END SUBROUTINE hfx_expand_3c_deriv_images_general
 
 ! **************************************************************************************************
 !> \brief Rotate the local blocks of a 3-center work tensor in place.
@@ -6321,16 +6827,39 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE hfx_expand_3c_images(kpoints, ri_data, nimg, natom, img_rep, img_op, op_slot, &
                                    imaps, nblk_RI, blk_atom_RI, blk_off_RI, blk_atom_AO, &
-                                   blk_off_AO, t3c, filter_eps)
+                                   blk_off_AO, t3c, filter_eps, cell, op_frac, op_map, op_shift, &
+                                   nops, blk_ord_RI, atom_first_RI, blk_ord_AO, atom_first_AO, &
+                                   general)
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
       INTEGER, INTENT(IN) :: nimg, natom, img_rep(:), img_op(:), op_slot(:), imaps(:, :, :), &
          nblk_RI, blk_atom_RI(:), blk_off_RI(:), blk_atom_AO(:), blk_off_AO(:)
       TYPE(dbt_type), DIMENSION(:), INTENT(INOUT)        :: t3c
       REAL(dp), INTENT(IN)                               :: filter_eps
+      TYPE(cell_type), OPTIONAL, TARGET                  :: cell
+      INTEGER, OPTIONAL :: op_frac(:, :, :), op_map(:, :), op_shift(:, :, :), nops, &
+         blk_ord_RI(:), atom_first_RI(:), blk_ord_AO(:), atom_first_AO(:)
+      LOGICAL, OPTIONAL                                  :: general
 
       INTEGER                                            :: b, g, i
       TYPE(dbt_type)                                     :: work
+      TYPE(cell_type), POINTER                           :: cell_ptr
+
+      NULLIFY (cell_ptr)
+      IF (PRESENT(general)) THEN
+         IF (general) THEN
+            cell_ptr => cell
+            CALL hfx_expand_3c_images_general(kpoints, cell_ptr, ri_data, nimg, natom, img_rep, &
+                                              op_frac, op_map, op_shift, op_slot, nops, nblk_RI, &
+                                              SIZE(blk_atom_AO), blk_atom_RI, blk_off_RI, &
+                                              blk_atom_AO, blk_off_AO, blk_ord_RI, atom_first_RI, &
+                                              blk_ord_AO, atom_first_AO, t3c, filter_eps)
+            DO i = 1, nimg
+               IF (img_rep(i) == i) CALL dbt_filter(t3c(i), filter_eps)
+            END DO
+            RETURN
+         END IF
+      END IF
 
       DO b = 1, nimg
          IF (img_rep(b) /= b) CYCLE
@@ -6348,6 +6877,10 @@ CONTAINS
             CALL dbt_filter(t3c(i), filter_eps)
          END DO
          CALL dbt_destroy(work)
+      END DO
+      ! Representatives were built with the looser threshold used for the expansion.
+      DO i = 1, nimg
+         IF (img_rep(i) == i) CALL dbt_filter(t3c(i), filter_eps)
       END DO
    END SUBROUTINE hfx_expand_3c_images
 
@@ -6393,6 +6926,8 @@ CONTAINS
       INTEGER, DIMENSION(3)                              :: bcell, ycell
       INTEGER, DIMENSION(3, 3)                           :: rfrac
       LOGICAL                                            :: duplicate, found, use_inversion_pairs
+      REAL(dp)                                           :: max_err
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: err_t
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
 
       use_inversion_pairs = .TRUE.
@@ -6419,6 +6954,8 @@ CONTAINS
       IF (nmax < 1) RETURN
 
       ALLOCATE (frac_t(3, 3, nmax), shift_t(3, natom, nmax), map_t(natom, nmax), slot_t(nmax))
+      ALLOCATE (err_t(nmax))
+      err_t(:) = 0.0_dp
       DO ik = 1, kpoints%nkp
          IF (.NOT. ASSOCIATED(kpoints%kp_sym(ik)%kpoint_sym)) CYCLE
          kpsym => kpoints%kp_sym(ik)%kpoint_sym
@@ -6431,6 +6968,7 @@ CONTAINS
                    ALL(map_t(:, g) == kpsym%f0(:, is)) .AND. &
                    ALL(shift_t(:, :, g) == kpsym%fcell_gauge(:, :, is))) THEN
                   duplicate = .TRUE.
+                  err_t(g) = MAX(err_t(g), kpsym%sym_error(is))
                   EXIT
                END IF
             END DO
@@ -6441,6 +6979,7 @@ CONTAINS
             frac_t(:, :, nops) = rfrac
             map_t(:, nops) = kpsym%f0(:, is)
             shift_t(:, :, nops) = kpsym%fcell_gauge(:, :, is)
+            err_t(nops) = kpsym%sym_error(is)
             slot_t(nops) = rot_slot
          END DO
       END DO
@@ -6477,6 +7016,20 @@ CONTAINS
             END IF
          END DO
       END DO
+
+      ! Reject operations that only approximately map the atoms: the transformed
+      ! integrals would then not be the full-image integrals.
+      max_err = 0.0_dp
+      DO img = 1, nimg
+         IF (rep(img) == img) CYCLE
+         IF (op(img) < 1 .OR. op(img) > nops) CYCLE
+         max_err = MAX(max_err, err_t(op(img)))
+      END DO
+      IF (max_err > hfx_image_symmetry_eps) THEN
+         DEALLOCATE (err_t)
+         CPABORT("KP_IMAGE_SYMMETRY: atom mapping is not exact; set KP_IMAGE_SYMMETRY FALSE")
+      END IF
+      DEALLOCATE (err_t)
 
       ALLOCATE (op_frac(3, 3, nops), op_map(natom, nops), op_shift(3, natom, nops), &
                 op_slot(nops))

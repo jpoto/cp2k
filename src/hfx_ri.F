@@ -468,8 +468,8 @@ CONTAINS
          sizes_RI_ext_split, starts_array_mc_block_int, starts_array_mc_int
       INTEGER, DIMENSION(3)                              :: pcoord, pdims
       INTEGER, DIMENSION(:), POINTER                     :: col_bsize, row_bsize
-      LOGICAL                                            :: converged, do_kpoints_prv
-      REAL(dp)                                           :: max_ev, min_ev, occ, RI_range
+      LOGICAL                                            :: converged, do_kpoints_prv, image_sym_active
+      REAL(dp)                                           :: build_filter_eps, max_ev, min_ev, occ, RI_range
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(dbcsr_distribution_type)                      :: dbcsr_dist
       TYPE(dbt_distribution_type)                        :: t_dist
@@ -590,6 +590,14 @@ CONTAINS
 
       ELSE !do_kpoints
 
+         ! With image symmetry only orbit representatives are built, so keep the sub-threshold
+         ! blocks that an equivalent image may retain after rotation; the expanded images are
+         ! filtered at the regular threshold afterwards.
+         image_sym_active = .FALSE.
+         IF (PRESENT(do_3c_image)) image_sym_active = .NOT. ALL(do_3c_image)
+         build_filter_eps = ri_data%filter_eps
+         IF (image_sym_active) build_filter_eps = 1.0E-3_dp*ri_data%filter_eps
+
          nthreads = 1
 !$       nthreads = omp_get_num_threads()
          pdims = 0
@@ -645,7 +653,7 @@ CONTAINS
 
          CALL dbt_create(t_3c_int(1, 1), t_3c_tmp)
          DO i_mem = 1, n_mem
-            CALL build_3c_integrals(t_3c_int_batched, ri_data%filter_eps, qs_env, nl_3c, &
+            CALL build_3c_integrals(t_3c_int_batched, build_filter_eps, qs_env, nl_3c, &
                                     basis_set_AO, basis_set_AO, basis_set_RI, &
                                     ri_data%ri_metric, int_eps=ri_data%eps_schwarz, op_pos=2, &
                                     desymmetrize=.FALSE., do_kpoints=.TRUE., do_hfx_kpoints=.TRUE., &
@@ -658,7 +666,7 @@ CONTAINS
                CALL get_tensor_occupancy(t_3c_int_batched(i_img, 1), nze, occ)
                IF (nze > 0) THEN
                   CALL dbt_copy(t_3c_int_batched(i_img, 1), t_3c_tmp, order=[3, 2, 1], move_data=.TRUE.)
-                  CALL dbt_filter(t_3c_tmp, ri_data%filter_eps)
+                  CALL dbt_filter(t_3c_tmp, build_filter_eps)
                   CALL dbt_copy(t_3c_tmp, t_3c_int(1, i_img), order=[1, 3, 2], &
                                 summation=.TRUE., move_data=.TRUE.)
                END IF
