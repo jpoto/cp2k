@@ -1253,7 +1253,8 @@ CONTAINS
                 t_2c_metric(natom), t_2c_binv(natom))
       CALL get_subgroup_2c_derivs(t_2c_inv, t_2c_bint, t_2c_metric, mat_2c_pot, t_2c_work, rho_ao_t, &
                                   rho_ao_t_sub, t_2c_der_metric, t_2c_der_metric_sub, mat_der_pot, &
-                                  mat_der_pot_sub, group_size, ngroups, para_env, para_env_sub, ri_data)
+                                  mat_der_pot_sub, group_size, ngroups, para_env, para_env_sub, ri_data, &
+                                  img_computed)
       CALL dbt_create(t_2c_work(1), t_2c_R) !nRI x nRI
       CALL dbt_create(t_2c_work(5), t_2c_R_split) !nRI x nRI with split blocks
 
@@ -3863,7 +3864,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE get_subgroup_2c_derivs(t_2c_inv, t_2c_bint, t_2c_metric, mat_2c_pot, t_2c_work, rho_ao_t, &
                                      rho_ao_t_sub, t_2c_der_metric, t_2c_der_metric_sub, mat_der_pot, &
-                                     mat_der_pot_sub, group_size, ngroups, para_env, para_env_sub, ri_data)
+                                     mat_der_pot_sub, group_size, ngroups, para_env, para_env_sub, ri_data, &
+                                     compute_image)
       TYPE(dbt_type), DIMENSION(:), INTENT(INOUT)        :: t_2c_inv, t_2c_bint, t_2c_metric
       TYPE(dbcsr_type), DIMENSION(:), INTENT(INOUT)      :: mat_2c_pot
       TYPE(dbt_type), DIMENSION(:), INTENT(INOUT)        :: t_2c_work
@@ -3873,12 +3875,14 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: group_size, ngroups
       TYPE(mp_para_env_type), POINTER                    :: para_env, para_env_sub
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: compute_image
 
       CHARACTER(len=*), PARAMETER :: routineN = 'get_subgroup_2c_derivs'
 
       INTEGER                                            :: handle, i, i_img, i_RI, i_spin, i_xyz, &
                                                             iatom, iproc, j, natom, nblks, nimg, &
                                                             nspins
+      LOGICAL                                            :: skip
       INTEGER(int_8)                                     :: nze
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: bsizes_RI_ext, bsizes_RI_ext_split, &
                                                             dist1, dist2
@@ -3955,12 +3959,16 @@ CONTAINS
       nimg = SIZE(rho_ao_t, 2)
 
       DO i_img = 1, nimg
+         skip = .FALSE.
+         IF (PRESENT(compute_image)) skip = .NOT. compute_image(i_img)
          DO i_spin = 1, nspins
             IF (.NOT. (i_img == 1 .AND. i_spin == 1)) THEN
                CALL dbt_create(rho_ao_t_sub(1, 1), rho_ao_t_sub(i_spin, i_img))
             END IF
-            CALL copy_2c_to_subgroup(rho_ao_t_sub(i_spin, i_img), rho_ao_t(i_spin, i_img), &
-                                     group_size, ngroups, para_env)
+            IF (.NOT. skip) THEN
+               CALL copy_2c_to_subgroup(rho_ao_t_sub(i_spin, i_img), rho_ao_t(i_spin, i_img), &
+                                        group_size, ngroups, para_env)
+            END IF
             CALL dbt_destroy(rho_ao_t(i_spin, i_img))
          END DO
       END DO
@@ -3996,6 +4004,9 @@ CONTAINS
       !The HFX potential
       DO i_img = 1, nimg
          IF (i_img > 1) CALL dbcsr_create(mat_2c_pot(i_img), template=mat_2c_pot(1))
+         skip = .FALSE.
+         IF (PRESENT(compute_image)) skip = .NOT. compute_image(i_img)
+         IF (skip) CYCLE
          CALL dbt_copy_matrix_to_tensor(ri_data%kp_mat_2c_pot(1, i_img), work)
          CALL get_tensor_occupancy(work, nze, occ)
          IF (nze == 0) CYCLE
@@ -4010,6 +4021,12 @@ CONTAINS
       DO i_xyz = 1, 3
          DO i_img = 1, nimg
             CALL dbcsr_create(mat_der_pot_sub(i_img, i_xyz), template=mat_2c_pot(1))
+            skip = .FALSE.
+            IF (PRESENT(compute_image)) skip = .NOT. compute_image(i_img)
+            IF (skip) THEN
+               CALL dbcsr_release(mat_der_pot(i_img, i_xyz))
+               CYCLE
+            END IF
             CALL dbt_copy_matrix_to_tensor(mat_der_pot(i_img, i_xyz), work)
             CALL dbcsr_release(mat_der_pot(i_img, i_xyz))
             CALL get_tensor_occupancy(work, nze, occ)
