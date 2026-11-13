@@ -670,13 +670,16 @@ CONTAINS
                       composite_grad(composite_nflat, 3, 2), &
                       composite_kin(composite_nflat, 2), &
                       composite_grid_atom(composite_nflat), &
-                      composite_smooth_density_cache(composite_nflat, 2), &
-                      composite_smooth_gradient_cache(composite_nflat, 3, 2), &
-                      composite_smooth_kin_cache(composite_nflat, 2), &
                       composite_grid_coords(3, composite_nflat), &
                       composite_grid_weights(composite_nflat), &
                       composite_base_grid_weights(composite_nflat), &
                       composite_atomic_grid_weights(composite_nflat))
+            ! The smooth-field caches are only consumed by the diagnostics contraction.
+            IF (atom_composite_diagnostic) THEN
+               ALLOCATE (composite_smooth_density_cache(composite_nflat, 2), &
+                         composite_smooth_gradient_cache(composite_nflat, 3, 2), &
+                         composite_smooth_kin_cache(composite_nflat, 2))
+            END IF
             composite_density = 0.0_dp
             composite_grad = 0.0_dp
             composite_kin = 0.0_dp
@@ -684,9 +687,11 @@ CONTAINS
                iatom = composite_local_atoms(composite_local_atom)
                composite_grid_atom(composite_atom_start(iatom):composite_atom_end(iatom)) = iatom
             END DO
-            composite_smooth_density_cache = 0.0_dp
-            composite_smooth_gradient_cache = 0.0_dp
-            composite_smooth_kin_cache = 0.0_dp
+            IF (atom_composite_diagnostic) THEN
+               composite_smooth_density_cache = 0.0_dp
+               composite_smooth_gradient_cache = 0.0_dp
+               composite_smooth_kin_cache = 0.0_dp
+            END IF
             composite_grid_coords = 0.0_dp
             composite_grid_weights = 0.0_dp
             composite_base_grid_weights = 0.0_dp
@@ -1022,7 +1027,8 @@ CONTAINS
 !$OMP        composite_smooth_kin_cache, drho_h, drho_s, grid_atom, iatom, &
 !$OMP        image_partition_atom_composite, lsd, my_kind_set, na, nlcc, nr, one_center_kind, &
 !$OMP        particle_set, qs_env, rho_h, rho_s, smooth_rho_r, tau_h, tau_s, &
-!$OMP        use_atom_composite_density, use_atom_composite_gradient, use_atom_composite_tau)
+!$OMP        atom_composite_diagnostic, use_atom_composite_density, &
+!$OMP        use_atom_composite_gradient, use_atom_composite_tau)
                   DO ir = 1, nr
                      DO ia = 1, na
                         composite_row = composite_atom_start(iatom) + (ir - 1)*na + ia - 1
@@ -1046,12 +1052,14 @@ CONTAINS
                               composite_smooth_density_value(2), &
                               composite_smooth_gradient_value(:, 2), &
                               composite_smooth_kin_value(2))
-                           composite_smooth_density_cache(composite_row, :) = &
-                              composite_smooth_density_value
-                           composite_smooth_gradient_cache(composite_row, :, :) = &
-                              composite_smooth_gradient_value
-                           composite_smooth_kin_cache(composite_row, :) = &
-                              composite_smooth_kin_value
+                           IF (atom_composite_diagnostic) THEN
+                              composite_smooth_density_cache(composite_row, :) = &
+                                 composite_smooth_density_value
+                              composite_smooth_gradient_cache(composite_row, :, :) = &
+                                 composite_smooth_gradient_value
+                              composite_smooth_kin_cache(composite_row, :) = &
+                                 composite_smooth_kin_value
+                           END IF
                            DO ispin = 1, 2
                               composite_density(composite_row, ispin) = &
                                  composite_smooth_density_value(ispin)
@@ -1083,12 +1091,14 @@ CONTAINS
                               composite_smooth_density_value(1), &
                               composite_smooth_gradient_value(:, 1), &
                               composite_smooth_kin_value(1))
-                           composite_smooth_density_cache(composite_row, 1) = &
-                              composite_smooth_density_value(1)
-                           composite_smooth_gradient_cache(composite_row, :, 1) = &
-                              composite_smooth_gradient_value(:, 1)
-                           composite_smooth_kin_cache(composite_row, 1) = &
-                              composite_smooth_kin_value(1)
+                           IF (atom_composite_diagnostic) THEN
+                              composite_smooth_density_cache(composite_row, 1) = &
+                                 composite_smooth_density_value(1)
+                              composite_smooth_gradient_cache(composite_row, :, 1) = &
+                                 composite_smooth_gradient_value(:, 1)
+                              composite_smooth_kin_cache(composite_row, 1) = &
+                                 composite_smooth_kin_value(1)
+                           END IF
                            composite_density(composite_row, :) = &
                               0.5_dp*composite_smooth_density_value(1)
                            DO idir = 1, 3
@@ -1481,9 +1491,11 @@ CONTAINS
             DEALLOCATE (composite_cross_density, composite_cross_grad, composite_cross_kin)
 
             CPASSERT(ALL(composite_grid_weights >= 0.0_dp))
-            atom_composite_nelec = SUM(composite_grid_weights* &
-                                       (composite_density(:, 1) + composite_density(:, 2)))
-            CALL para_env%sum(atom_composite_nelec)
+            IF (atom_composite_diagnostic .OR. native_grid_diagnostics) THEN
+               atom_composite_nelec = SUM(composite_grid_weights* &
+                                          (composite_density(:, 1) + composite_density(:, 2)))
+               CALL para_env%sum(atom_composite_nelec)
+            END IF
             IF (atom_composite_reference .AND. my_calculate_forces) THEN
                CALL skala_gapw_atom_composite_energy( &
                   my_xc_section, para_env, composite_density, composite_grad, composite_kin, &
@@ -2230,13 +2242,17 @@ CONTAINS
                smooth_kin_adjoint_storage, xc_deriv_method_id)
             DEALLOCATE (smooth_density_adjoint_storage, smooth_grad_adjoint_storage, &
                         smooth_kin_adjoint_storage)
-            smooth_grid_contraction = 0.0_dp
+            IF (atom_composite_diagnostic) THEN
+               smooth_grid_contraction = 0.0_dp
+            END IF
             DO ispin = 1, nspins
-               smooth_grid_contraction = smooth_grid_contraction + smooth_rho_r(1)%pw_grid%dvol* &
-                                         (SUM(smooth_vxc_rho(ispin)%array* &
-                                              smooth_rho_r(ispin)%array) + &
-                                          SUM(smooth_vxc_tau(ispin)%array* &
-                                              smooth_tau_r(ispin)%array))
+               IF (atom_composite_diagnostic) THEN
+                  smooth_grid_contraction = smooth_grid_contraction + smooth_rho_r(1)%pw_grid%dvol* &
+                                            (SUM(smooth_vxc_rho(ispin)%array* &
+                                                 smooth_rho_r(ispin)%array) + &
+                                             SUM(smooth_vxc_tau(ispin)%array* &
+                                                 smooth_tau_r(ispin)%array))
+               END IF
                IF (atom_composite_reference) THEN
                   CPASSERT(PRESENT(composite_vxc_rho))
                   CPASSERT(PRESENT(composite_vxc_tau))
@@ -2250,7 +2266,7 @@ CONTAINS
                CALL auxbas_pw_pool%give_back_pw(smooth_vxc_rho(ispin))
                CALL auxbas_pw_pool%give_back_pw(smooth_vxc_tau(ispin))
             END DO
-            CALL para_env%sum(smooth_grid_contraction)
+            IF (atom_composite_diagnostic) CALL para_env%sum(smooth_grid_contraction)
             DEALLOCATE (smooth_vxc_rho, smooth_vxc_tau)
 
             one_center_field_contraction = 0.0_dp
@@ -2736,11 +2752,13 @@ CONTAINS
                         composite_local_atom_coords, composite_grid_atom, &
                         composite_partition_weights, composite_partition_atom_coords, &
                         composite_distances, composite_density, composite_grad, composite_kin, &
-                        composite_smooth_density_cache, composite_smooth_gradient_cache, &
-                        composite_smooth_kin_cache, &
                         composite_density_grad, composite_grad_grad, composite_kin_grad, &
                         composite_grid_coords, composite_grid_weights, &
                         composite_base_grid_weights, composite_atomic_grid_weights)
+            IF (ALLOCATED(composite_smooth_density_cache)) THEN
+               DEALLOCATE (composite_smooth_density_cache, composite_smooth_gradient_cache, &
+                           composite_smooth_kin_cache)
+            END IF
          END IF
 
          IF (.NOT. atom_composite_reference) CALL para_env%sum(exc1)
@@ -3892,10 +3910,12 @@ CONTAINS
 !> \param angular_weights angular interpolation weights
 !> \param angular_derivative_weights optional Cartesian derivatives of the angular weights
 !> \param active whether the point lies inside the compact support
+!> \param direction_out ...
 ! **************************************************************************************************
    SUBROUTINE atom_grid_interpolation_weights( &
       grid_atom, harmonics, displacement, cutoff, radial_indices, radial_weights, &
-      radial_derivative_weights, nradial, angular_weights, angular_derivative_weights, active)
+      radial_derivative_weights, nradial, angular_weights, angular_derivative_weights, active, &
+      direction_out)
       TYPE(grid_atom_type), POINTER                      :: grid_atom
       TYPE(harmonics_atom_type), POINTER                 :: harmonics
       REAL(dp), DIMENSION(3), INTENT(IN)                 :: displacement
@@ -3907,6 +3927,7 @@ CONTAINS
       REAL(dp), DIMENSION(:), INTENT(OUT)                :: angular_weights
       REAL(dp), DIMENSION(:, :), INTENT(OUT), OPTIONAL   :: angular_derivative_weights
       LOGICAL, INTENT(OUT)                               :: active
+      REAL(dp), DIMENSION(3), INTENT(OUT), OPTIONAL      :: direction_out
 
       INTEGER                                            :: ia, ic, inode, iso, l, left, left_pos, &
                                                             logical_end, logical_start, lx, ly, &
@@ -3935,6 +3956,7 @@ CONTAINS
       IF (PRESENT(radial_derivative_weights)) radial_derivative_weights = 0.0_dp
       angular_weights = 0.0_dp
       IF (PRESENT(angular_derivative_weights)) angular_derivative_weights = 0.0_dp
+      IF (PRESENT(direction_out)) direction_out = 0.0_dp
       nradial = 0
       active = .FALSE.
       n = grid_atom%nr
@@ -3944,6 +3966,7 @@ CONTAINS
           radius > grid_atom%rad(MERGE(1, n, descending))) RETURN
       IF (radius <= 1.0E-12_dp) RETURN
       direction = displacement/radius
+      IF (PRESENT(direction_out)) direction_out = direction
 
       CPASSERT(n >= 2)
       left = n - 1
@@ -4107,6 +4130,7 @@ CONTAINS
       INTEGER, DIMENSION(4)                              :: radial_indices
       LOGICAL                                            :: active, need_spatial
       REAL(dp)                                           :: derivative_weight, weight
+      REAL(dp), DIMENSION(3)                             :: direction
       REAL(dp), DIMENSION(grid_atom%ng_sphere)           :: angular_weights
       REAL(dp), DIMENSION(4)                             :: radial_derivative_weights, radial_weights
       REAL(dp), DIMENSION(3, grid_atom%ng_sphere)        :: angular_derivative_weights
@@ -4122,11 +4146,12 @@ CONTAINS
       IF (need_spatial) THEN
          CALL atom_grid_interpolation_weights( &
             grid_atom, harmonics, displacement, cutoff, radial_indices, radial_weights, &
-            radial_derivative_weights, nradial, angular_weights, angular_derivative_weights, active)
+            radial_derivative_weights, nradial, angular_weights, angular_derivative_weights, active, &
+            direction_out=direction)
       ELSE
          CALL atom_grid_interpolation_weights( &
             grid_atom, harmonics, displacement, cutoff, radial_indices, radial_weights, &
-            nradial=nradial, angular_weights=angular_weights, active=active)
+            nradial=nradial, angular_weights=angular_weights, active=active, direction_out=direction)
       END IF
       IF (active) THEN
          DO inode = 1, nradial
@@ -4144,9 +4169,8 @@ CONTAINS
                                                      drho_s(idir, ia, ir, ispin))
                      IF (.NOT. need_spatial) CYCLE
                      derivative_weight = radial_derivative_weights(inode)* &
-                                         displacement(idir)/SQRT(SUM(displacement**2))* &
-                                         angular_weights(ia) + radial_weights(inode)* &
-                                         angular_derivative_weights(idir, ia)
+                                         direction(idir)*angular_weights(ia) + &
+                                         radial_weights(inode)*angular_derivative_weights(idir, ia)
                      density_spatial(idir, ispin) = density_spatial(idir, ispin) + &
                                                     derivative_weight*(rho_h(ia, ir, ispin) - rho_s(ia, ir, ispin))
                      kin_spatial(idir, ispin) = kin_spatial(idir, ispin) + &
