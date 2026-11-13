@@ -911,17 +911,22 @@ CONTAINS
                   weight_s => grid_atom%gapw_weight_s
                END IF
 
-               ! create a place where to put the derivatives
-               CALL xc_dset_create(deriv_set, local_bounds=bounds)
-               ! create the place where to store the argument for the functionals
-               CALL xc_rho_set_create(rho_set_h, bounds, rho_cutoff=density_cut, &
-                                      drho_cutoff=gradient_cut, tau_cutoff=tau_cut)
-               CALL xc_rho_set_create(rho_set_s, bounds, rho_cutoff=density_cut, &
-                                      drho_cutoff=gradient_cut, tau_cutoff=tau_cut)
+               ! The SKALA atom-grid path passes the raw densities directly to the
+               ! Torch model and never reads the derivative/rho sets; only the
+               ! conventional vxc_of_r_new path needs them.
+               IF (.NOT. skala_atom_grid) THEN
+                  ! create a place where to put the derivatives
+                  CALL xc_dset_create(deriv_set, local_bounds=bounds)
+                  ! create the place where to store the argument for the functionals
+                  CALL xc_rho_set_create(rho_set_h, bounds, rho_cutoff=density_cut, &
+                                         drho_cutoff=gradient_cut, tau_cutoff=tau_cut)
+                  CALL xc_rho_set_create(rho_set_s, bounds, rho_cutoff=density_cut, &
+                                         drho_cutoff=gradient_cut, tau_cutoff=tau_cut)
 
-               ! allocate the required 3d arrays where to store rho and drho
-               CALL xc_rho_set_atom_update(rho_set_h, needs, nspins, bounds)
-               CALL xc_rho_set_atom_update(rho_set_s, needs, nspins, bounds)
+                  ! allocate the required 3d arrays where to store rho and drho
+                  CALL xc_rho_set_atom_update(rho_set_h, needs, nspins, bounds)
+                  CALL xc_rho_set_atom_update(rho_set_s, needs, nspins, bounds)
+               END IF
 
                CALL reallocate(rho_h, 1, na, 1, nr, 1, nspins)
                CALL reallocate(rho_s, 1, na, 1, nr, 1, nspins)
@@ -1141,18 +1146,20 @@ CONTAINS
 
                IF (.NOT. one_center_kind) CYCLE
 
-               DO ir = 1, nr
-                  IF (tau_f) THEN
-                     CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, drho_h, tau_h, na, ir)
-                     CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, drho_s, tau_s, na, ir)
-                  ELSE IF (gradient_f) THEN
-                     CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, drho_h, tau_d, na, ir)
-                     CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, drho_s, tau_d, na, ir)
-                  ELSE
-                     CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, rho_d, tau_d, na, ir)
-                     CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, rho_d, tau_d, na, ir)
-                  END IF
-               END DO
+               IF (.NOT. skala_atom_grid) THEN
+                  DO ir = 1, nr
+                     IF (tau_f) THEN
+                        CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, drho_h, tau_h, na, ir)
+                        CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, drho_s, tau_s, na, ir)
+                     ELSE IF (gradient_f) THEN
+                        CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, drho_h, tau_d, na, ir)
+                        CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, drho_s, tau_d, na, ir)
+                     ELSE
+                        CALL fill_rho_set(rho_set_h, lsd, nspins, needs, rho_h, rho_d, tau_d, na, ir)
+                        CALL fill_rho_set(rho_set_s, lsd, nspins, needs, rho_s, rho_d, tau_d, na, ir)
+                     END IF
+                  END DO
+               END IF
 
                evaluate_hard = .TRUE.
                evaluate_soft = .TRUE.
@@ -1294,9 +1301,11 @@ CONTAINS
             IF (one_center_kind) THEN
                IF (tau_f) CALL release_tau_basis_cache(tau_basis_cache)
 
-               CALL xc_dset_release(deriv_set)
-               CALL xc_rho_set_release(rho_set_h)
-               CALL xc_rho_set_release(rho_set_s)
+               IF (.NOT. skala_atom_grid) THEN
+                  CALL xc_dset_release(deriv_set)
+                  CALL xc_rho_set_release(rho_set_h)
+                  CALL xc_rho_set_release(rho_set_s)
+               END IF
             END IF
          END DO ! ikind
 

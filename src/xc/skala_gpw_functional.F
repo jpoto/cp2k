@@ -151,6 +151,18 @@ MODULE skala_gpw_functional
                                                           cached_atom_static_nrow = -1, &
                                                           cached_atom_static_natom = -1
    TYPE(skala_atom_ws_type), SAVE                      :: atom_ws
+
+   ! Resolved model context (path, execution target, CUDA device). Resolved once
+   ! per XC section instead of on every one-center atom evaluation.
+   TYPE skala_model_context_type
+      LOGICAL                                            :: valid = .FALSE.
+      TYPE(section_vals_type), POINTER                   :: xc_section => NULL()
+      CHARACTER(len=default_path_length)                 :: model_path = ""
+      LOGICAL                                            :: use_cuda = .FALSE.
+      INTEGER                                            :: device = -1
+   END TYPE skala_model_context_type
+   TYPE(skala_model_context_type), SAVE                :: model_context
+
    LOGICAL, SAVE                                       :: logged_torch_threads = .FALSE.
    CHARACTER(len=default_path_length), SAVE            :: cached_model_path = ""
    CHARACTER(len=default_path_length), SAVE            :: cached_model_stamp = ""
@@ -478,7 +490,6 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT), &
          OPTIONAL                                        :: atom_force
 
-      CHARACTER(len=default_path_length)                 :: model_path
       INTEGER :: i, ipt, ispin, iw, j, k, native_grid_atom_chunk_max_rows, &
          native_grid_atom_partition, native_grid_atom_subchunks, nspins, omp_max_threads_restore, &
          phase_handle, selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
@@ -530,8 +541,8 @@ CONTAINS
 
       nspins = SIZE(rho_r)
       lsd = (nspins /= 1)
-      CALL get_skala_model_path(xc_section, model_path)
-      native_grid_use_cuda = skala_execution_use_cuda(xc_section)
+      CALL ensure_model_context(xc_section, rho_r(1)%pw_grid%para%group, &
+                                native_grid_use_cuda, selected_cuda_device)
       CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, &
                                       native_grid_atom_chunk_max_rows, native_grid_atom_partition)
       native_section => get_skala_native_section(xc_section)
@@ -542,10 +553,6 @@ CONTAINS
                           "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
          END IF
       END IF
-      ! The portable SKALA export used by the regtests builds ragged-index tensors on CPU.
-      selected_cuda_device = configure_native_grid_cuda( &
-                             native_grid_use_cuda, rho_r(1)%pw_grid%para%group)
-      CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
 
       IF (lsd) THEN
          needs%rho_spin = .TRUE.
@@ -885,7 +892,6 @@ CONTAINS
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(cell_type), POINTER                           :: cell
 
-      CHARACTER(len=default_path_length)                 :: model_path
       INTEGER :: chunk_max_rows, feature_begin, feature_end, feature_pos, i, iatom, isub, j, k, &
          local_row, native_grid_atom_partition, natom, nspins, nsubchunks, &
          omp_max_threads_restore, row, selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
@@ -916,8 +922,8 @@ CONTAINS
 
       nspins = SIZE(rho_r)
       lsd = (nspins /= 1)
-      CALL get_skala_model_path(xc_section, model_path)
-      native_grid_use_cuda = skala_execution_use_cuda(xc_section)
+      CALL ensure_model_context(xc_section, rho_r(1)%pw_grid%para%group, &
+                                native_grid_use_cuda, selected_cuda_device)
       CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, chunk_max_rows, &
                                       native_grid_atom_partition)
       IF (.NOT. native_grid_atom_chunks) chunk_max_rows = 0
@@ -926,10 +932,6 @@ CONTAINS
                        "SKALA_NATIVE%ATOM_PARTITION HARD supports energy/VXC only. "// &
                        "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
       END IF
-
-      selected_cuda_device = configure_native_grid_cuda( &
-                             native_grid_use_cuda, rho_r(1)%pw_grid%para%group)
-      CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
 
       IF (lsd) THEN
          needs%rho_spin = .TRUE.
@@ -1139,7 +1141,6 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(OUT), &
          OPTIONAL                                        :: atom_virial_h, atom_virial_s
 
-      CHARACTER(len=default_path_length)                 :: model_path
       INTEGER                                            :: ia, idir, iblock, ir, jdir, nblocks, &
                                                             nflat, nflat_tot, omp_max_threads_restore, &
                                                             row, row_in_block, selected_cuda_device
@@ -1197,11 +1198,7 @@ CONTAINS
       END IF
       IF (nblocks == 0) RETURN
 
-      CALL get_skala_model_path(xc_section, model_path)
-      native_grid_use_cuda = skala_execution_use_cuda(xc_section)
-      selected_cuda_device = configure_native_grid_cuda( &
-                             native_grid_use_cuda, group)
-      CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
+      CALL ensure_model_context(xc_section, group, native_grid_use_cuda, selected_cuda_device)
 
       nflat = na*nr
       nflat_tot = nblocks*nflat
@@ -3432,6 +3429,41 @@ CONTAINS
    END FUNCTION configure_native_grid_cuda
 
 ! **************************************************************************************************
+!> \brief Resolve the SKALA model path, execution target and device once per XC section.
+!>        Repeated per-atom section scans, environment lookups and model file
+!>        stamps are avoided; the context is invalidated by the cache release.
+!> \param xc_section XC settings, including the native model precision.
+!> \param group ...
+!> \param use_cuda ...
+!> \param cuda_device ...
+! **************************************************************************************************
+   SUBROUTINE ensure_model_context(xc_section, group, use_cuda, cuda_device)
+      TYPE(section_vals_type), POINTER                   :: xc_section
+
+      CLASS(mp_comm_type), INTENT(IN)                    :: group
+      LOGICAL, INTENT(OUT)                               :: use_cuda
+      INTEGER, INTENT(OUT)                               :: cuda_device
+
+      IF (model_context%valid) THEN
+         IF (ASSOCIATED(model_context%xc_section, xc_section)) THEN
+            use_cuda = model_context%use_cuda
+            cuda_device = model_context%device
+            RETURN
+         END IF
+      END IF
+
+      CALL get_skala_model_path(xc_section, model_context%model_path)
+      model_context%use_cuda = skala_execution_use_cuda(xc_section)
+      model_context%device = configure_native_grid_cuda(model_context%use_cuda, group)
+      CALL ensure_model_loaded(model_context%model_path, model_context%device, xc_section)
+      model_context%xc_section => xc_section
+      model_context%valid = .TRUE.
+      use_cuda = model_context%use_cuda
+      cuda_device = model_context%device
+
+   END SUBROUTINE ensure_model_context
+
+! **************************************************************************************************
 !> \brief Load and cache the TorchScript SKALA model.
 !> \param model_path ...
 !> \param cuda_device ...
@@ -3568,6 +3600,8 @@ CONTAINS
       cached_atom_static_nrow = -1
       cached_atom_static_natom = -1
       CALL release_atom_ws()
+      model_context%valid = .FALSE.
+      NULLIFY (model_context%xc_section)
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
 

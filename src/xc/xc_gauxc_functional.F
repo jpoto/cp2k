@@ -74,6 +74,29 @@ MODULE xc_gauxc_functional
    PUBLIC :: apply_gauxc, gauxc_gapw_all_all_electron, gauxc_gapw_all_pseudopotentials, &
              gauxc_gapw_has_paw_pseudopotentials, skala_info
 
+   ! Cached block layout for dense_to_dbcsr_into. The template's block sizes,
+   ! distribution and offsets are invariant across SCF steps, so the owned
+   ! upper-triangular block list is built once and reused; only the block values
+   ! are pushed with dbcsr_put_block each call.
+   TYPE dense_to_dbcsr_layout_type
+      LOGICAL                                            :: valid = .FALSE.
+      INTEGER                                            :: nrows = -1
+      INTEGER                                            :: ncols = -1
+      INTEGER                                            :: nblkrows = -1
+      INTEGER                                            :: nblkcols = -1
+      INTEGER                                            :: mynode = -1
+      INTEGER                                            :: myprow = -1
+      INTEGER                                            :: mypcol = -1
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: row_blk_size
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: col_blk_size
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: r_offset
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: blk_row
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: blk_col
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: blk
+   END TYPE dense_to_dbcsr_layout_type
+   TYPE(dense_to_dbcsr_layout_type), SAVE               :: dense_layout
+
 CONTAINS
 
 ! **************************************************************************************************
@@ -347,13 +370,11 @@ CONTAINS
       TYPE(dbcsr_p_type), INTENT(IN)                     :: template_dbcsr
       TYPE(dbcsr_p_type), INTENT(INOUT)                  :: dbcsr_mat
 
-      INTEGER :: col, icol, irow, mcols, mrows, mynode, mypcol, myprow, nblkcols_total, &
-         nblkrows_total, nc, ncols, nlocal_cols, nlocal_rows, nr, nrows, row
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset, local_cols, local_rows, &
-                                                            r_offset
+      INTEGER                                            :: ib, icol, irow, mcols, mrows, mynode, &
+                                                            mypcol, myprow, nblkcols_total, &
+                                                            nblkrows_total, nc, ncols, nr, nrows
       INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, col_dist, row_blk_size, &
                                                             row_dist
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: blk
       TYPE(dbcsr_distribution_type)                      :: dist
 
       CALL dbcsr_get_info(template_dbcsr%matrix, &
@@ -367,6 +388,18 @@ CONTAINS
 
       CPASSERT(nrows == SIZE(dense_mat, 1))
       CPASSERT(ncols == SIZE(dense_mat, 2))
+
+      CALL dbcsr_distribution_get(dist, mynode=mynode, myprow=myprow, mypcol=mypcol, &
+                                  row_dist=row_dist, col_dist=col_dist)
+
+      ! The block layout is invariant for a given template/distribution; build the
+      ! owned upper-triangular block list once and only push values each SCF.
+      IF (.NOT. dense_layout_matches(dense_layout, nrows, ncols, nblkrows_total, nblkcols_total, &
+                                     mynode, myprow, mypcol, row_blk_size, col_blk_size)) THEN
+         CALL build_dense_layout(dense_layout, nrows, ncols, nblkrows_total, nblkcols_total, &
+                                 mynode, myprow, mypcol, row_blk_size, col_blk_size, &
+                                 row_dist, col_dist)
+      END IF
 
       ! Reuse an existing matrix when its shape matches, otherwise (re)create it.
       IF (ASSOCIATED(dbcsr_mat%matrix)) THEN
@@ -387,79 +420,178 @@ CONTAINS
       END IF
       CALL dbcsr_work_create(dbcsr_mat%matrix, work_mutable=.TRUE.)
 
-      ALLOCATE (r_offset(nblkrows_total), c_offset(nblkcols_total))
-      r_offset(1) = 1
-      DO row = 2, nblkrows_total
-         r_offset(row) = r_offset(row - 1) + row_blk_size(row - 1)
-      END DO
-      c_offset(1) = 1
-      DO col = 2, nblkcols_total
-         c_offset(col) = c_offset(col - 1) + col_blk_size(col - 1)
+      DO ib = 1, SIZE(dense_layout%blk_row)
+         irow = dense_layout%blk_row(ib)
+         icol = dense_layout%blk_col(ib)
+         nr = dense_layout%row_blk_size(irow)
+         nc = dense_layout%col_blk_size(icol)
+         dense_layout%blk(1:nr, 1:nc) = 0.5_dp*( &
+                                        dense_mat(dense_layout%r_offset(irow):dense_layout%r_offset(irow) + nr - 1, &
+                                                  dense_layout%c_offset(icol):dense_layout%c_offset(icol) + nc - 1) + &
+                                        TRANSPOSE(dense_mat(dense_layout%r_offset(icol):dense_layout%r_offset(icol) + &
+                                                            dense_layout%row_blk_size(icol) - 1, &
+                                                            dense_layout%c_offset(irow):dense_layout%c_offset(irow) + &
+                                                            dense_layout%col_blk_size(irow) - 1)))
+         CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, dense_layout%blk(1:nr, 1:nc))
       END DO
 
-      CALL dbcsr_distribution_get(dist, mynode=mynode, myprow=myprow, mypcol=mypcol, &
-                                  row_dist=row_dist, col_dist=col_dist)
+      CALL dbcsr_finalize(dbcsr_mat%matrix)
+   END SUBROUTINE dense_to_dbcsr_into
 
-      ! Only visit blocks whose (row or transposed row) home is this rank.
-      ALLOCATE (local_rows(nblkrows_total), local_cols(nblkcols_total))
+! **************************************************************************************************
+!> \brief Whether the cached dense->DBCSR block layout still matches the template.
+!> \param layout ...
+!> \param nrows ...
+!> \param ncols ...
+!> \param nblkrows ...
+!> \param nblkcols ...
+!> \param mynode ...
+!> \param myprow ...
+!> \param mypcol ...
+!> \param row_blk_size ...
+!> \param col_blk_size ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION dense_layout_matches(layout, nrows, ncols, nblkrows, nblkcols, mynode, myprow, mypcol, &
+                                 row_blk_size, col_blk_size) RESULT(matches)
+      TYPE(dense_to_dbcsr_layout_type), INTENT(IN)       :: layout
+      INTEGER, INTENT(IN)                                :: nrows, ncols, nblkrows, nblkcols, &
+                                                            mynode, myprow, mypcol
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: row_blk_size, col_blk_size
+      LOGICAL                                            :: matches
+
+      matches = layout%valid .AND. layout%nrows == nrows .AND. layout%ncols == ncols .AND. &
+                layout%nblkrows == nblkrows .AND. layout%nblkcols == nblkcols .AND. &
+                layout%mynode == mynode .AND. layout%myprow == myprow .AND. &
+                layout%mypcol == mypcol
+      IF (matches) THEN
+         matches = ALLOCATED(layout%row_blk_size) .AND. ALLOCATED(layout%col_blk_size)
+      END IF
+      IF (matches) THEN
+         matches = SIZE(layout%row_blk_size) == SIZE(row_blk_size) .AND. &
+                   SIZE(layout%col_blk_size) == SIZE(col_blk_size)
+      END IF
+      IF (matches) THEN
+         matches = ALL(layout%row_blk_size == row_blk_size) .AND. &
+                   ALL(layout%col_blk_size == col_blk_size)
+      END IF
+   END FUNCTION dense_layout_matches
+
+! **************************************************************************************************
+!> \brief Build the cached offsets, owned upper-triangular block list and workspace.
+!> \param layout ...
+!> \param nrows ...
+!> \param ncols ...
+!> \param nblkrows ...
+!> \param nblkcols ...
+!> \param mynode ...
+!> \param myprow ...
+!> \param mypcol ...
+!> \param row_blk_size ...
+!> \param col_blk_size ...
+!> \param row_dist ...
+!> \param col_dist ...
+! **************************************************************************************************
+   SUBROUTINE build_dense_layout(layout, nrows, ncols, nblkrows, nblkcols, mynode, myprow, mypcol, &
+                                 row_blk_size, col_blk_size, row_dist, col_dist)
+      TYPE(dense_to_dbcsr_layout_type), INTENT(INOUT)    :: layout
+      INTEGER, INTENT(IN)                                :: nrows, ncols, nblkrows, nblkcols, &
+                                                            mynode, myprow, mypcol
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: row_blk_size, col_blk_size, row_dist, &
+                                                            col_dist
+
+      INTEGER                                            :: a, b, col, icol, irow, nblocks, &
+                                                            nlocal_cols, nlocal_rows, row
+      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: local_cols, local_rows
+
+      IF (ALLOCATED(layout%row_blk_size)) THEN
+         DEALLOCATE (layout%row_blk_size, layout%col_blk_size, layout%r_offset, layout%c_offset, &
+                     layout%blk_row, layout%blk_col, layout%blk)
+      END IF
+
+      ALLOCATE (layout%row_blk_size(nblkrows), layout%col_blk_size(nblkcols), &
+                layout%r_offset(nblkrows), layout%c_offset(nblkcols))
+      layout%row_blk_size = row_blk_size
+      layout%col_blk_size = col_blk_size
+      layout%r_offset(1) = 1
+      DO row = 2, nblkrows
+         layout%r_offset(row) = layout%r_offset(row - 1) + row_blk_size(row - 1)
+      END DO
+      layout%c_offset(1) = 1
+      DO col = 2, nblkcols
+         layout%c_offset(col) = layout%c_offset(col - 1) + col_blk_size(col - 1)
+      END DO
+
+      ! Locally owned block row/column indices.
+      ALLOCATE (local_rows(nblkrows), local_cols(nblkcols))
       nlocal_rows = 0
-      DO row = 1, nblkrows_total
+      DO row = 1, nblkrows
          IF (row_dist(row) == myprow) THEN
             nlocal_rows = nlocal_rows + 1
             local_rows(nlocal_rows) = row
          END IF
       END DO
       nlocal_cols = 0
-      DO col = 1, nblkcols_total
+      DO col = 1, nblkcols
          IF (col_dist(col) == mypcol) THEN
             nlocal_cols = nlocal_cols + 1
             local_cols(nlocal_cols) = col
          END IF
       END DO
 
-      ! Reused workspace so the symmetric averaging (A + A^T)/2 needs no per-block temporary.
-      ALLOCATE (blk(MAXVAL(row_blk_size), MAXVAL(col_blk_size)))
-
-      ! Non-transposed blocks (even row+column).
-      DO row = 1, nlocal_rows
-         irow = local_rows(row)
-         DO col = 1, nlocal_cols
-            icol = local_cols(col)
-            IF (irow > icol) CYCLE
-            IF (BTEST(irow + icol, 0)) CYCLE
-            nr = row_blk_size(irow)
-            nc = col_blk_size(icol)
-            blk(1:nr, 1:nc) = 0.5_dp*( &
-                              dense_mat(r_offset(irow):r_offset(irow) + nr - 1, &
-                                        c_offset(icol):c_offset(icol) + nc - 1) + &
-                              TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
-                                                  c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1)))
-            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, blk(1:nr, 1:nc))
+      ! Count, then build, the same blocks the original two parity loops visited.
+      nblocks = 0
+      DO a = 1, nlocal_rows
+         irow = local_rows(a)
+         DO b = 1, nlocal_cols
+            icol = local_cols(b)
+            IF (irow <= icol .AND. .NOT. BTEST(irow + icol, 0)) nblocks = nblocks + 1
+         END DO
+      END DO
+      DO b = 1, nlocal_cols
+         irow = local_cols(b)
+         DO a = 1, nlocal_rows
+            icol = local_rows(a)
+            IF (irow <= icol .AND. BTEST(irow + icol, 0)) nblocks = nblocks + 1
          END DO
       END DO
 
-      ! Transposed blocks (odd row+column) are stored through the local columns.
-      DO col = 1, nlocal_cols
-         irow = local_cols(col)
-         DO row = 1, nlocal_rows
-            icol = local_rows(row)
-            IF (irow > icol) CYCLE
-            IF (.NOT. BTEST(irow + icol, 0)) CYCLE
-            nr = row_blk_size(irow)
-            nc = col_blk_size(icol)
-            blk(1:nr, 1:nc) = 0.5_dp*( &
-                              dense_mat(r_offset(irow):r_offset(irow) + nr - 1, &
-                                        c_offset(icol):c_offset(icol) + nc - 1) + &
-                              TRANSPOSE(dense_mat(r_offset(icol):r_offset(icol) + row_blk_size(icol) - 1, &
-                                                  c_offset(irow):c_offset(irow) + col_blk_size(irow) - 1)))
-            CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, blk(1:nr, 1:nc))
+      ALLOCATE (layout%blk_row(nblocks), layout%blk_col(nblocks))
+      ALLOCATE (layout%blk(MAXVAL(row_blk_size), MAXVAL(col_blk_size)))
+      nblocks = 0
+      DO a = 1, nlocal_rows
+         irow = local_rows(a)
+         DO b = 1, nlocal_cols
+            icol = local_cols(b)
+            IF (irow <= icol .AND. .NOT. BTEST(irow + icol, 0)) THEN
+               nblocks = nblocks + 1
+               layout%blk_row(nblocks) = irow
+               layout%blk_col(nblocks) = icol
+            END IF
          END DO
       END DO
+      DO b = 1, nlocal_cols
+         irow = local_cols(b)
+         DO a = 1, nlocal_rows
+            icol = local_rows(a)
+            IF (irow <= icol .AND. BTEST(irow + icol, 0)) THEN
+               nblocks = nblocks + 1
+               layout%blk_row(nblocks) = irow
+               layout%blk_col(nblocks) = icol
+            END IF
+         END DO
+      END DO
+      DEALLOCATE (local_rows, local_cols)
 
-      CALL dbcsr_finalize(dbcsr_mat%matrix)
-
-      DEALLOCATE (r_offset, c_offset, local_rows, local_cols, blk)
-   END SUBROUTINE dense_to_dbcsr_into
+      layout%nrows = nrows
+      layout%ncols = ncols
+      layout%nblkrows = nblkrows
+      layout%nblkcols = nblkcols
+      layout%mynode = mynode
+      layout%myprow = myprow
+      layout%mypcol = mypcol
+      layout%valid = .TRUE.
+   END SUBROUTINE build_dense_layout
 
 ! **************************************************************************************************
 !> \brief ...
