@@ -82,7 +82,8 @@ MODULE kpoint_methods
                                               regular_kpoint_grid
    USE kpoint_types,                    ONLY: &
         find_kpoint_rotation_slot, get_kpoint_info, kind_rotmat_type, kpoint_env_create, &
-        kpoint_env_p_type, kpoint_env_type, kpoint_sym_create, kpoint_sym_type, kpoint_type
+        kpoint_env_p_type, kpoint_env_type, kpoint_sym_create, kpoint_sym_type, kpoint_type, &
+        kp_density_group_type, kp_symmetry_op_type
    USE local_gemm_api,                  ONLY: LOCAL_GEMM_PU_GPU,&
                                               LOCAL_GEMM_PU_HOST,&
                                               local_gemm_ctxt_type
@@ -136,24 +137,6 @@ MODULE kpoint_methods
       INTEGER, ALLOCATABLE, DIMENSION(:, :) :: cell
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:) :: symmetry_sign
    END TYPE kp_transform_plan_type
-
-   ! Non-owning view of one symmetry contribution; valid while kpoint metadata is unchanged.
-   TYPE :: kp_symmetry_op_type
-      TYPE(kind_rotmat_type), DIMENSION(:), POINTER :: kind_rot => NULL()
-      TYPE(kind_rotmat_type), DIMENSION(:), POINTER :: kind_rot_right => NULL()
-      INTEGER, DIMENSION(:), POINTER :: atom_map => NULL(), atom_kind => NULL()
-      INTEGER, DIMENSION(:, :), POINTER :: cell_shift => NULL()
-      REAL(KIND=dp), DIMENSION(3) :: xkp = 0.0_dp
-      LOGICAL :: time_reversal = .FALSE., identity = .FALSE., redistribute = .FALSE.
-   END TYPE kp_symmetry_op_type
-
-   ! Non-owning operation metadata and owned, group-local density contributions.
-   TYPE :: kp_density_group_type
-      TYPE(kp_symmetry_op_type) :: op
-      LOGICAL :: reverse_phase = .FALSE.
-      INTEGER, ALLOCATABLE :: inverse(:), ikp(:)
-      REAL(KIND=dp), ALLOCATABLE :: xkp(:, :), weight(:)
-   END TYPE kp_density_group_type
 
    PUBLIC :: kpoint_initialize, kpoint_env_initialize, kpoint_initialize_mos, kpoint_initialize_mo_set
    PUBLIC :: kpoint_init_cell_index, kpoint_set_mo_occupation
@@ -302,6 +285,8 @@ CONTAINS
       END DO
 
       kpsym%apply_symmetry = .TRUE.
+      kpoint%density_groups_revision = kpoint%density_groups_revision + 1
+      kpoint%density_groups_cache_valid(:) = .FALSE.
       ALLOCATE (kpsym%rot(3, 3, ns), kpsym%xkp(3, ns), kpsym%rotp(ns))
       ALLOCATE (kpsym%f0(natom, ns), kpsym%fcell(3, natom, ns), kpsym%fcell_gauge(3, natom, ns))
       ALLOCATE (kpsym%sym_error(ns))
@@ -2613,12 +2598,31 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: for_aux_fit, mixed_aux_orb
 
       INTEGER                                            :: i, ik, ikp, is, ncontrib, nrot, pass, &
-                                                            slot
+                                                            slot, variant
       INTEGER, ALLOCATABLE                               :: counts(:)
+      LOGICAL                                            :: aux_fit, mixed
       TYPE(kpoint_sym_type), POINTER                     :: kpsym
 
       nrot = 0
       IF (ASSOCIATED(kpoint%ibrot)) nrot = SIZE(kpoint%ibrot)
+      aux_fit = .FALSE.
+      IF (PRESENT(for_aux_fit)) aux_fit = for_aux_fit
+      mixed = .FALSE.
+      IF (PRESENT(mixed_aux_orb)) mixed = mixed_aux_orb
+      variant = 1 + MERGE(1, 0, aux_fit) + 2*MERGE(1, 0, mixed)
+
+      IF (ALLOCATED(kpoint%density_groups_cache)) THEN
+         IF (SIZE(kpoint%density_groups_cache, 2) >= variant .AND. &
+             UBOUND(kpoint%density_groups_cache, 1) == 4*nrot .AND. &
+             kpoint%density_groups_cache_valid(variant) .AND. &
+             kpoint%density_groups_cache_natom == natom .AND. &
+             ALL(kpoint%density_groups_cache_range == kpoint%kp_range)) THEN
+            ALLOCATE (groups(0:4*nrot))
+            CALL kp_density_groups_load(kpoint%density_groups_cache, variant, groups)
+            RETURN
+         END IF
+      END IF
+
       ALLOCATE (groups(0:4*nrot), counts(0:4*nrot))
       DO pass = 1, 2
          counts(:) = 0
@@ -2677,7 +2681,103 @@ CONTAINS
             END DO
          END IF
       END DO
+
+      IF (ALLOCATED(kpoint%density_groups_cache)) THEN
+         IF (UBOUND(kpoint%density_groups_cache, 1) /= 4*nrot) THEN
+            DEALLOCATE (kpoint%density_groups_cache)
+         END IF
+      END IF
+      IF (.NOT. ALLOCATED(kpoint%density_groups_cache)) THEN
+         ALLOCATE (kpoint%density_groups_cache(0:4*nrot, 4))
+      END IF
+      CALL kp_density_groups_store(groups, kpoint%density_groups_cache, variant)
+      kpoint%density_groups_cache_natom = natom
+      kpoint%density_groups_cache_range(:) = kpoint%kp_range
+      kpoint%density_groups_cache_valid(variant) = .TRUE.
    END SUBROUTINE kp_density_groups_create
+
+! **************************************************************************************************
+!> \brief Copy (rather than rebuild) cached density-group metadata.
+! **************************************************************************************************
+   SUBROUTINE kp_density_groups_store(src, cache, variant)
+      TYPE(kp_density_group_type), INTENT(IN)            :: src(:)
+      TYPE(kp_density_group_type), INTENT(INOUT)         :: cache(:, :)
+      INTEGER, INTENT(IN)                                :: variant
+
+      INTEGER                                            :: i
+
+      DO i = LBOUND(src, 1), UBOUND(src, 1)
+         cache(i, variant)%op%kind_rot => src(i)%op%kind_rot
+         cache(i, variant)%op%kind_rot_right => src(i)%op%kind_rot_right
+         cache(i, variant)%op%atom_map => src(i)%op%atom_map
+         cache(i, variant)%op%atom_kind => src(i)%op%atom_kind
+         cache(i, variant)%op%cell_shift => src(i)%op%cell_shift
+         cache(i, variant)%op%xkp = src(i)%op%xkp
+         cache(i, variant)%op%time_reversal = src(i)%op%time_reversal
+         cache(i, variant)%op%identity = src(i)%op%identity
+         cache(i, variant)%op%redistribute = src(i)%op%redistribute
+         cache(i, variant)%reverse_phase = src(i)%reverse_phase
+         CALL kp_density_groups_copy_i1(src(i)%inverse, cache(i, variant)%inverse)
+         CALL kp_density_groups_copy_i1(src(i)%ikp, cache(i, variant)%ikp)
+         CALL kp_density_groups_copy_r2(src(i)%xkp, cache(i, variant)%xkp)
+         CALL kp_density_groups_copy_r1(src(i)%weight, cache(i, variant)%weight)
+      END DO
+   END SUBROUTINE kp_density_groups_store
+
+   SUBROUTINE kp_density_groups_load(cache, variant, dst)
+      TYPE(kp_density_group_type), INTENT(IN)            :: cache(:, :)
+      INTEGER, INTENT(IN)                                :: variant
+      TYPE(kp_density_group_type), INTENT(INOUT)         :: dst(:)
+
+      INTEGER                                            :: i
+
+      DO i = LBOUND(dst, 1), UBOUND(dst, 1)
+         dst(i)%op%kind_rot => cache(i, variant)%op%kind_rot
+         dst(i)%op%kind_rot_right => cache(i, variant)%op%kind_rot_right
+         dst(i)%op%atom_map => cache(i, variant)%op%atom_map
+         dst(i)%op%atom_kind => cache(i, variant)%op%atom_kind
+         dst(i)%op%cell_shift => cache(i, variant)%op%cell_shift
+         dst(i)%op%xkp = cache(i, variant)%op%xkp
+         dst(i)%op%time_reversal = cache(i, variant)%op%time_reversal
+         dst(i)%op%identity = cache(i, variant)%op%identity
+         dst(i)%op%redistribute = cache(i, variant)%op%redistribute
+         dst(i)%reverse_phase = cache(i, variant)%reverse_phase
+         CALL kp_density_groups_copy_i1(cache(i, variant)%inverse, dst(i)%inverse)
+         CALL kp_density_groups_copy_i1(cache(i, variant)%ikp, dst(i)%ikp)
+         CALL kp_density_groups_copy_r2(cache(i, variant)%xkp, dst(i)%xkp)
+         CALL kp_density_groups_copy_r1(cache(i, variant)%weight, dst(i)%weight)
+      END DO
+   END SUBROUTINE kp_density_groups_load
+
+   SUBROUTINE kp_density_groups_copy_i1(src, dst)
+      INTEGER, ALLOCATABLE, INTENT(IN)                   :: src(:)
+      INTEGER, ALLOCATABLE, INTENT(INOUT)                :: dst(:)
+      IF (ALLOCATED(dst)) DEALLOCATE (dst)
+      IF (ALLOCATED(src)) THEN
+         ALLOCATE (dst(SIZE(src)))
+         dst(:) = src(:)
+      END IF
+   END SUBROUTINE kp_density_groups_copy_i1
+
+   SUBROUTINE kp_density_groups_copy_r1(src, dst)
+      REAL(KIND=dp), ALLOCATABLE, INTENT(IN)             :: src(:)
+      REAL(KIND=dp), ALLOCATABLE, INTENT(INOUT)          :: dst(:)
+      IF (ALLOCATED(dst)) DEALLOCATE (dst)
+      IF (ALLOCATED(src)) THEN
+         ALLOCATE (dst(SIZE(src)))
+         dst(:) = src(:)
+      END IF
+   END SUBROUTINE kp_density_groups_copy_r1
+
+   SUBROUTINE kp_density_groups_copy_r2(src, dst)
+      REAL(KIND=dp), ALLOCATABLE, INTENT(IN)             :: src(:, :)
+      REAL(KIND=dp), ALLOCATABLE, INTENT(INOUT)          :: dst(:, :)
+      IF (ALLOCATED(dst)) DEALLOCATE (dst)
+      IF (ALLOCATED(src)) THEN
+         ALLOCATE (dst(SIZE(src, 1), SIZE(src, 2)))
+         dst(:, :) = src(:, :)
+      END IF
+   END SUBROUTINE kp_density_groups_copy_r2
 
 ! **************************************************************************************************
 !> \brief Map each AO block to its local FM row and column intervals, excluding padding.
@@ -3537,6 +3637,8 @@ CONTAINS
       END DO
       IF (.NOT. needs_calibration) THEN
          kpoint%phases_calibrated = .TRUE.
+         kpoint%density_groups_revision = kpoint%density_groups_revision + 1
+         kpoint%density_groups_cache_valid(:) = .FALSE.
          RETURN
       END IF
 
@@ -3672,6 +3774,8 @@ CONTAINS
       CALL dbcsr_deallocate_matrix(sym_r)
       CALL dbcsr_deallocate_matrix(sym_c)
       kpoint%phases_calibrated = .TRUE.
+      kpoint%density_groups_revision = kpoint%density_groups_revision + 1
+      kpoint%density_groups_cache_valid(:) = .FALSE.
       CALL timestop(handle)
 
    END SUBROUTINE calibrate_symmetry_phases

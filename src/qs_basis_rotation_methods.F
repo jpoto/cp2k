@@ -102,6 +102,8 @@ CONTAINS
                END IF
             END DO
          END DO
+         ! Cached density groups hold views of these rotation arrays.
+         kpoints%density_groups_cache_valid(:) = .FALSE.
          ! check all rotations needed
          NULLIFY (orbrot)
          CALL get_qs_env(qs_env, dft_control=dft_control)

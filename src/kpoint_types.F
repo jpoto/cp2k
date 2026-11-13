@@ -160,6 +160,24 @@ MODULE kpoint_types
       TYPE(kpoint_sym_type), POINTER                    :: kpoint_sym => NULL()
    END TYPE kpoint_sym_p_type
 
+   ! Non-owning view of one symmetry contribution; valid while kpoint metadata is unchanged.
+   TYPE, PUBLIC :: kp_symmetry_op_type
+      TYPE(kind_rotmat_type), DIMENSION(:), POINTER :: kind_rot => NULL()
+      TYPE(kind_rotmat_type), DIMENSION(:), POINTER :: kind_rot_right => NULL()
+      INTEGER, DIMENSION(:), POINTER :: atom_map => NULL(), atom_kind => NULL()
+      INTEGER, DIMENSION(:, :), POINTER :: cell_shift => NULL()
+      REAL(KIND=dp), DIMENSION(3) :: xkp = 0.0_dp
+      LOGICAL :: time_reversal = .FALSE., identity = .FALSE., redistribute = .FALSE.
+   END TYPE kp_symmetry_op_type
+
+   ! Non-owning operation metadata and owned, group-local density contributions.
+   TYPE, PUBLIC :: kp_density_group_type
+      TYPE(kp_symmetry_op_type) :: op
+      LOGICAL :: reverse_phase = .FALSE.
+      INTEGER, ALLOCATABLE :: inverse(:), ikp(:)
+      REAL(KIND=dp), ALLOCATABLE :: xkp(:, :), weight(:)
+   END TYPE kp_density_group_type
+
 ! **************************************************************************************************
 !> \brief Contains information about kpoints
 !> \par History
@@ -239,6 +257,12 @@ MODULE kpoint_types
       TYPE(kpoint_sym_p_type), DIMENSION(:), &
          POINTER                              :: kp_sym => Null()
       LOGICAL                                 :: phases_calibrated = .FALSE.
+      ! Cached kp_density_groups_create metadata (four for_aux_fit/mixed_aux_orb variants).
+      TYPE(kp_density_group_type), ALLOCATABLE :: density_groups_cache(:, :)
+      LOGICAL, DIMENSION(4)                   :: density_groups_cache_valid = .FALSE.
+      INTEGER                                 :: density_groups_cache_natom = -1
+      INTEGER                                 :: density_groups_cache_range(2) = 0
+      INTEGER                                 :: density_groups_revision = 0
       INTEGER, DIMENSION(:), POINTER          :: atype => Null()
       INTEGER, DIMENSION(:), POINTER          :: ibrot => Null()
       TYPE(kind_rotmat_type), DIMENSION(:, :), &
@@ -292,6 +316,9 @@ CONTAINS
 
       kpoint%nkp = 0
       kpoint%phases_calibrated = .FALSE.
+      kpoint%density_groups_cache_valid(:) = .FALSE.
+      kpoint%density_groups_cache_natom = -1
+      kpoint%density_groups_revision = 0
 
       NULLIFY (kpoint%xkp, kpoint%wkp)
       NULLIFY (kpoint%xkp_input, kpoint%wkp_input)
@@ -328,6 +355,10 @@ CONTAINS
 
       IF (ASSOCIATED(kpoint)) THEN
          CALL kpoint_clear_scf_smat(kpoint)
+
+         IF (ALLOCATED(kpoint%density_groups_cache)) THEN
+            DEALLOCATE (kpoint%density_groups_cache)
+         END IF
 
          IF (ASSOCIATED(kpoint%xkp)) THEN
             DEALLOCATE (kpoint%xkp)
