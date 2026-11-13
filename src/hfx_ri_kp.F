@@ -249,11 +249,11 @@ CONTAINS
       INTEGER                                            :: handle, i_img, iatom, natom, nblk_AO_3c, &
                                                             nblk_RI_3c, nimg, nkind, nops
       INTEGER, ALLOCATABLE, DIMENSION(:) :: blk_atom_AO, blk_atom_RI, blk_off_AO, blk_off_RI, &
-         blk_ord_AO, blk_ord_RI, first_AO, first_RI, img_op, img_rep, op_slot
+         blk_ord_AO, blk_ord_RI, first_AO, first_RI, idx_op, idx_rep, img_op, img_rep, op_slot
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: op_map
       INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: imaps_3c, op_frac, op_shift
       LOGICAL :: general_3c, image_sym_check, image_sym_usable, use_3c_image, use_image_sym
-      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: do_2c_image, do_3c_image, img_inv
+      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: do_2c_image, do_3c_image, do_idx, img_inv
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dbcsr_type), ALLOCATABLE, DIMENSION(:)        :: t_2c_op_pot, t_2c_op_RI
       TYPE(dbt_type), ALLOCATABLE, DIMENSION(:, :)       :: t_3c_int
@@ -347,16 +347,6 @@ CONTAINS
                                    op_map, op_shift, nops, blk_ord_RI, first_RI, blk_ord_AO, &
                                    first_AO, general_3c)
       END IF
-      DEALLOCATE (img_rep, img_op, img_inv, do_2c_image, do_3c_image)
-      DEALLOCATE (op_slot, op_frac, op_map, op_shift)
-      IF (ALLOCATED(imaps_3c)) DEALLOCATE (imaps_3c)
-      IF (ALLOCATED(blk_atom_RI)) THEN
-         DEALLOCATE (blk_atom_RI, blk_off_RI, blk_ord_RI, first_RI)
-      END IF
-      IF (ALLOCATED(blk_atom_AO)) THEN
-         DEALLOCATE (blk_atom_AO, blk_off_AO, blk_ord_AO, first_AO)
-      END IF
-
       !Make sure the internals have the k-point format
       CALL adapt_ri_data_to_kp(dbcsr_template, ri_data, qs_env)
 
@@ -394,8 +384,34 @@ CONTAINS
       CALL reorder_3c_ints(t_3c_int(1, :), ri_data)
 
       !Pre-contract all 3c integrals with the bumped inverse RI metric (P^0|Q^0)^-1,
-      !and store in ri_data%t_3c_int_ctr_1
-      CALL precontract_3c_ints(t_3c_int, ri_data, qs_env)
+      !and store in ri_data%t_3c_int_ctr_1. The tensor index space was permuted by
+      !reorder_3c_ints, so map the image orbit into that space.
+      IF (use_3c_image .AND. .NOT. general_3c) THEN
+         ALLOCATE (idx_rep(nimg), idx_op(nimg), do_idx(nimg))
+         DO i_img = 1, nimg
+            idx_rep(i_img) = ri_data%img_to_idx(img_rep(ri_data%idx_to_img(i_img)))
+            idx_op(i_img) = img_op(ri_data%idx_to_img(i_img))
+            do_idx(i_img) = do_3c_image(ri_data%idx_to_img(i_img))
+         END DO
+         CALL precontract_3c_ints(t_3c_int, ri_data, qs_env, do_idx)
+         CALL hfx_expand_3c_images_dim(kpoints, ri_data, nimg, idx_rep, idx_op, op_slot, imaps_3c, &
+                                       [2, 1, 3], [2, 1, 2], nblk_RI_3c, nblk_AO_3c, blk_atom_RI, &
+                                       blk_off_RI, blk_atom_AO, blk_off_AO, &
+                                       ri_data%t_3c_int_ctr_1(1, :), ri_data%filter_eps)
+         DEALLOCATE (idx_rep, idx_op, do_idx)
+      ELSE
+         CALL precontract_3c_ints(t_3c_int, ri_data, qs_env)
+      END IF
+
+      DEALLOCATE (img_rep, img_op, img_inv, do_2c_image, do_3c_image)
+      DEALLOCATE (op_slot, op_frac, op_map, op_shift)
+      IF (ALLOCATED(imaps_3c)) DEALLOCATE (imaps_3c)
+      IF (ALLOCATED(blk_atom_RI)) THEN
+         DEALLOCATE (blk_atom_RI, blk_off_RI, blk_ord_RI, first_RI)
+      END IF
+      IF (ALLOCATED(blk_atom_AO)) THEN
+         DEALLOCATE (blk_atom_AO, blk_off_AO, blk_ord_AO, first_AO)
+      END IF
 
       CALL timestop(handle)
 
@@ -739,7 +755,7 @@ CONTAINS
             CALL dbt_create(ri_data%t_3c_int_ctr_2(1, 1), t_3c_apc(i_spin, i_img))
          END DO
       END DO
-      CALL contract_pmat_3c(t_3c_apc, ri_data%rho_ao_t, ri_data, qs_env)
+      CALL contract_pmat_3c(t_3c_apc, ri_data%rho_ao_t, ri_data, qs_env, img_computed)
 
       IF (use_image_sym) THEN
          CALL hfx_check_block_coverage(qs_env, kpoints, sparsity_pattern, nimg, natom, img_rep, &
@@ -1143,7 +1159,6 @@ CONTAINS
             CALL dbt_create(ri_data%t_3c_int_ctr_2(1, 1), t_3c_apc(i_spin, i_img))
          END DO
       END DO
-      CALL contract_pmat_3c(t_3c_apc, rho_ao_t, ri_data, qs_env)
 
       !Setup the subgroups
       hfx_section => section_vals_get_subs_vals(qs_env%input, "DFT%XC%HF%RI")
@@ -1228,6 +1243,9 @@ CONTAINS
             CPABORT("KP_IMAGE_SYMMETRY: incomplete image orbit for forces; set KP_IMAGE_SYMMETRY FALSE")
          END IF
       END IF
+
+      !Only image combinations reachable from the computed images are needed.
+      CALL contract_pmat_3c(t_3c_apc, rho_ao_t, ri_data, qs_env, img_computed)
 
       !Get the 2-center quantities in the subgroups (note: main group derivs are deleted wihtin)
       ALLOCATE (t_2c_inv(natom), mat_2c_pot(nimg), rho_ao_t_sub(nspins, nimg), t_2c_work(5), &
@@ -3051,10 +3069,11 @@ CONTAINS
 !> \param ri_data ...
 !> \param qs_env ...
 ! **************************************************************************************************
-   SUBROUTINE contract_pmat_3c(t_3c_apc, rho_ao_t, ri_data, qs_env)
+   SUBROUTINE contract_pmat_3c(t_3c_apc, rho_ao_t, ri_data, qs_env, compute_image)
       TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: t_3c_apc, rho_ao_t
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
       TYPE(qs_environment_type), POINTER                 :: qs_env
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: compute_image
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'contract_pmat_3c'
 
@@ -3086,6 +3105,9 @@ CONTAINS
       ALLOCATE (apc_filter(nimg), iapc_pairs(nimg, 2))
       apc_filter = 0
       DO b_img = 1, nimg
+         IF (PRESENT(compute_image)) THEN
+            IF (.NOT. compute_image(b_img)) CYCLE
+         END IF
          CALL get_iapc_pairs(iapc_pairs, b_img, ri_data, qs_env)
          DO i_img = 1, nimg_nze
             idx = iapc_pairs(i_img, 2)
@@ -3131,6 +3153,7 @@ CONTAINS
 
          DO i_spin = 1, nspins
             DO i_batch = 1, n_batch_img
+               IF (ALL(apc_filter(batch_ranges_img(i_batch):batch_ranges_img(i_batch + 1) - 1) == 0)) CYCLE
                !Second batch is over the P matrix. Here we fill the stacked rho tensors col by col
                DO apc_img = batch_ranges_img(i_batch), batch_ranges_img(i_batch + 1) - 1
                   IF (apc_filter(apc_img) == 0) CYCLE
@@ -3188,16 +3211,17 @@ CONTAINS
 !> \param ri_data ...
 !> \param qs_env ...
 ! **************************************************************************************************
-   SUBROUTINE precontract_3c_ints(t_3c_int, ri_data, qs_env)
+   SUBROUTINE precontract_3c_ints(t_3c_int, ri_data, qs_env, do_image)
       TYPE(dbt_type), DIMENSION(:, :), INTENT(INOUT)     :: t_3c_int
       TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
       TYPE(qs_environment_type), POINTER                 :: qs_env
+      LOGICAL, DIMENSION(:), INTENT(IN), OPTIONAL        :: do_image
 
       CHARACTER(len=*), PARAMETER :: routineN = 'precontract_3c_ints'
 
       INTEGER                                            :: batch_size, handle, i_batch, i_img, &
-                                                            i_RI, iatom, is, n_batch, natom, &
-                                                            nblks, nblks_3c(3), nimg
+                                                            i_RI, iatom, is, n_batch, n_list, &
+                                                            natom, nblks, nblks_3c(3), nimg
       INTEGER(int_8)                                     :: nflop
       INTEGER, ALLOCATABLE, DIMENSION(:) :: batch_ranges, bsizes_RI_ext, bsizes_RI_ext_split, &
          bsizes_stack, dist1, dist2, dist3, dist_stack3, idx_to_at_AO, int_indices
@@ -3209,9 +3233,16 @@ CONTAINS
       CALL get_qs_env(qs_env, natom=natom)
 
       nimg = ri_data%nimg
-      ALLOCATE (int_indices(nimg))
+      n_list = nimg
+      IF (PRESENT(do_image)) n_list = COUNT(do_image)
+      ALLOCATE (int_indices(MAX(1, n_list)))
+      is = 0
       DO i_img = 1, nimg
-         int_indices(i_img) = i_img
+         IF (PRESENT(do_image)) THEN
+            IF (.NOT. do_image(i_img)) CYCLE
+         END IF
+         is = is + 1
+         int_indices(is) = i_img
       END DO
 
       ALLOCATE (idx_to_at_AO(SIZE(ri_data%bsizes_AO_split)))
@@ -3235,13 +3266,13 @@ CONTAINS
 
       !For more efficiency, we stack multiple images of the 3-center integrals into a single tensor
       batch_size = ri_data%kp_stack_size
-      n_batch = nimg/batch_size
-      IF (MODULO(nimg, batch_size) /= 0) n_batch = n_batch + 1
+      n_batch = n_list/batch_size
+      IF (MODULO(n_list, batch_size) /= 0) n_batch = n_batch + 1
       ALLOCATE (batch_ranges(n_batch + 1))
       DO i_batch = 1, n_batch
          batch_ranges(i_batch) = (i_batch - 1)*batch_size + 1
       END DO
-      batch_ranges(n_batch + 1) = nimg + 1
+      batch_ranges(n_batch + 1) = n_list + 1
 
       nblks = SIZE(ri_data%bsizes_AO_split)
       ALLOCATE (bsizes_stack(batch_size*nblks))
@@ -3284,10 +3315,10 @@ CONTAINS
                               filter_eps=ri_data%filter_eps, flop=nflop)
             ri_data%dbcsr_nflop = ri_data%dbcsr_nflop + nflop
 
-            DO i_img = batch_ranges(i_batch), batch_ranges(i_batch + 1) - 1
-               CALL unstack_t_3c_apc(t_3c_tmp(3), t_3c_tmp(2), i_img - batch_ranges(i_batch) + 1)
-               CALL dbt_copy(t_3c_tmp(3), ri_data%t_3c_int_ctr_1(1, i_img), summation=.TRUE., &
-                             order=[2, 1, 3], move_data=.TRUE.)
+            DO is = batch_ranges(i_batch), batch_ranges(i_batch + 1) - 1
+               CALL unstack_t_3c_apc(t_3c_tmp(3), t_3c_tmp(2), is - batch_ranges(i_batch) + 1)
+               CALL dbt_copy(t_3c_tmp(3), ri_data%t_3c_int_ctr_1(1, int_indices(is)), &
+                             summation=.TRUE., order=[2, 1, 3], move_data=.TRUE.)
             END DO
             CALL dbt_clear(t_3c_tmp(1))
          END DO
@@ -6791,6 +6822,117 @@ CONTAINS
       END DO
       CALL dbt_iterator_stop(iter)
    END SUBROUTINE hfx_rotate_3c_work
+
+! **************************************************************************************************
+!> \brief Return the rotation sub-matrix for one tensor dimension and block.
+! **************************************************************************************************
+   SUBROUTINE hfx_3c_rot_slice(kpoints, role, ind, n, slot, nblk_RI, blk_atom_RI, blk_off_RI, &
+                               blk_atom_AO, blk_off_AO, r)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      INTEGER, INTENT(IN)                                :: role, ind, n, slot, nblk_RI, &
+                                                            blk_atom_RI(:), blk_off_RI(:), &
+                                                            blk_atom_AO(:), blk_off_AO(:)
+      REAL(dp), DIMENSION(:, :), POINTER                 :: r
+
+      INTEGER                                            :: iatom, kc, kind, off, rb
+
+      IF (role == 1) THEN
+         kc = (ind - 1)/nblk_RI + 1
+         rb = ind - (kc - 1)*nblk_RI
+         iatom = blk_atom_RI(rb)
+         off = blk_off_RI(rb)
+         kind = kpoints%atype(iatom)
+         r => kpoints%kind_rotmat_ri(slot, kind)%rmat(off + 1:off + n, off + 1:off + n)
+      ELSE
+         iatom = blk_atom_AO(ind)
+         off = blk_off_AO(ind)
+         kind = kpoints%atype(iatom)
+         r => kpoints%kind_rotmat(slot, kind)%rmat(off + 1:off + n, off + 1:off + n)
+      END IF
+   END SUBROUTINE hfx_3c_rot_slice
+
+! **************************************************************************************************
+!> \brief Rotate a 3-index tensor whose RI/AO dimension roles are given by dim_kind (1=RI, 2=AO).
+! **************************************************************************************************
+   SUBROUTINE hfx_rotate_3c_work_dim(work, kpoints, ri_data, g, op_slot, dim_kind, &
+                                     nblk_RI, blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
+      TYPE(dbt_type), INTENT(INOUT)                      :: work
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN)                                :: g, op_slot(:), dim_kind(:), nblk_RI, &
+                                                            blk_atom_RI(:), blk_off_RI(:), &
+                                                            blk_atom_AO(:), blk_off_AO(:)
+
+      INTEGER                                            :: d, slot
+      INTEGER, DIMENSION(3)                              :: ind, n
+      LOGICAL                                            :: found
+      REAL(dp), ALLOCATABLE, DIMENSION(:, :, :)          :: block, out
+      REAL(dp), DIMENSION(:, :), POINTER                 :: r1, r2, r3
+      TYPE(dbt_iterator_type)                            :: iter
+
+      slot = op_slot(g)
+      CALL dbt_iterator_start(iter, work)
+      DO WHILE (dbt_iterator_blocks_left(iter))
+         CALL dbt_iterator_next_block(iter, ind, blk_size=n)
+         CALL dbt_get_block(work, ind, block, found)
+         IF (.NOT. found) CYCLE
+         IF (slot == 0) THEN
+            DEALLOCATE (block)
+            CYCLE
+         END IF
+         CALL hfx_3c_rot_slice(kpoints, dim_kind(1), ind(1), n(1), slot, nblk_RI, blk_atom_RI, &
+                               blk_off_RI, blk_atom_AO, blk_off_AO, r1)
+         CALL hfx_3c_rot_slice(kpoints, dim_kind(2), ind(2), n(2), slot, nblk_RI, blk_atom_RI, &
+                               blk_off_RI, blk_atom_AO, blk_off_AO, r2)
+         CALL hfx_3c_rot_slice(kpoints, dim_kind(3), ind(3), n(3), slot, nblk_RI, blk_atom_RI, &
+                               blk_off_RI, blk_atom_AO, blk_off_AO, r3)
+         CALL hfx_rotate_3c_block(block, r1, r2, r3, out)
+         CALL dbt_put_block(work, ind, SHAPE(out), out)
+         DEALLOCATE (block, out)
+      END DO
+      CALL dbt_iterator_stop(iter)
+   END SUBROUTINE hfx_rotate_3c_work_dim
+
+! **************************************************************************************************
+!> \brief Expand representative 3-index images for an arbitrary RI/AO dimension order (fast path).
+! **************************************************************************************************
+   SUBROUTINE hfx_expand_3c_images_dim(kpoints, ri_data, nimg, img_rep, img_op, op_slot, imaps, &
+                                       map_dim, dim_kind, nblk_RI, nblk_AO, blk_atom_RI, blk_off_RI, &
+                                       blk_atom_AO, blk_off_AO, t3c, filter_eps)
+      TYPE(kpoint_type), POINTER                         :: kpoints
+      TYPE(hfx_ri_type), INTENT(INOUT)                   :: ri_data
+      INTEGER, INTENT(IN) :: nimg, img_rep(:), img_op(:), op_slot(:), imaps(:, :, :), map_dim(:), &
+         dim_kind(:), nblk_RI, nblk_AO, blk_atom_RI(:), blk_off_RI(:), blk_atom_AO(:), blk_off_AO(:)
+      TYPE(dbt_type), DIMENSION(:), INTENT(INOUT)        :: t3c
+      REAL(dp), INTENT(IN)                               :: filter_eps
+
+      INTEGER                                            :: b, d, g, i, mdim
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: imap
+      TYPE(dbt_type)                                     :: work
+
+      mdim = MAX(ri_data%ncell_RI*nblk_RI, nblk_AO)
+      ALLOCATE (imap(mdim, 3))
+      DO b = 1, nimg
+         IF (img_rep(b) /= b) CYCLE
+         CALL dbt_create(t3c(b), work)
+         DO i = 1, nimg
+            IF (img_rep(i) /= b) CYCLE
+            IF (i == b) CYCLE
+            g = img_op(i)
+            DO d = 1, 3
+               imap(:, d) = imaps(:, map_dim(d), g)
+            END DO
+            CALL dbt_copy(t3c(b), work)
+            CALL hfx_rotate_3c_work_dim(work, kpoints, ri_data, g, op_slot, dim_kind, nblk_RI, &
+                                        blk_atom_RI, blk_off_RI, blk_atom_AO, blk_off_AO)
+            CALL dbt_reshape(work, t3c(i), summation=.FALSE., move_data=.TRUE., index_map=imap)
+            CALL dbt_finalize(t3c(i))
+            CALL dbt_filter(t3c(i), filter_eps)
+         END DO
+         CALL dbt_destroy(work)
+      END DO
+      DEALLOCATE (imap)
+   END SUBROUTINE hfx_expand_3c_images_dim
 
 ! **************************************************************************************************
 !> \brief Mix the three Cartesian derivative components blockwise: out(xyz) = sum_x rmap(xyz,x) work(x).
