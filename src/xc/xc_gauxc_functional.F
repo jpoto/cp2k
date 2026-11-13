@@ -48,8 +48,9 @@ MODULE xc_gauxc_functional
                                               qs_rho_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
    USE skala_model_selection,           ONLY: find_single_functional_subsection,&
+                                              resolve_skala_execution_target,&
                                               resolve_skala_model_path,&
-                                              skala_gpu_mode_use_cuda
+                                              skala_execution_target_type
    USE string_utilities,                ONLY: uppercase
    USE xc_gauxc_cache,                  ONLY: cp_gauxc_cache_params,&
                                               cp_gauxc_cache_type,&
@@ -1181,11 +1182,11 @@ CONTAINS
       INTEGER                                            :: assembly_handle, density_handle, &
                                                             gpu_mode, ikind, img, model_handle, &
                                                             nimages
-      LOGICAL :: auto_cuda, do_kpoints, external_density, gapw_method, gapw_paw_pseudopotentials, &
-         gapw_pseudopotentials, grid_explicit, hdf5_output, int_space_explicit, is_periodic, &
-         lb_space_explicit, low_spin_scope, molecular_virial, molecular_virial_debug, &
-         need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, use_skala_model, &
-         write_hdf5_output
+      LOGICAL :: backend_has_gpu, do_kpoints, external_density, gapw_method, &
+         gapw_paw_pseudopotentials, gapw_pseudopotentials, grid_explicit, hdf5_output, &
+         int_space_explicit, is_periodic, lb_space_explicit, low_spin_scope, molecular_virial, &
+         molecular_virial_debug, need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, &
+         use_skala_model, write_hdf5_output
       REAL(KIND=dp)                                      :: exc_value, molecular_virial_debug_dx
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
@@ -1205,6 +1206,7 @@ CONTAINS
       TYPE(qs_rho_type), POINTER                         :: rho, rho_use, rho_xc
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(section_vals_type), POINTER                   :: gauxc_functional_section
+      TYPE(skala_execution_target_type)                  :: execution_target
 
       external_density = PRESENT(rho_ao_external)
       CPASSERT(PRESENT(exc_external) .EQV. external_density)
@@ -1357,11 +1359,12 @@ CONTAINS
          gauxc_functional_section, &
          "USE_GPU", &
          i_val=gpu_mode)
-      auto_cuda = .FALSE.
+      backend_has_gpu = .FALSE.
 #if defined(GAUXC_HAS_DEVICE) && defined(__LIBTORCH_CUDA)
-      auto_cuda = .TRUE.
+      backend_has_gpu = .TRUE.
 #endif
-      use_cuda = skala_gpu_mode_use_cuda(gpu_mode, auto_cuda)
+      CALL resolve_skala_execution_target(gpu_mode, backend_has_gpu, "GAUXC", execution_target)
+      use_cuda = execution_target%use_cuda
       CALL section_vals_val_get( &
          gauxc_functional_section, &
          "LB_EXECUTION_SPACE", &
@@ -1429,7 +1432,7 @@ CONTAINS
       IF (TRIM(lwd_kernel_key) == "AUTO") THEN
          params%lwd_kernel = "DEFAULT"
 #if defined(GAUXC_HAS_CUTLASS)
-         IF (use_skala_model .AND. TRIM(params%int_exec_space) == "DEVICE") THEN
+         IF (use_skala_model .AND. TRIM(int_exec_space_key) == "DEVICE") THEN
             params%lwd_kernel = "SCHEME1-CUTLASS"
          END IF
 #endif
@@ -1475,7 +1478,7 @@ CONTAINS
             CALL cp_abort(__LOCATION__, &
                           "GAPW low spin ROKS GauXC nuclear gradients and molecular virial are not implemented.")
          END IF
-         IF (TRIM(int_exec_space_key) /= "HOST" .OR. TRIM(params%lb_exec_space) /= "HOST") THEN
+         IF (TRIM(int_exec_space_key) /= "HOST" .OR. TRIM(lb_exec_space_key) /= "HOST") THEN
             CPABORT("GAPW low spin ROKS GauXC currently requires HOST execution.")
          END IF
          IF (params%use_gauxc_model .AND. .NOT. use_skala_model) THEN

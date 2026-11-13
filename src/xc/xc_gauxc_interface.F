@@ -1003,7 +1003,7 @@ CONTAINS
          IF (.NOT. ALLOCATED(res%vxc_zeta)) THEN
             ALLOCATE (res%vxc_zeta, mold=density_zeta)
          ELSE
-            CPASSERT(ALL(SHAPE(res%vxc_zeta) == SHAPE(density_scalar)))
+            CPASSERT(ALL(SHAPE(res%vxc_zeta) == SHAPE(density_zeta)))
          END IF
          res%vxc_zeta = 0._dp
 

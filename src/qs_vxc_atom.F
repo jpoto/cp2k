@@ -1482,7 +1482,8 @@ CONTAINS
                   composite_local_grid_sizes, composite_local_atom_coords, atom_composite_exc, &
                   composite_density_grad, composite_grad_grad, composite_kin_grad, &
                   composite_grid_coord_grad, composite_grid_weight_grad, &
-                  composite_atomic_grid_weight_grad, composite_atom_coord_grad)
+                  composite_atomic_grid_weight_grad, composite_atom_coord_grad, &
+                  static_geometry_valid=comp_geometry_valid)
                ALLOCATE (composite_cross_force(3, SIZE(particle_set)), &
                          composite_explicit_force(3, SIZE(particle_set)), &
                          composite_grid_coord_force(3, SIZE(particle_set)), &
@@ -2053,7 +2054,8 @@ CONTAINS
                   my_xc_section, para_env, composite_density, composite_grad, composite_kin, &
                   composite_grid_coords, composite_grid_weights, composite_atomic_grid_weights, &
                   composite_local_grid_sizes, composite_local_atom_coords, atom_composite_exc, &
-                  composite_density_grad, composite_grad_grad, composite_kin_grad)
+                  composite_density_grad, composite_grad_grad, composite_kin_grad, &
+                  static_geometry_valid=comp_geometry_valid)
             END IF
             adjoint_nchannels = MERGE(2, 1, lsd)
             ! Compact adjoint: accumulate the per-row feature gradients into the shared
@@ -2591,7 +2593,8 @@ CONTAINS
                   CALL skala_gapw_atom_composite_energy( &
                      my_xc_section, para_env, composite_density, composite_grad, composite_kin, &
                      composite_grid_coords, composite_grid_weights, composite_atomic_grid_weights, &
-                     composite_local_grid_sizes, composite_local_atom_coords, feature_vxc_plus)
+                     composite_local_grid_sizes, composite_local_atom_coords, feature_vxc_plus, &
+                     static_geometry_valid=comp_geometry_valid)
                   SELECT CASE (icomponent)
                   CASE (1)
                      composite_density = ((1.0_dp - feature_vxc_step)/ &
@@ -2613,7 +2616,8 @@ CONTAINS
                   CALL skala_gapw_atom_composite_energy( &
                      my_xc_section, para_env, composite_density, composite_grad, composite_kin, &
                      composite_grid_coords, composite_grid_weights, composite_atomic_grid_weights, &
-                     composite_local_grid_sizes, composite_local_atom_coords, feature_vxc_minus)
+                     composite_local_grid_sizes, composite_local_atom_coords, feature_vxc_minus, &
+                     static_geometry_valid=comp_geometry_valid)
                   SELECT CASE (icomponent)
                   CASE (1)
                      composite_density = composite_density/(1.0_dp - feature_vxc_step)

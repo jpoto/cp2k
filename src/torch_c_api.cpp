@@ -9,6 +9,7 @@
 
 #include <ATen/Parallel.h>
 #include <algorithm>
+#include <atomic>
 #if defined(__LIBTORCH_CUDA)
 #include <ATen/cuda/CUDAContextLight.h>
 #include <c10/cuda/CUDAAllocatorConfig.h>
@@ -136,7 +137,11 @@ static void torch_c_check(const bool condition, const char *message) {
  * \brief Internal helper for selecting the CUDA device when available.
  * \author Ole Schuett
  ******************************************************************************/
-static bool use_cuda_if_available = true;
+// CUDA is opt-out: GPU is the default whenever a CUDA device is usable. The
+// value is resolved once by the SKALA/GauXC execution-target resolver and then
+// kept for the whole calculation. Atomic because it is read from Torch calls
+// that may run concurrently on OpenMP threads.
+static std::atomic<bool> use_cuda_if_available{true};
 
 // Cached model metadata (TorchScript extra files) keyed by model filename and
 // the file stamp (size + mtime).
@@ -179,19 +184,16 @@ static bool get_positive_int_env(const char *name, int &value) {
 }
 
 static void initialize_torch_threads_from_env() {
-  static bool initialized = false;
-  if (initialized) {
-    return;
-  }
-  initialized = true;
-
-  int num_threads = 0;
-  if (get_positive_int_env("CP2K_TORCH_NUM_THREADS", num_threads)) {
-    at::set_num_threads(num_threads);
-  }
-  if (get_positive_int_env("CP2K_TORCH_NUM_INTEROP_THREADS", num_threads)) {
-    at::set_num_interop_threads(num_threads);
-  }
+  static std::once_flag init_flag;
+  std::call_once(init_flag, []() {
+    int num_threads = 0;
+    if (get_positive_int_env("CP2K_TORCH_NUM_THREADS", num_threads)) {
+      at::set_num_threads(num_threads);
+    }
+    if (get_positive_int_env("CP2K_TORCH_NUM_INTEROP_THREADS", num_threads)) {
+      at::set_num_interop_threads(num_threads);
+    }
+  });
 }
 
 // Set the Torch CPU intra-op thread count. An explicit CP2K_TORCH_NUM_THREADS
@@ -213,16 +215,29 @@ extern "C" int torch_c_get_num_threads(void) {
   return at::get_num_threads();
 }
 
+// Probe CUDA availability once: the result cannot change within a process and
+// repeated is_available()/device_count() calls are surprisingly expensive on
+// the per-tensor/per-dict hot path.
+static bool cuda_device_available(int &device_count) {
+  static std::once_flag probe_flag;
+  static bool available = false;
+  static int count = 0;
+  std::call_once(probe_flag, []() {
+    available = torch::cuda::is_available();
+    count = available ? torch::cuda::device_count() : 0;
+    available = available && count > 0;
+  });
+  device_count = count;
+  return available;
+}
+
 static torch::Device get_device() {
   initialize_torch_threads_from_env();
-  if (!use_cuda_if_available || !torch::cuda::is_available()) {
+  int device_count = 0;
+  if (!use_cuda_if_available.load() || !cuda_device_available(device_count)) {
     return torch::kCPU;
   }
   enable_expandable_cuda_segments_if_unconfigured();
-  const auto device_count = torch::cuda::device_count();
-  if (device_count <= 0) {
-    return torch::kCPU;
-  }
   const int chosen_device = offload_get_chosen_device();
   const int device = (chosen_device >= 0) ? chosen_device : 0;
   torch_c_check(device < device_count,
@@ -281,7 +296,11 @@ static torch::jit::Module load_module_for_device(
   auto model = (extra_files != nullptr)
                    ? torch::jit::load(filename, torch::kCPU, *extra_files)
                    : torch::jit::load(filename, torch::kCPU);
-  model.to(device);
+  // With load_on_cpu the module must stay on the CPU so callers can promote and
+  // freeze it there; remap_device_constants performs the host->device move.
+  if (!load_on_cpu) {
+    model.to(device);
+  }
   return model;
 }
 
@@ -533,6 +552,10 @@ static void copy_attr_string_to_fortran(const std::string &source, char *dest) {
   if (source.size() >= torch_c_attr_string_length) {
     torch_c_api_abort("Torch attribute string exceeds CP2K default length");
   }
+  // Blank-pad the whole Fortran buffer: the caller passes an INTENT(OUT)
+  // CHARACTER(LEN=default_string_length) and only source.size() bytes are
+  // overwritten otherwise, leaving an uninitialized tail.
+  std::memset(dest, ' ', torch_c_attr_string_length);
   std::memcpy(dest, source.data(), source.size());
 }
 
@@ -930,12 +953,14 @@ void torch_c_tensor_set_requires_grad(torch_c_tensor_t *tensor,
 /*******************************************************************************
  * \brief Select whether Torch wrappers should use CUDA when available.
  ******************************************************************************/
-void torch_c_use_cuda(const bool use_cuda) { use_cuda_if_available = use_cuda; }
+void torch_c_use_cuda(const bool use_cuda) {
+  use_cuda_if_available.store(use_cuda);
+}
 
 /*******************************************************************************
  * \brief Returns whether Torch wrappers currently select CUDA when available.
  ******************************************************************************/
-bool torch_c_get_use_cuda() { return use_cuda_if_available; }
+bool torch_c_get_use_cuda() { return use_cuda_if_available.load(); }
 
 /*******************************************************************************
  * \brief Materializes a contiguous host-owned copy of an autograd gradient.
@@ -1013,16 +1038,26 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
       for (int i = 0; i < count; ++i) {
         auto &entry = (*grad_pinned_pool)[tensors[i]];
         const auto sizes = sources[i].sizes();
+        // Only reuse a buffer no other reader still references. A previously
+        // returned gradient holds a reference to the pooled tensor (including
+        // deferred readbacks), so reusing it would overwrite live data.
         const bool reuse = entry.defined() && entry.sizes() == sizes &&
-                           entry.scalar_type() == sources[i].scalar_type();
+                           entry.scalar_type() == sources[i].scalar_type() &&
+                           entry.getIntrusivePtr().use_count() == 1;
         if (!reuse) {
           entry = torch::empty(
               sizes,
               sources[i].options().device(torch::kCPU).pinned_memory(true));
         }
-        entry.copy_(sources[i], true);
+        // Take the reference while holding the lock so concurrent callers see
+        // a non-free buffer and allocate their own.
         hosts[i] = entry;
       }
+    }
+    // Issue the device-to-host copies outside the global lock: the pinned
+    // buffers are now owned by this call, so no other thread can touch them.
+    for (int i = 0; i < count; ++i) {
+      hosts[i].copy_(sources[i], true);
     }
     if (synchronize) {
       // The copies above were issued on the sources' current stream, so waiting

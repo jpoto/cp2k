@@ -58,10 +58,11 @@ CONTAINS
       INTEGER                                            :: ios
       LOGICAL                                            :: use_fp64
 
+      ! The model is loaded on the CPU (even for a CUDA target) so that all
+      ! float32 -> float64 promotion and constant folding happen in host memory.
       CALL torch_model_load_with_metadata(model%torch_model, filename, &
                                           "protocol_version", protocol_string, &
                                           "features", features_json)
-      CALL torch_model_remap_device_constants(model%torch_model)
       CALL torch_model_disable_parameter_gradients(model%torch_model)
       READ (protocol_string, *, IOSTAT=ios) model%protocol_version
       IF (ios /= 0) CPABORT("Could not parse SKALA TorchScript protocol_version metadata")
@@ -77,6 +78,9 @@ CONTAINS
       use_fp64 = .TRUE.
       IF (PRESENT(fp64)) use_fp64 = fp64
       IF (use_fp64) CALL torch_model_promote_float32(model%torch_model)
+      ! Move to the resolved device (a no-op on the CPU target) and remap the
+      ! serialized device constants after promotion.
+      CALL torch_model_remap_device_constants(model%torch_model)
       ! Preserve the exported SKALA entry point while folding constant model state.
       CALL torch_model_freeze_preserving_method(model%torch_model, "get_exc_density")
 

@@ -18,7 +18,12 @@ MODULE skala_model_selection
                                               section_vals_type,&
                                               section_vals_val_get
    USE kinds,                           ONLY: default_path_length
+   USE offload_api,                     ONLY: offload_get_chosen_device,&
+                                              offload_get_device_count
    USE string_utilities,                ONLY: uppercase
+   USE torch_api,                       ONLY: torch_cuda_device_count,&
+                                              torch_cuda_is_available,&
+                                              torch_use_cuda
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -27,9 +32,19 @@ MODULE skala_model_selection
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'skala_model_selection'
 
+   TYPE :: skala_execution_target_type
+      INTEGER                                            :: gpu_mode = do_gpu_auto
+      LOGICAL                                            :: use_cuda = .FALSE.
+      INTEGER                                            :: device = -1
+   END TYPE skala_execution_target_type
+
+   LOGICAL, SAVE, PRIVATE                               :: execution_resolved = .FALSE.
+   TYPE(skala_execution_target_type), SAVE, PRIVATE     :: execution_target
+
    PUBLIC :: find_functional_subsection, find_single_functional_subsection, &
              gauxc_model_none_selected, get_gauxc_section, get_skala_native_section, &
-             resolve_skala_model_path, skala_gpu_mode_use_cuda, &
+             resolve_skala_execution_target, resolve_skala_model_path, &
+             skala_execution_target_type, skala_gpu_mode_use_cuda, &
              xc_section_uses_gauxc, xc_section_uses_gauxc_model, &
              xc_section_uses_native_skala_grid, xc_section_uses_skala_model
 
@@ -243,19 +258,17 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
 !> \param functional the GAUXC section
-!> \brief Return true when MODEL NONE (or no model distinct from FUNCTIONAL) is selected.
-!> \param none_selected ...
-!> \return ...
+!> \return true when no distinct model is selected
 ! **************************************************************************************************
-   FUNCTION gauxc_model_none_selected(functional) RESULT(none_selected)
+   FUNCTION gauxc_model_none_selected(functional)
       TYPE(section_vals_type), POINTER                   :: functional
-      LOGICAL                                            :: none_selected
+      LOGICAL                                            :: gauxc_model_none_selected
 
       CHARACTER(len=default_path_length)                 :: model_name, xc_fun_name
 
       CALL section_vals_val_get(functional, "MODEL", c_val=model_name)
       CALL section_vals_val_get(functional, "FUNCTIONAL", c_val=xc_fun_name)
-      none_selected = model_key_is_none(model_name, xc_fun_name)
+      gauxc_model_none_selected = model_key_is_none(model_name, xc_fun_name)
 
    END FUNCTION gauxc_model_none_selected
 
@@ -282,6 +295,101 @@ CONTAINS
       END SELECT
 
    END FUNCTION skala_gpu_mode_use_cuda
+
+! **************************************************************************************************
+!> \brief Resolve the CPU/GPU execution target once for the whole calculation.
+!>        CUDA is opt-out: on a CUDA-capable backend AUTO/DEVICE select the GPU.
+!>        HOST always selects the CPU. A CUDA-capable backend that cannot reach a
+!>        usable GPU aborts with a hint to set USE_GPU HOST. The decision is
+!>        memoized so later calls return the same target, and the Torch wrapper is
+!>        configured once.
+!> \param gpu_mode the USE_GPU selection
+!> \param backend_has_gpu whether this backend was built with CUDA support
+!> \param backend_name backend name for diagnostics
+!> \param exec_target the resolved execution target
+! **************************************************************************************************
+   SUBROUTINE resolve_skala_execution_target(gpu_mode, backend_has_gpu, backend_name, exec_target)
+      INTEGER, INTENT(IN)                                :: gpu_mode
+      LOGICAL, INTENT(IN)                                :: backend_has_gpu
+      CHARACTER(len=*), INTENT(IN)                       :: backend_name
+      TYPE(skala_execution_target_type), INTENT(OUT)     :: exec_target
+
+      CHARACTER(len=256)                                 :: msg
+
+      exec_target%gpu_mode = gpu_mode
+      exec_target%use_cuda = .FALSE.
+      exec_target%device = -1
+
+      SELECT CASE (gpu_mode)
+      CASE (do_gpu_host)
+         exec_target%use_cuda = .FALSE.
+      CASE (do_gpu_device)
+         IF (.NOT. backend_has_gpu) THEN
+            msg = TRIM(backend_name)//": USE_GPU GPU requested, but this backend "// &
+                  "was not built with CUDA support. Set USE_GPU HOST to run on the CPU."
+            CPABORT(TRIM(msg))
+         END IF
+         CALL select_cuda_target(backend_name, exec_target)
+      CASE (do_gpu_auto)
+         IF (backend_has_gpu) THEN
+            CALL select_cuda_target(backend_name, exec_target)
+         END IF
+      CASE DEFAULT
+         CPABORT("Unknown USE_GPU execution-space value.")
+      END SELECT
+
+      IF (execution_resolved) THEN
+         IF (execution_target%use_cuda .NEQV. exec_target%use_cuda) THEN
+            msg = "Conflicting CPU/GPU execution targets across backends. "// &
+                  "All backends must agree; set USE_GPU HOST consistently."
+            CPABORT(TRIM(msg))
+         END IF
+         exec_target = execution_target
+      ELSE
+         execution_target = exec_target
+         execution_resolved = .TRUE.
+         CALL torch_use_cuda(exec_target%use_cuda)
+      END IF
+   END SUBROUTINE resolve_skala_execution_target
+
+! **************************************************************************************************
+!> \brief Validate that a usable CUDA device exists and record it in the target.
+!> \param backend_name backend name for diagnostics
+!> \param exec_target execution target to update
+! **************************************************************************************************
+   SUBROUTINE select_cuda_target(backend_name, exec_target)
+      CHARACTER(len=*), INTENT(IN)                       :: backend_name
+      TYPE(skala_execution_target_type), INTENT(INOUT)   :: exec_target
+
+      CHARACTER(len=256)                                 :: msg
+      INTEGER                                            :: device_count
+
+      IF (.NOT. torch_cuda_is_available()) THEN
+         msg = TRIM(backend_name)//": GPU execution is the default for this CUDA "// &
+               "build, but no usable CUDA device was found. Set USE_GPU HOST to run on the CPU."
+         CPABORT(TRIM(msg))
+      END IF
+      device_count = torch_cuda_device_count()
+      IF (device_count <= 0) THEN
+         msg = TRIM(backend_name)//": GPU execution is the default for this CUDA "// &
+               "build, but no usable CUDA device was found. Set USE_GPU HOST to run on the CPU."
+         CPABORT(TRIM(msg))
+      END IF
+      IF (offload_get_device_count() <= 0) THEN
+         msg = TRIM(backend_name)//": GPU execution was requested, but the offload "// &
+               "library reports no usable device. Check CUDA_VISIBLE_DEVICES and the "// &
+               "MPI rank-to-device mapping, or set USE_GPU HOST."
+         CPABORT(TRIM(msg))
+      END IF
+      exec_target%device = offload_get_chosen_device()
+      IF (exec_target%device < 0 .OR. exec_target%device >= device_count) THEN
+         msg = TRIM(backend_name)//": GPU execution was requested, but the offload "// &
+               "library did not select a device visible to Torch. Check "// &
+               "CUDA_VISIBLE_DEVICES and the MPI rank-to-device mapping, or set USE_GPU HOST."
+         CPABORT(TRIM(msg))
+      END IF
+      exec_target%use_cuda = .TRUE.
+   END SUBROUTINE select_cuda_target
 
 ! **************************************************************************************************
 !> \brief Resolve MODEL SKALA to the host or CUDA model path, or return a custom path unchanged.

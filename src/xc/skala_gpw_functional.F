@@ -44,8 +44,9 @@ MODULE skala_gpw_functional
         smooth_partition_weights
    USE skala_model_selection,           ONLY: get_gauxc_section,&
                                               get_skala_native_section,&
+                                              resolve_skala_execution_target,&
                                               resolve_skala_model_path,&
-                                              skala_gpu_mode_use_cuda,&
+                                              skala_execution_target_type,&
                                               xc_section_uses_gauxc_model
    USE skala_torch_api,                 ONLY: skala_torch_model_get_exc,&
                                               skala_torch_model_get_exc_device,&
@@ -57,13 +58,14 @@ MODULE skala_gpw_functional
    USE torch_api,                       ONLY: &
         staged_upload, torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, &
         torch_dict_insert, torch_dict_release, torch_dict_set, torch_dict_type, torch_file_stamp, &
-        torch_get_num_threads, torch_get_use_cuda, torch_grad_pool_clear, torch_pinned_finish, &
-        torch_pinned_release, torch_pinned_reserve, torch_set_default_threads, &
-        torch_stream_synchronize, torch_tensor_accumulate, torch_tensor_backward_scalar, &
-        torch_tensor_data_ptr, torch_tensor_from_array, torch_tensor_grad, &
-        torch_tensor_grad_batch, torch_tensor_grad_batch3, torch_tensor_grad_batch3_deferred, &
+        torch_get_num_threads, torch_grad_pool_clear, torch_pinned_finish, torch_pinned_release, &
+        torch_pinned_reserve, torch_set_default_threads, torch_stream_synchronize, &
+        torch_tensor_accumulate, torch_tensor_backward_scalar, torch_tensor_data_ptr, &
+        torch_tensor_from_array, torch_tensor_grad, torch_tensor_grad_batch, &
+        torch_tensor_grad_batch3, torch_tensor_grad_batch3_deferred, &
         torch_tensor_grad_batch_deferred, torch_tensor_item_double, torch_tensor_narrow, &
-        torch_tensor_release, torch_tensor_to_device_leaf, torch_tensor_type, torch_use_cuda
+        torch_tensor_release, torch_tensor_set_requires_grad, torch_tensor_to_device_leaf, &
+        torch_tensor_type
    USE xc_input_constants,              ONLY: skala_gapw_atom_composite_grid,&
                                               skala_gapw_common_grid,&
                                               skala_gapw_cp2k_default,&
@@ -112,6 +114,12 @@ MODULE skala_gpw_functional
    TYPE(skala_torch_model_type), SAVE                  :: cached_model
    TYPE(skala_gapw_atom_cuda_tensor_cache_type), SAVE, TARGET :: cached_atom_cuda_tensors
    LOGICAL, SAVE                                       :: cached_atom_cuda_tensors_active = .FALSE.
+   ! Static (geometry-only) device tensors: uploaded only when the geometry,
+   ! grid shape, or device changes instead of on every SCF step.
+   LOGICAL, SAVE                                       :: cached_atom_static_valid = .FALSE.
+   INTEGER, SAVE                                       :: cached_atom_static_device = -1, &
+                                                          cached_atom_static_nrow = -1, &
+                                                          cached_atom_static_natom = -1
    LOGICAL, SAVE                                       :: logged_torch_threads = .FALSE.
    CHARACTER(len=default_path_length), SAVE            :: cached_model_path = ""
    CHARACTER(len=default_path_length), SAVE            :: cached_model_stamp = ""
@@ -446,8 +454,7 @@ CONTAINS
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, have_atom_coord_grad, lsd, my_just_energy, &
          native_grid_atom_chunks, native_grid_diagnostics, native_grid_use_cuda, needs_atom_force, &
-         saved_use_cuda, use_atom_subchunks, use_chunk_static_grad, use_full_static_grad, &
-         use_static_grad_arrays
+         use_atom_subchunks, use_chunk_static_grad, use_full_static_grad, use_static_grad_arrays
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: atomic_grid_weight_grad_g, &
                                                             grid_weight_grad_g
@@ -505,8 +512,6 @@ CONTAINS
          END IF
       END IF
       ! The portable SKALA export used by the regtests builds ragged-index tensors on CPU.
-      saved_use_cuda = torch_get_use_cuda()
-      CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, rho_r(1)%pw_grid%para%group)
       CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
@@ -815,7 +820,6 @@ CONTAINS
       IF (.NOT. use_atom_subchunks .AND. has_atom_chunk_work) CALL torch_tensor_release(exc_tensor)
       CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
-      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
       CALL timestop(phase_handle)
 
@@ -860,7 +864,7 @@ CONTAINS
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL                                            :: have_exc_tensor, have_weight_grad_t, &
                                                             lsd, native_grid_atom_chunks, &
-                                                            native_grid_use_cuda, saved_use_cuda
+                                                            native_grid_use_cuda
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: exc, local_derivative
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: local_weight_grad, partition_weights
@@ -892,8 +896,6 @@ CONTAINS
                        "Set ATOM_PARTITION SMOOTH to compute forces or the virial.")
       END IF
 
-      saved_use_cuda = torch_get_use_cuda()
-      CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, rho_r(1)%pw_grid%para%group)
       CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
@@ -1040,7 +1042,6 @@ CONTAINS
       IF (ALLOCATED(local_weight_grad)) DEALLOCATE (local_weight_grad)
       CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
-      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gpw_weight_derivative
@@ -1115,7 +1116,7 @@ CONTAINS
                                                             seg_offsets
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
       INTEGER(KIND=int_8)                                :: upload_offset, upload_total
-      LOGICAL :: is_hard, need_coord_grad, my_energy_only, native_grid_use_cuda, saved_use_cuda
+      LOGICAL :: is_hard, need_coord_grad, my_energy_only, native_grid_use_cuda
       REAL(KIND=dp)                                      :: tmp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, exc_segments, &
                                                             grid_weights
@@ -1181,8 +1182,6 @@ CONTAINS
 
       CALL get_skala_model_path(xc_section, model_path)
       native_grid_use_cuda = skala_execution_use_cuda(xc_section)
-      saved_use_cuda = torch_get_use_cuda()
-      CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, group)
       CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
@@ -1433,7 +1432,6 @@ CONTAINS
       DEALLOCATE (atomic_grid_size_bound_shape, atomic_grid_sizes, atomic_grid_weights, &
                   coarse_0_atomic_coords, density, grad, grid_coords, grid_weights, kin, &
                   seg_offsets, seg_lengths, exc_segments, weight_b)
-      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gapw_atom_vxc_of_r_pair
@@ -1458,13 +1456,15 @@ CONTAINS
 !> \param grid_weight_grad_out ...
 !> \param atomic_grid_weight_grad_out ...
 !> \param atom_coord_grad_out ...
+!> \param static_geometry_valid ...
 ! **************************************************************************************************
    SUBROUTINE skala_gapw_atom_composite_energy(xc_section, group, density, grad, kin, &
                                                grid_coords, grid_weights, atomic_grid_weights, &
                                                atomic_grid_sizes, atomic_coords, exc, &
                                                density_grad_out, grad_grad_out, kin_grad_out, &
                                                grid_coord_grad_out, grid_weight_grad_out, &
-                                               atomic_grid_weight_grad_out, atom_coord_grad_out)
+                                               atomic_grid_weight_grad_out, atom_coord_grad_out, &
+                                               static_geometry_valid)
       TYPE(section_vals_type), POINTER                   :: xc_section
 
       CLASS(mp_comm_type), INTENT(IN)                    :: group
@@ -1481,6 +1481,7 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), INTENT(OUT), OPTIONAL :: grad_grad_out
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), INTENT(OUT), OPTIONAL :: grid_weight_grad_out, &
                                                                          atomic_grid_weight_grad_out
+      LOGICAL, INTENT(IN), OPTIONAL                      :: static_geometry_valid
 
       CHARACTER(len=default_path_length)                 :: model_path
       INTEGER :: atom_begin, atom_count, chunk_max_rows, chunk_row_count, chunk_row_start, &
@@ -1491,7 +1492,7 @@ CONTAINS
                                                             chunk_row_begin, chunk_row_counts
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
       LOGICAL :: active_rank, native_grid_atom_chunks, native_grid_use_cuda, &
-                 need_coordinate_derivatives, need_derivatives, saved_use_cuda
+                 need_coordinate_derivatives, need_derivatives, upload_static
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad, grid_weight_grad
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad, density_grad, &
                                                             grid_coord_grad, kin_grad
@@ -1551,8 +1552,6 @@ CONTAINS
       IF (chunk_max_rows == -1) THEN
          chunk_max_rows = auto_atom_composite_chunk_max_rows(atomic_grid_sizes, group)
       END IF
-      saved_use_cuda = torch_get_use_cuda()
-      CALL torch_use_cuda(native_grid_use_cuda)
       selected_cuda_device = configure_native_grid_cuda( &
                              native_grid_use_cuda, group)
       exc = 0.0_dp
@@ -1575,29 +1574,60 @@ CONTAINS
             density_t => cached_atom_cuda_tensors%density_t
             grad_t => cached_atom_cuda_tensors%grad_t
             kin_t => cached_atom_cuda_tensors%kin_t
-            upload_total = INT(SIZE(grid_coords), KIND=int_8) + &
-                           INT(SIZE(grid_weights), KIND=int_8) + &
-                           INT(SIZE(atomic_grid_weights), KIND=int_8) + &
-                           INT(SIZE(atomic_coords), KIND=int_8) + &
-                           INT(SIZE(density), KIND=int_8) + &
-                           INT(SIZE(grad), KIND=int_8) + &
-                           INT(SIZE(kin), KIND=int_8)
+            ! Static tensors depend only on the (unchanged) geometry/layout and
+            ! device; skip their host->device upload when the caller confirms the
+            ! geometry is unchanged. Only density/grad/kin are re-uploaded per SCF.
+            upload_static = .TRUE.
+            IF (PRESENT(static_geometry_valid)) THEN
+               IF (static_geometry_valid .AND. cached_atom_static_valid .AND. &
+                   cached_atom_static_device == selected_cuda_device .AND. &
+                   cached_atom_static_nrow == local_nrow .AND. &
+                   cached_atom_static_natom == local_natom) upload_static = .FALSE.
+            END IF
+            IF (upload_static) THEN
+               upload_total = INT(SIZE(grid_coords), KIND=int_8) + &
+                              INT(SIZE(grid_weights), KIND=int_8) + &
+                              INT(SIZE(atomic_grid_weights), KIND=int_8) + &
+                              INT(SIZE(atomic_coords), KIND=int_8) + &
+                              INT(SIZE(density), KIND=int_8) + &
+                              INT(SIZE(grad), KIND=int_8) + &
+                              INT(SIZE(kin), KIND=int_8)
+            ELSE
+               upload_total = INT(SIZE(density), KIND=int_8) + &
+                              INT(SIZE(grad), KIND=int_8) + &
+                              INT(SIZE(kin), KIND=int_8)
+            END IF
             CALL torch_pinned_reserve(upload_total)
             upload_offset = 0_int_8
-            upload_offset = staged_upload(grid_coords_t, grid_coords, upload_offset, &
-                                          need_coordinate_derivatives)
-            upload_offset = staged_upload(grid_weights_t, grid_weights, upload_offset, &
-                                          need_coordinate_derivatives)
-            upload_offset = staged_upload(atomic_grid_weights_t, atomic_grid_weights, &
-                                          upload_offset, need_coordinate_derivatives)
-            upload_offset = staged_upload(atomic_coords_t, atomic_coords, upload_offset, &
-                                          need_coordinate_derivatives)
+            IF (upload_static) THEN
+               upload_offset = staged_upload(grid_coords_t, grid_coords, upload_offset, &
+                                             need_coordinate_derivatives)
+               upload_offset = staged_upload(grid_weights_t, grid_weights, upload_offset, &
+                                             need_coordinate_derivatives)
+               upload_offset = staged_upload(atomic_grid_weights_t, atomic_grid_weights, &
+                                             upload_offset, need_coordinate_derivatives)
+               upload_offset = staged_upload(atomic_coords_t, atomic_coords, upload_offset, &
+                                             need_coordinate_derivatives)
+            ELSE
+               ! Re-arm differentiability on the cached leaves (clears stale grads)
+               ! without re-copying the data.
+               CALL torch_tensor_set_requires_grad(grid_coords_t, need_coordinate_derivatives)
+               CALL torch_tensor_set_requires_grad(grid_weights_t, need_coordinate_derivatives)
+               CALL torch_tensor_set_requires_grad(atomic_grid_weights_t, need_coordinate_derivatives)
+               CALL torch_tensor_set_requires_grad(atomic_coords_t, need_coordinate_derivatives)
+            END IF
             upload_offset = staged_upload(density_t, density, upload_offset, need_derivatives)
             upload_offset = staged_upload(grad_t, grad, upload_offset, need_derivatives)
             upload_offset = staged_upload(kin_t, kin, upload_offset, need_derivatives)
             CALL torch_stream_synchronize()
             CALL torch_pinned_finish()
             cached_atom_cuda_tensors_active = .TRUE.
+            IF (upload_static) THEN
+               cached_atom_static_valid = .TRUE.
+               cached_atom_static_device = selected_cuda_device
+               cached_atom_static_nrow = local_nrow
+               cached_atom_static_natom = local_natom
+            END IF
          ELSE
             grid_coords_t => grid_coords_local_t
             grid_weights_t => grid_weights_local_t
@@ -1771,7 +1801,6 @@ CONTAINS
          NULLIFY (chunk_atom_begin, chunk_atom_count, chunk_row_begin, chunk_row_counts)
          CALL timestop(phase_handle)
       END IF
-      CALL torch_use_cuda(saved_use_cuda)
       CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gapw_atom_composite_energy
@@ -3276,8 +3305,9 @@ CONTAINS
       LOGICAL                                            :: use_cuda
 
       INTEGER                                            :: gpu_mode
-      LOGICAL                                            :: save_auto_cuda
+      LOGICAL                                            :: backend_has_gpu
       TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
+      TYPE(skala_execution_target_type)                  :: target
 
       gpu_mode = do_gpu_auto
       native_section => get_skala_native_section(xc_section)
@@ -3290,20 +3320,13 @@ CONTAINS
          END IF
       END IF
 
-      save_auto_cuda = .FALSE.
+      backend_has_gpu = .FALSE.
 #if defined(__LIBTORCH_CUDA)
-      save_auto_cuda = .TRUE.
+      backend_has_gpu = .TRUE.
 #endif
       CALL ensure_skala_torch_threads()
-      use_cuda = skala_gpu_mode_use_cuda(gpu_mode, save_auto_cuda)
-
-      IF (use_cuda) THEN
-         IF (.NOT. torch_cuda_is_available() .OR. torch_cuda_device_count() <= 0) THEN
-            CALL cp_abort(__LOCATION__, &
-                          "GPU execution was requested, but no usable CUDA device was "// &
-                          "found. Set USE_GPU HOST to force CPU execution.")
-         END IF
-      END IF
+      CALL resolve_skala_execution_target(gpu_mode, backend_has_gpu, "SKALA", TARGET)
+      use_cuda = target%use_cuda
 
    END FUNCTION skala_execution_use_cuda
 
@@ -3471,6 +3494,10 @@ CONTAINS
          CALL torch_tensor_release(cached_atom_cuda_tensors%kin_t)
          cached_atom_cuda_tensors_active = .FALSE.
       END IF
+      cached_atom_static_valid = .FALSE.
+      cached_atom_static_device = -1
+      cached_atom_static_nrow = -1
+      cached_atom_static_natom = -1
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
 
