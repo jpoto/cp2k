@@ -1173,14 +1173,17 @@ CONTAINS
          CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
                                        img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot)
          IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0)) THEN
-            IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: no usable symmetry for forces; full image sum")
-               image_sym_warned = .TRUE.
-            END IF
-            use_image_sym = .FALSE.
-            img_rep(:) = [(b_img, b_img=1, nimg)]
-            img_op(:) = 0
-            img_inv(:) = .FALSE.
+            CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry for forces; set KP_IMAGE_SYMMETRY FALSE")
+         END IF
+         ! The force/virial star assembly assumes a cell-only orbit. Reject an
+         ! atom-dependent gauge explicitly instead of producing wrong forces.
+         IF (natom > 1) THEN
+            DO b_img = 1, nops
+               IF (ANY(op_shift(:, 2:natom, b_img) /= &
+                       SPREAD(op_shift(:, 1, b_img), 2, natom - 1))) THEN
+                  CPABORT("KP_IMAGE_SYMMETRY: atom-dependent gauge unsupported for forces; set FALSE")
+               END IF
+            END DO
          END IF
       END IF
 
@@ -1214,11 +1217,7 @@ CONTAINS
             END IF
          END DO
          IF (.NOT. img_ok) THEN
-            use_image_sym = .FALSE.
-            IF (.NOT. image_sym_warned) THEN
-               CPWARN("KP_IMAGE_SYMMETRY: incomplete image orbit for forces; full image sum")
-               image_sym_warned = .TRUE.
-            END IF
+            CPABORT("KP_IMAGE_SYMMETRY: incomplete image orbit for forces; set KP_IMAGE_SYMMETRY FALSE")
          END IF
       END IF
 
@@ -6387,7 +6386,7 @@ CONTAINS
 !> \brief Validate the general (atom-dependent gauge) case for the 3c image expansion.
 !>        Every block of a representative must map to an image inside the representative's orbit
 !>        and every shifted RI cell must stay inside the finite RI-cell set. Otherwise the caller
-!>        falls back to the full image sum.
+!>        aborts (strict contract).
 ! **************************************************************************************************
    SUBROUTINE hfx_3c_plan_general(ready, kpoints, ri_data, natom, nops, op_frac, op_map, &
                                   op_shift, op_slot, img_rep, nimg, nblk_RI, blk_atom_RI, &
