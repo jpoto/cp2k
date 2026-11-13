@@ -670,6 +670,11 @@ CONTAINS
       force_new_runtime_local = .FALSE.
       IF (PRESENT(force_new_runtime)) force_new_runtime_local = force_new_runtime
       use_external_runtime = PRESENT(runtime)
+      IF (force_new_runtime_local .AND. use_external_runtime) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "A fresh GauXC runtime cannot be requested together with an "// &
+                       "external runtime.")
+      END IF
       res%owns_rt = .FALSE.
       res%uses_device_runtime = .FALSE.
 
@@ -726,10 +731,20 @@ CONTAINS
                   GAUXC_RETURN_IF_ERROR(status)
                   res%owns_rt = .TRUE.
                END IF
+            ELSE IF (force_new_runtime_local) THEN
+               ! Honor a fresh-runtime request even without a communicator by
+               ! creating a serial runtime instead of silently reusing the global one.
+               res%rt = gauxc_runtime_environment_new(status%status)
+               GAUXC_RETURN_IF_ERROR(status)
+               res%owns_rt = .TRUE.
             END IF
 #else
             MARK_USED(mpi_comm)
-            MARK_USED(force_new_runtime)
+            IF (force_new_runtime_local) THEN
+               res%rt = gauxc_runtime_environment_new(status%status)
+               GAUXC_RETURN_IF_ERROR(status)
+               res%owns_rt = .TRUE.
+            END IF
 #endif
          END IF
       END IF

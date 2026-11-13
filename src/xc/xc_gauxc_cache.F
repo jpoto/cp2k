@@ -482,6 +482,9 @@ CONTAINS
                                   status)
       IF (status%status%code /= 0) THEN
          error_code = status%status%code
+         ! Clean up symmetrically: a partially created integrator depends on the
+         ! grid, so release it first.
+         CALL gauxc_destroy_integrator(cache%gradient_integrator, status)
          CALL gauxc_destroy_grid(cache%gradient_grid, status)
          status%status%code = error_code
          RETURN

@@ -1629,6 +1629,12 @@ CONTAINS
                      status=gauxc_status, &
                      model=TRIM(params%model_eval_name))
                ELSE
+                  ! The default and MODEL_GRADIENT_RUNTIME MPI paths both use the
+                  ! shared integrator; the policy guarantees it is the para_env
+                  ! (MPI) runtime whenever MPI is selected.
+                  IF (params%use_gradient_mpi_runtime .AND. params%use_self_runtime) THEN
+                     CPABORT("MODEL_GRADIENT_RUNTIME MPI requires a shared energy integrator.")
+                  END IF
                   CALL gauxc_compute_xc_gradient( &
                      cache%integrator, &
                      cache%density_scalar, &
@@ -1705,6 +1711,12 @@ CONTAINS
                      gauxc_status, &
                      model=TRIM(params%model_eval_name))
                ELSE
+                  ! The default and MODEL_GRADIENT_RUNTIME MPI paths both use the
+                  ! shared integrator; the policy guarantees it is the para_env
+                  ! (MPI) runtime whenever MPI is selected.
+                  IF (params%use_gradient_mpi_runtime .AND. params%use_self_runtime) THEN
+                     CPABORT("MODEL_GRADIENT_RUNTIME MPI requires a shared energy integrator.")
+                  END IF
                   CALL gauxc_compute_xc_gradient( &
                      cache%integrator, &
                      cache%density_scalar, &
