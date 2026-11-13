@@ -387,9 +387,7 @@ CONTAINS
          CALL ensure_real_2d(features%density, nflat, 2)
          CALL ensure_real_3d(features%grad, nflat, 3, 2)
          CALL ensure_real_2d(features%kin, nflat, 2)
-         features%density = 0.0_dp
-         features%grad = 0.0_dp
-         features%kin = 0.0_dp
+         ! Every row below is fully overwritten; no pre-zeroing needed.
 
          DO row = 1, nflat
             ipt = cached_layout%feature_source_points(row)

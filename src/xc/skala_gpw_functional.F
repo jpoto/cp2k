@@ -9,8 +9,7 @@
 !> \brief Experimental CP2K-native GPW real-space-grid path for SKALA TorchScript models.
 ! **************************************************************************************************
 MODULE skala_gpw_functional
-   USE OMP_LIB,                         ONLY: omp_get_max_threads,&
-                                              omp_set_num_threads
+   USE OMP_LIB,                         ONLY: omp_get_max_threads
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
    USE cp_array_utils,                  ONLY: cp_3d_r_cp_type
@@ -491,8 +490,8 @@ CONTAINS
          OPTIONAL                                        :: atom_force
 
       INTEGER :: i, ipt, ispin, iw, j, k, native_grid_atom_chunk_max_rows, &
-         native_grid_atom_partition, native_grid_atom_subchunks, nspins, omp_max_threads_restore, &
-         phase_handle, selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
+         native_grid_atom_partition, native_grid_atom_subchunks, nspins, phase_handle, &
+         selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, have_atom_coord_grad, lsd, my_just_energy, &
          native_grid_atom_chunks, native_grid_diagnostics, native_grid_use_cuda, needs_atom_force, &
@@ -524,7 +523,6 @@ CONTAINS
       needs_atom_force = PRESENT(atom_force)
       IF (needs_atom_force) atom_force = 0.0_dp
       have_atom_coord_grad = .FALSE.
-      omp_max_threads_restore = omp_get_max_threads()
 
       IF (compute_virial .AND. my_just_energy) THEN
          CALL cp_abort(__LOCATION__, &
@@ -830,7 +828,6 @@ CONTAINS
                virial_before = virial_xc
             END IF
          END IF
-         CALL omp_set_num_threads(omp_max_threads_restore)
          CALL build_vxc_from_feature_grads(vxc_rho, vxc_tau, rho_r, pw_pool, &
                                            density_grad, grad_grad, kin_grad, &
                                            xc_deriv_method_id)
@@ -858,7 +855,6 @@ CONTAINS
       IF (.NOT. use_atom_subchunks .AND. has_atom_chunk_work) CALL torch_tensor_release(exc_tensor)
       CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
-      CALL omp_set_num_threads(omp_max_threads_restore)
       CALL timestop(phase_handle)
 
    END SUBROUTINE skala_gpw_eval
@@ -893,8 +889,8 @@ CONTAINS
       TYPE(cell_type), POINTER                           :: cell
 
       INTEGER :: chunk_max_rows, feature_begin, feature_end, feature_pos, i, iatom, isub, j, k, &
-         local_row, native_grid_atom_partition, natom, nspins, nsubchunks, &
-         omp_max_threads_restore, row, selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
+         local_row, native_grid_atom_partition, natom, nspins, nsubchunks, row, &
+         selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: subchunk_atom_begin, &
                                                             subchunk_atom_count, &
                                                             subchunk_row_begin, subchunk_row_count
@@ -903,7 +899,7 @@ CONTAINS
                                                             lsd, native_grid_atom_chunks, &
                                                             native_grid_use_cuda
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
-      REAL(KIND=dp)                                      :: exc, local_derivative
+      REAL(KIND=dp)                                      :: local_derivative
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: local_weight_grad, partition_weights
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: atom_coords_pbc
       REAL(KIND=dp), DIMENSION(3)                        :: grid_point
@@ -918,7 +914,6 @@ CONTAINS
       CPASSERT(ASSOCIATED(rho_g))
       CPASSERT(ASSOCIATED(tau))
       CALL pw_zero(weight_deriv_r)
-      omp_max_threads_restore = omp_get_max_threads()
 
       nspins = SIZE(rho_r)
       lsd = (nspins /= 1)
@@ -989,8 +984,8 @@ CONTAINS
                CALL skala_gpw_feature_build_atom_subchunk_bounds( &
                   features, subchunk, subchunk_atom_begin(isub), subchunk_atom_count(isub), &
                   subchunk_row_begin(isub), subchunk_row_count(isub), .FALSE.)
-               CALL skala_torch_model_get_exc(cached_model, subchunk%inputs, &
-                                              subchunk%grid_weights_t, exc_tensor, exc)
+               CALL skala_torch_model_get_exc_device(cached_model, subchunk%inputs, &
+                                                     subchunk%grid_weights_t, exc_tensor)
                CALL torch_tensor_backward_scalar(exc_tensor)
                CALL torch_tensor_release(exc_tensor)
                CALL skala_gpw_feature_release(subchunk)
@@ -998,8 +993,8 @@ CONTAINS
             DEALLOCATE (subchunk_atom_begin, subchunk_atom_count, subchunk_row_begin, &
                         subchunk_row_count)
          ELSE IF (features%chunk_feature_count > 0) THEN
-            CALL skala_torch_model_get_exc(cached_model, features%inputs, features%grid_weights_t, &
-                                           exc_tensor, exc)
+            CALL skala_torch_model_get_exc_device(cached_model, features%inputs, &
+                                                  features%grid_weights_t, exc_tensor)
             CALL torch_tensor_backward_scalar(exc_tensor)
             have_exc_tensor = .TRUE.
          END IF
@@ -1007,8 +1002,8 @@ CONTAINS
                                                weight_only=.TRUE., &
                                                local_grid_weight_grad=local_weight_grad)
       ELSE
-         CALL skala_torch_model_get_exc(cached_model, features%inputs, features%grid_weights_t, &
-                                        exc_tensor, exc)
+         CALL skala_torch_model_get_exc_device(cached_model, features%inputs, &
+                                               features%grid_weights_t, exc_tensor)
          CALL torch_tensor_backward_scalar(exc_tensor)
          CALL torch_tensor_grad(features%grid_weights_t, grid_weight_grad_t)
          CALL torch_tensor_data_ptr(grid_weight_grad_t, grid_weight_grad)
@@ -1075,7 +1070,6 @@ CONTAINS
       IF (ALLOCATED(local_weight_grad)) DEALLOCATE (local_weight_grad)
       CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
       CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
-      CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gpw_weight_derivative
 
@@ -1142,7 +1136,7 @@ CONTAINS
          OPTIONAL                                        :: atom_virial_h, atom_virial_s
 
       INTEGER                                            :: ia, idir, iblock, ir, jdir, nblocks, &
-                                                            nflat, nflat_tot, omp_max_threads_restore, &
+                                                            nflat, nflat_tot, &
                                                             row, row_in_block, selected_cuda_device
       INTEGER(KIND=int_8)                                :: upload_offset, upload_total
       LOGICAL :: is_hard, need_coord_grad, my_energy_only, native_grid_use_cuda
@@ -1164,7 +1158,6 @@ CONTAINS
       CPASSERT(ASSOCIATED(rho_s))
       CPASSERT(ASSOCIATED(drho_s))
       CPASSERT(ASSOCIATED(tau_s))
-      omp_max_threads_restore = omp_get_max_threads()
 
       my_energy_only = .FALSE.
       IF (PRESENT(energy_only)) my_energy_only = energy_only
@@ -1464,7 +1457,6 @@ CONTAINS
          CALL torch_tensor_release(atom_ws%atomic_grid_size_bound_shape_t)
          CALL torch_tensor_release(atom_ws%coarse_0_atomic_coords_t)
       END IF
-      CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gapw_atom_vxc_of_r_pair
 
@@ -1518,7 +1510,7 @@ CONTAINS
       CHARACTER(len=default_path_length)                 :: model_path
       INTEGER :: atom_begin, atom_count, chunk_max_rows, chunk_row_count, chunk_row_start, &
                  ichunk, local_natom, local_nrow, max_grid_size, &
-                 nchunks, omp_max_threads_restore, phase_handle, selected_cuda_device
+                 nchunks, phase_handle, selected_cuda_device
       INTEGER(KIND=int_8)                                :: upload_offset, upload_total
       INTEGER, DIMENSION(:), POINTER                     :: chunk_atom_begin, chunk_atom_count, &
                                                             chunk_row_begin, chunk_row_counts
@@ -1570,7 +1562,6 @@ CONTAINS
       CPASSERT(PRESENT(atomic_grid_weight_grad_out) .EQV. need_coordinate_derivatives)
       CPASSERT(PRESENT(atom_coord_grad_out) .EQV. need_coordinate_derivatives)
       CPASSERT((.NOT. need_coordinate_derivatives) .OR. need_derivatives)
-      omp_max_threads_restore = omp_get_max_threads()
 
       local_nrow = SIZE(density, 1)
       local_natom = SIZE(atomic_grid_sizes)
@@ -1833,7 +1824,6 @@ CONTAINS
          NULLIFY (chunk_atom_begin, chunk_atom_count, chunk_row_begin, chunk_row_counts)
          CALL timestop(phase_handle)
       END IF
-      CALL omp_set_num_threads(omp_max_threads_restore)
 
    END SUBROUTINE skala_gapw_atom_composite_energy
 

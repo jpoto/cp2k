@@ -1406,6 +1406,39 @@ void torch_c_tensor_weighted_sum_range(const torch_c_tensor_t *values,
 }
 
 /*******************************************************************************
+ * \brief Computes all weighted segment sums and copies them to host in one
+ *        device-to-host synchronization. The weight device/dtype conversion and
+ *        flattening are done once for the whole batch.
+ ******************************************************************************/
+void torch_c_tensor_weighted_sum_segments(const torch_c_tensor_t *values,
+                                          const torch_c_tensor_t *weights,
+                                          const int64_t *offsets,
+                                          const int64_t *lengths,
+                                          const int nseg, double *result) {
+  TORCH_C_TRY
+  c10::OptionalDeviceGuard guard;
+  get_device_with_guard(guard);
+  const auto flat_values = values->flatten();
+  const auto flat_weights =
+      weights->to(values->device()).to(values->dtype()).flatten();
+  torch_c_check(flat_values.numel() == flat_weights.numel(),
+                "Torch weighted sum: value/weight size mismatch");
+  std::vector<torch::Tensor> dots;
+  dots.reserve(nseg);
+  for (int i = 0; i < nseg; ++i) {
+    torch_c_check(offsets[i] >= 0 && lengths[i] >= 0 &&
+                      offsets[i] + lengths[i] <= flat_values.numel(),
+                  "Torch weighted sum range is out of bounds");
+    dots.push_back(torch::dot(flat_values.narrow(0, offsets[i], lengths[i]),
+                              flat_weights.narrow(0, offsets[i], lengths[i])));
+  }
+  const auto host =
+      torch::stack(dots).to(torch::kFloat64).to(torch::kCPU).contiguous();
+  std::memcpy(result, host.data_ptr<double>(), nseg * sizeof(double));
+  TORCH_C_CATCH("torch_c_tensor_weighted_sum_segments")
+}
+
+/*******************************************************************************
  * \brief Adds a device scalar to an accumulator without a host synchronization.
  ******************************************************************************/
 void torch_c_tensor_accumulate(torch_c_tensor_t **accumulator,

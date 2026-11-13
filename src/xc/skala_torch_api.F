@@ -22,7 +22,7 @@ MODULE skala_torch_api
       torch_model_freeze_preserving_method, torch_model_load_with_metadata, torch_model_release, &
       torch_model_remap_device_constants, torch_model_promote_float32, torch_model_type, &
       torch_tensor_item_double, torch_tensor_release, torch_tensor_type, &
-      torch_tensor_weighted_sum, torch_tensor_weighted_sum_range
+      torch_tensor_weighted_sum, torch_tensor_weighted_sum_segments
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -191,8 +191,7 @@ CONTAINS
       TYPE(torch_tensor_type), INTENT(INOUT)             :: exc_tensor
       REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: exc_segments
 
-      INTEGER                                            :: iseg
-      TYPE(torch_tensor_type)                            :: exc_density, segment_tensor
+      TYPE(torch_tensor_type)                            :: exc_density
 #if defined (__HAS_IEEE_EXCEPTIONS)
       LOGICAL, DIMENSION(5)                              :: ieee_halt
 #endif
@@ -206,12 +205,10 @@ CONTAINS
 #endif
       CALL torch_model_forward_mol_tensor(model%torch_model, "get_exc_density", inputs, exc_density)
       CALL torch_tensor_weighted_sum(exc_density, grid_weights, exc_tensor)
-      DO iseg = 1, SIZE(exc_segments)
-         CALL torch_tensor_weighted_sum_range(exc_density, grid_weights, seg_offsets(iseg), &
-                                              seg_lengths(iseg), segment_tensor)
-         exc_segments(iseg) = torch_tensor_item_double(segment_tensor)
-         CALL torch_tensor_release(segment_tensor)
-      END DO
+      ! All segment sums are reduced on device and copied back with a single
+      ! host synchronization instead of one per segment.
+      CALL torch_tensor_weighted_sum_segments(exc_density, grid_weights, seg_offsets, &
+                                              seg_lengths, exc_segments)
       CALL torch_tensor_release(exc_density)
 #if defined (__HAS_IEEE_EXCEPTIONS)
       CALL ieee_set_halting_mode(IEEE_ALL, ieee_halt)
