@@ -89,11 +89,8 @@ MODULE qs_vxc_atom
    USE skala_gpw_features,              ONLY: build_periodic_atom_image_layout,&
                                               periodic_atom_image_partition,&
                                               periodic_atom_image_partition_from_layout,&
-                                              smooth_atom_partition,&
                                               smooth_partition_atomic_weight_scale,&
-                                              smooth_partition_atomic_weight_scale_derivative,&
-                                              smooth_partition_derivative_action,&
-                                              smooth_partition_weights
+                                              smooth_partition_atomic_weight_scale_derivative
    USE skala_gpw_functional,            ONLY: build_vxc_from_feature_grads,&
                                               native_skala_gapw_density_partition,&
                                               skala_gapw_atom_composite_energy,&
@@ -166,7 +163,7 @@ MODULE qs_vxc_atom
    ! per geometry and reused across the SCF iterations. The atom coordinates are replicated on
    ! every rank, so the validity decision is identical everywhere without a collective.
    INTEGER, PRIVATE :: native_comp_nrows = -1, native_comp_perd(3) = 0
-   LOGICAL, PRIVATE :: native_comp_ready = .FALSE., native_comp_image = .FALSE.
+   LOGICAL, PRIVATE :: native_comp_ready = .FALSE.
    REAL(dp), PRIVATE :: native_comp_hmat(3, 3) = 0.0_dp
    REAL(dp), ALLOCATABLE, PRIVATE :: native_comp_atoms(:, :), native_comp_coords(:, :), &
                                      native_comp_base_w(:), native_comp_atomic_w(:), &
@@ -304,13 +301,11 @@ CONTAINS
       INTEGER, DIMENSION(:), POINTER                     :: atom_list
       LOGICAL :: accint, atom_composite_active, atom_composite_diagnostic, &
          atom_composite_reference, comp_geometry_valid, direct_valence_atom_composite, donlcc, &
-         evaluate_hard, evaluate_soft, gradient_f, image_partition_atom_composite, lsd, &
-         my_calculate_forces, native_grid_diagnostics, nlcc, one_center_kind, paw_atom, &
-         paw_pseudopotentials, requested_atom_composite_grid, rho_g_valid, skala_atom_grid, &
-         source_matrix_local, tau_f, tau_r_valid, use_atom_composite_density, &
-         use_atom_composite_gradient, use_atom_composite_tau, use_virial
-      LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: composite_partition_included, &
-                                                            partition_included_private
+         evaluate_hard, evaluate_soft, gradient_f, lsd, my_calculate_forces, &
+         native_grid_diagnostics, nlcc, one_center_kind, paw_atom, paw_pseudopotentials, &
+         requested_atom_composite_grid, rho_g_valid, skala_atom_grid, source_matrix_local, tau_f, &
+         tau_r_valid, use_atom_composite_density, use_atom_composite_gradient, &
+         use_atom_composite_tau, use_virial
       REAL(dp) :: agr, alpha, atom_composite_exc, atom_composite_nelec, coefficient, &
          composite_cross_cutoff_max, composite_cross_density_max, composite_cross_grad_max, &
          composite_cross_kin_max, composite_density_max, composite_density_min, &
@@ -324,13 +319,12 @@ CONTAINS
          one_center_gradient_field_contraction, one_center_gradient_matrix_contraction, &
          one_center_matrix_contraction, one_center_rho_grad_field_contraction, &
          one_center_rho_grad_matrix_contraction, one_center_tau_field_contraction, &
-         one_center_tau_matrix_contraction, one_center_tensor_contraction, partition_adjoint, &
-         partition_scale, partition_weight, smooth_grid_contraction, smooth_input_contraction, &
+         one_center_tau_matrix_contraction, one_center_tensor_contraction, partition_scale, &
+         partition_weight, smooth_grid_contraction, smooth_input_contraction, &
          target_partition_adjoint, tau_cut, zeff
       REAL(dp), ALLOCATABLE, DIMENSION(:) :: composite_atomic_grid_weight_grad, &
-         composite_atomic_grid_weights, composite_base_grid_weights, composite_distances, &
-         composite_grid_weight_grad, composite_grid_weights, composite_partition_weights, fw, &
-         partition_weight_grad, partition_weights_private
+         composite_atomic_grid_weights, composite_base_grid_weights, composite_grid_weight_grad, &
+         composite_grid_weights, fw
       REAL(dp), ALLOCATABLE, DIMENSION(:, :) :: adjoint_compact, adjoint_local_flat, &
          composite_atom_coord_grad, composite_atom_coords, composite_cross_density, &
          composite_cross_force, composite_cross_force_local, composite_cross_kin, &
@@ -340,10 +334,9 @@ CONTAINS
          composite_model_atom_force, composite_moving_smooth_force, composite_nlcc_center_force, &
          composite_nlcc_center_force_local
       REAL(dp), ALLOCATABLE, DIMENSION(:, :) :: composite_nlcc_target_force, &
-         composite_partition_atom_coords, composite_partition_force, &
-         composite_partition_force_local, composite_partition_image_coords, &
-         composite_smooth_density_cache, composite_smooth_kin_cache, local_partition_datom, &
-         partition_column_sum, thread_adj
+         composite_partition_force, composite_partition_force_local, &
+         composite_partition_image_coords, composite_smooth_density_cache, &
+         composite_smooth_kin_cache, local_partition_datom, thread_adj
       REAL(dp), ALLOCATABLE, DIMENSION(:, :), TARGET     :: smooth_density_adjoint_storage, &
                                                             smooth_kin_adjoint_storage
       REAL(dp), ALLOCATABLE, DIMENSION(:, :, :) :: composite_cross_grad, composite_grad, &
@@ -552,7 +545,6 @@ CONTAINS
       END IF
       ! CP2K's auxiliary PW fields are represented on one index-periodic cell even
       ! when the physical Poisson problem is isolated or partially periodic.
-      image_partition_atom_composite = atom_composite_active
       composite_image_periodicity = 1
       IF (PRESENT(composite_reference_active)) composite_reference_active = atom_composite_reference
       gapw_density_partition = skala_gapw_density_partition_hard_minus_soft
@@ -600,10 +592,7 @@ CONTAINS
                       composite_atom_kind_index(SIZE(particle_set)), &
                       composite_atom_start(SIZE(particle_set)), &
                       composite_atom_end(SIZE(particle_set)), &
-                      composite_atom_coords(3, SIZE(particle_set)), &
-                      composite_partition_weights(SIZE(particle_set)), &
-                      composite_partition_atom_coords(3, SIZE(particle_set)), &
-                      composite_distances(SIZE(particle_set)))
+                      composite_atom_coords(3, SIZE(particle_set)))
             composite_atomic_grid_sizes = 0_int_8
             composite_atom_kind = 0
             composite_atom_kind_index = 0
@@ -711,7 +700,7 @@ CONTAINS
             CPASSERT(smooth_rho_r(1)%pw_grid%para%group%num_pe == para_env%num_pe)
             CPASSERT(smooth_rho_r(1)%pw_grid%para%group%mepos == para_env%mepos)
             CALL prepare_native_grid_cache(qs_env%native_grid_cache, smooth_rho_r(1)%pw_grid, &
-                                           cell, composite_nflat, image_partition_atom_composite)
+                                           cell, composite_nflat, .TRUE.)
             CALL pw_env_get(pw_env, auxbas_pw_pool=auxbas_pw_pool)
             CALL section_vals_val_get(my_xc_section, "XC_GRID%XC_DERIV", &
                                       i_val=xc_deriv_method_id)
@@ -735,8 +724,6 @@ CONTAINS
                IF (comp_geometry_valid) comp_geometry_valid = ALL(native_comp_atoms == composite_atom_coords)
                comp_geometry_valid = comp_geometry_valid .AND. ALL(native_comp_hmat == cell%hmat)
                comp_geometry_valid = comp_geometry_valid .AND. ALL(native_comp_perd == cell%perd)
-               comp_geometry_valid = comp_geometry_valid .AND. &
-                                     (native_comp_image .EQV. image_partition_atom_composite)
             ELSE
                comp_geometry_valid = .FALSE.
             END IF
@@ -760,15 +747,13 @@ CONTAINS
                   CALL get_qs_kind(my_kind_set(composite_atom_kind(iatom)), grid_atom=grid_atom)
                   nr = grid_atom%nr
                   na = grid_atom%ng_sphere
-                  IF (image_partition_atom_composite) THEN
-                     CALL build_periodic_atom_image_layout( &
-                        composite_atom_coords, cell, iatom, composite_image_periodicity, &
-                        composite_partition_image_coords, composite_partition_target_image)
-                     CALL build_periodic_atom_image_layout( &
-                        composite_atom_coords(:, iatom:iatom), cell, 1, &
-                        composite_image_periodicity, composite_descriptor_image_coords, &
-                        composite_descriptor_target_image)
-                  END IF
+                  CALL build_periodic_atom_image_layout( &
+                     composite_atom_coords, cell, iatom, composite_image_periodicity, &
+                     composite_partition_image_coords, composite_partition_target_image)
+                  CALL build_periodic_atom_image_layout( &
+                     composite_atom_coords(:, iatom:iatom), cell, 1, &
+                     composite_image_periodicity, composite_descriptor_image_coords, &
+                     composite_descriptor_target_image)
                   DO ir = 1, nr
                      DO ia = 1, na
                         composite_row = composite_atom_start(iatom) + (ir - 1)*na + ia - 1
@@ -778,23 +763,14 @@ CONTAINS
                                              grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
                         composite_point(3) = particle_set(iatom)%r(3) + &
                                              grid_atom%rad(ir)*grid_atom%cos_pol(ia)
-                        IF (image_partition_atom_composite) THEN
-                           CALL periodic_atom_image_partition_from_layout( &
-                              composite_point, composite_partition_image_coords, &
-                              composite_partition_target_image, partition_weight)
-                           CALL periodic_atom_image_partition_from_layout( &
-                              composite_point, composite_descriptor_image_coords, &
-                              composite_descriptor_target_image, descriptor_window_weight)
-                           partition_scale = smooth_partition_atomic_weight_scale( &
-                                             descriptor_window_weight)
-                        ELSE
-                           CALL smooth_atom_partition( &
-                              composite_point, composite_atom_coords, cell, &
-                              composite_partition_weights, composite_partition_atom_coords, &
-                              composite_distances)
-                           partition_weight = composite_partition_weights(iatom)
-                           partition_scale = 1.0_dp
-                        END IF
+                        CALL periodic_atom_image_partition_from_layout( &
+                           composite_point, composite_partition_image_coords, &
+                           composite_partition_target_image, partition_weight)
+                        CALL periodic_atom_image_partition_from_layout( &
+                           composite_point, composite_descriptor_image_coords, &
+                           composite_descriptor_target_image, descriptor_window_weight)
+                        partition_scale = smooth_partition_atomic_weight_scale( &
+                                          descriptor_window_weight)
                         composite_grid_coords(:, composite_row) = composite_point
                         composite_base_grid_weights(composite_row) = grid_atom%weight(ia, ir)
                         composite_atomic_grid_weights(composite_row) = &
@@ -811,13 +787,12 @@ CONTAINS
                native_comp_atoms = composite_atom_coords
                native_comp_hmat = cell%hmat
                native_comp_perd = cell%perd
-               native_comp_image = image_partition_atom_composite
                native_comp_nrows = composite_nflat
                native_comp_ready = .TRUE.
             END IF
 
             CALL native_grid_build_needed(smooth_rho_r(1)%pw_grid, cell, smooth_rho_r(1)%pw_grid%para%group, &
-                                          image_partition_atom_composite, composite_nflat, &
+                                          .TRUE., composite_nflat, &
                                           composite_grid_coords, composite_atom_coords)
             IF (lsd) THEN
                CALL xc_rho_set_get(smooth_rho_set, rhoa=smooth_rhoa, rhob=smooth_rhob, &
@@ -1010,22 +985,20 @@ CONTAINS
 
                IF (atom_composite_active) THEN
                   CALL timeset("calculate_vxc_atom_interp", interp_handle)
-!$OMP PARALLEL DO COLLAPSE(2) IF (image_partition_atom_composite) SCHEDULE(STATIC) DEFAULT(NONE) &
+!$OMP PARALLEL DO COLLAPSE(2) SCHEDULE(STATIC) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_row, composite_point, composite_smooth_density_value, &
 !$OMP         composite_smooth_gradient_value, composite_smooth_kin_value, &
-!$OMP         descriptor_window_weight, idir, ispin, &
+!$OMP         idir, ispin, &
 !$OMP         gth_potential, nlcc_density, nlcc_gradient, nlcc_hessian, nlcc_spin_factor, &
-!$OMP         interpolation_stencil, partition_scale, partition_weight, sgp_potential, source_atom) &
-!$OMP SHARED(atom_composite_reference, cell, composite_atom_coords, composite_atom_kind, &
-!$OMP        composite_atom_start, composite_atomic_grid_weights, composite_base_grid_weights, &
+!$OMP         interpolation_stencil, sgp_potential, source_atom) &
+!$OMP SHARED(atom_composite_reference, cell, composite_atom_kind, &
+!$OMP        composite_atom_start, &
 !$OMP        composite_density, composite_descriptor_image_coords, &
-!$OMP        composite_descriptor_target_image, composite_distances, composite_grad, &
-!$OMP        composite_grid_coords, composite_grid_weights, composite_kin, &
-!$OMP        composite_partition_atom_coords, composite_partition_image_coords, &
-!$OMP        composite_partition_target_image, composite_partition_weights, &
+!$OMP        composite_descriptor_target_image, composite_grad, &
+!$OMP        composite_grid_coords, composite_kin, &
 !$OMP        composite_smooth_density_cache, composite_smooth_gradient_cache, &
 !$OMP        composite_smooth_kin_cache, drho_h, drho_s, grid_atom, iatom, &
-!$OMP        image_partition_atom_composite, lsd, my_kind_set, na, nlcc, nr, one_center_kind, &
+!$OMP        lsd, my_kind_set, na, nlcc, nr, one_center_kind, &
 !$OMP        particle_set, qs_env, rho_h, rho_s, smooth_rho_r, tau_h, tau_s, &
 !$OMP        atom_composite_diagnostic, use_atom_composite_density, &
 !$OMP        use_atom_composite_gradient, use_atom_composite_tau)
@@ -1037,7 +1010,7 @@ CONTAINS
                                                             composite_point, interpolation_stencil)) THEN
                            CALL create_native_grid_interpolation_stencil( &
                               interpolation_stencil, smooth_rho_r(1)%pw_grid, cell, composite_point, &
-                              image_partition_atom_composite)
+                              .TRUE.)
                            CALL store_native_grid_stencil(qs_env%native_grid_cache, composite_row, &
                                                           composite_point, interpolation_stencil)
                         END IF
@@ -1512,8 +1485,7 @@ CONTAINS
                          composite_moving_smooth_force(3, SIZE(particle_set)), &
                          composite_nlcc_center_force(3, SIZE(particle_set)), &
                          composite_nlcc_target_force(3, SIZE(particle_set)), &
-                         composite_partition_force(3, SIZE(particle_set)), &
-                         composite_partition_included(SIZE(particle_set)))
+                         composite_partition_force(3, SIZE(particle_set)))
                composite_cross_force = 0.0_dp
                composite_cross_image_virial = 0.0_dp
                composite_model_atom_force = 0.0_dp
@@ -1527,12 +1499,12 @@ CONTAINS
                composite_interpolation_virial = 0.0_dp
                composite_partition_strain_virial = 0.0_dp
                CALL timeset("calculate_vxc_atom_force", force_handle)
-!$OMP PARALLEL DO IF (image_partition_atom_composite) SCHEDULE(STATIC) DEFAULT(NONE) &
+!$OMP PARALLEL DO SCHEDULE(STATIC) DEFAULT(NONE) &
 !$OMP PRIVATE(composite_local_atom, composite_row, composite_smooth_gradient_value, &
 !$OMP         iatom, idir, ispin, jdir, interpolation_stencil) &
 !$OMP SHARED(cell, composite_atom_end, composite_atom_start, composite_grad_grad, &
 !$OMP        composite_grid_coords, composite_local_atoms, composite_local_natom, &
-!$OMP        image_partition_atom_composite, lsd, qs_env, smooth_rho_r) &
+!$OMP        lsd, qs_env, smooth_rho_r) &
 !$OMP REDUCTION(+:composite_feature_virial)
                DO composite_local_atom = 1, composite_local_natom
                   iatom = composite_local_atoms(composite_local_atom)
@@ -1542,7 +1514,7 @@ CONTAINS
                                                          interpolation_stencil)) THEN
                         CALL create_native_grid_interpolation_stencil( &
                            interpolation_stencil, smooth_rho_r(1)%pw_grid, cell, &
-                           composite_grid_coords(:, composite_row), image_partition_atom_composite)
+                           composite_grid_coords(:, composite_row), .TRUE.)
                      END IF
                      IF (lsd) THEN
                         DO jdir = 1, 3
@@ -1570,15 +1542,14 @@ CONTAINS
                   END DO
                END DO
 !$OMP END PARALLEL DO
-!$OMP PARALLEL IF (image_partition_atom_composite) DEFAULT(NONE) &
+!$OMP PARALLEL DEFAULT(NONE) &
 !$OMP PRIVATE(composite_local_atom, composite_row, descriptor_window_adjoint, &
 !$OMP         descriptor_window_weight, gth_potential, iatom, idir, ispin, jdir, &
 !$OMP         nlcc_density, nlcc_gradient, nlcc_hessian, nlcc_spatial_derivative, &
-!$OMP         nlcc_spin_factor, partition_adjoint, composite_nlcc_center_force_local, &
+!$OMP         nlcc_spin_factor, composite_nlcc_center_force_local, &
 !$OMP         composite_partition_force_local, local_descriptor_datom, &
 !$OMP         local_descriptor_dstrain, local_partition_datom, local_partition_dstrain, &
-!$OMP         local_partition_weight, partition_column_sum, partition_included_private, &
-!$OMP         partition_weight_grad, partition_weights_private, sgp_potential, source_atom, &
+!$OMP         local_partition_weight, sgp_potential, source_atom, &
 !$OMP         spatial_derivative, target_atom, target_partition_adjoint, interpolation_stencil) &
 !$OMP REDUCTION(+:composite_interpolation_virial, composite_partition_strain_virial) &
 !$OMP SHARED(cell, composite_atom_coord_grad, composite_atom_coords, composite_atom_end, &
@@ -1589,16 +1560,11 @@ CONTAINS
 !$OMP        composite_kin_grad, composite_local_atoms, composite_local_natom, &
 !$OMP        composite_model_atom_force, composite_moving_smooth_force, &
 !$OMP        composite_nlcc_center_force, composite_nlcc_target_force, composite_partition_force, &
-!$OMP        composite_partition_included, &
-!$OMP        composite_partition_weights, image_partition_atom_composite, lsd, my_kind_set, &
+!$OMP        lsd, my_kind_set, &
 !$OMP        nlcc, particle_set, qs_env, smooth_rho_r)
                ALLOCATE (composite_nlcc_center_force_local(3, SIZE(particle_set)), &
                          composite_partition_force_local(3, SIZE(particle_set)), &
-                         local_partition_datom(3, SIZE(particle_set)), &
-                         partition_column_sum(3, SIZE(particle_set)), &
-                         partition_included_private(SIZE(particle_set)), &
-                         partition_weights_private(SIZE(particle_set)), &
-                         partition_weight_grad(SIZE(particle_set)))
+                         local_partition_datom(3, SIZE(particle_set)))
                composite_nlcc_center_force_local = 0.0_dp
                composite_partition_force_local = 0.0_dp
 !$OMP DO SCHEDULE(DYNAMIC)
@@ -1615,7 +1581,7 @@ CONTAINS
                                                          interpolation_stencil)) THEN
                         CALL create_native_grid_interpolation_stencil( &
                            interpolation_stencil, smooth_rho_r(1)%pw_grid, cell, &
-                           composite_grid_coords(:, composite_row), image_partition_atom_composite)
+                           composite_grid_coords(:, composite_row), .TRUE.)
                      END IF
                      IF (lsd) THEN
                         spatial_derivative = &
@@ -1699,53 +1665,35 @@ CONTAINS
                               composite_nlcc_center_force_local(:, source_atom) - nlcc_spatial_derivative
                         END DO
                      END IF
-                     IF (image_partition_atom_composite) THEN
-                        CALL periodic_atom_image_partition( &
-                           composite_grid_coords(:, composite_row), composite_atom_coords, cell, &
-                           iatom, local_partition_weight, local_partition_datom, &
-                           local_partition_dstrain, composite_image_periodicity)
-                        CALL periodic_atom_image_partition( &
-                           composite_grid_coords(:, composite_row), &
-                           composite_atom_coords(:, iatom:iatom), cell, 1, &
-                           descriptor_window_weight, local_descriptor_datom, &
-                           local_descriptor_dstrain, composite_image_periodicity)
-                        ! Its atom derivative cancels against the moving target grid; periodic
-                        ! image strain remains an explicit contribution to the virial.
-                        target_partition_adjoint = composite_base_grid_weights(composite_row)* &
-                                                   composite_grid_weight_grad(composite_row)
-                        descriptor_window_adjoint = composite_base_grid_weights(composite_row)* &
-                                                    composite_atomic_grid_weight_grad(composite_row)* &
-                                                    smooth_partition_atomic_weight_scale_derivative( &
-                                                    descriptor_window_weight)
-                        DO target_atom = 1, SIZE(particle_set)
-                           composite_partition_force_local(:, target_atom) = &
-                              composite_partition_force_local(:, target_atom) + &
-                              target_partition_adjoint*local_partition_datom(:, target_atom)
-                        END DO
-                        composite_partition_force_local(:, iatom) = &
-                           composite_partition_force_local(:, iatom) - target_partition_adjoint* &
-                           SUM(local_partition_datom, DIM=2)
-                        composite_partition_strain_virial = &
-                           composite_partition_strain_virial - target_partition_adjoint* &
-                           local_partition_dstrain - descriptor_window_adjoint* &
-                           local_descriptor_dstrain
-                     ELSE
-                        CALL smooth_partition_weights( &
-                           composite_grid_coords(:, composite_row), composite_atom_coords, cell, &
-                           partition_weights_private, partition_included_private)
-                        partition_adjoint = composite_grid_weight_grad(composite_row)* &
-                                            composite_atomic_grid_weights(composite_row)
-                        partition_weight_grad = 0.0_dp
-                        partition_weight_grad(iatom) = partition_adjoint
-                        CALL smooth_partition_derivative_action( &
-                           composite_grid_coords(:, composite_row), composite_atom_coords, cell, &
-                           partition_weights_private, partition_included_private, &
-                           partition_weight_grad, atom_force=composite_partition_force_local, &
-                           dweight_column_sum=partition_column_sum)
-                        composite_partition_force_local(:, iatom) = &
-                           composite_partition_force_local(:, iatom) - &
-                           partition_adjoint*partition_column_sum(:, iatom)
-                     END IF
+                     CALL periodic_atom_image_partition( &
+                        composite_grid_coords(:, composite_row), composite_atom_coords, cell, &
+                        iatom, local_partition_weight, local_partition_datom, &
+                        local_partition_dstrain, composite_image_periodicity)
+                     CALL periodic_atom_image_partition( &
+                        composite_grid_coords(:, composite_row), &
+                        composite_atom_coords(:, iatom:iatom), cell, 1, &
+                        descriptor_window_weight, local_descriptor_datom, &
+                        local_descriptor_dstrain, composite_image_periodicity)
+                     ! Its atom derivative cancels against the moving target grid; periodic
+                     ! image strain remains an explicit contribution to the virial.
+                     target_partition_adjoint = composite_base_grid_weights(composite_row)* &
+                                                composite_grid_weight_grad(composite_row)
+                     descriptor_window_adjoint = composite_base_grid_weights(composite_row)* &
+                                                 composite_atomic_grid_weight_grad(composite_row)* &
+                                                 smooth_partition_atomic_weight_scale_derivative( &
+                                                 descriptor_window_weight)
+                     DO target_atom = 1, SIZE(particle_set)
+                        composite_partition_force_local(:, target_atom) = &
+                           composite_partition_force_local(:, target_atom) + &
+                           target_partition_adjoint*local_partition_datom(:, target_atom)
+                     END DO
+                     composite_partition_force_local(:, iatom) = &
+                        composite_partition_force_local(:, iatom) - target_partition_adjoint* &
+                        SUM(local_partition_datom, DIM=2)
+                     composite_partition_strain_virial = &
+                        composite_partition_strain_virial - target_partition_adjoint* &
+                        local_partition_dstrain - descriptor_window_adjoint* &
+                        local_descriptor_dstrain
                   END DO
                END DO
 !$OMP END DO
@@ -1756,9 +1704,7 @@ CONTAINS
                                                  composite_partition_force_local
 !$OMP END CRITICAL(skala_atom_composite_force_reduction)
                DEALLOCATE (composite_nlcc_center_force_local, composite_partition_force_local, &
-                           local_partition_datom, partition_column_sum, &
-                           partition_included_private, &
-                           partition_weight_grad, partition_weights_private)
+                           local_partition_datom)
 !$OMP END PARALLEL
                CALL timestop(force_handle)
                ! The target atom grids can overlap augmentation regions of other atoms
@@ -2069,7 +2015,7 @@ CONTAINS
                            composite_model_atom_force, composite_moving_smooth_force, &
                            composite_nlcc_center_force, &
                            composite_nlcc_target_force, &
-                           composite_partition_force, composite_partition_included)
+                           composite_partition_force)
             ELSE
                CALL skala_gapw_atom_composite_energy( &
                   my_xc_section, para_env, composite_density, composite_grad, composite_kin, &
@@ -2090,7 +2036,7 @@ CONTAINS
 !$OMP         interpolation_stencil, thread_adj, lin, pos, coefficient, idir) &
 !$OMP SHARED(adjoint_compact, cell, composite_density_grad, composite_grad_grad, &
 !$OMP        composite_grid_coords, composite_kin_grad, composite_nflat, &
-!$OMP        image_partition_atom_composite, lsd, native_need_npts, qs_env, &
+!$OMP        lsd, native_need_npts, qs_env, &
 !$OMP        smooth_rho_r)
             ALLOCATE (thread_adj(SIZE(adjoint_compact, 1), SIZE(adjoint_compact, 2)))
             thread_adj = 0.0_dp
@@ -2101,7 +2047,7 @@ CONTAINS
                                                    interpolation_stencil)) THEN
                   CALL create_native_grid_interpolation_stencil( &
                      interpolation_stencil, smooth_rho_r(1)%pw_grid, cell, &
-                     composite_grid_coords(:, composite_row), image_partition_atom_composite)
+                     composite_grid_coords(:, composite_row), .TRUE.)
                END IF
                IF (.NOT. interpolation_stencil%active) CYCLE
                IF (lsd) THEN
@@ -2750,8 +2696,7 @@ CONTAINS
                         composite_atom_kind_index, composite_atom_start, composite_atom_end, &
                         composite_atom_coords, composite_local_atoms, composite_local_grid_sizes, &
                         composite_local_atom_coords, composite_grid_atom, &
-                        composite_partition_weights, composite_partition_atom_coords, &
-                        composite_distances, composite_density, composite_grad, composite_kin, &
+                        composite_density, composite_grad, composite_kin, &
                         composite_density_grad, composite_grad_grad, composite_kin_grad, &
                         composite_grid_coords, composite_grid_weights, &
                         composite_base_grid_weights, composite_atomic_grid_weights)

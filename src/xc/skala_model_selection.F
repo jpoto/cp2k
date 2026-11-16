@@ -30,8 +30,6 @@ MODULE skala_model_selection
 
    PRIVATE
 
-   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'skala_model_selection'
-
    TYPE :: skala_execution_target_type
       INTEGER                                            :: gpu_mode = do_gpu_auto
       LOGICAL                                            :: use_cuda = .FALSE.
@@ -44,7 +42,7 @@ MODULE skala_model_selection
    PUBLIC :: find_functional_subsection, find_single_functional_subsection, &
              gauxc_model_none_selected, get_gauxc_section, get_skala_native_section, &
              resolve_skala_execution_target, resolve_skala_model_path, &
-             skala_execution_target_type, skala_gpu_mode_use_cuda, &
+             skala_execution_target_type, &
              xc_section_uses_gauxc, xc_section_uses_gauxc_model, &
              xc_section_uses_native_skala_grid, xc_section_uses_skala_model
 
@@ -271,30 +269,6 @@ CONTAINS
       gauxc_model_none_selected = model_key_is_none(model_name, xc_fun_name)
 
    END FUNCTION gauxc_model_none_selected
-
-! **************************************************************************************************
-!> \brief Resolve the USE_GPU mode to a logical CUDA decision.
-!> \param gpu_mode ...
-!> \param auto_cuda whether AUTO should select the GPU for this backend
-!> \return ...
-! **************************************************************************************************
-   FUNCTION skala_gpu_mode_use_cuda(gpu_mode, auto_cuda) RESULT(use_cuda)
-      INTEGER, INTENT(IN)                                :: gpu_mode
-      LOGICAL, INTENT(IN)                                :: auto_cuda
-      LOGICAL                                            :: use_cuda
-
-      SELECT CASE (gpu_mode)
-      CASE (do_gpu_auto)
-         use_cuda = auto_cuda
-      CASE (do_gpu_host)
-         use_cuda = .FALSE.
-      CASE (do_gpu_device)
-         use_cuda = .TRUE.
-      CASE DEFAULT
-         CPABORT("Unknown SKALA execution-space value.")
-      END SELECT
-
-   END FUNCTION skala_gpu_mode_use_cuda
 
 ! **************************************************************************************************
 !> \brief Resolve the CPU/GPU execution target once for the whole calculation.

@@ -958,11 +958,6 @@ void torch_c_use_cuda(const bool use_cuda) {
 }
 
 /*******************************************************************************
- * \brief Returns whether Torch wrappers currently select CUDA when available.
- ******************************************************************************/
-bool torch_c_get_use_cuda() { return use_cuda_if_available.load(); }
-
-/*******************************************************************************
  * \brief Materializes a contiguous host-owned copy of an autograd gradient.
  ******************************************************************************/
 static torch::Tensor materialize_host_gradient(const torch::Tensor &source,
@@ -1377,32 +1372,6 @@ void torch_c_tensor_weighted_sum(const torch_c_tensor_t *values,
                 "Torch weighted sum: value/weight size mismatch");
   *result = new torch_c_tensor_t(torch::dot(flat_values, flat_weights));
   TORCH_C_CATCH("torch_c_tensor_weighted_sum")
-}
-
-/*******************************************************************************
- * \brief Returns the weighted sum over a flat element range (segmented energy).
- ******************************************************************************/
-void torch_c_tensor_weighted_sum_range(const torch_c_tensor_t *values,
-                                       const torch_c_tensor_t *weights,
-                                       const int64_t start,
-                                       const int64_t length,
-                                       torch_c_tensor_t **result) {
-  TORCH_C_TRY
-  c10::OptionalDeviceGuard guard;
-  get_device_with_guard(guard);
-  const auto weights_on_device =
-      weights->to(values->device()).to(values->dtype());
-  const auto flat_values = values->flatten();
-  const auto flat_weights = weights_on_device.flatten();
-  torch_c_check(flat_values.numel() == flat_weights.numel(),
-                "Torch weighted sum: value/weight size mismatch");
-  torch_c_check(start >= 0 && length >= 0 &&
-                    start + length <= flat_values.numel(),
-                "Torch weighted sum range is out of bounds");
-  *result =
-      new torch_c_tensor_t(torch::dot(flat_values.narrow(0, start, length),
-                                      flat_weights.narrow(0, start, length)));
-  TORCH_C_CATCH("torch_c_tensor_weighted_sum_range")
 }
 
 /*******************************************************************************

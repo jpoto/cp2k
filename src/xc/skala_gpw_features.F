@@ -60,7 +60,6 @@ MODULE skala_gpw_features
       INTEGER                                            :: chunk_atom_begin = 1, chunk_atom_end = 0, &
                                                             chunk_feature_begin = 1, &
                                                             chunk_feature_count = 0, chunk_natom = 0, &
-                                                            chunk_static_grad_mode = 0, &
                                                             natom = 0, nflat = 0, nflat_local = 0, &
                                                             npoint = 0, nproc = 0, &
                                                             cuda_device = -3, &
@@ -70,7 +69,6 @@ MODULE skala_gpw_features
       INTEGER                                            :: comm_handle = -1
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: dynamic_counts, dynamic_displs, &
                                                             chunk_feature_counts, chunk_feature_displs, &
-                                                            feature_counts, feature_displs, &
                                                             feature_source_points, global_to_feature, &
                                                             local_feature_counts, local_feature_offsets, &
                                                             local_feature_rows, &
@@ -116,7 +114,7 @@ MODULE skala_gpw_features
       TYPE(torch_tensor_type)                            :: grid_weights_t
       TYPE(torch_tensor_type)                            :: grad_t
       TYPE(torch_tensor_type)                            :: kin_t
-      REAL(KIND=dp)                                      :: dvol = 0.0_dp, weight_sum = 0.0_dp, &
+      REAL(KIND=dp)                                      :: weight_sum = 0.0_dp, &
                                                             weight_sumsq = 0.0_dp
       REAL(KIND=dp), DIMENSION(3, 3)                     :: cell_hmat = 0.0_dp, dh = 0.0_dp
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, chunk_atomic_grid_weights, &
@@ -138,7 +136,7 @@ MODULE skala_gpw_features
    END TYPE skala_gpw_layout_cache_type
 
    TYPE skala_gpw_feature_type
-      INTEGER                                            :: chunk_atom_begin = 1, chunk_atom_end = 0, &
+      INTEGER                                            :: chunk_atom_begin = 1, &
                                                             chunk_feature_count = 0, chunk_natom = 0, &
                                                             nflat = 0, nflat_local = 0, &
                                                             atom_partition = skala_gpw_atom_partition_hard
@@ -155,7 +153,7 @@ MODULE skala_gpw_features
       TYPE(torch_tensor_type)                           :: grid_weights_t
       TYPE(torch_tensor_type)                           :: kin_input_t
       TYPE(torch_tensor_type)                           :: kin_t
-      INTEGER, ALLOCATABLE, DIMENSION(:)                :: local_feature_counts, local_feature_offsets, &
+      INTEGER, ALLOCATABLE, DIMENSION(:)                :: local_feature_offsets, &
                                                            local_feature_rows
       INTEGER, POINTER, DIMENSION(:)                    :: route_point_recv_counts => NULL(), &
                                                            route_point_recv_displs => NULL(), &
@@ -622,9 +620,9 @@ CONTAINS
       END DO
 
       IF (PRESENT(weights)) THEN
-         weights_match = layout_weights_match(pw_grid, weights)
+         weights_match = layout_weights_match(weights)
       ELSE
-         weights_match = layout_weights_match(pw_grid)
+         weights_match = layout_weights_match()
       END IF
       IF (.NOT. weights_match) RETURN
 
@@ -634,12 +632,10 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Check whether current optional integration weights match the cached static tensors.
-!> \param pw_grid ...
 !> \param weights ...
 !> \return ...
 ! **************************************************************************************************
-   FUNCTION layout_weights_match(pw_grid, weights) RESULT(matches)
-      TYPE(pw_grid_type), POINTER                        :: pw_grid
+   FUNCTION layout_weights_match(weights) RESULT(matches)
       TYPE(pw_r3d_rs_type), OPTIONAL, POINTER            :: weights
       LOGICAL                                            :: matches
 
@@ -649,7 +645,6 @@ CONTAINS
       TYPE(cp_logger_type), POINTER                      :: logger
 
       matches = .FALSE.
-      MARK_USED(pw_grid)
 
       has_weights = .FALSE.
       IF (PRESENT(weights)) THEN
@@ -961,13 +956,10 @@ CONTAINS
 
       CALL timeset("skala_gpw_layout_atom_sort", phase_handle)
       IF (needs_full_static_tensors) THEN
-         ALLOCATE (cached_layout%feature_counts(nproc), cached_layout%feature_displs(nproc), &
-                   cached_layout%dynamic_counts(nproc), cached_layout%dynamic_displs(nproc), &
+         ALLOCATE (cached_layout%dynamic_counts(nproc), cached_layout%dynamic_displs(nproc), &
                    cached_layout%feature_source_points(nflat), &
                    cached_layout%global_to_feature(npoint), &
                    atom_position(natom), cursor(nflat_local))
-         cached_layout%feature_counts(:) = feature_counts
-         cached_layout%feature_displs(:) = feature_displs
          cached_layout%dynamic_counts(:) = ndynamic_per_point*point_counts
          cached_layout%dynamic_displs(:) = ndynamic_per_point*point_displs
          cached_layout%global_to_feature = 0
@@ -1196,7 +1188,6 @@ CONTAINS
       cached_layout%bo = bo
       cached_layout%bounds = pw_grid%bounds
       cached_layout%npts = pw_grid%npts
-      cached_layout%dvol = pw_grid%dvol
       cached_layout%dh = pw_grid%dh
       cached_layout%cell_hmat = cell%hmat
       cached_layout%cell_perd = cell%perd
@@ -1299,7 +1290,6 @@ CONTAINS
                              cache%chunk_atomic_grid_sizes_t)
       CALL torch_dict_insert(cache%chunk_static_inputs, "atomic_grid_size_bound_shape", &
                              cache%chunk_atomic_grid_size_bound_shape_t)
-      cache%chunk_static_grad_mode = grad_mode
       cache%chunk_static_tensors_active = .TRUE.
 
    END SUBROUTINE build_chunk_static_layout_tensors
@@ -1322,7 +1312,6 @@ CONTAINS
                                           grad_mode >= 2)
       CALL torch_tensor_set_requires_grad(cached_layout%chunk_coarse_0_atomic_coords_t, &
                                           grad_mode >= 2)
-      cached_layout%chunk_static_grad_mode = grad_mode
 
    END SUBROUTINE ensure_chunk_static_tensor_grad
 
@@ -1351,7 +1340,6 @@ CONTAINS
       features%nflat = cached_layout%nflat
       features%nflat_local = cached_layout%nflat_local
       features%chunk_atom_begin = cached_layout%chunk_atom_begin
-      features%chunk_atom_end = cached_layout%chunk_atom_end
       features%chunk_feature_count = cached_layout%chunk_feature_count
       features%chunk_natom = cached_layout%chunk_natom
       features%atom_partition = cached_layout%atom_partition
@@ -1381,13 +1369,11 @@ CONTAINS
                          LBOUND(cached_layout%feature_index, 3), &
                          UBOUND(cached_layout%feature_index, 3))
       CALL ensure_real_1d(features%grid_weights, cached_layout%nflat)
-      CALL ensure_int_1d(features%local_feature_counts, cached_layout%nflat_local)
       CALL ensure_int_1d(features%local_feature_offsets, cached_layout%nflat_local + 1)
       CALL ensure_int_1d(features%local_feature_rows, SIZE(cached_layout%local_feature_rows))
 
       features%feature_index(:, :, :) = cached_layout%feature_index
       features%grid_weights(:) = cached_layout%grid_weights
-      features%local_feature_counts(:) = cached_layout%local_feature_counts
       features%local_feature_offsets(:) = cached_layout%local_feature_offsets
       features%local_feature_rows(:) = cached_layout%local_feature_rows
 
@@ -1414,13 +1400,11 @@ CONTAINS
       IF (needs_coordinate_array) THEN
          ! Routing mode keeps a per-rank local feature layout. Assembly routines
          ! index these arrays by feature position, so the row map is made local.
-         CALL ensure_int_1d(features%local_feature_counts, cached_layout%nflat_local)
          CALL ensure_int_1d(features%local_feature_offsets, cached_layout%nflat_local + 1)
          CALL ensure_int_1d(features%local_feature_rows, SIZE(cached_layout%local_feature_rows))
          CALL ensure_real_2d(features%grid_coords, 3, SIZE(cached_layout%local_feature_rows))
          CALL ensure_real_1d(features%grid_weights, SIZE(cached_layout%local_feature_rows))
          CALL ensure_real_1d(features%atomic_grid_weights, SIZE(cached_layout%local_feature_rows))
-         features%local_feature_counts(:) = cached_layout%local_feature_counts
          features%local_feature_offsets(:) = cached_layout%local_feature_offsets
          DO feature_pos = 1, SIZE(cached_layout%local_feature_rows)
             features%grid_coords(:, feature_pos) = &
@@ -2010,8 +1994,6 @@ CONTAINS
       IF (ALLOCATED(cache%route_recv_chunk_rows)) DEALLOCATE (cache%route_recv_chunk_rows)
       IF (ALLOCATED(cache%dynamic_counts)) DEALLOCATE (cache%dynamic_counts)
       IF (ALLOCATED(cache%dynamic_displs)) DEALLOCATE (cache%dynamic_displs)
-      IF (ALLOCATED(cache%feature_counts)) DEALLOCATE (cache%feature_counts)
-      IF (ALLOCATED(cache%feature_displs)) DEALLOCATE (cache%feature_displs)
       IF (ALLOCATED(cache%feature_source_points)) DEALLOCATE (cache%feature_source_points)
       IF (ALLOCATED(cache%global_to_feature)) DEALLOCATE (cache%global_to_feature)
       IF (ALLOCATED(cache%feature_index)) DEALLOCATE (cache%feature_index)
@@ -2057,7 +2039,6 @@ CONTAINS
       cache%bo = 0
       cache%bounds = 0
       cache%npts = 0
-      cache%dvol = 0.0_dp
       cache%weight_sum = 0.0_dp
       cache%weight_sumsq = 0.0_dp
       cache%cell_hmat = 0.0_dp
@@ -2147,7 +2128,6 @@ CONTAINS
                features%route_recv_chunk_rows)
       IF (.NOT. keep) THEN
          IF (ALLOCATED(features%feature_index)) DEALLOCATE (features%feature_index)
-         IF (ALLOCATED(features%local_feature_counts)) DEALLOCATE (features%local_feature_counts)
          IF (ALLOCATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
          IF (ALLOCATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
          IF (ALLOCATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
@@ -2304,16 +2284,13 @@ CONTAINS
 !> \param atom_count ...
 !> \param row_begin ...
 !> \param row_count ...
-!> \param requires_grad ...
 ! **************************************************************************************************
    SUBROUTINE skala_gpw_feature_build_atom_subchunk_bounds(parent, features, atom_begin, &
-                                                           atom_count, row_begin, row_count, &
-                                                           requires_grad)
+                                                           atom_count, row_begin, row_count)
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: parent
       TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
       INTEGER, INTENT(IN)                                :: atom_begin, atom_count, row_begin, &
                                                             row_count
-      LOGICAL, INTENT(IN)                                :: requires_grad
 
       INTEGER                                            :: atom_end, max_grid_size, row_end
 
@@ -2323,7 +2300,6 @@ CONTAINS
       row_end = row_begin + row_count - 1
       CPASSERT(atom_count > 0)
       CPASSERT(row_count > 0)
-      MARK_USED(requires_grad)
       max_grid_size = MAXVAL(INT(cached_layout%chunk_atomic_grid_sizes(atom_begin:atom_end)))
 
       ALLOCATE (features%atomic_grid_size_bound_shape(0, max_grid_size))

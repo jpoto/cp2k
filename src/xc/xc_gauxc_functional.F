@@ -15,9 +15,7 @@ MODULE xc_gauxc_functional
    USE basis_set_types,                 ONLY: gto_basis_set_type
    USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
-   USE cp_dbcsr_api,                    ONLY: dbcsr_create,&
-                                              dbcsr_get_info,&
-                                              dbcsr_p_type
+   USE cp_dbcsr_api,                    ONLY: dbcsr_p_type
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
    USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
@@ -1764,9 +1762,6 @@ CONTAINS
                   ! The default and MODEL_GRADIENT_RUNTIME MPI paths both use the
                   ! shared integrator; the policy guarantees it is the para_env
                   ! (MPI) runtime whenever MPI is selected.
-                  IF (params%use_gradient_mpi_runtime .AND. params%use_self_runtime) THEN
-                     CPABORT("MODEL_GRADIENT_RUNTIME MPI requires a shared energy integrator.")
-                  END IF
                   CALL gauxc_compute_xc_gradient( &
                      cache%integrator, &
                      cache%density_scalar, &
@@ -1846,9 +1841,6 @@ CONTAINS
                   ! The default and MODEL_GRADIENT_RUNTIME MPI paths both use the
                   ! shared integrator; the policy guarantees it is the para_env
                   ! (MPI) runtime whenever MPI is selected.
-                  IF (params%use_gradient_mpi_runtime .AND. params%use_self_runtime) THEN
-                     CPABORT("MODEL_GRADIENT_RUNTIME MPI requires a shared energy integrator.")
-                  END IF
                   CALL gauxc_compute_xc_gradient( &
                      cache%integrator, &
                      cache%density_scalar, &
