@@ -22,15 +22,12 @@ MODULE xc_gauxc_interface
       ieee_set_halting_mode
 #endif
    USE iso_c_binding, ONLY: &
-      c_associated, &
       c_bool, &
       c_char, &
       c_double, &
-      c_f_pointer, &
       c_int, &
       c_int32_t, &
       c_int64_t, &
-      c_null_char, &
       c_ptr, &
       c_size_t
    USE particle_types, ONLY: &
@@ -256,7 +253,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE print_gauxc_status_message(status)
       ! IMPORT :: c_ptr
-      TYPE(cp_gauxc_status_type)                         :: status
+      TYPE(cp_gauxc_status_type), INTENT(IN)             :: status
 
 #ifdef __GAUXC
       CHARACTER(len=32)                                  :: stderr_env
@@ -289,22 +286,15 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE write_gauxc_status_message(unit, status)
       INTEGER, INTENT(IN)                                :: unit
-      TYPE(cp_gauxc_status_type)                         :: status
+      TYPE(cp_gauxc_status_type), INTENT(IN)             :: status
 
 #ifdef __GAUXC
-      CHARACTER(kind=c_char), POINTER                    :: s(:)
-      INTEGER                                            :: i
-      INTEGER, PARAMETER                                 :: status_message_length = 4096
+      CHARACTER(kind=c_char, len=:), ALLOCATABLE         :: message
 
       WRITE (UNIT=unit, FMT='(a,1x,i0)') "GauXC returned with status code", status%status%code
-      IF (c_associated(status%status%message)) THEN
-         WRITE (UNIT=unit, FMT='(a)', ADVANCE='no') "GauXC status message: ["
-         CALL c_f_pointer(status%status%message, s, [status_message_length])
-         DO i = 1, SIZE(s)
-            IF (s(i) == c_null_char) EXIT
-            WRITE (UNIT=unit, FMT='(A)', ADVANCE='no') s(i)
-         END DO
-         WRITE (UNIT=unit, FMT='(a)') "]"
+      message = gauxc_status_message(status%status)
+      IF (LEN(message) > 0) THEN
+         WRITE (UNIT=unit, FMT='(a)') "GauXC status message: ["//message//"]"
       ELSE
          WRITE (UNIT=unit, FMT='(a)') "GauXC status message: [null]"
       END IF
@@ -422,8 +412,9 @@ CONTAINS
 
 #ifdef __GAUXC
       INTEGER                                            :: iatom, ikind, iprim, iset, ishell, lval, &
-                                                            nkind, npgf, nset, nshell, &
-                                                            nshell_total, shell_index, natoms
+                                                            ncgf_shell, nkind, npgf, nset, nshell, &
+                                                            nsgf_shell, nshell_total, shell_index, natoms
+      CHARACTER(len=256)                                 :: error_msg
       REAL(c_double), DIMENSION(3)                       :: shell_origin
       TYPE(atomic_kind_type), POINTER                    :: atomic_kind
       TYPE(gauxc_shell_type), ALLOCATABLE, DIMENSION(:)  :: shells
@@ -470,9 +461,26 @@ CONTAINS
                lval = gto_basis%l(ishell, iset)
                res%max_l = MAX(res%max_l, lval)
                shells(shell_index)%l = INT(lval, c_int32_t)
-               ! FIXME hardcoded true param
-               ! pure=1: spherical Gaussians; pure=0: cartesian Gaussians
-               shells(shell_index)%pure = .TRUE._c_bool
+               ! GauXC stores a fixed number of primitives per shell; reject
+               ! contractions that would overflow those arrays.
+               IF (npgf > SIZE(shells(shell_index)%exponents)) THEN
+                  WRITE (error_msg, '(A,I0,A,I0,A)') "GAUXC basis: contraction with ", npgf, &
+                       " primitives exceeds the GauXC shell limit of ", &
+                       SIZE(shells(shell_index)%exponents), " primitives"
+                  CPABORT(TRIM(error_msg))
+               END IF
+               ! CP2K's orbital basis is stored in spherical (solid-harmonic) form,
+               ! so a shell carries 2*l+1 AOs. Detect the representation explicitly
+               ! instead of silently assuming it.
+               nsgf_shell = gto_basis%last_sgf(ishell, iset) - gto_basis%first_sgf(ishell, iset) + 1
+               ncgf_shell = gto_basis%last_cgf(ishell, iset) - gto_basis%first_cgf(ishell, iset) + 1
+               IF (nsgf_shell == 2*lval + 1) THEN
+                  shells(shell_index)%pure = .TRUE._c_bool
+               ELSE IF (ncgf_shell == (lval + 1)*(lval + 2)/2) THEN
+                  CPABORT("GAUXC path requires spherical GTO basis functions (cartesian detected)")
+               ELSE
+                  CPABORT("GAUXC basis: inconsistent shell AO dimensions")
+               END IF
                shells(shell_index)%nprim = INT(npgf, c_int32_t)
                shells(shell_index)%origin = shell_origin
 

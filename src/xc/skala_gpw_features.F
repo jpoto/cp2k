@@ -194,6 +194,13 @@ MODULE skala_gpw_features
 
    TYPE(skala_gpw_layout_cache_type), SAVE, TARGET       :: cached_layout
 
+   ! The native layout is built for exactly one of the full-grid or atom-chunk
+   ! modes. Mixing them within one initialized cache is unsupported; remember
+   ! the first choice so a later mismatch aborts instead of reusing an
+   ! incompatible layout.
+   LOGICAL, SAVE                                         :: layout_mode_known = .FALSE.
+   LOGICAL, SAVE                                         :: layout_mode_full = .FALSE.
+
    ! Persistent per-layout host scratch, reused across SCF steps to avoid
    ! reallocating the grid-sized dynamic and routing buffers every call.
    TYPE skala_gpw_scratch_type
@@ -505,6 +512,26 @@ CONTAINS
 
       my_atom_partition = skala_gpw_atom_partition_hard
       IF (PRESENT(atom_partition)) my_atom_partition = atom_partition
+
+      IF (layout_mode_known) THEN
+         IF (layout_mode_full .NEQV. needs_full_static_tensors) THEN
+            IF (needs_full_static_tensors) THEN
+               CALL cp_abort(__LOCATION__, &
+                             "SKALA: the native layout was established in atom-chunk mode, "// &
+                             "but a full-grid evaluation was requested. Mixing full-grid and "// &
+                             "atom-chunk modes within one run is not supported.")
+            ELSE
+               CALL cp_abort(__LOCATION__, &
+                             "SKALA: the native layout was established in full-grid mode, "// &
+                             "but an atom-chunk evaluation was requested. Mixing full-grid and "// &
+                             "atom-chunk modes within one run is not supported.")
+            END IF
+         END IF
+      ELSE
+         layout_mode_known = .TRUE.
+         layout_mode_full = needs_full_static_tensors
+      END IF
+
       IF (PRESENT(weights)) THEN
          CALL timeset("skala_gpw_layout_match", phase_handle)
          cache_matches = layout_cache_matches(pw_grid, particle_set, cell, weights, &
@@ -1913,6 +1940,8 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE skala_gpw_features_release_cache()
       CALL release_layout_cache(cached_layout)
+      layout_mode_known = .FALSE.
+      layout_mode_full = .FALSE.
    END SUBROUTINE skala_gpw_features_release_cache
 
 ! **************************************************************************************************

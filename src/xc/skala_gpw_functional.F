@@ -115,6 +115,7 @@ MODULE skala_gpw_functional
       INTEGER                                            :: device = -2
       LOGICAL                                            :: tensors_active = .FALSE.
       LOGICAL                                            :: dict_active = .FALSE.
+      LOGICAL                                            :: int_tensors_active = .FALSE.
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes, seg_lengths, &
                                                             seg_offsets
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
@@ -160,6 +161,12 @@ MODULE skala_gpw_functional
       INTEGER                                            :: device = -1
    END TYPE skala_model_context_type
    TYPE(skala_model_context_type), SAVE                :: model_context
+
+   ! Stress/virial is a run-level property of the native SKALA path. CP2K may
+   ! perform an initial non-stress energy evaluation before the stress/force
+   ! evaluation, but once stress has been requested the run must stay in stress
+   ! mode; a later non-stress evaluation aborts instead of mixing the two.
+   LOGICAL, SAVE                                       :: stress_mode_entered = .FALSE.
 
    LOGICAL, SAVE                                       :: logged_torch_threads = .FALSE.
    CHARACTER(len=default_path_length), SAVE            :: cached_model_path = ""
@@ -525,6 +532,21 @@ CONTAINS
       IF (compute_virial .AND. my_just_energy) THEN
          CALL cp_abort(__LOCATION__, &
                        "Native SKALA GPW stress/virial requires feature gradients.")
+      END IF
+
+      ! CP2K may compute an initial non-stress energy before the stress/force
+      ! evaluation. Once stress has been requested, however, the run must stay
+      ! in stress mode. Just-energy calls (finite-difference virial diagnostics)
+      ! do not build feature gradients and are exempt.
+      IF (.NOT. my_just_energy) THEN
+         IF (compute_virial) THEN
+            stress_mode_entered = .TRUE.
+         ELSE IF (stress_mode_entered) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "SKALA: a stress/virial evaluation was performed earlier in this "// &
+                          "run, but a non-stress evaluation was requested. Mixing stress and "// &
+                          "non-stress modes within one run is not supported.")
+         END IF
       END IF
       IF (.NOT. ASSOCIATED(rho_g)) THEN
          CALL cp_abort(__LOCATION__, &
@@ -1147,6 +1169,14 @@ CONTAINS
          atom_ws%nblocks = nblocks
          atom_ws%nflat_tot = nflat_tot
          atom_ws%device = selected_cuda_device
+         ! These two integer tensors are fully determined by the workspace
+         ! dimensions, so create them once per workspace instead of on every call.
+         CALL torch_tensor_from_array(atom_ws%atomic_grid_sizes_t, atom_ws%atomic_grid_sizes)
+         CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_sizes_t, .FALSE.)
+         CALL torch_tensor_from_array(atom_ws%atomic_grid_size_bound_shape_t, &
+                                      atom_ws%atomic_grid_size_bound_shape)
+         CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_size_bound_shape_t, .FALSE.)
+         atom_ws%int_tensors_active = .TRUE.
       END IF
       atom_ws%density = 0.0_dp
       atom_ws%grad = 0.0_dp
@@ -1238,11 +1268,6 @@ CONTAINS
          CALL torch_tensor_from_array(atom_ws%kin_t, atom_ws%kin)
          CALL torch_tensor_to_device_leaf(atom_ws%kin_t,.NOT. my_energy_only)
       END IF
-      CALL torch_tensor_from_array(atom_ws%atomic_grid_sizes_t, atom_ws%atomic_grid_sizes)
-      CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_sizes_t, .FALSE.)
-      CALL torch_tensor_from_array(atom_ws%atomic_grid_size_bound_shape_t, &
-                                   atom_ws%atomic_grid_size_bound_shape)
-      CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_size_bound_shape_t, .FALSE.)
 
       IF (.NOT. atom_ws%dict_active) THEN
          CALL torch_dict_create(atom_ws%inputs)
@@ -1387,8 +1412,6 @@ CONTAINS
          CALL torch_tensor_release(atom_ws%grid_coords_t)
          CALL torch_tensor_release(atom_ws%grid_weights_t)
          CALL torch_tensor_release(atom_ws%atomic_grid_weights_t)
-         CALL torch_tensor_release(atom_ws%atomic_grid_sizes_t)
-         CALL torch_tensor_release(atom_ws%atomic_grid_size_bound_shape_t)
          CALL torch_tensor_release(atom_ws%coarse_0_atomic_coords_t)
       END IF
 
@@ -3384,9 +3407,12 @@ CONTAINS
          CALL torch_tensor_release(atom_ws%density_t)
          CALL torch_tensor_release(atom_ws%grad_t)
          CALL torch_tensor_release(atom_ws%kin_t)
+         atom_ws%tensors_active = .FALSE.
+      END IF
+      IF (atom_ws%int_tensors_active) THEN
          CALL torch_tensor_release(atom_ws%atomic_grid_sizes_t)
          CALL torch_tensor_release(atom_ws%atomic_grid_size_bound_shape_t)
-         atom_ws%tensors_active = .FALSE.
+         atom_ws%int_tensors_active = .FALSE.
       END IF
       IF (atom_ws%dict_active) THEN
          CALL torch_dict_release(atom_ws%inputs)
@@ -3434,6 +3460,7 @@ CONTAINS
       CALL release_atom_ws()
       model_context%valid = .FALSE.
       NULLIFY (model_context%xc_section)
+      stress_mode_entered = .FALSE.
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
 
