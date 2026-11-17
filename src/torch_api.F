@@ -1700,7 +1700,7 @@ CONTAINS
       TYPE(torch_model_type), INTENT(IN)                 :: model
       CHARACTER(len=*), INTENT(IN)                       :: key
       CHARACTER(LEN=default_string_length), &
-         ALLOCATABLE, DIMENSION(:)                       :: dest
+         ALLOCATABLE, DIMENSION(:), INTENT(OUT)          :: dest
 
 #if defined(__LIBTORCH)
 
@@ -1730,6 +1730,9 @@ CONTAINS
       CALL torch_c_model_get_attr_list_size(model=model%c_ptr, &
                                             key=TRIM(key)//C_NULL_CHAR, &
                                             size=num_items)
+      IF (num_items < 0) THEN
+         CPABORT("Torch model metadata list returned a negative length.")
+      END IF
       ALLOCATE (dest(num_items))
       dest(:) = ""
 

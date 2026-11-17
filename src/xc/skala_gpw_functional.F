@@ -95,7 +95,6 @@ MODULE skala_gpw_functional
 
    PRIVATE
 
-   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'skala_gpw_functional'
    INTEGER, PARAMETER, PRIVATE          :: atom_chunk_auto_max_rows = 400000, &
                                            atom_chunk_auto_min_rows = 100000, &
                                            atom_chunk_auto_row_quantum = 100000, &
@@ -2419,6 +2418,7 @@ CONTAINS
       CPASSERT(SIZE(chunk_grad_grad, 1) == features%chunk_feature_count)
       CPASSERT(SIZE(chunk_grad_grad, 2) == 3)
       CPASSERT(SIZE(chunk_kin_grad, 1) == features%chunk_feature_count)
+      CPASSERT(.NOT. my_collapse_spin_grads .OR. features%uses_collapsed_rks_dynamic)
       IF (features%uses_collapsed_rks_dynamic) THEN
          CPASSERT(my_collapse_spin_grads)
          CPASSERT(SIZE(chunk_density_grad, 2) == 1)
@@ -2443,34 +2443,16 @@ CONTAINS
             irow = features%route_chunk_rows(feature_pos)
             CPASSERT(irow >= 1 .AND. irow <= features%chunk_feature_count)
             IF (my_collapse_spin_grads) THEN
-               IF (features%uses_collapsed_rks_dynamic) THEN
-                  TARGET(base + 1) = TARGET(base + 1) + &
-                                     0.5_dp*chunk_density_grad(irow, 1)
-                  TARGET(base + 2) = TARGET(base + 2) + &
-                                     0.5_dp*chunk_grad_grad(irow, 1, 1)
-                  TARGET(base + 3) = TARGET(base + 3) + &
-                                     0.5_dp*chunk_grad_grad(irow, 2, 1)
-                  TARGET(base + 4) = TARGET(base + 4) + &
-                                     0.5_dp*chunk_grad_grad(irow, 3, 1)
-                  TARGET(base + 5) = TARGET(base + 5) + &
-                                     0.5_dp*chunk_kin_grad(irow, 1)
-               ELSE
-                  TARGET(base + 1) = TARGET(base + 1) + &
-                                     0.5_dp*(chunk_density_grad(irow, 1) + &
-                                             chunk_density_grad(irow, 2))
-                  TARGET(base + 2) = TARGET(base + 2) + &
-                                     0.5_dp*(chunk_grad_grad(irow, 1, 1) + &
-                                             chunk_grad_grad(irow, 1, 2))
-                  TARGET(base + 3) = TARGET(base + 3) + &
-                                     0.5_dp*(chunk_grad_grad(irow, 2, 1) + &
-                                             chunk_grad_grad(irow, 2, 2))
-                  TARGET(base + 4) = TARGET(base + 4) + &
-                                     0.5_dp*(chunk_grad_grad(irow, 3, 1) + &
-                                             chunk_grad_grad(irow, 3, 2))
-                  TARGET(base + 5) = TARGET(base + 5) + &
-                                     0.5_dp*(chunk_kin_grad(irow, 1) + &
-                                             chunk_kin_grad(irow, 2))
-               END IF
+               TARGET(base + 1) = TARGET(base + 1) + &
+                                  0.5_dp*chunk_density_grad(irow, 1)
+               TARGET(base + 2) = TARGET(base + 2) + &
+                                  0.5_dp*chunk_grad_grad(irow, 1, 1)
+               TARGET(base + 3) = TARGET(base + 3) + &
+                                  0.5_dp*chunk_grad_grad(irow, 2, 1)
+               TARGET(base + 4) = TARGET(base + 4) + &
+                                  0.5_dp*chunk_grad_grad(irow, 3, 1)
+               TARGET(base + 5) = TARGET(base + 5) + &
+                                  0.5_dp*chunk_kin_grad(irow, 1)
             ELSE
                TARGET(base + 1:base + 2) = TARGET(base + 1:base + 2) + &
                                            chunk_density_grad(irow, :)
@@ -2921,7 +2903,6 @@ CONTAINS
       atom_virial = 0.0_dp
       grid_grad_sum = 0.0_dp
       atom_grad_sum = 0.0_dp
-      local_row = 0
       DO local_row = 1, features%nflat_local
          DO feature_pos = features%local_feature_offsets(local_row), &
             features%local_feature_offsets(local_row + 1) - 1
@@ -2999,7 +2980,6 @@ CONTAINS
 
       grid_tmp = 0.0_dp
       atomic_tmp = 0.0_dp
-      local_row = 0
       DO local_row = 1, features%nflat_local
          DO feature_pos = features%local_feature_offsets(local_row), &
             features%local_feature_offsets(local_row + 1) - 1

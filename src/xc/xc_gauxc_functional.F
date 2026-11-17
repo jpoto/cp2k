@@ -23,8 +23,7 @@ MODULE xc_gauxc_functional
                                               gth_potential_type,&
                                               sgp_potential_type
    USE input_constants,                 ONLY: xc_vdw_fun_nonloc
-   USE input_section_types,             ONLY: section_vals_get_subs_vals,&
-                                              section_vals_type,&
+   USE input_section_types,             ONLY: section_vals_type,&
                                               section_vals_val_get
    USE iso_c_binding,                   ONLY: c_double
    USE kinds,                           ONLY: default_path_length,&
@@ -592,12 +591,6 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: gauxc_functional_section
 
       INTEGER                                            :: n_subsections
-      TYPE(section_vals_type), POINTER                   :: functionals
-
-      functionals => section_vals_get_subs_vals(xc_section, "XC_FUNCTIONAL")
-      IF (.NOT. ASSOCIATED(functionals)) THEN
-         CPABORT("XC_FUNCTIONAL section not found")
-      END IF
 
       CALL find_single_functional_subsection(xc_section, "GAUXC", gauxc_functional_section, &
                                              n_subsections)
