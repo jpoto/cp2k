@@ -891,7 +891,8 @@ CONTAINS
             res, &
             nspins=nspins, &
             status=gauxc_status, &
-            model=TRIM(model_name))
+            model=TRIM(model_name), &
+            energy_only=.TRUE.)
       ELSE
          CPASSERT(nspins == 2)
          CPASSERT(PRESENT(density_zeta))
@@ -902,7 +903,8 @@ CONTAINS
             density_zeta, &
             nspins, &
             gauxc_status, &
-            model=TRIM(model_name))
+            model=TRIM(model_name), &
+            energy_only=.TRUE.)
       END IF
       CALL gauxc_check_status(gauxc_status)
 
@@ -1325,7 +1327,6 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: nonlocal_vdw_abort_message = &
          "GauXC does not support non-local VDW_POTENTIAL corrections. "// &
          "Use an additive PAIR_POTENTIAL dispersion correction or disable GauXC."
-      REAL(KIND=dp), PARAMETER :: gapw_fd_gradient_dx = 1.0E-4_dp
 
       CHARACTER(len=default_path_length)                 :: model_key, model_name, output_path, &
                                                             resolved_model
@@ -1340,7 +1341,8 @@ CONTAINS
          int_space_explicit, is_periodic, lb_space_explicit, low_spin_scope, molecular_virial, &
          molecular_virial_debug, need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, &
          use_skala_model, write_hdf5_output
-      REAL(KIND=dp)                                      :: exc_value, molecular_virial_debug_dx
+      REAL(KIND=dp)                                      :: exc_value, force_numerical_gradient_dx, &
+                                                            molecular_virial_debug_dx
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_gauxc_cache_params)                        :: params
@@ -1428,13 +1430,6 @@ CONTAINS
       nimages = dft_control%nimages
       params%nspins = dft_control%nspins
       params%nimages = dft_control%nimages
-      IF (ASSOCIATED(cell)) THEN
-         params%cell_hmat = REAL(cell%hmat, KIND=c_double)
-         params%cell_perd = cell%perd
-      ELSE
-         params%cell_hmat = 0.0_c_double
-         params%cell_perd = 0
-      END IF
       params%nkind = SIZE(qs_kind_set)
       IF (ALLOCATED(params%kind_basis_names)) DEALLOCATE (params%kind_basis_names)
       ALLOCATE (params%kind_basis_names(params%nkind))
@@ -1564,6 +1559,10 @@ CONTAINS
          l_val=params%force_fd_gradient)
       CALL section_vals_val_get( &
          gauxc_functional_section, &
+         "FORCE_NUMERICAL_GRADIENT_DX", &
+         r_val=force_numerical_gradient_dx)
+      CALL section_vals_val_get( &
+         gauxc_functional_section, &
          "OUTPUT_PATH", &
          c_val=output_path)
 
@@ -1608,6 +1607,10 @@ CONTAINS
       IF (params%device_runtime_fill_fraction <= 0.0_dp .OR. params%device_runtime_fill_fraction > 1.0_dp) THEN
          CALL cp_abort(__LOCATION__, &
                        "GAUXC%DEVICE_RUNTIME_FILL_FRACTION must be > 0 and <= 1.")
+      END IF
+      IF (force_numerical_gradient_dx <= 0.0_dp) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "GAUXC%FORCE_NUMERICAL_GRADIENT_DX must be positive.")
       END IF
       IF (molecular_virial_debug) THEN
          IF (molecular_virial_debug_dx <= 0.0_dp) THEN
@@ -1770,7 +1773,7 @@ CONTAINS
                      particle_set, qs_kind_set, cache%density_scalar, params%nspins, params%model_eval_name, &
                      params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
                      params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
-                     params%device_runtime_fill_fraction, gapw_fd_gradient_dx, para_env, &
+                     params%device_runtime_fill_fraction, force_numerical_gradient_dx, para_env, &
                      cache%xc_gradient%exc_grad)
                ELSE IF (params%use_gradient_self_runtime) THEN
                   CALL gauxc_compute_xc_gradient( &
@@ -1849,7 +1852,7 @@ CONTAINS
                      particle_set, qs_kind_set, cache%density_scalar, params%nspins, params%model_eval_name, &
                      params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
                      params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
-                     params%device_runtime_fill_fraction, gapw_fd_gradient_dx, para_env, &
+                     params%device_runtime_fill_fraction, force_numerical_gradient_dx, para_env, &
                      cache%xc_gradient%exc_grad, density_zeta=cache%density_zeta)
                ELSE IF (params%use_gradient_self_runtime) THEN
                   CALL gauxc_compute_xc_gradient( &

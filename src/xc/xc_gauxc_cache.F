@@ -55,8 +55,6 @@ MODULE xc_gauxc_cache
       LOGICAL                                      :: use_gauxc_model = .FALSE.
       INTEGER                                      :: nimages = -1
       INTEGER                                      :: nkind = -1
-      REAL(c_double)                               :: cell_hmat(3, 3) = 0.0_c_double
-      INTEGER                                      :: cell_perd(3) = 0
       CHARACTER(LEN=default_string_length), ALLOCATABLE :: kind_basis_names(:)
    END TYPE cp_gauxc_cache_params
 
@@ -287,8 +285,6 @@ CONTAINS
       cache%use_fd_gradient = params%use_fd_gradient
       cache%nimages = params%nimages
       cache%nkind = params%nkind
-      cache%cell_hmat = params%cell_hmat
-      cache%cell_perd = params%cell_perd
       IF (ALLOCATED(cache%kind_basis_names)) DEALLOCATE (cache%kind_basis_names)
       IF (ALLOCATED(params%kind_basis_names)) THEN
          ALLOCATE (cache%kind_basis_names(SIZE(params%kind_basis_names)))
@@ -582,8 +578,6 @@ CONTAINS
       IF (cache%mpi_comm /= para_env%get_handle()) RETURN
       IF (cache%nimages /= params%nimages) RETURN
       IF (cache%nkind /= params%nkind) RETURN
-      IF (ANY(cache%cell_perd /= params%cell_perd)) RETURN
-      IF (ANY(ABS(cache%cell_hmat - params%cell_hmat) > 1.0E-10_c_double)) RETURN
       IF (ALLOCATED(cache%kind_basis_names) .NEQV. ALLOCATED(params%kind_basis_names)) RETURN
       IF (ALLOCATED(params%kind_basis_names)) THEN
          IF (SIZE(cache%kind_basis_names) /= SIZE(params%kind_basis_names)) RETURN

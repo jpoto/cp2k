@@ -114,6 +114,8 @@ MODULE xc_gauxc_interface
       gauxc_delete, &
       gauxc_integrator_eval_exc_grad_rks, &
       gauxc_integrator_eval_exc_grad_uks, &
+      gauxc_integrator_eval_exc_rks, &
+      gauxc_integrator_eval_exc_uks, &
       gauxc_integrator_eval_exc_vxc_rks, &
       gauxc_integrator_eval_exc_vxc_uks, &
       gauxc_integrator_new, &
@@ -916,7 +918,8 @@ CONTAINS
       density_zeta, &
       nspins, &
       status, &
-      model)
+      model, &
+      energy_only)
 
       TYPE(cp_gauxc_integrator_type), INTENT(IN)         :: integrator
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: density_scalar
@@ -926,10 +929,11 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: nspins
       TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: model
+      LOGICAL, INTENT(IN), OPTIONAL                      :: energy_only
 
 #ifdef __GAUXC
       CHARACTER(len=default_path_length)                 :: model_key
-      LOGICAL                                            :: use_gauxc_model
+      LOGICAL                                            :: my_energy_only, use_gauxc_model
 #ifdef GAUXC_HAS_ONEDFT
 #if defined (__HAS_IEEE_EXCEPTIONS)
       LOGICAL, DIMENSION(5)                              :: ieee_halt
@@ -943,6 +947,38 @@ CONTAINS
          CALL uppercase(model_key)
          use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE")
       END IF
+      my_energy_only = .FALSE.
+      IF (PRESENT(energy_only)) my_energy_only = energy_only
+
+#ifdef GAUXC_HAS_DEVICE
+      ! Other libraries may have changed the current CUDA device; restore the
+      ! offload selection before GauXC touches the device.
+      IF (integrator%uses_device_runtime) CALL offload_activate_chosen_device()
+#endif
+
+      ! For conventional functionals the C API offers a true energy-only entry
+      ! point. OneDFT models have no such call, so they keep the exc/vxc path.
+      IF (my_energy_only .AND. .NOT. use_gauxc_model) THEN
+         IF (nspins == 1) THEN
+            CALL ensure_matrix_scratch(res%scratch_rks, density_scalar)
+            res%scratch_rks(:, :) = 0.5_dp*density_scalar
+            CALL gauxc_integrator_eval_exc_rks( &
+               status%status, &
+               integrator%integrator, &
+               res%scratch_rks, &
+               res%exc)
+         ELSE
+            CPASSERT(PRESENT(density_zeta))
+            CALL gauxc_integrator_eval_exc_uks( &
+               status%status, &
+               integrator%integrator, &
+               density_scalar, &
+               density_zeta, &
+               res%exc)
+         END IF
+         GAUXC_RETURN_IF_ERROR(status)
+         RETURN
+      END IF
 
       IF (.NOT. ALLOCATED(res%vxc_scalar)) THEN
          ALLOCATE (res%vxc_scalar, mold=density_scalar)
@@ -950,12 +986,6 @@ CONTAINS
          CPASSERT(ALL(SHAPE(res%vxc_scalar) == SHAPE(density_scalar)))
       END IF
       res%vxc_scalar = 0._dp
-
-#ifdef GAUXC_HAS_DEVICE
-      ! Other libraries may have changed the current CUDA device; restore the
-      ! offload selection before GauXC touches the device.
-      IF (integrator%uses_device_runtime) CALL offload_activate_chosen_device()
-#endif
 
       IF (use_gauxc_model) THEN
 #ifndef GAUXC_HAS_ONEDFT

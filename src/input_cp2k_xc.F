@@ -1578,11 +1578,20 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="FORCE_NUMERICAL_GRADIENT", &
                           description="Force central finite differences for the GauXC molecular XC "// &
-                          "nuclear gradient, using a displacement of 1.0E-4 bohr at fixed AO density. "// &
+                          "nuclear gradient, using the displacement given by "// &
+                          "FORCE_NUMERICAL_GRADIENT_DX at fixed AO density. "// &
                           "Diagnostic option; costs six XC energy evaluations per atom. Does not "// &
                           "affect SKALA_NATIVE or the CP2K one-center contribution.", &
                           usage="FORCE_NUMERICAL_GRADIENT T", &
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="FORCE_NUMERICAL_GRADIENT_DX", &
+                          description="Displacement in bohr for the FORCE_NUMERICAL_GRADIENT "// &
+                          "central finite differences.", &
+                          usage="FORCE_NUMERICAL_GRADIENT_DX 1.0E-4", &
+                          default_r_val=1.0E-4_dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

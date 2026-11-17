@@ -498,7 +498,9 @@ CONTAINS
 
       INTEGER :: i, ipt, ispin, iw, j, k, native_grid_atom_chunk_max_rows, &
          native_grid_atom_partition, native_grid_atom_subchunks, nspins, phase_handle, &
-         selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
+         selected_cuda_device, static_grad_count, static_grad_atom_slot, &
+         static_grad_grid_slot, static_grad_weight_slot, static_grad_atomic_weight_slot, &
+         xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, lsd, my_just_energy, native_grid_atom_chunks, &
          native_grid_diagnostics, native_grid_use_cuda, needs_atom_force, use_atom_subchunks, &
@@ -519,7 +521,8 @@ CONTAINS
       TYPE(torch_tensor_type)                            :: atom_coord_grad_t, &
                                                             atomic_grid_weight_grad_t, exc_tensor, &
                                                             grid_coord_grad_t, grid_weight_grad_t
-      TYPE(torch_tensor_type), DIMENSION(4)              :: static_grad_batch_t
+      TYPE(torch_tensor_type), DIMENSION(4)              :: static_grad_batch_t, &
+                                                            static_grad_tensor_batch
       TYPE(xc_rho_cflags_type)                           :: needs
       TYPE(xc_rho_set_type)                              :: rho_set
 
@@ -680,14 +683,55 @@ CONTAINS
             CALL timeset("skala_gpw_static_grad_fetch", phase_handle)
             NULLIFY (grid_coord_grad_p, grid_weight_grad_p, atomic_grid_weight_grad_p, &
                      atom_coord_grad_p)
-            CALL torch_tensor_grad_batch( &
-               [features%grid_coords_t, features%grid_weights_t, &
-                features%atomic_grid_weights_t, features%coarse_0_atomic_coords_t], &
-               static_grad_batch_t)
-            CALL torch_tensor_data_ptr(static_grad_batch_t(1), grid_coord_grad_p)
-            CALL torch_tensor_data_ptr(static_grad_batch_t(2), grid_weight_grad_p)
-            CALL torch_tensor_data_ptr(static_grad_batch_t(3), atomic_grid_weight_grad_p)
-            CALL torch_tensor_data_ptr(static_grad_batch_t(4), atom_coord_grad_p)
+            ! Only fetch gradients a consumer will actually use. Atom forces need
+            ! the atomic coordinate gradient, the virial also needs the grid
+            ! coordinate and weight gradients, and a smooth partition uses the
+            ! weight gradients for forces as well.
+            static_grad_count = 0
+            static_grad_atom_slot = 0
+            static_grad_grid_slot = 0
+            static_grad_weight_slot = 0
+            static_grad_atomic_weight_slot = 0
+            IF (needs_atom_force .OR. compute_virial) THEN
+               static_grad_count = static_grad_count + 1
+               static_grad_atom_slot = static_grad_count
+               static_grad_tensor_batch(static_grad_count) = features%coarse_0_atomic_coords_t
+            END IF
+            IF (compute_virial) THEN
+               static_grad_count = static_grad_count + 1
+               static_grad_grid_slot = static_grad_count
+               static_grad_tensor_batch(static_grad_count) = features%grid_coords_t
+            END IF
+            IF (compute_virial .OR. &
+                (needs_atom_force .AND. &
+                 features%atom_partition == skala_gpw_atom_partition_smooth)) THEN
+               static_grad_count = static_grad_count + 1
+               static_grad_weight_slot = static_grad_count
+               static_grad_tensor_batch(static_grad_count) = features%grid_weights_t
+               static_grad_count = static_grad_count + 1
+               static_grad_atomic_weight_slot = static_grad_count
+               static_grad_tensor_batch(static_grad_count) = features%atomic_grid_weights_t
+            END IF
+            IF (static_grad_count > 0) THEN
+               CALL torch_tensor_grad_batch(static_grad_tensor_batch(1:static_grad_count), &
+                                            static_grad_batch_t(1:static_grad_count))
+               IF (static_grad_atom_slot > 0) THEN
+                  CALL torch_tensor_data_ptr(static_grad_batch_t(static_grad_atom_slot), &
+                                             atom_coord_grad_p)
+               END IF
+               IF (static_grad_grid_slot > 0) THEN
+                  CALL torch_tensor_data_ptr(static_grad_batch_t(static_grad_grid_slot), &
+                                             grid_coord_grad_p)
+               END IF
+               IF (static_grad_weight_slot > 0) THEN
+                  CALL torch_tensor_data_ptr(static_grad_batch_t(static_grad_weight_slot), &
+                                             grid_weight_grad_p)
+               END IF
+               IF (static_grad_atomic_weight_slot > 0) THEN
+                  CALL torch_tensor_data_ptr(static_grad_batch_t(static_grad_atomic_weight_slot), &
+                                             atomic_grid_weight_grad_p)
+               END IF
+            END IF
             CALL timestop(phase_handle)
          END IF
          IF (compute_virial) THEN
@@ -810,10 +854,9 @@ CONTAINS
          CALL timeset("skala_gpw_grad_release", phase_handle)
          DEALLOCATE (density_grad, grad_grad, kin_grad)
          IF (use_full_static_grad) THEN
-            CALL torch_tensor_release(static_grad_batch_t(1))
-            CALL torch_tensor_release(static_grad_batch_t(2))
-            CALL torch_tensor_release(static_grad_batch_t(3))
-            CALL torch_tensor_release(static_grad_batch_t(4))
+            DO i = 1, static_grad_count
+               CALL torch_tensor_release(static_grad_batch_t(i))
+            END DO
          END IF
          IF (ALLOCATED(atom_coord_grad_g)) DEALLOCATE (atom_coord_grad_g)
          IF (ALLOCATED(grid_coord_grad_g)) DEALLOCATE (grid_coord_grad_g)
