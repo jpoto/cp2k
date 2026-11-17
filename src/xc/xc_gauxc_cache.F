@@ -92,7 +92,7 @@ MODULE xc_gauxc_cache
       TYPE(cp_gauxc_xc_type)                       :: xc_result = cp_gauxc_xc_type()
       TYPE(cp_gauxc_xc_gradient_type)              :: xc_gradient = cp_gauxc_xc_gradient_type()
       TYPE(dense_to_dbcsr_layout_type)             :: dense_layout
-      REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: vxc_channel, density_scalar, density_zeta
+      REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: density_scalar, density_zeta
       INTEGER                                      :: mpi_comm = -1
       LOGICAL                                      :: is_init = .FALSE.
       LOGICAL                                      :: gradient_is_init = .FALSE.
@@ -410,7 +410,6 @@ CONTAINS
       IF (ALLOCATED(cache%xc_gradient%exc_grad)) DEALLOCATE (cache%xc_gradient%exc_grad)
       IF (ALLOCATED(cache%xc_gradient%scratch_rks)) DEALLOCATE (cache%xc_gradient%scratch_rks)
       IF (ALLOCATED(cache%xc_gradient%scratch_zeta_zero)) DEALLOCATE (cache%xc_gradient%scratch_zeta_zero)
-      IF (ALLOCATED(cache%vxc_channel)) DEALLOCATE (cache%vxc_channel)
       IF (ALLOCATED(cache%density_scalar)) DEALLOCATE (cache%density_scalar)
       IF (ALLOCATED(cache%density_zeta)) DEALLOCATE (cache%density_zeta)
       IF (ALLOCATED(cache%dense_layout%row_blk_size)) THEN

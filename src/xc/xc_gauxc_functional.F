@@ -329,7 +329,7 @@ CONTAINS
 !> \param template_dbcsr Template DBCSR matrix for distribution and block sizes
 !> \param dbcsr_mat Output DBCSR matrix with full upper block structure
 ! **************************************************************************************************
-   SUBROUTINE dense_to_dbcsr_into(layout, dense_mat, template_dbcsr, dbcsr_mat)
+   SUBROUTINE dense_to_dbcsr_into(layout, dense_mat, template_dbcsr, dbcsr_mat, dense_zeta, z_sign)
       USE cp_dbcsr_api, ONLY: &
          dbcsr_clear, &
          dbcsr_create, &
@@ -346,10 +346,15 @@ CONTAINS
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: dense_mat
       TYPE(dbcsr_p_type), INTENT(IN)                     :: template_dbcsr
       TYPE(dbcsr_p_type), INTENT(INOUT)                  :: dbcsr_mat
+      REAL(c_double), DIMENSION(:, :), INTENT(IN), &
+         OPTIONAL                                        :: dense_zeta
+      REAL(c_double), INTENT(IN), OPTIONAL               :: z_sign
 
-      INTEGER                                            :: ib, icol, irow, mcols, mrows, mynode, &
-                                                            mypcol, myprow, nblkcols_total, &
-                                                            nblkrows_total, nc, ncols, nr, nrows
+      INTEGER                                            :: c1, c2, c1t, c2t, ib, icol, irow, mcols, &
+                                                            mrows, mynode, mypcol, myprow, &
+                                                            nblkcols_total, nblkrows_total, nc, ncols, &
+                                                            nc_t, nr, nr_t, nrows, r1, r2, r1t, r2t
+      REAL(c_double)                                     :: zsign
       INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, col_dist, row_blk_size, &
                                                             row_dist
       TYPE(dbcsr_distribution_type)                      :: dist
@@ -365,6 +370,9 @@ CONTAINS
 
       CPASSERT(nrows == SIZE(dense_mat, 1))
       CPASSERT(ncols == SIZE(dense_mat, 2))
+      IF (PRESENT(dense_zeta)) THEN
+         CPASSERT(SIZE(dense_zeta, 1) == nrows .AND. SIZE(dense_zeta, 2) == ncols)
+      END IF
 
       CALL dbcsr_distribution_get(dist, mynode=mynode, myprow=myprow, mypcol=mypcol, &
                                   row_dist=row_dist, col_dist=col_dist)
@@ -398,18 +406,32 @@ CONTAINS
       END IF
       CALL dbcsr_work_create(dbcsr_mat%matrix, work_mutable=.TRUE.)
 
+      zsign = 1.0_dp
+      IF (PRESENT(z_sign)) zsign = z_sign
       DO ib = 1, SIZE(layout%blk_row)
          irow = layout%blk_row(ib)
          icol = layout%blk_col(ib)
          nr = layout%row_blk_size(irow)
          nc = layout%col_blk_size(icol)
-         layout%blk(1:nr, 1:nc) = 0.5_dp*( &
-                                   dense_mat(layout%r_offset(irow):layout%r_offset(irow) + nr - 1, &
-                                             layout%c_offset(icol):layout%c_offset(icol) + nc - 1) + &
-                                   TRANSPOSE(dense_mat(layout%r_offset(icol):layout%r_offset(icol) + &
-                                                       layout%row_blk_size(icol) - 1, &
-                                                       layout%c_offset(irow):layout%c_offset(irow) + &
-                                                       layout%col_blk_size(irow) - 1)))
+         nr_t = layout%row_blk_size(icol)
+         nc_t = layout%col_blk_size(irow)
+         r1 = layout%r_offset(irow)
+         r2 = r1 + nr - 1
+         c1 = layout%c_offset(icol)
+         c2 = c1 + nc - 1
+         r1t = layout%r_offset(icol)
+         r2t = r1t + nr_t - 1
+         c1t = layout%c_offset(irow)
+         c2t = c1t + nc_t - 1
+         IF (PRESENT(dense_zeta)) THEN
+            ! Symmetrized channel block from total (dense_mat) and spin (dense_zeta).
+            layout%blk(1:nr, 1:nc) = 0.5_dp*( &
+               (dense_mat(r1:r2, c1:c2) + zsign*dense_zeta(r1:r2, c1:c2)) + &
+               TRANSPOSE(dense_mat(r1t:r2t, c1t:c2t) + zsign*dense_zeta(r1t:r2t, c1t:c2t)))
+         ELSE
+            layout%blk(1:nr, 1:nc) = 0.5_dp*( &
+               dense_mat(r1:r2, c1:c2) + TRANSPOSE(dense_mat(r1t:r2t, c1t:c2t)))
+         END IF
          CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, layout%blk(1:nr, 1:nc))
       END DO
 
@@ -1945,21 +1967,15 @@ CONTAINS
                                   rho_ao(1, img), matrix_vxc(1))
       ELSE
          CPASSERT(SIZE(matrix_vxc) == 2)
-         ! Transform derivatives from total/spin density back to alpha/beta
-         ! channels on the host and convert each spin only once.
-         IF (.NOT. ALLOCATED(cache%vxc_channel)) THEN
-            ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
-         ELSE IF (ANY(SHAPE(cache%vxc_channel) /= SHAPE(cache%xc_result%vxc_scalar))) THEN
-            DEALLOCATE (cache%vxc_channel)
-            ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
-         END IF
-         cache%vxc_channel(:, :) = cache%xc_result%vxc_scalar(:, :) + cache%xc_result%vxc_zeta(:, :)
-         cache%xc_result%vxc_zeta(:, :) = cache%xc_result%vxc_scalar(:, :) - &
-                                          cache%xc_result%vxc_zeta(:, :)
-         CALL dense_to_dbcsr_into(cache%dense_layout, cache%vxc_channel, rho_ao(1, img), &
-                                  matrix_vxc(1))
-         CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_zeta, rho_ao(2, img), &
-                                  matrix_vxc(2))
+         ! Build the alpha/beta channels directly from total/spin blocks: alpha =
+         ! scalar + zeta, beta = scalar - zeta. This avoids materializing an extra
+         ! dense channel matrix and two full-matrix passes.
+         CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_scalar, rho_ao(1, img), &
+                                  matrix_vxc(1), dense_zeta=cache%xc_result%vxc_zeta, &
+                                  z_sign=1.0_dp)
+         CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_scalar, rho_ao(2, img), &
+                                  matrix_vxc(2), dense_zeta=cache%xc_result%vxc_zeta, &
+                                  z_sign=-1.0_dp)
       END IF
 
    END SUBROUTINE assemble_gauxc_vxc
