@@ -39,8 +39,9 @@ MODULE skala_model_selection
    LOGICAL, SAVE, PRIVATE                               :: execution_resolved = .FALSE.
    TYPE(skala_execution_target_type), SAVE, PRIVATE     :: execution_target
 
-   PUBLIC :: find_functional_subsection, find_single_functional_subsection, &
+   PUBLIC :: find_single_functional_subsection, &
              gauxc_model_none_selected, get_gauxc_section, get_skala_native_section, &
+             model_key_is_none, &
              resolve_skala_execution_target, resolve_skala_model_path, &
              skala_execution_target_type, &
              xc_section_uses_gauxc, xc_section_uses_gauxc_model, &

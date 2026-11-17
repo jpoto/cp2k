@@ -28,7 +28,6 @@
 #include <cblas.h>
 #endif
 
-#include <cassert>
 
 #include <cfenv>
 #include <climits>
@@ -257,16 +256,6 @@ static torch::Device get_device_with_guard(c10::OptionalDeviceGuard &guard) {
     guard.reset_device(device);
   }
   return device;
-}
-
-static bool use_batched_gradient_readback(const torch::Tensor &tensor) {
-#if defined(__LIBTORCH_CUDA)
-  return tensor.is_cuda() &&
-         at::cuda::getDeviceProperties(tensor.device().index())->integrated;
-#else
-  (void)tensor;
-  return false;
-#endif
 }
 
 static void set_jit_fusion_strategy() {
@@ -1481,12 +1470,6 @@ void torch_c_model_release(torch_c_model_t *model) {
   delete (model);
 }
 
-/*******************************************************************************
- * \brief Reads metadata entry from given "*.pth" file.
- *        In Torch lingo they are called extra files.
- *        The returned char array has to be deallocated by caller!
- * \author Ole Schuett
- ******************************************************************************/
 /*******************************************************************************
  * \brief Writes a size+mtime fingerprint of a file into a caller buffer.
  ******************************************************************************/

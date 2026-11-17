@@ -27,7 +27,6 @@ MODULE skala_gpw_functional
    USE offload_api,                     ONLY: offload_get_chosen_device,&
                                               offload_get_device_count
    USE particle_types,                  ONLY: particle_type
-   USE pw_grid_types,                   ONLY: pw_grid_type
    USE pw_methods,                      ONLY: pw_scale,&
                                               pw_zero
    USE pw_pool_types,                   ONLY: pw_pool_type
@@ -513,7 +512,7 @@ CONTAINS
          xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL :: has_atom_chunk_work, lsd, my_just_energy, native_grid_atom_chunks, &
-         native_grid_diagnostics, native_grid_use_cuda, needs_atom_force, use_atom_subchunks, &
+         native_grid_diagnostics, needs_atom_force, use_atom_subchunks, &
          use_chunk_static_grad, use_full_static_grad
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: atomic_grid_weight_grad_g, &
@@ -528,9 +527,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad_p, grid_coord_grad_p
       TYPE(section_vals_type), POINTER                   :: native_section
       TYPE(skala_gpw_feature_type), POINTER              :: features
-      TYPE(torch_tensor_type)                            :: atom_coord_grad_t, &
-                                                            atomic_grid_weight_grad_t, exc_tensor, &
-                                                            grid_coord_grad_t, grid_weight_grad_t
+      TYPE(torch_tensor_type)                            :: exc_tensor
       TYPE(torch_tensor_type), DIMENSION(4)              :: static_grad_batch_t, &
                                                             static_grad_tensor_batch
       TYPE(xc_rho_cflags_type)                           :: needs
@@ -574,7 +571,7 @@ CONTAINS
       nspins = SIZE(rho_r)
       lsd = (nspins /= 1)
       CALL ensure_model_context(xc_section, rho_r(1)%pw_grid%para%group, &
-                                native_grid_use_cuda, selected_cuda_device)
+                                cuda_device=selected_cuda_device)
       CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, &
                                       native_grid_atom_chunk_max_rows, native_grid_atom_partition)
       native_section => get_skala_native_section(xc_section)
@@ -746,8 +743,7 @@ CONTAINS
          END IF
          IF (compute_virial) THEN
             IF (native_grid_diagnostics) virial_before = virial_xc
-            CALL build_weight_virial(virial_xc, features, exc, grid_weight_grad_t, &
-                                     atomic_grid_weight_grad_t, &
+            CALL build_weight_virial(virial_xc, features, exc, &
                                      rho_r(1)%pw_grid%para%group%mepos == 0, &
                                      native_grid_diagnostics, &
                                      grid_weight_grad_in=grid_weight_grad_p, &
@@ -758,7 +754,7 @@ CONTAINS
             END IF
          END IF
          IF (needs_atom_force) THEN
-            CALL add_explicit_coordinate_force(atom_force, features, atom_coord_grad_t, &
+            CALL add_explicit_coordinate_force(atom_force, &
                                                rho_r(1)%pw_grid%para%group%mepos == 0, &
                                                atom_coord_grad_in=atom_coord_grad_p)
          END IF
@@ -772,22 +768,18 @@ CONTAINS
                CALL add_smooth_partition_force_virial( &
                   atom_force=atom_force, virial_xc=virial_xc, features=features, &
                   particle_set=particle_set, cell=cell, rho_r=rho_r, &
-                  grid_weight_grad_t=grid_weight_grad_t, &
-                  atomic_grid_weight_grad_t=atomic_grid_weight_grad_t, &
                   grid_weight_grad_in=grid_weight_grad_p, &
                   atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
             ELSE IF (needs_atom_force) THEN
                CALL add_smooth_partition_force_virial( &
                   atom_force=atom_force, features=features, particle_set=particle_set, &
-                  cell=cell, rho_r=rho_r, grid_weight_grad_t=grid_weight_grad_t, &
-                  atomic_grid_weight_grad_t=atomic_grid_weight_grad_t, &
+                  cell=cell, rho_r=rho_r, &
                   grid_weight_grad_in=grid_weight_grad_p, &
                   atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
             ELSE
                CALL add_smooth_partition_force_virial( &
                   virial_xc=virial_xc, features=features, particle_set=particle_set, &
-                  cell=cell, rho_r=rho_r, grid_weight_grad_t=grid_weight_grad_t, &
-                  atomic_grid_weight_grad_t=atomic_grid_weight_grad_t, &
+                  cell=cell, rho_r=rho_r, &
                   grid_weight_grad_in=grid_weight_grad_p, &
                   atomic_grid_weight_grad_in=atomic_grid_weight_grad_p)
             END IF
@@ -844,8 +836,7 @@ CONTAINS
                                        rho_r(1)%pw_grid%para%group%mepos == 0)
                virial_before = virial_xc
             END IF
-            CALL build_static_coordinate_virial(virial_xc, features, atom_coord_grad_t, &
-                                                grid_coord_grad_t, &
+            CALL build_static_coordinate_virial(virial_xc, features, &
                                                 rho_r(1)%pw_grid%para%group%mepos == 0, &
                                                 native_grid_diagnostics, &
                                                 atom_coord_grad_in=atom_coord_grad_p, &
@@ -920,8 +911,7 @@ CONTAINS
                                                             subchunk_row_begin, subchunk_row_count
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL                                            :: have_exc_tensor, have_weight_grad_t, &
-                                                            lsd, native_grid_atom_chunks, &
-                                                            native_grid_use_cuda
+                                                            lsd, native_grid_atom_chunks
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: local_derivative
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: local_weight_grad, partition_weights
@@ -942,7 +932,7 @@ CONTAINS
       nspins = SIZE(rho_r)
       lsd = (nspins /= 1)
       CALL ensure_model_context(xc_section, rho_r(1)%pw_grid%para%group, &
-                                native_grid_use_cuda, selected_cuda_device)
+                                cuda_device=selected_cuda_device)
       CALL read_skala_native_controls(xc_section, native_grid_atom_chunks, chunk_max_rows, &
                                       native_grid_atom_partition)
       IF (.NOT. native_grid_atom_chunks) chunk_max_rows = 0
@@ -2009,26 +1999,18 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Add the explicit SKALA derivative with respect to atom-center coordinates.
 !> \param atom_force ...
-!> \param features ...
-!> \param atom_coord_grad_t ...
 !> \param root_rank ...
 !> \param atom_coord_grad_in ...
 ! **************************************************************************************************
-   SUBROUTINE add_explicit_coordinate_force(atom_force, features, atom_coord_grad_t, root_rank, &
-                                            atom_coord_grad_in)
+   SUBROUTINE add_explicit_coordinate_force(atom_force, root_rank, atom_coord_grad_in)
       REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: atom_force
-      TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
-      TYPE(torch_tensor_type), INTENT(INOUT)             :: atom_coord_grad_t
       LOGICAL, INTENT(IN)                                :: root_rank
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), TARGET :: atom_coord_grad_in
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: atom_coord_grad_in
 
-      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: atom_coord_grad
-
-      atom_coord_grad => atom_coord_grad_in
       IF (root_rank) THEN
-         CPASSERT(SIZE(atom_force, 1) == SIZE(atom_coord_grad, 1))
-         CPASSERT(SIZE(atom_force, 2) == SIZE(atom_coord_grad, 2))
-         atom_force(:, :) = atom_force(:, :) + atom_coord_grad(:, :)
+         CPASSERT(SIZE(atom_force, 1) == SIZE(atom_coord_grad_in, 1))
+         CPASSERT(SIZE(atom_force, 2) == SIZE(atom_coord_grad_in, 2))
+         atom_force(:, :) = atom_force(:, :) + atom_coord_grad_in(:, :)
       END IF
 
    END SUBROUTINE add_explicit_coordinate_force
@@ -2043,14 +2025,11 @@ CONTAINS
 !> \param particle_set ...
 !> \param cell ...
 !> \param rho_r ...
-!> \param grid_weight_grad_t ...
-!> \param atomic_grid_weight_grad_t ...
 !> \param grid_weight_grad_in ...
 !> \param atomic_grid_weight_grad_in ...
 ! **************************************************************************************************
    SUBROUTINE add_smooth_partition_force_virial(atom_force, virial_xc, features, particle_set, cell, &
-                                                rho_r, grid_weight_grad_t, atomic_grid_weight_grad_t, &
-                                                grid_weight_grad_in, atomic_grid_weight_grad_in)
+                                                rho_r, grid_weight_grad_in, atomic_grid_weight_grad_in)
       REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT), &
          OPTIONAL                                        :: atom_force
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT), &
@@ -2059,8 +2038,6 @@ CONTAINS
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r
-      TYPE(torch_tensor_type), INTENT(INOUT)             :: grid_weight_grad_t, &
-                                                            atomic_grid_weight_grad_t
       REAL(KIND=dp), DIMENSION(:), INTENT(IN), TARGET    :: grid_weight_grad_in, &
                                                             atomic_grid_weight_grad_in
 
@@ -2913,19 +2890,15 @@ CONTAINS
 !> \brief Add explicit SKALA coordinate-feature contributions to the XC virial.
 !> \param virial_xc ...
 !> \param features ...
-!> \param atom_coord_grad_t ...
-!> \param grid_coord_grad_t ...
 !> \param root_rank ...
 !> \param print_components ...
 !> \param atom_coord_grad_in ...
 !> \param grid_coord_grad_in ...
 ! **************************************************************************************************
-   SUBROUTINE build_static_coordinate_virial(virial_xc, features, atom_coord_grad_t, &
-                                             grid_coord_grad_t, root_rank, print_components, &
-                                             atom_coord_grad_in, grid_coord_grad_in)
+   SUBROUTINE build_static_coordinate_virial(virial_xc, features, root_rank, &
+                                             print_components, atom_coord_grad_in, grid_coord_grad_in)
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT)      :: virial_xc
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
-      TYPE(torch_tensor_type), INTENT(INOUT)             :: atom_coord_grad_t, grid_coord_grad_t
       LOGICAL, INTENT(IN)                                :: root_rank
       LOGICAL, INTENT(IN), OPTIONAL                      :: print_components
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), TARGET :: atom_coord_grad_in, grid_coord_grad_in
@@ -2998,21 +2971,16 @@ CONTAINS
 !> \param virial_xc ...
 !> \param features ...
 !> \param exc ...
-!> \param grid_weight_grad_t ...
-!> \param atomic_grid_weight_grad_t ...
 !> \param root_rank ...
 !> \param print_components ...
 !> \param grid_weight_grad_in ...
 !> \param atomic_grid_weight_grad_in ...
 ! **************************************************************************************************
-   SUBROUTINE build_weight_virial(virial_xc, features, exc, grid_weight_grad_t, &
-                                  atomic_grid_weight_grad_t, root_rank, print_components, &
+   SUBROUTINE build_weight_virial(virial_xc, features, exc, root_rank, print_components, &
                                   grid_weight_grad_in, atomic_grid_weight_grad_in)
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT)      :: virial_xc
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
       REAL(KIND=dp), INTENT(IN)                          :: exc
-      TYPE(torch_tensor_type), INTENT(INOUT)             :: grid_weight_grad_t, &
-                                                            atomic_grid_weight_grad_t
       LOGICAL, INTENT(IN)                                :: root_rank
       LOGICAL, INTENT(IN), OPTIONAL                      :: print_components
       REAL(KIND=dp), DIMENSION(:), INTENT(IN), TARGET    :: grid_weight_grad_in, &
@@ -3338,14 +3306,14 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: xc_section
 
       CLASS(mp_comm_type), INTENT(IN)                    :: group
-      LOGICAL, INTENT(OUT)                               :: use_cuda
+      LOGICAL, INTENT(OUT), OPTIONAL                     :: use_cuda
       INTEGER, INTENT(OUT)                               :: cuda_device
 
       CHARACTER(len=default_path_length)                 :: model_path
 
       IF (model_context%valid) THEN
          IF (ASSOCIATED(model_context%xc_section, xc_section)) THEN
-            use_cuda = model_context%use_cuda
+            IF (PRESENT(use_cuda)) use_cuda = model_context%use_cuda
             cuda_device = model_context%device
             RETURN
          END IF
@@ -3357,7 +3325,7 @@ CONTAINS
       CALL ensure_model_loaded(model_path, model_context%device, xc_section)
       model_context%xc_section => xc_section
       model_context%valid = .TRUE.
-      use_cuda = model_context%use_cuda
+      IF (PRESENT(use_cuda)) use_cuda = model_context%use_cuda
       cuda_device = model_context%device
 
    END SUBROUTINE ensure_model_context

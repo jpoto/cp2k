@@ -46,6 +46,7 @@ MODULE xc_gauxc_functional
                                               qs_rho_type
    USE qs_scf_types,                    ONLY: qs_scf_env_type
    USE skala_model_selection,           ONLY: find_single_functional_subsection,&
+                                              model_key_is_none,&
                                               resolve_skala_execution_target,&
                                               resolve_skala_model_path,&
                                               skala_execution_target_type
@@ -320,7 +321,7 @@ CONTAINS
 
    END SUBROUTINE dbcsr_to_dense_pair
 
-! ******, ***********************************************************************************
+! **************************************************************************************************
 !> \brief Fill a DBCSR matrix from a dense symmetric matrix with full upper block structure.
 !>        This creates all upper-triangular blocks, not just those present in a template,
 !>        reusing the target matrix when its shape already matches.
@@ -1255,8 +1256,9 @@ CONTAINS
       TYPE(xc_rho_cflags_type), INTENT(inout), OPTIONAL  :: needs
       INTEGER, INTENT(out), OPTIONAL                     :: max_deriv
 
-      CHARACTER(len=default_path_length)                 :: model_key, model_name
-      CHARACTER(len=default_string_length)               :: xc_fun_key, xc_fun_name
+      CHARACTER(len=default_path_length)                 :: model_name
+      CHARACTER(len=default_string_length)               :: xc_fun_name
+      LOGICAL                                            :: model_is_none
 
       IF (functional%section%name == "SKALA_NATIVE") THEN
          CALL section_vals_val_get(functional, "MODEL", c_val=model_name)
@@ -1279,22 +1281,17 @@ CONTAINS
 
       CALL section_vals_val_get(functional, "FUNCTIONAL", c_val=xc_fun_name)
       CALL section_vals_val_get(functional, "MODEL", c_val=model_name)
-      model_key = ADJUSTL(model_name)
-      xc_fun_key = ADJUSTL(xc_fun_name)
-      CALL uppercase(model_key)
-      CALL uppercase(xc_fun_key)
+      model_is_none = model_key_is_none(model_name, xc_fun_name)
 
       IF (PRESENT(reference)) THEN
-         IF (TRIM(model_key) == "NONE" .OR. TRIM(model_key) == "" .OR. &
-             TRIM(model_key) == TRIM(xc_fun_key)) THEN
+         IF (model_is_none) THEN
             reference = "Functional computed by GauXC (underlying: "//TRIM(xc_fun_name)//")"
          ELSE
             reference = "Functional computed by GauXC Skala model "//TRIM(model_name)
          END IF
       END IF
       IF (PRESENT(shortform)) THEN
-         IF (TRIM(model_key) == "NONE" .OR. TRIM(model_key) == "" .OR. &
-             TRIM(model_key) == TRIM(xc_fun_key)) THEN
+         IF (model_is_none) THEN
             shortform = "GAUXC ("//TRIM(xc_fun_name)//")"
          ELSE
             shortform = "GAUXC Skala"
@@ -1344,12 +1341,12 @@ CONTAINS
                                                             resolved_model
       CHARACTER(len=default_string_length) :: gradient_runtime, gradient_runtime_key, grid_key, &
          int_exec_space_key, lb_exec_space_key, lwd_kernel_key, pruning_key, skala_runtime, &
-         skala_runtime_key, xc_fun_key
+         skala_runtime_key
       INTEGER                                            :: assembly_handle, density_handle, &
-                                                            gpu_mode, ikind, img, model_handle, &
+                                                            gpu_mode, ikind, img, &
                                                             nimages
       LOGICAL :: backend_has_gpu, do_kpoints, external_density, gapw_method, have_zeta, &
-         gapw_paw_pseudopotentials, gapw_pseudopotentials, grid_explicit, hdf5_output, &
+         gapw_paw_pseudopotentials, gapw_pseudopotentials, grid_explicit, &
          int_space_explicit, is_periodic, lb_space_explicit, low_spin_scope, molecular_virial, &
          molecular_virial_debug, need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, &
          use_skala_model, write_hdf5_output
@@ -1580,16 +1577,15 @@ CONTAINS
 
       model_key = ADJUSTL(model_name)
       CALL uppercase(model_key)
-      xc_fun_key = ADJUSTL(params%xc_fun_name)
-      CALL uppercase(xc_fun_key)
       skala_runtime_key = ADJUSTL(skala_runtime)
       CALL uppercase(skala_runtime_key)
       gradient_runtime_key = ADJUSTL(gradient_runtime)
       CALL uppercase(gradient_runtime_key)
+      lb_exec_space_key = ADJUSTL(params%lb_exec_space)
+      CALL uppercase(lb_exec_space_key)
       int_exec_space_key = ADJUSTL(params%int_exec_space)
       CALL uppercase(int_exec_space_key)
-      params%use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE" .AND. &
-                                TRIM(model_key) /= TRIM(xc_fun_key))
+      params%use_gauxc_model = .NOT. model_key_is_none(model_name, params%xc_fun_name)
       use_skala_model = (TRIM(model_key) == "SKALA")
       lwd_kernel_key = ADJUSTL(params%lwd_kernel)
       CALL uppercase(lwd_kernel_key)
@@ -1689,7 +1685,7 @@ CONTAINS
                "GauXC Skala nuclear gradients are sensitive to the GauXC molecular grid. "// &
                "Use GRID SUPERFINE and PRUNING_SCHEME UNPRUNED for quantitative force checks.")
          END IF
-         IF (TRIM(model_key) == "SKALA") THEN
+         IF (use_skala_model) THEN
             CALL resolve_skala_model_path(model_name, TRIM(params%int_exec_space) == "DEVICE", &
                                           resolved_model)
             params%model_eval_name = resolved_model
@@ -1723,8 +1719,8 @@ CONTAINS
       CALL gauxc_cache_ensure_gradient(cache, params, gauxc_status)
       CALL gauxc_check_status(gauxc_status)
 
-      hdf5_output = (TRIM(output_path) /= "")
-      write_hdf5_output = hdf5_output .AND. para_env%mepos == 0 .AND. .NOT. external_density
+      write_hdf5_output = (TRIM(output_path) /= "") .AND. para_env%mepos == 0 .AND. &
+                          .NOT. external_density
       IF (write_hdf5_output .AND. ASSOCIATED(scf_env)) THEN
          write_hdf5_output = scf_env%iter_count == 1
       END IF
@@ -1799,13 +1795,9 @@ CONTAINS
 
          exc_value = exc_value + cache%xc_result%exc
 
-         IF (img == 1) THEN
-            CALL timeset("gauxc_vxc_assembly", assembly_handle)
-            CALL assemble_gauxc_vxc(cache, rho_ao, matrix_vxc, img)
-            CALL timestop(assembly_handle)
-         ELSE
-            CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
-         END IF
+         CALL timeset("gauxc_vxc_assembly", assembly_handle)
+         CALL assemble_gauxc_vxc(cache, rho_ao, matrix_vxc, img)
+         CALL timestop(assembly_handle)
       END DO
 
       IF (external_density) THEN

@@ -43,7 +43,6 @@ MODULE skala_feature_keys
          skala_key_grid_weights, skala_key_atomic_grid_weights, skala_key_atomic_grid_sizes, &
          skala_key_coarse_0_atomic_coords, skala_key_atomic_grid_size_bound_shape]
 
-   PUBLIC :: skala_n_features, skala_feature_names
    PUBLIC :: skala_key_grid_coords, skala_key_grid_weights, skala_key_atomic_grid_weights
    PUBLIC :: skala_key_atomic_grid_sizes, skala_key_atomic_grid_size_bound_shape
    PUBLIC :: skala_key_density, skala_key_grad, skala_key_kin, skala_key_coarse_0_atomic_coords

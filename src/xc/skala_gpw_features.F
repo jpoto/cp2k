@@ -59,7 +59,7 @@ MODULE skala_gpw_features
              skala_gpw_feature_type, smooth_partition_derivative_action, &
              smooth_partition_weights, &
              build_periodic_atom_image_layout, periodic_atom_image_partition, &
-             periodic_atom_image_partition_from_layout, smooth_atom_partition, &
+             periodic_atom_image_partition_from_layout, &
              smooth_partition_atomic_weight_scale, smooth_partition_atomic_weight_scale_derivative
 
    TYPE skala_gpw_layout_cache_type
@@ -3136,14 +3136,12 @@ CONTAINS
             grid_point, atom_coords, cell, target_atom, weight, image_periodicity)
          RETURN
       END IF
-      IF (need_derivatives) THEN
-         CPASSERT(SIZE(dweight_datom, 1) == 3)
-         CPASSERT(SIZE(dweight_datom, 2) == natom)
-         CPASSERT(SIZE(dweight_dstrain, 1) == 3)
-         CPASSERT(SIZE(dweight_dstrain, 2) == 3)
-         dweight_datom = 0.0_dp
-         dweight_dstrain = 0.0_dp
-      END IF
+      CPASSERT(SIZE(dweight_datom, 1) == 3)
+      CPASSERT(SIZE(dweight_datom, 2) == natom)
+      CPASSERT(SIZE(dweight_dstrain, 1) == 3)
+      CPASSERT(SIZE(dweight_dstrain, 2) == 3)
+      dweight_datom = 0.0_dp
+      dweight_dstrain = 0.0_dp
       weight = 0.0_dp
       partition_periodicity = cell%perd
       IF (PRESENT(image_periodicity)) partition_periodicity = image_periodicity
@@ -3206,7 +3204,7 @@ CONTAINS
       CALL periodic_image_normalized_weights(image_coords, distances, normalized_weights)
       weight = normalized_weights(target_image)
 
-      IF (need_derivatives .AND. weight > 0.0_dp) THEN
+      IF (weight > 0.0_dp) THEN
          active_count = 0
          DO iimage = 1, image_count
             IF (normalized_weights(iimage) > 0.0_dp) THEN

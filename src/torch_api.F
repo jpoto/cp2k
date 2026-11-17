@@ -80,7 +80,7 @@ MODULE torch_api
 
    PUBLIC :: torch_tensor_type, torch_tensor_expand_dim, torch_tensor_from_array, &
              torch_tensor_narrow, torch_tensor_release
-   PUBLIC :: torch_tensor_upload_pinned, staged_upload, torch_pinned_reserve, torch_stream_synchronize
+   PUBLIC :: staged_upload, torch_pinned_reserve, torch_stream_synchronize
    PUBLIC :: torch_file_stamp, torch_grad_pool_clear, torch_model_metadata_clear, &
              torch_pinned_finish, torch_pinned_release
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
@@ -91,7 +91,7 @@ MODULE torch_api
    PUBLIC :: torch_tensor_weighted_sum_segments
    PUBLIC :: torch_dict_type, torch_dict_clone, torch_dict_create, torch_dict_insert
    PUBLIC :: torch_dict_get, torch_dict_release, torch_dict_set
-   PUBLIC :: torch_set_num_threads, torch_get_num_threads, torch_set_default_threads
+   PUBLIC :: torch_get_num_threads, torch_set_default_threads
    PUBLIC :: torch_model_type, torch_model_load, torch_model_load_with_metadata, &
              torch_model_forward, torch_model_release
    PUBLIC :: torch_model_disable_parameter_gradients, torch_model_forward_mol_tensor, &

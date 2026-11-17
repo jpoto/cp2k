@@ -28,12 +28,10 @@ MODULE xc_gauxc_interface
       c_int, &
       c_int32_t, &
       c_int64_t, &
-      c_ptr, &
       c_size_t
    USE particle_types, ONLY: &
       particle_type
    USE qs_kind_types, ONLY: &
-      get_qs_kind, &
       qs_kind_type
    USE cp_log_handling, ONLY: &
       cp_logger_get_default_io_unit
@@ -82,7 +80,6 @@ MODULE xc_gauxc_interface
    USE gauxc_atom, ONLY: &
       gauxc_atom_type
    USE gauxc_basisset, ONLY: &
-      gauxc_basisset_new, &
       gauxc_basisset_new_from_shells, &
       gauxc_basisset_type, &
       gauxc_delete
@@ -104,7 +101,6 @@ MODULE xc_gauxc_interface
       gauxc_molecular_weights_factory_new, &
       gauxc_molecular_weights_factory_type, &
       gauxc_molecular_weights_modify_weights, &
-      gauxc_molecular_weights_settings, &
       gauxc_molecular_weights_type
    USE gauxc_xc_functional, ONLY: &
       gauxc_delete, &
@@ -254,7 +250,6 @@ CONTAINS
 !> \param status ...
 ! **************************************************************************************************
    SUBROUTINE print_gauxc_status_message(status)
-      ! IMPORT :: c_ptr
       TYPE(cp_gauxc_status_type), INTENT(IN)             :: status
 
 #ifdef __GAUXC
