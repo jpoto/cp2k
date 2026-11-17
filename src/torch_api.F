@@ -773,6 +773,30 @@ CONTAINS
       TYPE(torch_tensor_type), DIMENSION(:), INTENT(IN)  :: tensors
       TYPE(torch_tensor_type), DIMENSION(:), INTENT(INOUT) :: grads
 
+      CALL torch_tensor_grad_batch_impl(tensors, grads, deferred=.FALSE.)
+
+   END SUBROUTINE torch_tensor_grad_batch
+
+! **************************************************************************************************
+!> \brief Copies several autograd gradients to the pinned host buffers without synchronizing.
+!>        Call torch_stream_synchronize() before reading the gradients.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_grad_batch_deferred(tensors, grads)
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(IN)  :: tensors
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(INOUT) :: grads
+
+      CALL torch_tensor_grad_batch_impl(tensors, grads, deferred=.TRUE.)
+
+   END SUBROUTINE torch_tensor_grad_batch_deferred
+
+! **************************************************************************************************
+!> \brief Shared implementation of the synchronized and deferred gradient batches.
+! **************************************************************************************************
+   SUBROUTINE torch_tensor_grad_batch_impl(tensors, grads, deferred)
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(IN)  :: tensors
+      TYPE(torch_tensor_type), DIMENSION(:), INTENT(INOUT) :: grads
+      LOGICAL, INTENT(IN)                                :: deferred
+
 #if defined(__LIBTORCH)
       INTEGER                                            :: i, n
       TYPE(C_PTR), ALLOCATABLE, DIMENSION(:)             :: c_grads, c_tensors
@@ -785,43 +809,6 @@ CONTAINS
             INTEGER(kind=C_INT), VALUE                   :: count
             TYPE(C_PTR), DIMENSION(*)                    :: grads
          END SUBROUTINE torch_c_tensor_grad_batch
-      END INTERFACE
-
-      n = SIZE(tensors)
-      CPASSERT(SIZE(grads) == n)
-      ALLOCATE (c_tensors(n), c_grads(n))
-      DO i = 1, n
-         CPASSERT(C_ASSOCIATED(tensors(i)%c_ptr))
-         c_tensors(i) = tensors(i)%c_ptr
-         CPASSERT(.NOT. C_ASSOCIATED(grads(i)%c_ptr))
-         c_grads(i) = C_NULL_PTR
-      END DO
-      CALL torch_c_tensor_grad_batch(tensors=c_tensors, count=INT(n, C_INT), grads=c_grads)
-      DO i = 1, n
-         CPASSERT(C_ASSOCIATED(c_grads(i)))
-         grads(i)%c_ptr = c_grads(i)
-      END DO
-      DEALLOCATE (c_tensors, c_grads)
-#else
-      CPABORT("CP2K compiled without the Torch library.")
-      MARK_USED(tensors)
-      MARK_USED(grads)
-#endif
-   END SUBROUTINE torch_tensor_grad_batch
-
-! **************************************************************************************************
-!> \brief Copies several autograd gradients to the pinned host buffers without synchronizing.
-!>        Call torch_stream_synchronize() before reading the gradients.
-! **************************************************************************************************
-   SUBROUTINE torch_tensor_grad_batch_deferred(tensors, grads)
-      TYPE(torch_tensor_type), DIMENSION(:), INTENT(IN)  :: tensors
-      TYPE(torch_tensor_type), DIMENSION(:), INTENT(INOUT) :: grads
-
-#if defined(__LIBTORCH)
-      INTEGER                                            :: i, n
-      TYPE(C_PTR), ALLOCATABLE, DIMENSION(:)             :: c_grads, c_tensors
-
-      INTERFACE
          SUBROUTINE torch_c_tensor_grad_batch_deferred(tensors, count, grads) &
             BIND(C, name="torch_c_tensor_grad_batch_deferred")
             IMPORT :: C_PTR, C_INT
@@ -840,7 +827,12 @@ CONTAINS
          CPASSERT(.NOT. C_ASSOCIATED(grads(i)%c_ptr))
          c_grads(i) = C_NULL_PTR
       END DO
-      CALL torch_c_tensor_grad_batch_deferred(tensors=c_tensors, count=INT(n, C_INT), grads=c_grads)
+      IF (deferred) THEN
+         CALL torch_c_tensor_grad_batch_deferred(tensors=c_tensors, count=INT(n, C_INT), &
+                                                  grads=c_grads)
+      ELSE
+         CALL torch_c_tensor_grad_batch(tensors=c_tensors, count=INT(n, C_INT), grads=c_grads)
+      END IF
       DO i = 1, n
          CPASSERT(C_ASSOCIATED(c_grads(i)))
          grads(i)%c_ptr = c_grads(i)
@@ -850,8 +842,9 @@ CONTAINS
       CPABORT("CP2K compiled without the Torch library.")
       MARK_USED(tensors)
       MARK_USED(grads)
+      MARK_USED(deferred)
 #endif
-   END SUBROUTINE torch_tensor_grad_batch_deferred
+   END SUBROUTINE torch_tensor_grad_batch_impl
 
 ! **************************************************************************************************
 !> \brief Returns the weighted sum of two Torch tensors.

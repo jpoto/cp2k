@@ -1054,6 +1054,26 @@ CONTAINS
    END SUBROUTINE gauxc_xc_gradient_fd
 
 ! **************************************************************************************************
+!> \brief Arithmetic center of the particle positions.
+!> \param particle_set ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION molecular_center(particle_set) RESULT(center)
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      REAL(KIND=dp), DIMENSION(3)                        :: center
+
+      INTEGER                                            :: iatom
+
+      CPASSERT(ASSOCIATED(particle_set))
+      center = 0.0_dp
+      DO iatom = 1, SIZE(particle_set)
+         center = center + particle_set(iatom)%r
+      END DO
+      center = center/REAL(SIZE(particle_set), dp)
+
+   END FUNCTION molecular_center
+
+! **************************************************************************************************
 !> \brief finite-difference check of the molecular GauXC XC virial diagnostic
 !> \param exc_grad ...
 !> \param particle_set ...
@@ -1103,11 +1123,7 @@ CONTAINS
 
       IF (para_env%mepos /= 0) RETURN
 
-      center = 0.0_dp
-      DO iatom = 1, SIZE(particle_set)
-         center = center + particle_set(iatom)%r
-      END DO
-      center = center/REAL(SIZE(particle_set), dp)
+      center = molecular_center(particle_set)
 
       ALLOCATE (particle_set_minus(SIZE(particle_set)), particle_set_plus(SIZE(particle_set)))
       particle_set_minus = particle_set
@@ -1187,11 +1203,7 @@ CONTAINS
 
       IF (para_env%mepos /= 0) RETURN
 
-      center = 0.0_dp
-      DO iatom = 1, SIZE(particle_set)
-         center = center + particle_set(iatom)%r
-      END DO
-      center = center/REAL(SIZE(particle_set), dp)
+      center = molecular_center(particle_set)
 
       grad_sum = 0.0_dp
       molecular_virial = 0.0_dp
@@ -1578,7 +1590,7 @@ CONTAINS
       CALL uppercase(int_exec_space_key)
       params%use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE" .AND. &
                                 TRIM(model_key) /= TRIM(xc_fun_key))
-      use_skala_model = (INDEX(TRIM(model_key), "SKALA") > 0)
+      use_skala_model = (TRIM(model_key) == "SKALA")
       lwd_kernel_key = ADJUSTL(params%lwd_kernel)
       CALL uppercase(lwd_kernel_key)
       IF (TRIM(lwd_kernel_key) == "AUTO") THEN

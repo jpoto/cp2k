@@ -1381,6 +1381,17 @@ void torch_c_model_forward_mol_tensor(torch_c_model_t *model,
   TORCH_C_CATCH("torch_c_model_forward_mol_tensor")
 }
 
+static void flatten_weighted_pair(const torch_c_tensor_t *values,
+                                  const torch_c_tensor_t *weights,
+                                  torch::Tensor &flat_values,
+                                  torch::Tensor &flat_weights) {
+  flat_values = values->flatten();
+  flat_weights =
+      weights->to(values->device()).to(values->dtype()).flatten();
+  torch_c_check(flat_values.numel() == flat_weights.numel(),
+                "Torch weighted sum: value/weight size mismatch");
+}
+
 /*******************************************************************************
  * \brief Returns the weighted sum of two Torch tensors.
  ******************************************************************************/
@@ -1390,12 +1401,8 @@ void torch_c_tensor_weighted_sum(const torch_c_tensor_t *values,
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
-  const auto weights_on_device =
-      weights->to(values->device()).to(values->dtype());
-  const auto flat_values = values->flatten();
-  const auto flat_weights = weights_on_device.flatten();
-  torch_c_check(flat_values.numel() == flat_weights.numel(),
-                "Torch weighted sum: value/weight size mismatch");
+  torch::Tensor flat_values, flat_weights;
+  flatten_weighted_pair(values, weights, flat_values, flat_weights);
   *result = new torch_c_tensor_t(torch::dot(flat_values, flat_weights));
   TORCH_C_CATCH("torch_c_tensor_weighted_sum")
 }
@@ -1413,11 +1420,8 @@ void torch_c_tensor_weighted_sum_segments(const torch_c_tensor_t *values,
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
-  const auto flat_values = values->flatten();
-  const auto flat_weights =
-      weights->to(values->device()).to(values->dtype()).flatten();
-  torch_c_check(flat_values.numel() == flat_weights.numel(),
-                "Torch weighted sum: value/weight size mismatch");
+  torch::Tensor flat_values, flat_weights;
+  flatten_weighted_pair(values, weights, flat_values, flat_weights);
   std::vector<torch::Tensor> dots;
   dots.reserve(nseg);
   for (int i = 0; i < nseg; ++i) {

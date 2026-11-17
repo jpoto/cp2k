@@ -228,7 +228,7 @@ CONTAINS
       CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
       model_key = ADJUSTL(model_name)
       CALL uppercase(model_key)
-      uses_skala_model = INDEX(TRIM(model_key), "SKALA") > 0
+      uses_skala_model = (TRIM(model_key) == "SKALA")
 
    END FUNCTION xc_section_uses_skala_model
 

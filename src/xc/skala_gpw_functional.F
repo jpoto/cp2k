@@ -44,7 +44,8 @@ MODULE skala_gpw_functional
                                               skala_key_grid_weights,&
                                               skala_key_kin
    USE skala_gpw_features,              ONLY: &
-        skala_gpw_atom_partition_hard, skala_gpw_atom_partition_smooth, &
+        grid_coordinate, skala_gpw_atom_partition_hard, skala_gpw_atom_partition_smooth, &
+        sort_chunks_by_padded_rows, &
         skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, skala_gpw_feature_build, &
         skala_gpw_feature_build_atom_subchunk_bounds, skala_gpw_feature_release, &
         skala_gpw_feature_type, skala_gpw_features_release_cache, &
@@ -1049,7 +1050,7 @@ CONTAINS
                feature_begin = features%local_feature_offsets(local_row)
                feature_end = features%local_feature_offsets(local_row + 1) - 1
                local_derivative = 0.0_dp
-               grid_point = native_grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
+               grid_point = grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
                CALL smooth_partition_weights(grid_point, atom_coords_pbc, cell, &
                                              partition_weights, included)
                CPASSERT(feature_end - feature_begin + 1 == COUNT(included))
@@ -1932,10 +1933,9 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(OUT)    :: atom_begin, atom_count, row_begin, &
                                                             row_count
 
-      INTEGER :: atom_begin_tmp, atom_count_tmp, atom_rows, chunk_atoms, chunk_max_atom_rows, &
-         iatom, insert_at, natom, nchunks, padded_rows_tmp, row_begin_tmp, row_count_tmp, rows, &
+      INTEGER :: atom_rows, chunk_atoms, chunk_max_atom_rows, iatom, natom, nchunks, rows, &
          subchunk
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: padded_rows
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: padded_rows
 
       natom = SIZE(atomic_grid_sizes)
       CPASSERT(natom > 0)
@@ -1995,32 +1995,13 @@ CONTAINS
       ALLOCATE (padded_rows(nchunks))
       DO subchunk = 1, nchunks
          iatom = atom_begin(subchunk) + atom_count(subchunk) - 1
-         padded_rows(subchunk) = atom_count(subchunk)* &
-                                 INT(MAXVAL(atomic_grid_sizes(atom_begin(subchunk):iatom)))
+         padded_rows(subchunk) = INT(atom_count(subchunk), KIND=int_8)* &
+                                 INT(MAXVAL(atomic_grid_sizes(atom_begin(subchunk):iatom)), &
+                                     KIND=int_8)
       END DO
 
       ! Largest blocks run first so CUDA allocations can be reused by all following calls.
-      DO subchunk = 2, nchunks
-         padded_rows_tmp = padded_rows(subchunk)
-         atom_begin_tmp = atom_begin(subchunk)
-         atom_count_tmp = atom_count(subchunk)
-         row_begin_tmp = row_begin(subchunk)
-         row_count_tmp = row_count(subchunk)
-         insert_at = subchunk
-         DO WHILE (insert_at > 1 .AND. padded_rows(insert_at - 1) < padded_rows_tmp)
-            padded_rows(insert_at) = padded_rows(insert_at - 1)
-            atom_begin(insert_at) = atom_begin(insert_at - 1)
-            atom_count(insert_at) = atom_count(insert_at - 1)
-            row_begin(insert_at) = row_begin(insert_at - 1)
-            row_count(insert_at) = row_count(insert_at - 1)
-            insert_at = insert_at - 1
-         END DO
-         padded_rows(insert_at) = padded_rows_tmp
-         atom_begin(insert_at) = atom_begin_tmp
-         atom_count(insert_at) = atom_count_tmp
-         row_begin(insert_at) = row_begin_tmp
-         row_count(insert_at) = row_count_tmp
-      END DO
+      CALL sort_chunks_by_padded_rows(padded_rows, atom_begin, atom_count, row_begin, row_count)
       DEALLOCATE (padded_rows)
 
    END SUBROUTINE atom_composite_chunk_layout
@@ -2117,7 +2098,7 @@ CONTAINS
          DO j = bo(1, 2), bo(2, 2)
             DO i = bo(1, 1), bo(2, 1)
                local_row = local_row + 1
-               grid_point = native_grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
+               grid_point = grid_coordinate(rho_r(1)%pw_grid, [i, j, k])
                CALL smooth_partition_weights(grid_point, atom_coords_pbc, cell, weights, included)
                feature_begin = features%local_feature_offsets(local_row)
                feature_end = features%local_feature_offsets(local_row + 1) - 1
@@ -2167,21 +2148,6 @@ CONTAINS
 !> \param pw_grid ...
 !> \param index ...
 !> \return ...
-! **************************************************************************************************
-   FUNCTION native_grid_coordinate(pw_grid, index) RESULT(coord)
-      TYPE(pw_grid_type), POINTER                        :: pw_grid
-      INTEGER, DIMENSION(3), INTENT(IN)                  :: index
-      REAL(KIND=dp), DIMENSION(3)                        :: coord
-
-      INTEGER, DIMENSION(3)                              :: relative_index
-
-      relative_index = index - pw_grid%bounds(1, :)
-      coord = REAL(relative_index(1), KIND=dp)*pw_grid%dh(:, 1) + &
-              REAL(relative_index(2), KIND=dp)*pw_grid%dh(:, 2) + &
-              REAL(relative_index(3), KIND=dp)*pw_grid%dh(:, 3)
-
-   END FUNCTION native_grid_coordinate
-
 ! **************************************************************************************************
 !> \brief Evaluate a rank-local atom chunk as multiple atom-contiguous Torch subchunks.
 !> \param features ...

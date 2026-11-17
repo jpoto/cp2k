@@ -53,7 +53,7 @@ MODULE skala_gpw_features
    INTEGER, PARAMETER, PRIVATE          :: periodic_partition_image_shell = 1
 
    PUBLIC :: skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, &
-             skala_gpw_features_release_cache, &
+             sort_chunks_by_padded_rows, grid_coordinate, skala_gpw_features_release_cache, &
              skala_gpw_feature_build, skala_gpw_feature_build_atom_subchunk_bounds, &
              skala_gpw_feature_release, &
              skala_gpw_feature_type, smooth_partition_derivative_action, &
@@ -2172,6 +2172,57 @@ CONTAINS
    END FUNCTION skala_gpw_atom_subchunk_count
 
 ! **************************************************************************************************
+!> \brief Sort chunk layouts in place, largest padded block first.
+!> \param padded_rows key used for the descending order
+!> \param atom_begin ...
+!> \param atom_count ...
+!> \param row_begin ...
+!> \param row_count ...
+! **************************************************************************************************
+   SUBROUTINE sort_chunks_by_padded_rows(padded_rows, atom_begin, atom_count, row_begin, row_count)
+      INTEGER(KIND=int_8), DIMENSION(:), INTENT(IN)      :: padded_rows
+      INTEGER, DIMENSION(:), INTENT(INOUT)               :: atom_begin, atom_count, row_begin, &
+                                                            row_count
+
+      INTEGER                                            :: chunk, insert_at
+      INTEGER                                            :: atom_begin_tmp, atom_count_tmp, &
+                                                            row_begin_tmp, row_count_tmp
+      INTEGER(KIND=int_8)                                :: key
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: keys
+
+      CPASSERT(SIZE(atom_begin) == SIZE(padded_rows))
+      CPASSERT(SIZE(atom_count) == SIZE(padded_rows))
+      CPASSERT(SIZE(row_begin) == SIZE(padded_rows))
+      CPASSERT(SIZE(row_count) == SIZE(padded_rows))
+
+      ALLOCATE (keys(SIZE(padded_rows)))
+      keys = padded_rows
+      DO chunk = 2, SIZE(keys)
+         key = keys(chunk)
+         atom_begin_tmp = atom_begin(chunk)
+         atom_count_tmp = atom_count(chunk)
+         row_begin_tmp = row_begin(chunk)
+         row_count_tmp = row_count(chunk)
+         insert_at = chunk
+         DO WHILE (insert_at > 1 .AND. keys(insert_at - 1) < key)
+            keys(insert_at) = keys(insert_at - 1)
+            atom_begin(insert_at) = atom_begin(insert_at - 1)
+            atom_count(insert_at) = atom_count(insert_at - 1)
+            row_begin(insert_at) = row_begin(insert_at - 1)
+            row_count(insert_at) = row_count(insert_at - 1)
+            insert_at = insert_at - 1
+         END DO
+         keys(insert_at) = key
+         atom_begin(insert_at) = atom_begin_tmp
+         atom_count(insert_at) = atom_count_tmp
+         row_begin(insert_at) = row_begin_tmp
+         row_count(insert_at) = row_count_tmp
+      END DO
+      DEALLOCATE (keys)
+
+   END SUBROUTINE sort_chunks_by_padded_rows
+
+! **************************************************************************************************
 !> \brief Build atom and row bounds for all atom-contiguous subchunks in one pass.
 !> \param max_rows ...
 !> \param atom_begin ...
@@ -2185,9 +2236,7 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(OUT)    :: atom_begin, atom_count, row_begin, &
                                                             row_count
 
-      INTEGER :: atom_begin_tmp, atom_count_tmp, atom_rows, iatom, insert_at, nsubchunks, &
-         row_begin_tmp, row_count_tmp, rows, subchunk
-      INTEGER(KIND=int_8)                                :: padded_rows_tmp
+      INTEGER :: atom_rows, iatom, nsubchunks, rows, subchunk
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: padded_rows
 
       nsubchunks = skala_gpw_atom_subchunk_count(max_rows)
@@ -2241,28 +2290,7 @@ CONTAINS
       END DO
 
       ! Evaluate the largest padded block first so Torch can reuse its CUDA allocations.
-      DO subchunk = 2, nsubchunks
-         padded_rows_tmp = padded_rows(subchunk)
-         atom_begin_tmp = atom_begin(subchunk)
-         atom_count_tmp = atom_count(subchunk)
-         row_begin_tmp = row_begin(subchunk)
-         row_count_tmp = row_count(subchunk)
-         insert_at = subchunk
-         DO WHILE (insert_at > 1)
-            IF (padded_rows(insert_at - 1) >= padded_rows_tmp) EXIT
-            padded_rows(insert_at) = padded_rows(insert_at - 1)
-            atom_begin(insert_at) = atom_begin(insert_at - 1)
-            atom_count(insert_at) = atom_count(insert_at - 1)
-            row_begin(insert_at) = row_begin(insert_at - 1)
-            row_count(insert_at) = row_count(insert_at - 1)
-            insert_at = insert_at - 1
-         END DO
-         padded_rows(insert_at) = padded_rows_tmp
-         atom_begin(insert_at) = atom_begin_tmp
-         atom_count(insert_at) = atom_count_tmp
-         row_begin(insert_at) = row_begin_tmp
-         row_count(insert_at) = row_count_tmp
-      END DO
+      CALL sort_chunks_by_padded_rows(padded_rows, atom_begin, atom_count, row_begin, row_count)
       DEALLOCATE (padded_rows)
 
    END SUBROUTINE skala_gpw_atom_subchunk_layout
