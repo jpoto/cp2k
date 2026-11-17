@@ -131,6 +131,8 @@ MODULE hfx_ri_kp
    LOGICAL, SAVE, PRIVATE :: force_gauge_warned = .FALSE.
    ! Fractional-coordinate residual above which the atom mapping is not a symmetry.
    REAL(dp), PARAMETER, PRIVATE :: hfx_image_symmetry_eps = 1.0E-8_dp
+   ! Bits per INTEGER(int_8) word in the compact image-expansion block masks.
+   INTEGER, PARAMETER, PRIVATE :: hfx_mask_word_bits = 64
 CONTAINS
 
 ! **************************************************************************************************
@@ -601,7 +603,7 @@ CONTAINS
                                                             print_progress, use_delta_p, &
                                                             use_image_sym
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: img_computed, img_inv
-      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: filled
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: filled
       REAL(dp)                                           :: etmp, fac, occ, pfac, pref, t1, t2, t3, &
                                                             t4
       TYPE(cell_type), POINTER                           :: cell
@@ -939,7 +941,7 @@ CONTAINS
             CALL dbcsr_create(ks_full(b_img), template=ks_matrix(1, 1)%matrix, &
                               matrix_type=dbcsr_type_no_symmetry)
          END DO
-         ALLOCATE (filled(natom, natom, nimg))
+         ALLOCATE (filled(hfx_block_mask_size(natom, nimg)))
          ALLOCATE (ident_map(natom), ident_frac(3, 3), zero_shift(3, natom))
          ident_map(:) = [(i, i=1, natom)]
          ident_frac(:, :) = 0
@@ -953,12 +955,15 @@ CONTAINS
             DO b_img = 1, nimg
                CALL dbcsr_clear(ks_full(b_img))
             END DO
-            filled(:, :, :) = .FALSE.
+            filled(:) = 0_int_8
             DO b_img = 1, nimg
                IF (img_rep(b_img) /= b_img) CYCLE
                CALL hfx_full_image_matrix(ks_t, i_spin, b_img, nimg, qs_env, &
                                           sym_full, sym_tmp, sym_work)
-               CALL dbcsr_replicate_all(sym_full)
+               ! Every rank must see every source block to write its owned targets.
+               ! With a single rank all blocks are already local, so the full
+               ! replicate/distribute round-trip is pure overhead.
+               IF (para_env%num_pe > 1) CALL dbcsr_replicate_all(sym_full)
                DO i_img = 1, nimg
                   IF (img_rep(i_img) /= b_img) CYCLE
                   IF (i_img == b_img) THEN
@@ -972,7 +977,7 @@ CONTAINS
                                                   b_img, img_inv(i_img), nimg, sym_full, ks_full, filled)
                   END IF
                END DO
-               CALL dbcsr_distribute(sym_full)
+               IF (para_env%num_pe > 1) CALL dbcsr_distribute(sym_full)
             END DO
             DO b_img = 1, nimg
                CALL dbcsr_finalize(ks_full(b_img))
@@ -5900,19 +5905,20 @@ CONTAINS
       REAL(dp), INTENT(IN)                               :: filter_eps
 
       INTEGER                                            :: b, g, i, icol, ip, irow, jp, kind_i, &
-                                                            kind_j, mynode, owner, slot, ximg
+                                                            kind_j, mynode, numnodes, owner, slot, &
+                                                            ximg
       INTEGER, DIMENSION(3)                              :: bcell, xcell
       LOGICAL                                            :: found
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: recreated
-      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: filled
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: filled
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rblock, rot_work
       REAL(dp), DIMENSION(:, :), POINTER                 :: block, left_rot, right_rot
       TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_iterator_type)                          :: iter
       TYPE(dbcsr_type)                                   :: work
 
-      ALLOCATE (filled(natom, natom, nimg), recreated(nimg))
-      filled(:, :, :) = .FALSE.
+      ALLOCATE (filled(hfx_block_mask_size(natom, nimg)), recreated(nimg))
+      filled(:) = 0_int_8
       recreated(:) = .FALSE.
       DO b = 1, nimg
          IF (img_rep(b) /= b) CYCLE
@@ -5926,7 +5932,9 @@ CONTAINS
             recreated(i) = .TRUE.
          END DO
          CALL dbcsr_copy(work, t2c(b))
-         CALL dbcsr_replicate_all(work)
+         CALL dbcsr_get_info(work, distribution=dist)
+         CALL dbcsr_distribution_get(dist, numnodes=numnodes)
+         IF (numnodes > 1) CALL dbcsr_replicate_all(work)
          CALL dbcsr_iterator_start(iter, work)
          DO WHILE (dbcsr_iterator_blocks_left(iter))
             CALL dbcsr_iterator_next_block(iter, irow, icol, block)
@@ -5941,7 +5949,7 @@ CONTAINS
                IF (.NOT. found .OR. ximg /= i) CYCLE
                ip = op_map(irow, g)
                jp = op_map(icol, g)
-               IF (filled(ip, jp, i)) CYCLE
+               IF (hfx_block_mask_test(filled, ip, jp, i, natom)) CYCLE
 
                kind_i = kpoints%atype(irow)
                kind_j = kpoints%atype(icol)
@@ -5966,7 +5974,7 @@ CONTAINS
                CALL dbcsr_get_stored_coordinates(t2c(i), ip, jp, owner)
                IF (owner == mynode) THEN
                   CALL dbcsr_put_block(t2c(i), ip, jp, rblock)
-                  filled(ip, jp, i) = .TRUE.
+                  CALL hfx_block_mask_set(filled, ip, jp, i, natom)
                END IF
                DEALLOCATE (rblock)
             END DO
@@ -6009,11 +6017,11 @@ CONTAINS
       REAL(dp), INTENT(IN)                               :: filter_eps
 
       INTEGER                                            :: b, g, i, icol, ip, irow, jp, kind_i, &
-                                                            kind_j, mynode, ni, nj, owner, slot, &
-                                                            ximg, xyz, xyz2
+                                                            kind_j, mynode, ni, nj, numnodes, owner, &
+                                                            slot, ximg, xyz, xyz2
       INTEGER, DIMENSION(3)                              :: bcell, xcell
       LOGICAL                                            :: found, found_any
-      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: filled
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: filled
       REAL(dp)                                           :: rmap(3, 3)
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: outblock
       REAL(dp), ALLOCATABLE, DIMENSION(:, :, :)          :: rb, rs
@@ -6021,8 +6029,8 @@ CONTAINS
       TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_type), ALLOCATABLE, DIMENSION(:)        :: work
 
-      ALLOCATE (filled(natom, natom, nimg), work(3))
-      filled(:, :, :) = .FALSE.
+      ALLOCATE (filled(hfx_block_mask_size(natom, nimg)), work(3))
+      filled(:) = 0_int_8
       DO b = 1, nimg
          IF (img_rep(b) /= b) CYCLE
          DO i = 1, nimg
@@ -6036,7 +6044,9 @@ CONTAINS
          END DO
          DO xyz = 1, 3
             CALL dbcsr_copy(work(xyz), t2c_der(b, xyz))
-            CALL dbcsr_replicate_all(work(xyz))
+            CALL dbcsr_get_info(work(xyz), distribution=dist)
+            CALL dbcsr_distribution_get(dist, numnodes=numnodes)
+            IF (numnodes > 1) CALL dbcsr_replicate_all(work(xyz))
          END DO
          bcell = kpoints%index_to_cell(:, b)
          DO irow = 1, natom
@@ -6067,7 +6077,7 @@ CONTAINS
                   IF (.NOT. found .OR. ximg /= i) CYCLE
                   ip = op_map(irow, g)
                   jp = op_map(icol, g)
-                  IF (filled(ip, jp, i)) CYCLE
+                  IF (hfx_block_mask_test(filled, ip, jp, i, natom)) CYCLE
 
                   kind_i = kpoints%atype(irow)
                   kind_j = kpoints%atype(icol)
@@ -6097,7 +6107,7 @@ CONTAINS
                         CALL dbcsr_put_block(t2c_der(i, xyz), ip, jp, outblock)
                      END IF
                   END DO
-                  filled(ip, jp, i) = .TRUE.
+                  CALL hfx_block_mask_set(filled, ip, jp, i, natom)
                END DO
                DEALLOCATE (rs, rb, outblock)
             END DO
@@ -6589,12 +6599,12 @@ CONTAINS
       LOGICAL                                            :: anymask, found
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: started
       LOGICAL, ALLOCATABLE, DIMENSION(:, :)              :: gmask
-      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: written
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: written
       TYPE(dbt_type)                                     :: work
 
       nblk1 = ri_data%ncell_RI*nblk_RI
       mdim = MAX(nblk1, nblk_AO)
-      ALLOCATE (map1(nblk1), imap(mdim, 3), gmask(1, nblk_AO), written(nimg, natom, natom), &
+      ALLOCATE (map1(nblk1), imap(mdim, 3), gmask(1, nblk_AO), written(hfx_block_mask_size(natom, nimg)), &
                 started(nimg))
       bounds(1, :) = [0, 0, 0]
       bounds(2, :) = [HUGE(bounds(1, 1)), HUGE(bounds(1, 1)), HUGE(bounds(1, 1))]
@@ -6602,7 +6612,7 @@ CONTAINS
       DO b = 1, nimg
          IF (img_rep(b) /= b) CYCLE
          CALL dbt_create(t3c(b), work)
-         written(:, :, :) = .FALSE.
+         written(:) = 0_int_8
          started(:) = .FALSE.
          bcell = kpoints%index_to_cell(:, b)
          DO g = 1, nops
@@ -6632,7 +6642,7 @@ CONTAINS
                   anymask = .FALSE.
                   DO jb = 1, nblk_AO
                      jatom = blk_atom_AO(jb)
-                     IF (written(t, iatom, jatom)) CYCLE
+                     IF (hfx_block_mask_test(written, iatom, jatom, t, natom)) CYCLE
                      ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + &
                              op_shift(:, jatom, g) - si
                      CALL hfx_image_from_cell(kpoints, ycell, img, found)
@@ -6645,7 +6655,7 @@ CONTAINS
                                    index_map=imap, group_mask=gmask, group_dim=3)
                   started(t) = .TRUE.
                   DO jb = 1, nblk_AO
-                     IF (gmask(1, jb)) written(t, iatom, blk_atom_AO(jb)) = .TRUE.
+                     IF (gmask(1, jb)) CALL hfx_block_mask_set(written, iatom, blk_atom_AO(jb), t, natom)
                   END DO
                END DO
             END DO
@@ -6687,13 +6697,13 @@ CONTAINS
       LOGICAL                                            :: anymask, found
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: started
       LOGICAL, ALLOCATABLE, DIMENSION(:, :)              :: gmask
-      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: written
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: written
       REAL(dp)                                           :: rmap(3, 3)
       TYPE(dbt_type)                                     :: out(3), work(3)
 
       nblk1 = ri_data%ncell_RI*nblk_RI
       mdim = MAX(nblk1, nblk_AO)
-      ALLOCATE (map1(nblk1), imap(mdim, 3), gmask(1, nblk_AO), written(nimg, natom, natom), &
+      ALLOCATE (map1(nblk1), imap(mdim, 3), gmask(1, nblk_AO), written(hfx_block_mask_size(natom, nimg)), &
                 started(nimg))
       bounds(1, :) = [0, 0, 0]
       bounds(2, :) = [HUGE(bounds(1, 1)), HUGE(bounds(1, 1)), HUGE(bounds(1, 1))]
@@ -6704,7 +6714,7 @@ CONTAINS
             CALL dbt_create(t3c_der(b, xyz), work(xyz))
             CALL dbt_create(t3c_der(b, xyz), out(xyz))
          END DO
-         written(:, :, :) = .FALSE.
+         written(:) = 0_int_8
          started(:) = .FALSE.
          bcell = kpoints%index_to_cell(:, b)
          DO g = 1, nops
@@ -6738,7 +6748,7 @@ CONTAINS
                   anymask = .FALSE.
                   DO jb = 1, nblk_AO
                      jatom = blk_atom_AO(jb)
-                     IF (written(t, iatom, jatom)) CYCLE
+                     IF (hfx_block_mask_test(written, iatom, jatom, t, natom)) CYCLE
                      ycell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + &
                              op_shift(:, jatom, g) - si
                      CALL hfx_image_from_cell(kpoints, ycell, img, found)
@@ -6754,7 +6764,7 @@ CONTAINS
                   END DO
                   started(t) = .TRUE.
                   DO jb = 1, nblk_AO
-                     IF (gmask(1, jb)) written(t, iatom, blk_atom_AO(jb)) = .TRUE.
+                     IF (gmask(1, jb)) CALL hfx_block_mask_set(written, iatom, blk_atom_AO(jb), t, natom)
                   END DO
                END DO
             END DO
@@ -7259,6 +7269,68 @@ CONTAINS
    END SUBROUTINE hfx_image_from_cell
 
 ! **************************************************************************************************
+!> \brief Number of 64-bit words needed for a dense (ip, jp, image) block mask.
+!> \param natom number of atoms (masked index range per dimension)
+!> \param nimg number of images
+!> \return number of INTEGER(int_8) words
+! **************************************************************************************************
+   PURE FUNCTION hfx_block_mask_size(natom, nimg) RESULT(nwords)
+      INTEGER, INTENT(IN)                                :: natom, nimg
+      INTEGER                                            :: nwords
+
+      INTEGER(KIND=int_8)                                :: nbits
+
+      nbits = INT(natom, KIND=int_8)*INT(natom, KIND=int_8)*INT(nimg, KIND=int_8)
+      nwords = INT((nbits + hfx_mask_word_bits - 1)/hfx_mask_word_bits)
+   END FUNCTION hfx_block_mask_size
+
+! **************************************************************************************************
+!> \brief Set the bit for the (ip, jp, ximg) entry of a compact block mask.
+!> \param mask packed bit mask
+!> \param ip first atom index (1..natom)
+!> \param jp second atom index (1..natom)
+!> \param ximg image index (1..nimg)
+!> \param natom mask index range per atom dimension
+! **************************************************************************************************
+   PURE SUBROUTINE hfx_block_mask_set(mask, ip, jp, ximg, natom)
+      INTEGER(KIND=int_8), DIMENSION(:), INTENT(INOUT)   :: mask
+      INTEGER, INTENT(IN)                                :: ip, jp, ximg, natom
+
+      INTEGER                                            :: word
+      INTEGER(KIND=int_8)                                :: bit, idx
+
+      idx = (INT(ximg - 1, KIND=int_8)*INT(natom, KIND=int_8) + INT(jp - 1, KIND=int_8)) &
+            *INT(natom, KIND=int_8) + INT(ip - 1, KIND=int_8)
+      word = INT(idx/hfx_mask_word_bits) + 1
+      bit = ISHFT(1_int_8, INT(MOD(idx, INT(hfx_mask_word_bits, KIND=int_8))))
+      mask(word) = IOR(mask(word), bit)
+   END SUBROUTINE hfx_block_mask_set
+
+! **************************************************************************************************
+!> \brief Test the bit for the (ip, jp, ximg) entry of a compact block mask.
+!> \param mask packed bit mask
+!> \param ip first atom index (1..natom)
+!> \param jp second atom index (1..natom)
+!> \param ximg image index (1..nimg)
+!> \param natom mask index range per atom dimension
+!> \return whether the entry is set
+! **************************************************************************************************
+   PURE FUNCTION hfx_block_mask_test(mask, ip, jp, ximg, natom) RESULT(is_set)
+      INTEGER(KIND=int_8), DIMENSION(:), INTENT(IN)      :: mask
+      INTEGER, INTENT(IN)                                :: ip, jp, ximg, natom
+      LOGICAL                                            :: is_set
+
+      INTEGER                                            :: word
+      INTEGER(KIND=int_8)                                :: bit, idx
+
+      idx = (INT(ximg - 1, KIND=int_8)*INT(natom, KIND=int_8) + INT(jp - 1, KIND=int_8)) &
+            *INT(natom, KIND=int_8) + INT(ip - 1, KIND=int_8)
+      word = INT(idx/hfx_mask_word_bits) + 1
+      bit = ISHFT(1_int_8, INT(MOD(idx, INT(hfx_mask_word_bits, KIND=int_8))))
+      is_set = IAND(mask(word), bit) /= 0_int_8
+   END FUNCTION hfx_block_mask_test
+
+! **************************************************************************************************
 !> \brief Rotate the AO blocks of an atom-block tensor and optionally transpose the result.
 !> \param kpoints k-point environment (kind rotation matrices)
 !> \param aux_fit ...
@@ -7406,10 +7478,10 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: invert
       INTEGER, INTENT(IN)                                :: nimg
       TYPE(dbcsr_type), INTENT(INOUT)                    :: src, ks_full(:)
-      LOGICAL, INTENT(INOUT)                             :: filled(:, :, :)
+      INTEGER(KIND=int_8), INTENT(INOUT)                 :: filled(:)
 
       INTEGER                                            :: icol, ip, irow, jp, kind_i, kind_j, &
-                                                            mynode, owner, ximg
+                                                            mynode, natom, owner, ximg
       INTEGER, DIMENSION(3)                              :: bcell, xcell
       LOGICAL                                            :: found
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rblock, tblock, work
@@ -7417,6 +7489,7 @@ CONTAINS
       TYPE(dbcsr_distribution_type)                      :: dist
       TYPE(dbcsr_iterator_type)                          :: iter
 
+      natom = SIZE(atom_map)
       bcell = kpoints%index_to_cell(:, src_image)
       CALL dbcsr_iterator_start(iter, src)
       DO WHILE (dbcsr_iterator_blocks_left(iter))
@@ -7432,7 +7505,7 @@ CONTAINS
          END IF
          CALL hfx_image_from_cell(kpoints, xcell, ximg, found)
          IF (.NOT. found .OR. ximg < 1 .OR. ximg > nimg) CYCLE
-         IF (filled(ip, jp, ximg)) CYCLE
+         IF (hfx_block_mask_test(filled, ip, jp, ximg, natom)) CYCLE
 
          kind_i = kpoints%atype(irow)
          kind_j = kpoints%atype(icol)
@@ -7462,7 +7535,7 @@ CONTAINS
             CALL dbcsr_get_stored_coordinates(ks_full(ximg), ip, jp, owner)
             IF (owner == mynode) THEN
                CALL dbcsr_put_block(ks_full(ximg), ip, jp, tblock)
-               filled(ip, jp, ximg) = .TRUE.
+               CALL hfx_block_mask_set(filled, ip, jp, ximg, natom)
             END IF
             DEALLOCATE (tblock)
          ELSE
@@ -7471,7 +7544,7 @@ CONTAINS
             CALL dbcsr_get_stored_coordinates(ks_full(ximg), ip, jp, owner)
             IF (owner == mynode) THEN
                CALL dbcsr_put_block(ks_full(ximg), ip, jp, rblock)
-               filled(ip, jp, ximg) = .TRUE.
+               CALL hfx_block_mask_set(filled, ip, jp, ximg, natom)
             END IF
             DEALLOCATE (rblock)
          END IF
@@ -7508,19 +7581,21 @@ CONTAINS
       INTEGER                                            :: b, g, i, ip, j, jp, mb_img, r, ximg
       INTEGER, DIMENSION(3)                              :: bcell, xcell
       LOGICAL                                            :: found
-      LOGICAL, ALLOCATABLE, DIMENSION(:, :, :)           :: covered, present
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: covered, present
 
       usable = .FALSE.
-      ALLOCATE (PRESENT(natom, natom, nimg), covered(natom, natom, nimg))
-      PRESENT(:, :, :) = .FALSE.
-      covered(:, :, :) = .FALSE.
+      ALLOCATE (present(hfx_block_mask_size(natom, nimg)), covered(hfx_block_mask_size(natom, nimg)))
+      present(:) = 0_int_8
+      covered(:) = 0_int_8
       DO b = 1, nimg
          mb_img = get_opp_index(b, qs_env)
          DO j = 1, natom
             DO i = 1, natom
-               PRESENT(i, j, b) = sparsity_pattern(i, j, b) >= 0
+               IF (sparsity_pattern(i, j, b) >= 0) &
+                  CALL hfx_block_mask_set(present, i, j, b, natom)
                IF (mb_img > 0 .AND. mb_img <= nimg) THEN
-                  PRESENT(i, j, b) = PRESENT(i, j, b) .OR. sparsity_pattern(j, i, mb_img) >= 0
+                  IF (sparsity_pattern(j, i, mb_img) >= 0) &
+                     CALL hfx_block_mask_set(present, i, j, b, natom)
                END IF
             END DO
          END DO
@@ -7532,13 +7607,18 @@ CONTAINS
          DO b = 1, nimg
             IF (img_rep(b) /= r) CYCLE
             IF (b == r) THEN
-               covered(:, :, r) = covered(:, :, r) .OR. PRESENT(:, :, r)
+               DO j = 1, natom
+                  DO i = 1, natom
+                     IF (hfx_block_mask_test(present, i, j, r, natom)) &
+                        CALL hfx_block_mask_set(covered, i, j, r, natom)
+                  END DO
+               END DO
                CYCLE
             END IF
             g = img_op(b)
             DO j = 1, natom
                DO i = 1, natom
-                  IF (.NOT. PRESENT(i, j, r)) CYCLE
+                  IF (.NOT. hfx_block_mask_test(present, i, j, r, natom)) CYCLE
                   xcell = MATMUL(TRANSPOSE(op_frac(:, :, g)), bcell) + op_shift(:, j, g) - op_shift(:, i, g)
                   IF (img_inv(b)) THEN
                      ip = op_map(j, g)
@@ -7549,12 +7629,21 @@ CONTAINS
                      jp = op_map(j, g)
                   END IF
                   CALL hfx_image_from_cell(kpoints, xcell, ximg, found)
-                  IF (found .AND. ximg >= 1 .AND. ximg <= nimg) covered(ip, jp, ximg) = .TRUE.
+                  IF (found .AND. ximg >= 1 .AND. ximg <= nimg) &
+                     CALL hfx_block_mask_set(covered, ip, jp, ximg, natom)
                END DO
             END DO
          END DO
       END DO
-      usable = ALL(covered .OR. .NOT. present)
+      usable = .TRUE.
+      DO b = 1, nimg
+         DO j = 1, natom
+            DO i = 1, natom
+               IF (hfx_block_mask_test(present, i, j, b, natom) .AND. &
+                   .NOT. hfx_block_mask_test(covered, i, j, b, natom)) usable = .FALSE.
+            END DO
+         END DO
+      END DO
       DEALLOCATE (present, covered)
    END SUBROUTINE hfx_check_block_coverage
 
