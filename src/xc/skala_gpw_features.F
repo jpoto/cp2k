@@ -12,9 +12,6 @@ MODULE skala_gpw_features
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
    USE cp_array_utils,                  ONLY: cp_3d_r_cp_type
-   USE cp_log_handling,                 ONLY: cp_get_default_logger,&
-                                              cp_logger_type
-   USE cp_output_handling,              ONLY: high_print_level
    USE kinds,                           ONLY: dp,&
                                               int_8
    USE message_passing,                 ONLY: mp_comm_type
@@ -666,10 +663,8 @@ CONTAINS
       TYPE(pw_r3d_rs_type), OPTIONAL, POINTER            :: weights
       LOGICAL                                            :: matches
 
-      INTEGER                                            :: print_level
       LOGICAL                                            :: has_weights, signature_has_weights
       REAL(KIND=dp)                                      :: weight_sum, weight_sumsq
-      TYPE(cp_logger_type), POINTER                      :: logger
 
       matches = .FALSE.
 
@@ -679,24 +674,19 @@ CONTAINS
       END IF
       IF (cached_layout%has_weights .NEQV. has_weights) RETURN
 
-      ! The integration weights are fully determined by the cache keys (grid,
-      ! cell, atom positions and partition). Comparing their moments is only a
-      ! consistency check, so skip the O(Ngrid) reduction unless the global
-      ! print level requests it.
-      logger => cp_get_default_logger()
-      print_level = -1
-      IF (ASSOCIATED(logger)) print_level = logger%print_level
-      IF (print_level >= high_print_level) THEN
-         IF (PRESENT(weights)) THEN
-            CALL weights_signature(weights, signature_has_weights, weight_sum, weight_sumsq)
-         ELSE
-            CALL weights_signature(has_weights=signature_has_weights, weight_sum=weight_sum, &
-                                   weight_sumsq=weight_sumsq)
-         END IF
-         IF (signature_has_weights .NEQV. has_weights) RETURN
-         IF (ABS(cached_layout%weight_sum - weight_sum) > layout_tol) RETURN
-         IF (ABS(cached_layout%weight_sumsq - weight_sumsq) > layout_tol) RETURN
+      ! The integration weights feed both the cached weight arrays and the
+      ! static Torch tensors, so always compare their signature. Do not gate
+      ! this on the print level: a stale weights fingerprint would silently
+      ! reuse an otherwise-invalid layout.
+      IF (PRESENT(weights)) THEN
+         CALL weights_signature(weights, signature_has_weights, weight_sum, weight_sumsq)
+      ELSE
+         CALL weights_signature(has_weights=signature_has_weights, weight_sum=weight_sum, &
+                                weight_sumsq=weight_sumsq)
       END IF
+      IF (signature_has_weights .NEQV. has_weights) RETURN
+      IF (ABS(cached_layout%weight_sum - weight_sum) > layout_tol) RETURN
+      IF (ABS(cached_layout%weight_sumsq - weight_sumsq) > layout_tol) RETURN
 
       matches = .TRUE.
 

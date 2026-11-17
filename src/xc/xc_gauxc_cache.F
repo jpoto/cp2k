@@ -60,6 +60,30 @@ MODULE xc_gauxc_cache
       CHARACTER(LEN=default_string_length), ALLOCATABLE :: kind_basis_names(:)
    END TYPE cp_gauxc_cache_params
 
+   ! Cached dense->DBCSR block layout for one GauXC cache instance. The
+   ! template's block sizes and distributions, together with the owned
+   ! upper-triangular block list, are reused across SCF steps; only the block
+   ! values are pushed with dbcsr_put_block each call.
+   TYPE dense_to_dbcsr_layout_type
+      LOGICAL                                      :: valid = .FALSE.
+      INTEGER                                      :: nrows = -1
+      INTEGER                                      :: ncols = -1
+      INTEGER                                      :: nblkrows = -1
+      INTEGER                                      :: nblkcols = -1
+      INTEGER                                      :: mynode = -1
+      INTEGER                                      :: myprow = -1
+      INTEGER                                      :: mypcol = -1
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: row_blk_size
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: col_blk_size
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: row_dist
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: col_dist
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: r_offset
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: c_offset
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: blk_row
+      INTEGER, ALLOCATABLE, DIMENSION(:)           :: blk_col
+      REAL(c_double), ALLOCATABLE, DIMENSION(:, :) :: blk
+   END TYPE dense_to_dbcsr_layout_type
+
    TYPE, extends(cp_gauxc_cache_params)            :: cp_gauxc_cache_type
       TYPE(cp_gauxc_molecule_type)                 :: molecule = cp_gauxc_molecule_type()
       TYPE(cp_gauxc_basisset_type)                 :: basisset = cp_gauxc_basisset_type()
@@ -69,6 +93,7 @@ MODULE xc_gauxc_cache
       TYPE(cp_gauxc_integrator_type)               :: gradient_integrator = cp_gauxc_integrator_type()
       TYPE(cp_gauxc_xc_type)                       :: xc_result = cp_gauxc_xc_type()
       TYPE(cp_gauxc_xc_gradient_type)              :: xc_gradient = cp_gauxc_xc_gradient_type()
+      TYPE(dense_to_dbcsr_layout_type)             :: dense_layout
       REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: vxc_channel, density_scalar, density_zeta
       INTEGER                                      :: mpi_comm = -1
       LOGICAL                                      :: is_init = .FALSE.
@@ -83,6 +108,7 @@ MODULE xc_gauxc_cache
 
    PUBLIC :: &
       cp_gauxc_cache_type, &
+      dense_to_dbcsr_layout_type, &
       gauxc_cache_init, &
       gauxc_cache_is_valid, &
       gauxc_cache_ensure_gradient, &
@@ -410,6 +436,14 @@ CONTAINS
       IF (ALLOCATED(cache%vxc_channel)) DEALLOCATE (cache%vxc_channel)
       IF (ALLOCATED(cache%density_scalar)) DEALLOCATE (cache%density_scalar)
       IF (ALLOCATED(cache%density_zeta)) DEALLOCATE (cache%density_zeta)
+      IF (ALLOCATED(cache%dense_layout%row_blk_size)) THEN
+         DEALLOCATE (cache%dense_layout%row_blk_size, cache%dense_layout%col_blk_size, &
+                     cache%dense_layout%row_dist, cache%dense_layout%col_dist, &
+                     cache%dense_layout%r_offset, cache%dense_layout%c_offset, &
+                     cache%dense_layout%blk_row, cache%dense_layout%blk_col, &
+                     cache%dense_layout%blk)
+      END IF
+      cache%dense_layout%valid = .FALSE.
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
       cache%is_init = .FALSE.

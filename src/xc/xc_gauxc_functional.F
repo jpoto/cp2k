@@ -52,6 +52,7 @@ MODULE xc_gauxc_functional
    USE string_utilities,                ONLY: uppercase
    USE xc_gauxc_cache,                  ONLY: cp_gauxc_cache_params,&
                                               cp_gauxc_cache_type,&
+                                              dense_to_dbcsr_layout_type,&
                                               gauxc_cache_ensure_gradient,&
                                               gauxc_cache_init
    USE xc_gauxc_interface,              ONLY: &
@@ -71,29 +72,6 @@ MODULE xc_gauxc_functional
 
    PUBLIC :: apply_gauxc, gauxc_gapw_all_all_electron, gauxc_gapw_all_pseudopotentials, &
              gauxc_gapw_has_paw_pseudopotentials, skala_info
-
-   ! Cached block layout for dense_to_dbcsr_into. The template's block sizes,
-   ! distribution and offsets are invariant across SCF steps, so the owned
-   ! upper-triangular block list is built once and reused; only the block values
-   ! are pushed with dbcsr_put_block each call.
-   TYPE dense_to_dbcsr_layout_type
-      LOGICAL                                            :: valid = .FALSE.
-      INTEGER                                            :: nrows = -1
-      INTEGER                                            :: ncols = -1
-      INTEGER                                            :: nblkrows = -1
-      INTEGER                                            :: nblkcols = -1
-      INTEGER                                            :: mynode = -1
-      INTEGER                                            :: myprow = -1
-      INTEGER                                            :: mypcol = -1
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: row_blk_size
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: col_blk_size
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: r_offset
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: c_offset
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: blk_row
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: blk_col
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: blk
-   END TYPE dense_to_dbcsr_layout_type
-   TYPE(dense_to_dbcsr_layout_type), SAVE               :: dense_layout
 
 CONTAINS
 
@@ -351,7 +329,7 @@ CONTAINS
 !> \param template_dbcsr Template DBCSR matrix for distribution and block sizes
 !> \param dbcsr_mat Output DBCSR matrix with full upper block structure
 ! **************************************************************************************************
-   SUBROUTINE dense_to_dbcsr_into(dense_mat, template_dbcsr, dbcsr_mat)
+   SUBROUTINE dense_to_dbcsr_into(layout, dense_mat, template_dbcsr, dbcsr_mat)
       USE cp_dbcsr_api, ONLY: &
          dbcsr_clear, &
          dbcsr_create, &
@@ -364,6 +342,7 @@ CONTAINS
          dbcsr_release, &
          dbcsr_type_symmetric, &
          dbcsr_work_create
+      TYPE(dense_to_dbcsr_layout_type), INTENT(INOUT)    :: layout
       REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: dense_mat
       TYPE(dbcsr_p_type), INTENT(IN)                     :: template_dbcsr
       TYPE(dbcsr_p_type), INTENT(INOUT)                  :: dbcsr_mat
@@ -392,9 +371,10 @@ CONTAINS
 
       ! The block layout is invariant for a given template/distribution; build the
       ! owned upper-triangular block list once and only push values each SCF.
-      IF (.NOT. dense_layout_matches(dense_layout, nrows, ncols, nblkrows_total, nblkcols_total, &
-                                     mynode, myprow, mypcol, row_blk_size, col_blk_size)) THEN
-         CALL build_dense_layout(dense_layout, nrows, ncols, nblkrows_total, nblkcols_total, &
+      IF (.NOT. dense_layout_matches(layout, nrows, ncols, nblkrows_total, nblkcols_total, &
+                                     mynode, myprow, mypcol, row_blk_size, col_blk_size, &
+                                     row_dist, col_dist)) THEN
+         CALL build_dense_layout(layout, nrows, ncols, nblkrows_total, nblkcols_total, &
                                  mynode, myprow, mypcol, row_blk_size, col_blk_size, &
                                  row_dist, col_dist)
       END IF
@@ -418,19 +398,19 @@ CONTAINS
       END IF
       CALL dbcsr_work_create(dbcsr_mat%matrix, work_mutable=.TRUE.)
 
-      DO ib = 1, SIZE(dense_layout%blk_row)
-         irow = dense_layout%blk_row(ib)
-         icol = dense_layout%blk_col(ib)
-         nr = dense_layout%row_blk_size(irow)
-         nc = dense_layout%col_blk_size(icol)
-         dense_layout%blk(1:nr, 1:nc) = 0.5_dp*( &
-                                        dense_mat(dense_layout%r_offset(irow):dense_layout%r_offset(irow) + nr - 1, &
-                                                  dense_layout%c_offset(icol):dense_layout%c_offset(icol) + nc - 1) + &
-                                        TRANSPOSE(dense_mat(dense_layout%r_offset(icol):dense_layout%r_offset(icol) + &
-                                                            dense_layout%row_blk_size(icol) - 1, &
-                                                            dense_layout%c_offset(irow):dense_layout%c_offset(irow) + &
-                                                            dense_layout%col_blk_size(irow) - 1)))
-         CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, dense_layout%blk(1:nr, 1:nc))
+      DO ib = 1, SIZE(layout%blk_row)
+         irow = layout%blk_row(ib)
+         icol = layout%blk_col(ib)
+         nr = layout%row_blk_size(irow)
+         nc = layout%col_blk_size(icol)
+         layout%blk(1:nr, 1:nc) = 0.5_dp*( &
+                                   dense_mat(layout%r_offset(irow):layout%r_offset(irow) + nr - 1, &
+                                             layout%c_offset(icol):layout%c_offset(icol) + nc - 1) + &
+                                   TRANSPOSE(dense_mat(layout%r_offset(icol):layout%r_offset(icol) + &
+                                                       layout%row_blk_size(icol) - 1, &
+                                                       layout%c_offset(irow):layout%c_offset(irow) + &
+                                                       layout%col_blk_size(irow) - 1)))
+         CALL dbcsr_put_block(dbcsr_mat%matrix, irow, icol, layout%blk(1:nr, 1:nc))
       END DO
 
       CALL dbcsr_finalize(dbcsr_mat%matrix)
@@ -451,11 +431,12 @@ CONTAINS
 !> \return ...
 ! **************************************************************************************************
    FUNCTION dense_layout_matches(layout, nrows, ncols, nblkrows, nblkcols, mynode, myprow, mypcol, &
-                                 row_blk_size, col_blk_size) RESULT(matches)
+                                 row_blk_size, col_blk_size, row_dist, col_dist) RESULT(matches)
       TYPE(dense_to_dbcsr_layout_type), INTENT(IN)       :: layout
       INTEGER, INTENT(IN)                                :: nrows, ncols, nblkrows, nblkcols, &
                                                             mynode, myprow, mypcol
-      INTEGER, DIMENSION(:), INTENT(IN)                  :: row_blk_size, col_blk_size
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: row_blk_size, col_blk_size, row_dist, &
+                                                            col_dist
       LOGICAL                                            :: matches
 
       matches = layout%valid .AND. layout%nrows == nrows .AND. layout%ncols == ncols .AND. &
@@ -463,15 +444,21 @@ CONTAINS
                 layout%mynode == mynode .AND. layout%myprow == myprow .AND. &
                 layout%mypcol == mypcol
       IF (matches) THEN
-         matches = ALLOCATED(layout%row_blk_size) .AND. ALLOCATED(layout%col_blk_size)
+         matches = ALLOCATED(layout%row_blk_size) .AND. ALLOCATED(layout%col_blk_size) .AND. &
+                   ALLOCATED(layout%row_dist) .AND. ALLOCATED(layout%col_dist)
       END IF
       IF (matches) THEN
          matches = SIZE(layout%row_blk_size) == SIZE(row_blk_size) .AND. &
-                   SIZE(layout%col_blk_size) == SIZE(col_blk_size)
+                   SIZE(layout%col_blk_size) == SIZE(col_blk_size) .AND. &
+                   SIZE(layout%row_dist) == SIZE(row_dist) .AND. &
+                   SIZE(layout%col_dist) == SIZE(col_dist)
       END IF
       IF (matches) THEN
          matches = ALL(layout%row_blk_size == row_blk_size) .AND. &
                    ALL(layout%col_blk_size == col_blk_size)
+      END IF
+      IF (matches) THEN
+         matches = ALL(layout%row_dist == row_dist) .AND. ALL(layout%col_dist == col_dist)
       END IF
    END FUNCTION dense_layout_matches
 
@@ -503,14 +490,17 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: local_cols, local_rows
 
       IF (ALLOCATED(layout%row_blk_size)) THEN
-         DEALLOCATE (layout%row_blk_size, layout%col_blk_size, layout%r_offset, layout%c_offset, &
-                     layout%blk_row, layout%blk_col, layout%blk)
+         DEALLOCATE (layout%row_blk_size, layout%col_blk_size, layout%row_dist, layout%col_dist, &
+                     layout%r_offset, layout%c_offset, layout%blk_row, layout%blk_col, layout%blk)
       END IF
 
       ALLOCATE (layout%row_blk_size(nblkrows), layout%col_blk_size(nblkcols), &
+                layout%row_dist(nblkrows), layout%col_dist(nblkcols), &
                 layout%r_offset(nblkrows), layout%c_offset(nblkcols))
       layout%row_blk_size = row_blk_size
       layout%col_blk_size = col_blk_size
+      layout%row_dist = row_dist
+      layout%col_dist = col_dist
       layout%r_offset(1) = 1
       DO row = 2, nblkrows
          layout%r_offset(row) = layout%r_offset(row - 1) + row_blk_size(row - 1)
@@ -1878,7 +1868,8 @@ CONTAINS
          IF (params%nspins == 1) THEN
             IF (img == 1) THEN
                CALL timeset("gauxc_vxc_assembly", assembly_handle)
-               CALL dense_to_dbcsr_into(cache%xc_result%vxc_scalar, rho_ao(1, img), &
+               CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_scalar, &
+                                        rho_ao(1, img), &
                                         matrix_vxc(1))
                CALL timestop(assembly_handle)
             ELSE
@@ -1899,8 +1890,10 @@ CONTAINS
                                              cache%xc_result%vxc_zeta(:, :)
             IF (img == 1) THEN
                CALL timeset("gauxc_vxc_assembly", assembly_handle)
-               CALL dense_to_dbcsr_into(cache%vxc_channel, rho_ao(1, 1), matrix_vxc(1))
-               CALL dense_to_dbcsr_into(cache%xc_result%vxc_zeta, rho_ao(2, 1), matrix_vxc(2))
+               CALL dense_to_dbcsr_into(cache%dense_layout, cache%vxc_channel, rho_ao(1, 1), &
+                                        matrix_vxc(1))
+               CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_zeta, rho_ao(2, 1), &
+                                        matrix_vxc(2))
                CALL timestop(assembly_handle)
             ELSE
                CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
