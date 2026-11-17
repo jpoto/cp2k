@@ -18,6 +18,15 @@ MODULE skala_gpw_features
    USE particle_types,                  ONLY: particle_type
    USE pw_grid_types,                   ONLY: pw_grid_type
    USE pw_types,                        ONLY: pw_r3d_rs_type
+   USE skala_feature_keys,              ONLY: skala_key_atomic_grid_size_bound_shape,&
+                                              skala_key_atomic_grid_sizes,&
+                                              skala_key_atomic_grid_weights,&
+                                              skala_key_coarse_0_atomic_coords,&
+                                              skala_key_density,&
+                                              skala_key_grad,&
+                                              skala_key_grid_coords,&
+                                              skala_key_grid_weights,&
+                                              skala_key_kin
    USE torch_api,                       ONLY: &
         staged_upload, torch_dict_clone, torch_dict_create, torch_dict_insert, torch_dict_release, &
         torch_dict_type, torch_pinned_finish, torch_pinned_reserve, torch_stream_synchronize, &
@@ -65,9 +74,8 @@ MODULE skala_gpw_features
       INTEGER, DIMENSION(3)                              :: cell_perd = 0, npts = 0
       INTEGER                                            :: comm_handle = -1
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: dynamic_counts, dynamic_displs, &
-                                                            chunk_feature_counts, chunk_feature_displs, &
-                                                            feature_source_points, global_to_feature, &
-                                                            local_feature_counts, local_feature_offsets, &
+                                                            feature_source_points, &
+                                                            local_feature_offsets, &
                                                             local_feature_rows, &
                                                             chunk_return_positions, route_chunk_offsets, &
                                                             route_chunk_rows, route_row_offsets, &
@@ -82,7 +90,6 @@ MODULE skala_gpw_features
                                                             route_feature_recv_displs, &
                                                             route_send_local_features, &
                                                             route_recv_chunk_rows
-      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)           :: feature_index
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes, chunk_atomic_grid_sizes
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape, &
                                                             chunk_atomic_grid_size_bound_shape
@@ -167,7 +174,6 @@ MODULE skala_gpw_features
                                                            route_feature_recv_displs => NULL(), &
                                                            route_send_local_features => NULL(), &
                                                            route_recv_chunk_rows => NULL()
-      INTEGER, ALLOCATABLE, DIMENSION(:, :, :)          :: feature_index
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)    :: atomic_grid_sizes
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :) :: atomic_grid_size_bound_shape
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)          :: atomic_grid_weights, grid_weights
@@ -719,11 +725,12 @@ CONTAINS
          my_atom_partition, natom, nfeature_local, nflat, nflat_local, npoint, nproc, nx, ny, &
          owner, pe, pe_index, phase_handle, row, source_global, source_local, static_base
       INTEGER, ALLOCATABLE, DIMENSION(:) :: atom_chunk_owner, atom_offset, atom_position, &
-         chunk_atom_begin, chunk_atom_end, cursor, dist_counts, dist_cursor, dist_displs, &
-         dist_recv_counts, dist_recv_displs, dist_send_counts, dist_send_displs, feature_counts, &
-         feature_displs, global_owner, global_source_points, local_feature_counts_tmp, &
-         local_owner, local_source_global, local_source_points, point_counts, point_displs, &
-         static_counts, static_displs
+         chunk_atom_begin, chunk_atom_end, chunk_feature_counts, chunk_feature_displs, cursor, &
+         dist_counts, dist_cursor, dist_displs, dist_recv_counts, dist_recv_displs, &
+         dist_send_counts, dist_send_displs, feature_counts, feature_displs, global_owner, &
+         global_source_points, global_to_feature, local_feature_counts_tmp, local_owner, &
+         local_source_global, local_source_points, point_counts, point_displs, static_counts, &
+         static_displs
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL                                            :: has_weights, nonperiodic
       REAL(KIND=dp)                                      :: atomic_base_weight, base_weight, &
@@ -766,12 +773,6 @@ CONTAINS
          ALLOCATE (local_source_points(max_local_features), point_counts(nproc), &
                    point_displs(nproc))
       END IF
-      IF (needs_full_static_tensors) THEN
-         ALLOCATE (cached_layout%feature_index(bo(1, 1):bo(2, 1), &
-                                               bo(1, 2):bo(2, 2), &
-                                               bo(1, 3):bo(2, 3)))
-         cached_layout%feature_index = 0
-      END IF
       local_feature_counts_tmp = 0
       DO iatom = 1, natom
          atom_coords_pbc(:, iatom) = pbc(particle_set(iatom)%r, cell, positive_range=.TRUE.)
@@ -812,7 +813,6 @@ CONTAINS
                   IF (PRESENT(weights)) THEN
                      IF (ASSOCIATED(weights)) base_weight = base_weight*weights%array(i, j, k)
                   END IF
-                  IF (needs_full_static_tensors) cached_layout%feature_index(i, j, k) = local_row
                   owner = nearest_atom(grid_point, atom_coords_pbc, cell)
                   local_feature_counts_tmp(local_row) = 1
                   local_owner(local_row) = owner
@@ -847,7 +847,6 @@ CONTAINS
                   IF (PRESENT(weights)) THEN
                      IF (ASSOCIATED(weights)) base_weight = base_weight*weights%array(i, j, k)
                   END IF
-                  IF (needs_full_static_tensors) cached_layout%feature_index(i, j, k) = local_row
                   IF (nonperiodic) THEN
                      CALL smooth_atom_partition(grid_point, atom_coords_pbc, cell, &
                                                 partition_weights, partition_atom_coords, distances, &
@@ -942,24 +941,21 @@ CONTAINS
       END IF
       CALL timestop(phase_handle)
 
-      ALLOCATE (cached_layout%chunk_feature_counts(nproc), &
-                cached_layout%chunk_feature_displs(nproc), &
+      ALLOCATE (chunk_feature_counts(nproc), chunk_feature_displs(nproc), &
                 cached_layout%route_point_recv_counts(nproc), &
                 cached_layout%route_point_recv_displs(nproc), &
                 cached_layout%route_point_send_counts(nproc), &
                 cached_layout%route_point_send_displs(nproc), &
                 cached_layout%atomic_grid_sizes(natom), &
-                cached_layout%local_feature_counts(nflat_local), &
                 cached_layout%local_feature_offsets(nflat_local + 1), &
                 cached_layout%local_feature_rows(nfeature_local), &
                 atom_offset(natom + 1), chunk_atom_begin(nproc), chunk_atom_end(nproc))
       cached_layout%atomic_grid_sizes = 0_int_8
-      cached_layout%local_feature_counts(:) = local_feature_counts_tmp
       cached_layout%local_feature_offsets(1) = 1
       DO local_row = 1, nflat_local
          cached_layout%local_feature_offsets(local_row + 1) = &
             cached_layout%local_feature_offsets(local_row) + &
-            cached_layout%local_feature_counts(local_row)
+            local_feature_counts_tmp(local_row)
       END DO
 
       IF (needs_local_static) THEN
@@ -975,11 +971,11 @@ CONTAINS
       IF (needs_full_static_tensors) THEN
          ALLOCATE (cached_layout%dynamic_counts(nproc), cached_layout%dynamic_displs(nproc), &
                    cached_layout%feature_source_points(nflat), &
-                   cached_layout%global_to_feature(npoint), &
+                   global_to_feature(npoint), &
                    atom_position(natom), cursor(nflat_local))
          cached_layout%dynamic_counts(:) = ndynamic_per_point*point_counts
          cached_layout%dynamic_displs(:) = ndynamic_per_point*point_displs
-         cached_layout%global_to_feature = 0
+         global_to_feature = 0
          cursor(:) = cached_layout%local_feature_offsets(1:nflat_local)
          DO ipt = 1, nflat
             cached_layout%atomic_grid_sizes(global_owner(ipt)) = &
@@ -1043,12 +1039,11 @@ CONTAINS
       max_grid_size = MAXVAL(INT(cached_layout%atomic_grid_sizes))
       CALL build_atom_chunks(cached_layout%atomic_grid_sizes, atom_offset, nproc, &
                              chunk_atom_begin, chunk_atom_end, &
-                             cached_layout%chunk_feature_counts, &
-                             cached_layout%chunk_feature_displs)
+                             chunk_feature_counts, chunk_feature_displs)
       cached_layout%chunk_atom_begin = chunk_atom_begin(pe_index)
       cached_layout%chunk_atom_end = chunk_atom_end(pe_index)
-      cached_layout%chunk_feature_begin = cached_layout%chunk_feature_displs(pe_index) + 1
-      cached_layout%chunk_feature_count = cached_layout%chunk_feature_counts(pe_index)
+      cached_layout%chunk_feature_begin = chunk_feature_displs(pe_index) + 1
+      cached_layout%chunk_feature_count = chunk_feature_counts(pe_index)
       cached_layout%chunk_natom = cached_layout%chunk_atom_end - &
                                   cached_layout%chunk_atom_begin + 1
 
@@ -1084,8 +1079,8 @@ CONTAINS
             atom_position(owner) = atom_position(owner) + 1
             source_global = global_source_points(ipt)
             cached_layout%feature_source_points(row) = source_global
-            IF (cached_layout%global_to_feature(source_global) == 0) THEN
-               cached_layout%global_to_feature(source_global) = row
+            IF (global_to_feature(source_global) == 0) THEN
+               global_to_feature(source_global) = row
             END IF
             static_base = nstatic_per_point*(ipt - 1)
             cached_layout%grid_coords(:, row) = global_static(static_base + 1:static_base + 3)
@@ -1107,17 +1102,8 @@ CONTAINS
                END IF
             END IF
          END DO
-         CPASSERT(ALL(cached_layout%global_to_feature > 0))
+         CPASSERT(ALL(global_to_feature > 0))
          CPASSERT(ALL(cached_layout%local_feature_rows > 0))
-         DO k = bo(1, 3), bo(2, 3)
-            DO j = bo(1, 2), bo(2, 2)
-               DO i = bo(1, 1), bo(2, 1)
-                  local_row = cached_layout%feature_index(i, j, k)
-                  cached_layout%feature_index(i, j, k) = &
-                     cached_layout%local_feature_rows(cached_layout%local_feature_offsets(local_row))
-               END DO
-            END DO
-         END DO
       ELSE
          CPASSERT(ALL(cached_layout%local_feature_rows > 0))
       END IF
@@ -1257,13 +1243,13 @@ CONTAINS
       CALL torch_tensor_to_device_leaf(cache%atomic_grid_size_bound_shape_t, .FALSE.)
 
       CALL torch_dict_create(cache%static_inputs)
-      CALL torch_dict_insert(cache%static_inputs, "grid_coords", cache%grid_coords_t)
-      CALL torch_dict_insert(cache%static_inputs, "grid_weights", cache%grid_weights_t)
-      CALL torch_dict_insert(cache%static_inputs, "atomic_grid_weights", &
+      CALL torch_dict_insert(cache%static_inputs, skala_key_grid_coords, cache%grid_coords_t)
+      CALL torch_dict_insert(cache%static_inputs, skala_key_grid_weights, cache%grid_weights_t)
+      CALL torch_dict_insert(cache%static_inputs, skala_key_atomic_grid_weights, &
                              cache%atomic_grid_weights_t)
-      CALL torch_dict_insert(cache%static_inputs, "atomic_grid_sizes", &
+      CALL torch_dict_insert(cache%static_inputs, skala_key_atomic_grid_sizes, &
                              cache%atomic_grid_sizes_t)
-      CALL torch_dict_insert(cache%static_inputs, "atomic_grid_size_bound_shape", &
+      CALL torch_dict_insert(cache%static_inputs, skala_key_atomic_grid_size_bound_shape, &
                              cache%atomic_grid_size_bound_shape_t)
       cache%static_tensors_active = .TRUE.
 
@@ -1297,15 +1283,15 @@ CONTAINS
       CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_size_bound_shape_t, .FALSE.)
 
       CALL torch_dict_create(cache%chunk_static_inputs)
-      CALL torch_dict_insert(cache%chunk_static_inputs, "grid_coords", &
+      CALL torch_dict_insert(cache%chunk_static_inputs, skala_key_grid_coords, &
                              cache%chunk_grid_coords_t)
-      CALL torch_dict_insert(cache%chunk_static_inputs, "grid_weights", &
+      CALL torch_dict_insert(cache%chunk_static_inputs, skala_key_grid_weights, &
                              cache%chunk_grid_weights_t)
-      CALL torch_dict_insert(cache%chunk_static_inputs, "atomic_grid_weights", &
+      CALL torch_dict_insert(cache%chunk_static_inputs, skala_key_atomic_grid_weights, &
                              cache%chunk_atomic_grid_weights_t)
-      CALL torch_dict_insert(cache%chunk_static_inputs, "atomic_grid_sizes", &
+      CALL torch_dict_insert(cache%chunk_static_inputs, skala_key_atomic_grid_sizes, &
                              cache%chunk_atomic_grid_sizes_t)
-      CALL torch_dict_insert(cache%chunk_static_inputs, "atomic_grid_size_bound_shape", &
+      CALL torch_dict_insert(cache%chunk_static_inputs, skala_key_atomic_grid_size_bound_shape, &
                              cache%chunk_atomic_grid_size_bound_shape_t)
       cache%chunk_static_tensors_active = .TRUE.
 
@@ -1378,18 +1364,10 @@ CONTAINS
       TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
       LOGICAL, INTENT(IN)                                :: needs_grid_coordinate_array
 
-      CALL ensure_int_3d(features%feature_index, &
-                         LBOUND(cached_layout%feature_index, 1), &
-                         UBOUND(cached_layout%feature_index, 1), &
-                         LBOUND(cached_layout%feature_index, 2), &
-                         UBOUND(cached_layout%feature_index, 2), &
-                         LBOUND(cached_layout%feature_index, 3), &
-                         UBOUND(cached_layout%feature_index, 3))
       CALL ensure_real_1d(features%grid_weights, cached_layout%nflat)
       CALL ensure_int_1d(features%local_feature_offsets, cached_layout%nflat_local + 1)
       CALL ensure_int_1d(features%local_feature_rows, SIZE(cached_layout%local_feature_rows))
 
-      features%feature_index(:, :, :) = cached_layout%feature_index
       features%grid_weights(:) = cached_layout%grid_weights
       features%local_feature_offsets(:) = cached_layout%local_feature_offsets
       features%local_feature_rows(:) = cached_layout%local_feature_rows
@@ -1993,8 +1971,6 @@ CONTAINS
          cache%chunk_static_tensors_active = .FALSE.
       END IF
 
-      IF (ALLOCATED(cache%chunk_feature_counts)) DEALLOCATE (cache%chunk_feature_counts)
-      IF (ALLOCATED(cache%chunk_feature_displs)) DEALLOCATE (cache%chunk_feature_displs)
       IF (ALLOCATED(cache%chunk_return_positions)) DEALLOCATE (cache%chunk_return_positions)
       IF (ALLOCATED(cache%route_chunk_offsets)) DEALLOCATE (cache%route_chunk_offsets)
       IF (ALLOCATED(cache%route_chunk_rows)) DEALLOCATE (cache%route_chunk_rows)
@@ -2014,11 +1990,8 @@ CONTAINS
       IF (ALLOCATED(cache%dynamic_counts)) DEALLOCATE (cache%dynamic_counts)
       IF (ALLOCATED(cache%dynamic_displs)) DEALLOCATE (cache%dynamic_displs)
       IF (ALLOCATED(cache%feature_source_points)) DEALLOCATE (cache%feature_source_points)
-      IF (ALLOCATED(cache%global_to_feature)) DEALLOCATE (cache%global_to_feature)
-      IF (ALLOCATED(cache%feature_index)) DEALLOCATE (cache%feature_index)
       IF (ALLOCATED(cache%atomic_grid_sizes)) DEALLOCATE (cache%atomic_grid_sizes)
       IF (ALLOCATED(cache%chunk_atomic_grid_sizes)) DEALLOCATE (cache%chunk_atomic_grid_sizes)
-      IF (ALLOCATED(cache%local_feature_counts)) DEALLOCATE (cache%local_feature_counts)
       IF (ALLOCATED(cache%local_feature_offsets)) DEALLOCATE (cache%local_feature_offsets)
       IF (ALLOCATED(cache%local_feature_rows)) DEALLOCATE (cache%local_feature_rows)
       IF (ALLOCATED(cache%atomic_grid_size_bound_shape)) THEN
@@ -2146,7 +2119,6 @@ CONTAINS
                features%route_feature_recv_displs, features%route_send_local_features, &
                features%route_recv_chunk_rows)
       IF (.NOT. keep) THEN
-         IF (ALLOCATED(features%feature_index)) DEALLOCATE (features%feature_index)
          IF (ALLOCATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
          IF (ALLOCATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
          IF (ALLOCATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
@@ -2385,24 +2357,24 @@ CONTAINS
       END IF
 
       CALL torch_dict_create(features%inputs)
-      CALL torch_dict_insert(features%inputs, "grid_coords", features%grid_coords_t)
-      CALL torch_dict_insert(features%inputs, "grid_weights", features%grid_weights_t)
-      CALL torch_dict_insert(features%inputs, "atomic_grid_weights", &
+      CALL torch_dict_insert(features%inputs, skala_key_grid_coords, features%grid_coords_t)
+      CALL torch_dict_insert(features%inputs, skala_key_grid_weights, features%grid_weights_t)
+      CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_weights, &
                              features%atomic_grid_weights_t)
-      CALL torch_dict_insert(features%inputs, "atomic_grid_sizes", &
+      CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_sizes, &
                              features%atomic_grid_sizes_t)
-      CALL torch_dict_insert(features%inputs, "atomic_grid_size_bound_shape", &
+      CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_size_bound_shape, &
                              features%atomic_grid_size_bound_shape_t)
       IF (features%uses_collapsed_rks_dynamic) THEN
-         CALL torch_dict_insert(features%inputs, "density", features%density_input_t)
-         CALL torch_dict_insert(features%inputs, "grad", features%grad_input_t)
-         CALL torch_dict_insert(features%inputs, "kin", features%kin_input_t)
+         CALL torch_dict_insert(features%inputs, skala_key_density, features%density_input_t)
+         CALL torch_dict_insert(features%inputs, skala_key_grad, features%grad_input_t)
+         CALL torch_dict_insert(features%inputs, skala_key_kin, features%kin_input_t)
       ELSE
-         CALL torch_dict_insert(features%inputs, "density", features%density_t)
-         CALL torch_dict_insert(features%inputs, "grad", features%grad_t)
-         CALL torch_dict_insert(features%inputs, "kin", features%kin_t)
+         CALL torch_dict_insert(features%inputs, skala_key_density, features%density_t)
+         CALL torch_dict_insert(features%inputs, skala_key_grad, features%grad_t)
+         CALL torch_dict_insert(features%inputs, skala_key_kin, features%kin_t)
       END IF
-      CALL torch_dict_insert(features%inputs, "coarse_0_atomic_coords", &
+      CALL torch_dict_insert(features%inputs, skala_key_coarse_0_atomic_coords, &
                              features%coarse_0_atomic_coords_t)
 
    END SUBROUTINE add_subchunk_feature_tensors
@@ -2520,21 +2492,21 @@ CONTAINS
          IF (.NOT. cached_layout%chunk_inputs_active) THEN
             CALL torch_dict_clone(cached_layout%chunk_static_inputs, cached_layout%chunk_inputs)
             IF (features%uses_collapsed_rks_dynamic) THEN
-               CALL torch_dict_insert(cached_layout%chunk_inputs, "density", &
+               CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_density, &
                                       features%density_input_t)
-               CALL torch_dict_insert(cached_layout%chunk_inputs, "grad", &
+               CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_grad, &
                                       features%grad_input_t)
-               CALL torch_dict_insert(cached_layout%chunk_inputs, "kin", &
+               CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_kin, &
                                       features%kin_input_t)
             ELSE
-               CALL torch_dict_insert(cached_layout%chunk_inputs, "density", &
+               CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_density, &
                                       cached_layout%chunk_density_t)
-               CALL torch_dict_insert(cached_layout%chunk_inputs, "grad", &
+               CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_grad, &
                                       cached_layout%chunk_grad_t)
-               CALL torch_dict_insert(cached_layout%chunk_inputs, "kin", &
+               CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_kin, &
                                       cached_layout%chunk_kin_t)
             END IF
-            CALL torch_dict_insert(cached_layout%chunk_inputs, "coarse_0_atomic_coords", &
+            CALL torch_dict_insert(cached_layout%chunk_inputs, skala_key_coarse_0_atomic_coords, &
                                    cached_layout%chunk_coarse_0_atomic_coords_t)
             cached_layout%chunk_inputs_use_collapsed_rks = features%uses_collapsed_rks_dynamic
             cached_layout%chunk_inputs_active = .TRUE.
@@ -2581,38 +2553,42 @@ CONTAINS
                IF (requires_stress_grad) THEN
                   CALL torch_tensor_from_array(features%grid_coords_t, features%grid_coords)
                   CALL torch_tensor_to_device_leaf(features%grid_coords_t, .TRUE.)
-                  CALL torch_dict_insert(features%inputs, "grid_coords", features%grid_coords_t)
+                  CALL torch_dict_insert(features%inputs, skala_key_grid_coords, &
+                                         features%grid_coords_t)
                   features%owns_grid_coordinate_tensor = .TRUE.
                ELSE
                   features%grid_coords_t = cached_layout%grid_coords_t
-                  CALL torch_dict_insert(features%inputs, "grid_coords", features%grid_coords_t)
+                  CALL torch_dict_insert(features%inputs, skala_key_grid_coords, &
+                                         features%grid_coords_t)
                END IF
                CALL torch_tensor_from_array(features%grid_weights_t, features%grid_weights)
                CALL torch_tensor_to_device_leaf(features%grid_weights_t, .TRUE.)
                CALL torch_tensor_from_array(features%atomic_grid_weights_t, &
                                             features%atomic_grid_weights)
                CALL torch_tensor_to_device_leaf(features%atomic_grid_weights_t, .TRUE.)
-               CALL torch_dict_insert(features%inputs, "grid_weights", features%grid_weights_t)
-               CALL torch_dict_insert(features%inputs, "atomic_grid_weights", &
+               CALL torch_dict_insert(features%inputs, skala_key_grid_weights, &
+                                      features%grid_weights_t)
+               CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_weights, &
                                       features%atomic_grid_weights_t)
-               CALL torch_dict_insert(features%inputs, "atomic_grid_sizes", &
+               CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_sizes, &
                                       features%atomic_grid_sizes_t)
-               CALL torch_dict_insert(features%inputs, "atomic_grid_size_bound_shape", &
+               CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_size_bound_shape, &
                                       features%atomic_grid_size_bound_shape_t)
                features%owns_weight_tensors = .TRUE.
             ELSE
                CALL torch_dict_clone(cached_layout%static_inputs, features%inputs)
             END IF
-            CALL torch_dict_insert(features%inputs, "density", features%density_t)
-            CALL torch_dict_insert(features%inputs, "grad", features%grad_t)
-            CALL torch_dict_insert(features%inputs, "kin", features%kin_t)
+            CALL torch_dict_insert(features%inputs, skala_key_density, features%density_t)
+            CALL torch_dict_insert(features%inputs, skala_key_grad, features%grad_t)
+            CALL torch_dict_insert(features%inputs, skala_key_kin, features%kin_t)
          ELSE
             IF (.NOT. cached_layout%inputs_active) THEN
                CALL torch_dict_clone(cached_layout%static_inputs, cached_layout%inputs)
-               CALL torch_dict_insert(cached_layout%inputs, "density", cached_layout%density_t)
-               CALL torch_dict_insert(cached_layout%inputs, "grad", cached_layout%grad_t)
-               CALL torch_dict_insert(cached_layout%inputs, "kin", cached_layout%kin_t)
-               CALL torch_dict_insert(cached_layout%inputs, "coarse_0_atomic_coords", &
+               CALL torch_dict_insert(cached_layout%inputs, skala_key_density, &
+                                      cached_layout%density_t)
+               CALL torch_dict_insert(cached_layout%inputs, skala_key_grad, cached_layout%grad_t)
+               CALL torch_dict_insert(cached_layout%inputs, skala_key_kin, cached_layout%kin_t)
+               CALL torch_dict_insert(cached_layout%inputs, skala_key_coarse_0_atomic_coords, &
                                       cached_layout%coarse_0_atomic_coords_t)
                cached_layout%inputs_active = .TRUE.
             END IF
@@ -2627,11 +2603,11 @@ CONTAINS
             CALL torch_tensor_from_array(features%coarse_0_atomic_coords_t, &
                                          features%coarse_0_atomic_coords)
             CALL torch_tensor_to_device_leaf(features%coarse_0_atomic_coords_t, .TRUE.)
-            CALL torch_dict_insert(features%inputs, "coarse_0_atomic_coords", &
+            CALL torch_dict_insert(features%inputs, skala_key_coarse_0_atomic_coords, &
                                    features%coarse_0_atomic_coords_t)
             features%owns_coordinate_tensor = .TRUE.
          ELSE IF (my_requires_weight_grad) THEN
-            CALL torch_dict_insert(features%inputs, "coarse_0_atomic_coords", &
+            CALL torch_dict_insert(features%inputs, skala_key_coarse_0_atomic_coords, &
                                    cached_layout%coarse_0_atomic_coords_t)
          END IF
       END IF
@@ -3768,31 +3744,5 @@ CONTAINS
       buf = 0.0_dp
 
    END SUBROUTINE ensure_real_3d
-
-! **************************************************************************************************
-!> \brief Ensure a reusable 3D integer scratch buffer has the requested bounds.
-!> \param buf ...
-!> \param l1 ...
-!> \param u1 ...
-!> \param l2 ...
-!> \param u2 ...
-!> \param l3 ...
-!> \param u3 ...
-! **************************************************************************************************
-   SUBROUTINE ensure_int_3d(buf, l1, u1, l2, u2, l3, u3)
-      INTEGER, ALLOCATABLE, DIMENSION(:, :, :), &
-         INTENT(INOUT)                                   :: buf
-      INTEGER, INTENT(IN)                                :: l1, u1, l2, u2, l3, u3
-
-      IF (ALLOCATED(buf)) THEN
-         IF (LBOUND(buf, 1) == l1 .AND. UBOUND(buf, 1) == u1 .AND. &
-             LBOUND(buf, 2) == l2 .AND. UBOUND(buf, 2) == u2 .AND. &
-             LBOUND(buf, 3) == l3 .AND. UBOUND(buf, 3) == u3) RETURN
-         DEALLOCATE (buf)
-      END IF
-      ALLOCATE (buf(l1:u1, l2:u2, l3:u3))
-      buf = 0
-
-   END SUBROUTINE ensure_int_3d
 
 END MODULE skala_gpw_features

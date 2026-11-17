@@ -17,6 +17,7 @@ MODULE skala_torch_api
    USE kinds, ONLY: default_string_length, &
                     dp, &
                     int_8
+   USE skala_feature_keys, ONLY: skala_validate_feature_list
    USE torch_api, ONLY: &
       torch_dict_type, torch_model_disable_parameter_gradients, torch_model_forward_mol_tensor, &
       torch_model_freeze_preserving_method, torch_model_load_with_metadata, torch_model_release, &
@@ -73,6 +74,7 @@ CONTAINS
       BLOCK
          CHARACTER(len=default_string_length), ALLOCATABLE :: features(:)
          CALL parse_feature_list(features_json, features)
+         CALL skala_validate_feature_list(features)
          DEALLOCATE (features)
       END BLOCK
       use_fp64 = .TRUE.

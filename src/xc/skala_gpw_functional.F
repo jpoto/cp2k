@@ -34,6 +34,15 @@ MODULE skala_gpw_functional
    USE pw_types,                        ONLY: pw_c1d_gs_type,&
                                               pw_r3d_rs_type
    USE qs_grid_atom,                    ONLY: grid_atom_type
+   USE skala_feature_keys,              ONLY: skala_key_atomic_grid_size_bound_shape,&
+                                              skala_key_atomic_grid_sizes,&
+                                              skala_key_atomic_grid_weights,&
+                                              skala_key_coarse_0_atomic_coords,&
+                                              skala_key_density,&
+                                              skala_key_grad,&
+                                              skala_key_grid_coords,&
+                                              skala_key_grid_weights,&
+                                              skala_key_kin
    USE skala_gpw_features,              ONLY: &
         skala_gpw_atom_partition_hard, skala_gpw_atom_partition_smooth, &
         skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, skala_gpw_feature_build, &
@@ -1317,16 +1326,18 @@ CONTAINS
          CALL torch_dict_create(atom_ws%inputs)
          atom_ws%dict_active = .TRUE.
       END IF
-      CALL torch_dict_set(atom_ws%inputs, "grid_coords", atom_ws%grid_coords_t)
-      CALL torch_dict_set(atom_ws%inputs, "grid_weights", atom_ws%grid_weights_t)
-      CALL torch_dict_set(atom_ws%inputs, "atomic_grid_weights", atom_ws%atomic_grid_weights_t)
-      CALL torch_dict_set(atom_ws%inputs, "atomic_grid_sizes", atom_ws%atomic_grid_sizes_t)
-      CALL torch_dict_set(atom_ws%inputs, "atomic_grid_size_bound_shape", &
+      CALL torch_dict_set(atom_ws%inputs, skala_key_grid_coords, atom_ws%grid_coords_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_grid_weights, atom_ws%grid_weights_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_atomic_grid_weights, &
+                          atom_ws%atomic_grid_weights_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_atomic_grid_sizes, atom_ws%atomic_grid_sizes_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_atomic_grid_size_bound_shape, &
                           atom_ws%atomic_grid_size_bound_shape_t)
-      CALL torch_dict_set(atom_ws%inputs, "density", atom_ws%density_t)
-      CALL torch_dict_set(atom_ws%inputs, "grad", atom_ws%grad_t)
-      CALL torch_dict_set(atom_ws%inputs, "kin", atom_ws%kin_t)
-      CALL torch_dict_set(atom_ws%inputs, "coarse_0_atomic_coords", atom_ws%coarse_0_atomic_coords_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_density, atom_ws%density_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_grad, atom_ws%grad_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_kin, atom_ws%kin_t)
+      CALL torch_dict_set(atom_ws%inputs, skala_key_coarse_0_atomic_coords, &
+                          atom_ws%coarse_0_atomic_coords_t)
 
       DO iblock = 1, nblocks
          atom_ws%seg_offsets(iblock) = INT((iblock - 1)*nflat, KIND=int_8)
@@ -1710,16 +1721,16 @@ CONTAINS
                                          atomic_grid_size_bound_shape)
             CALL torch_tensor_to_device_leaf(atomic_grid_size_bound_shape_t, .FALSE.)
 
-            CALL torch_dict_set(inputs, "grid_coords", grid_coords_chunk_t)
-            CALL torch_dict_set(inputs, "grid_weights", grid_weights_chunk_t)
-            CALL torch_dict_set(inputs, "atomic_grid_weights", atomic_grid_weights_chunk_t)
-            CALL torch_dict_set(inputs, "atomic_grid_sizes", atomic_grid_sizes_chunk_t)
-            CALL torch_dict_set(inputs, "atomic_grid_size_bound_shape", &
+            CALL torch_dict_set(inputs, skala_key_grid_coords, grid_coords_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_grid_weights, grid_weights_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_atomic_grid_weights, atomic_grid_weights_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_atomic_grid_sizes, atomic_grid_sizes_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_atomic_grid_size_bound_shape, &
                                 atomic_grid_size_bound_shape_t)
-            CALL torch_dict_set(inputs, "density", density_chunk_t)
-            CALL torch_dict_set(inputs, "grad", grad_chunk_t)
-            CALL torch_dict_set(inputs, "kin", kin_chunk_t)
-            CALL torch_dict_set(inputs, "coarse_0_atomic_coords", atomic_coords_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_density, density_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_grad, grad_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_kin, kin_chunk_t)
+            CALL torch_dict_set(inputs, skala_key_coarse_0_atomic_coords, atomic_coords_chunk_t)
 
             CALL timeset("skala_atom_torch_forward", phase_handle)
             CALL skala_torch_model_get_exc_device(cached_model, inputs, grid_weights_chunk_t, &
@@ -2347,7 +2358,7 @@ CONTAINS
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
          INTENT(OUT)                                     :: kin_grad
 
-      INTEGER                                            :: feature_pos, i, j, k, local_row, row
+      INTEGER                                            :: feature_pos, local_row, row
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: density_grad_all, kin_grad_all
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad_all
       TYPE(torch_tensor_type)                            :: density_grad_t, grad_grad_t, kin_grad_t
@@ -2369,25 +2380,18 @@ CONTAINS
       density_grad = 0.0_dp
       grad_grad = 0.0_dp
       kin_grad = 0.0_dp
-      local_row = 0
-      DO k = LBOUND(features%feature_index, 3), UBOUND(features%feature_index, 3)
-         DO j = LBOUND(features%feature_index, 2), UBOUND(features%feature_index, 2)
-            DO i = LBOUND(features%feature_index, 1), UBOUND(features%feature_index, 1)
-               local_row = local_row + 1
-               DO feature_pos = features%local_feature_offsets(local_row), &
-                  features%local_feature_offsets(local_row + 1) - 1
-                  row = features%local_feature_rows(feature_pos)
-                  CPASSERT(row >= 1 .AND. row <= features%nflat)
-                  density_grad(local_row, :) = density_grad(local_row, :) + &
-                                               density_grad_all(row, :)
-                  grad_grad(local_row, :, :) = grad_grad(local_row, :, :) + &
-                                               grad_grad_all(row, :, :)
-                  kin_grad(local_row, :) = kin_grad(local_row, :) + kin_grad_all(row, :)
-               END DO
-            END DO
+      DO local_row = 1, features%nflat_local
+         DO feature_pos = features%local_feature_offsets(local_row), &
+            features%local_feature_offsets(local_row + 1) - 1
+            row = features%local_feature_rows(feature_pos)
+            CPASSERT(row >= 1 .AND. row <= features%nflat)
+            density_grad(local_row, :) = density_grad(local_row, :) + &
+                                         density_grad_all(row, :)
+            grad_grad(local_row, :, :) = grad_grad(local_row, :, :) + &
+                                         grad_grad_all(row, :, :)
+            kin_grad(local_row, :) = kin_grad(local_row, :) + kin_grad_all(row, :)
          END DO
       END DO
-      CPASSERT(local_row == features%nflat_local)
 
       CALL torch_tensor_release(density_grad_t)
       CALL torch_tensor_release(grad_grad_t)

@@ -222,15 +222,23 @@ CONTAINS
       IF (params%use_self_runtime) THEN
          ! SKALA can request a replicated molecular runtime for reproducible
          ! open-shell densities across CP2K MPI ranks.
-         cache%grid = create_cached_grid(cache%molecule, cache%basisset, params, status, &
-                                         mp_comm_self%get_handle(), .TRUE.)
+         cache%grid = gauxc_create_grid( &
+                      cache%molecule, cache%basisset, params%grid_type, params%radial_quadrature, &
+                      params%pruning_scheme, params%lb_exec_space, params%batch_size, &
+                      params%device_runtime_fill_fraction, status, &
+                      mpi_comm=mp_comm_self%get_handle(), force_new_runtime=.TRUE., &
+                      int_exec_space=params%int_exec_space)
       ELSE
          ! Use the QS force-evaluation communicator rather than GauXC's global
          ! runtime.  In mixed CDFT the diabatic states can be built on disjoint
          ! MPI subgroups; using the global communicator would make GauXC wait
          ! for ranks that are working on another state.
-         cache%grid = create_cached_grid(cache%molecule, cache%basisset, params, status, &
-                                         para_env%get_handle(), .FALSE.)
+         cache%grid = gauxc_create_grid( &
+                      cache%molecule, cache%basisset, params%grid_type, params%radial_quadrature, &
+                      params%pruning_scheme, params%lb_exec_space, params%batch_size, &
+                      params%device_runtime_fill_fraction, status, &
+                      mpi_comm=para_env%get_handle(), force_new_runtime=.FALSE., &
+                      int_exec_space=params%int_exec_space)
       END IF
       IF (status%status%code /= 0) THEN
          CALL cleanup_after_grid()
@@ -265,7 +273,7 @@ CONTAINS
       cache%natom = params%natom
       cache%nspins = params%nspins
       cache%batch_size = params%batch_size
-      cache%device_runtime_fill_fraction = REAL(params%device_runtime_fill_fraction, c_double)
+      cache%device_runtime_fill_fraction = params%device_runtime_fill_fraction
       cache%xc_fun_name = TRIM(params%xc_fun_name)
       cache%grid_type = TRIM(params%grid_type)
       cache%radial_quadrature = TRIM(params%radial_quadrature)
@@ -298,7 +306,7 @@ CONTAINS
       BLOCK
          INTEGER :: iatom
          DO iatom = 1, params%natom
-            cache%last_positions(:, iatom) = REAL(particle_set(iatom)%r(:), c_double)
+            cache%last_positions(:, iatom) = particle_set(iatom)%r(:)
          END DO
       END BLOCK
 
@@ -372,23 +380,6 @@ CONTAINS
 !> \param mpi_comm communicator to build the runtime on
 !> \param force_new force a freshly created runtime
 !> \return the new grid
-! **************************************************************************************************
-   FUNCTION create_cached_grid(molecule, basisset, params, status, mpi_comm, force_new) RESULT(grid)
-      TYPE(cp_gauxc_molecule_type), INTENT(IN)           :: molecule
-      TYPE(cp_gauxc_basisset_type), INTENT(IN)           :: basisset
-      TYPE(cp_gauxc_cache_params), INTENT(IN)            :: params
-      TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
-      INTEGER, INTENT(IN)                                :: mpi_comm
-      LOGICAL, INTENT(IN)                                :: force_new
-      TYPE(cp_gauxc_grid_type)                           :: grid
-
-      grid = gauxc_create_grid(molecule, basisset, params%grid_type, params%radial_quadrature, &
-                               params%pruning_scheme, params%lb_exec_space, params%batch_size, &
-                               params%device_runtime_fill_fraction, status, mpi_comm=mpi_comm, &
-                               force_new_runtime=force_new, int_exec_space=params%int_exec_space)
-
-   END FUNCTION create_cached_grid
-
 ! **************************************************************************************************
 !> \brief Release all GauXC objects in a cache and deallocate arrays
 !> \param cache ...
@@ -494,8 +485,13 @@ CONTAINS
       IF (.NOT. cache%is_init) RETURN
       IF (cache%gradient_is_init) RETURN
 
-      cache%gradient_grid = create_cached_grid(cache%molecule, cache%basisset, params, status, &
-                                               mp_comm_self%get_handle(), .TRUE.)
+      cache%gradient_grid = gauxc_create_grid( &
+                               cache%molecule, cache%basisset, params%grid_type, &
+                               params%radial_quadrature, params%pruning_scheme, &
+                               params%lb_exec_space, params%batch_size, &
+                               params%device_runtime_fill_fraction, status, &
+                               mpi_comm=mp_comm_self%get_handle(), force_new_runtime=.TRUE., &
+                               int_exec_space=params%int_exec_space)
       IF (status%status%code /= 0) THEN
          error_code = status%status%code
          CALL gauxc_destroy_grid(cache%gradient_grid, status)
@@ -558,7 +554,7 @@ CONTAINS
       IF (cache%natom /= params%natom) RETURN
       IF (cache%nspins /= params%nspins) RETURN
       IF (cache%batch_size /= params%batch_size) RETURN
-      IF (ABS(cache%device_runtime_fill_fraction - REAL(params%device_runtime_fill_fraction, c_double)) > &
+      IF (ABS(cache%device_runtime_fill_fraction - params%device_runtime_fill_fraction) > &
           1.0E-10_c_double) RETURN
       IF (TRIM(cache%xc_fun_name) /= TRIM(params%xc_fun_name)) RETURN
       IF (TRIM(cache%grid_type) /= TRIM(params%grid_type)) RETURN
@@ -588,7 +584,7 @@ CONTAINS
       IF (SIZE(cache%last_positions, 2) /= params%natom) RETURN
       DO iatom = 1, params%natom
          IF (ANY(ABS(cache%last_positions(:, iatom) - &
-                     REAL(particle_set(iatom)%r(:), c_double)) > pos_tol)) RETURN
+                     particle_set(iatom)%r(:)) > pos_tol)) RETURN
       END DO
       cache_valid = .TRUE.
 #else
