@@ -153,6 +153,12 @@ static std::mutex model_metadata_mutex;
 static std::unordered_map<std::string, model_metadata_entry>
     model_metadata_cache;
 
+// Deferred gradient readbacks copy on the source tensor's device stream.
+// Remember which devices have pending copies so the later
+// torch_c_stream_synchronize() waits on those devices and not merely on the
+// currently active one.
+static thread_local std::set<int> pending_grad_readback_devices;
+
 static void enable_expandable_cuda_segments_if_unconfigured() {
 #if defined(__LIBTORCH_CUDA)
   static const bool initialized = []() {
@@ -793,8 +799,18 @@ void torch_c_stream_synchronize() {
   TORCH_C_TRY
   if (torch::cuda::is_available()) {
     c10::OptionalDeviceGuard guard;
-    get_device_with_guard(guard);
+    const auto active = get_device_with_guard(guard);
     c10::cuda::getCurrentCUDAStream().synchronize();
+    for (const int device_index : pending_grad_readback_devices) {
+      if (active.is_cuda() &&
+          static_cast<int>(active.index()) == device_index) {
+        continue; // Already synchronized above.
+      }
+      c10::DeviceGuard device_guard(torch::Device(
+          torch::kCUDA, static_cast<c10::DeviceIndex>(device_index)));
+      c10::cuda::getCurrentCUDAStream().synchronize();
+    }
+    pending_grad_readback_devices.clear();
   }
   TORCH_C_CATCH("torch_c_stream_synchronize")
 }
@@ -1066,6 +1082,10 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
       c10::cuda::getCurrentCUDAStream(
           static_cast<c10::DeviceIndex>(source_device))
           .synchronize();
+    } else {
+      // The caller will synchronize later; remember the source device so the
+      // deferred sync waits on the stream the copies were actually issued on.
+      pending_grad_readback_devices.insert(source_device);
     }
     for (int i = 0; i < count; ++i) {
       grads[i] = new torch_c_tensor_t(std::move(hosts[i]));
@@ -1525,6 +1545,16 @@ void torch_c_model_read_metadata(const char *filename, const char *key,
   }
   copy_string_to_c_buffer(content_str, content, length);
   TORCH_C_CATCH("torch_c_model_read_metadata")
+}
+
+/*******************************************************************************
+ * \brief Clears the cached TorchScript model metadata.
+ ******************************************************************************/
+void torch_c_model_metadata_clear() {
+  TORCH_C_TRY
+  std::lock_guard<std::mutex> lock(model_metadata_mutex);
+  model_metadata_cache.clear();
+  TORCH_C_CATCH("torch_c_model_metadata_clear")
 }
 
 /*******************************************************************************

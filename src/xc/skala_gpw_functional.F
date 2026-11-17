@@ -57,7 +57,8 @@ MODULE skala_gpw_functional
    USE torch_api,                       ONLY: &
         staged_upload, torch_cuda_device_count, torch_cuda_is_available, torch_dict_create, &
         torch_dict_release, torch_dict_set, torch_dict_type, torch_file_stamp, &
-        torch_get_num_threads, torch_grad_pool_clear, torch_pinned_finish, torch_pinned_release, &
+        torch_get_num_threads, torch_grad_pool_clear, torch_model_metadata_clear, &
+        torch_pinned_finish, torch_pinned_release, &
         torch_pinned_reserve, torch_set_default_threads, torch_stream_synchronize, &
         torch_tensor_accumulate, torch_tensor_backward_scalar, torch_tensor_data_ptr, &
         torch_tensor_from_array, torch_tensor_grad, torch_tensor_grad_batch, &
@@ -3442,6 +3443,7 @@ CONTAINS
       END IF
       CALL torch_grad_pool_clear()
       CALL torch_pinned_release()
+      CALL torch_model_metadata_clear()
       CALL skala_gpw_feature_release(cached_features)
       IF (cached_atom_cuda_tensors_active) THEN
          CALL torch_tensor_release(cached_atom_cuda_tensors%grid_coords_t)

@@ -99,6 +99,7 @@ MODULE xc_gauxc_cache
       LOGICAL                                      :: is_init = .FALSE.
       LOGICAL                                      :: gradient_is_init = .FALSE.
       LOGICAL                                      :: gradient_notice_printed = .FALSE.
+      LOGICAL                                      :: execution_spaces_logged = .FALSE.
       REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: last_positions
    CONTAINS
 
@@ -113,8 +114,6 @@ MODULE xc_gauxc_cache
       gauxc_cache_is_valid, &
       gauxc_cache_ensure_gradient, &
       gauxc_cache_release, cp_gauxc_cache_params
-
-   LOGICAL, SAVE :: execution_spaces_logged = .FALSE.
 
 CONTAINS
 
@@ -252,14 +251,14 @@ CONTAINS
          RETURN
       END IF
 
-      IF (.NOT. execution_spaces_logged .AND. para_env%mepos == 0) THEN
+      IF (.NOT. cache%execution_spaces_logged .AND. para_env%mepos == 0) THEN
          unit_nr = cp_logger_get_default_io_unit()
          IF (unit_nr > 0) THEN
             WRITE (unit_nr, '(A)') " GAUXC| Execution spaces: LB "// &
                TRIM(params%lb_exec_space)//", INT "//TRIM(params%int_exec_space)// &
                ", runtime "//MERGE("DEVICE", "HOST  ", cache%grid%uses_device_runtime)
          END IF
-         execution_spaces_logged = .TRUE.
+         cache%execution_spaces_logged = .TRUE.
       END IF
 
       cache%gradient_is_init = .FALSE.
@@ -446,6 +445,7 @@ CONTAINS
       cache%dense_layout%valid = .FALSE.
       cache%gradient_is_init = .FALSE.
       cache%gradient_notice_printed = .FALSE.
+      cache%execution_spaces_logged = .FALSE.
       cache%is_init = .FALSE.
 
    END SUBROUTINE gauxc_cache_release

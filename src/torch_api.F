@@ -81,7 +81,8 @@ MODULE torch_api
    PUBLIC :: torch_tensor_type, torch_tensor_expand_dim, torch_tensor_from_array, &
              torch_tensor_narrow, torch_tensor_release
    PUBLIC :: torch_tensor_upload_pinned, staged_upload, torch_pinned_reserve, torch_stream_synchronize
-   PUBLIC :: torch_file_stamp, torch_grad_pool_clear, torch_pinned_finish, torch_pinned_release
+   PUBLIC :: torch_file_stamp, torch_grad_pool_clear, torch_model_metadata_clear, &
+             torch_pinned_finish, torch_pinned_release
    PUBLIC :: torch_tensor_data_ptr, torch_tensor_backward, torch_tensor_backward_scalar
    PUBLIC :: torch_tensor_grad, torch_tensor_grad_batch, torch_tensor_grad_batch3
    PUBLIC :: torch_tensor_grad_batch_deferred, torch_tensor_grad_batch3_deferred
@@ -694,6 +695,21 @@ CONTAINS
       CALL torch_c_grad_pool_clear()
 #endif
    END SUBROUTINE torch_grad_pool_clear
+
+! **************************************************************************************************
+!> \brief Clear the cached TorchScript model metadata.
+! **************************************************************************************************
+   SUBROUTINE torch_model_metadata_clear()
+
+#if defined(__LIBTORCH)
+      INTERFACE
+         SUBROUTINE torch_c_model_metadata_clear() BIND(C, name="torch_c_model_metadata_clear")
+         END SUBROUTINE torch_c_model_metadata_clear
+      END INTERFACE
+
+      CALL torch_c_model_metadata_clear()
+#endif
+   END SUBROUTINE torch_model_metadata_clear
 
 ! **************************************************************************************************
 !> \brief Returns the gradient of a Torch tensor which was computed by autograd.
