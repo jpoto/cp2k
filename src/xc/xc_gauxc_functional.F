@@ -1348,7 +1348,7 @@ CONTAINS
       INTEGER                                            :: assembly_handle, density_handle, &
                                                             gpu_mode, ikind, img, model_handle, &
                                                             nimages
-      LOGICAL :: backend_has_gpu, do_kpoints, external_density, gapw_method, &
+      LOGICAL :: backend_has_gpu, do_kpoints, external_density, gapw_method, have_zeta, &
          gapw_paw_pseudopotentials, gapw_pseudopotentials, grid_explicit, hdf5_output, &
          int_space_explicit, is_periodic, lb_space_explicit, low_spin_scope, molecular_virial, &
          molecular_virial_debug, need_xc_gradient, periodic_reference, pruning_explicit, use_cuda, &
@@ -1764,71 +1764,12 @@ CONTAINS
          IF (img > 1) THEN
             CPABORT("UNIMPLEMENTED: Handling nimg>1 in k-point integration")
          END IF
+         have_zeta = .FALSE.
          IF (params%nspins == 1) THEN
             CALL timeset("gauxc_density_dense", density_handle)
             CALL dbcsr_to_dense(rho_ao(1, img), cache%density_scalar, para_env)
             CALL para_env%sum(cache%density_scalar)
             CALL timestop(density_handle)
-            CALL timeset("gauxc_model_eval", model_handle)
-            CALL gauxc_compute_xc( &
-               cache%integrator, &
-               cache%density_scalar, &
-               cache%xc_result, &
-               nspins=params%nspins, &
-               status=gauxc_status, &
-               model=TRIM(params%model_eval_name))
-            CALL gauxc_check_status(gauxc_status)
-            CALL timestop(model_handle)
-            IF (need_xc_gradient) THEN
-               IF (params%use_fd_gradient) THEN
-                  CALL gauxc_xc_gradient_fd( &
-                     particle_set, qs_kind_set, cache%density_scalar, params%nspins, params%model_eval_name, &
-                     params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
-                     params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
-                     params%device_runtime_fill_fraction, force_numerical_gradient_dx, para_env, &
-                     cache%xc_gradient%exc_grad)
-               ELSE IF (params%use_gradient_self_runtime) THEN
-                  CALL gauxc_compute_xc_gradient( &
-                     cache%gradient_integrator, &
-                     cache%density_scalar, &
-                     cache%xc_gradient, &
-                     nspins=params%nspins, &
-                     natom=params%natom, &
-                     status=gauxc_status, &
-                     model=TRIM(params%model_eval_name))
-               ELSE
-                  ! The default and MODEL_GRADIENT_RUNTIME MPI paths both use the
-                  ! shared integrator; the policy guarantees it is the para_env
-                  ! (MPI) runtime whenever MPI is selected.
-                  CALL gauxc_compute_xc_gradient( &
-                     cache%integrator, &
-                     cache%density_scalar, &
-                     cache%xc_gradient, &
-                     nspins=params%nspins, &
-                     natom=params%natom, &
-                     status=gauxc_status, &
-                     model=TRIM(params%model_eval_name))
-               END IF
-               CALL gauxc_check_status(gauxc_status)
-               CALL assert_gauxc_gradient_replicated(cache%xc_gradient%exc_grad, para_env)
-               IF (calculate_forces) THEN
-                  CALL add_gauxc_gradient_to_force( &
-                     cache%xc_gradient%exc_grad, &
-                     force, &
-                     atomic_kind_set, &
-                     para_env)
-               END IF
-               IF (molecular_virial) THEN
-                  CALL print_gauxc_molecular_virial(cache%xc_gradient%exc_grad, particle_set, para_env)
-               END IF
-               IF (molecular_virial_debug) THEN
-                  CALL debug_gauxc_molecular_virial( &
-                     cache%xc_gradient%exc_grad, particle_set, qs_kind_set, cache%density_scalar, params%nspins, &
-                    params%model_eval_name, params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
-                     params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
-                     params%device_runtime_fill_fraction, molecular_virial_debug_dx, para_env)
-               END IF
-            END IF
          ELSE
             CPASSERT(params%nspins == 2)
             ! In here:
@@ -1847,107 +1788,23 @@ CONTAINS
             ! a second time because that is what UKS requires.
             ! This style lowers memory footprint.
             cache%density_zeta(:, :) = cache%density_scalar(:, :) - 2.0_dp*cache%density_zeta(:, :)
-            CALL timeset("gauxc_model_eval", model_handle)
-            CALL gauxc_compute_xc( &
-               cache%integrator, &
-               cache%density_scalar, &
-               cache%xc_result, &
-               cache%density_zeta, &
-               params%nspins, &
-               gauxc_status, &
-               model=TRIM(params%model_eval_name))
-            CALL gauxc_check_status(gauxc_status)
-            CALL timestop(model_handle)
-            IF (need_xc_gradient) THEN
-               IF (params%use_fd_gradient) THEN
-                  CALL gauxc_xc_gradient_fd( &
-                     particle_set, qs_kind_set, cache%density_scalar, params%nspins, params%model_eval_name, &
-                     params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
-                     params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
-                     params%device_runtime_fill_fraction, force_numerical_gradient_dx, para_env, &
-                     cache%xc_gradient%exc_grad, density_zeta=cache%density_zeta)
-               ELSE IF (params%use_gradient_self_runtime) THEN
-                  CALL gauxc_compute_xc_gradient( &
-                     cache%gradient_integrator, &
-                     cache%density_scalar, &
-                     cache%xc_gradient, &
-                     cache%density_zeta, &
-                     params%nspins, &
-                     params%natom, &
-                     gauxc_status, &
-                     model=TRIM(params%model_eval_name))
-               ELSE
-                  ! The default and MODEL_GRADIENT_RUNTIME MPI paths both use the
-                  ! shared integrator; the policy guarantees it is the para_env
-                  ! (MPI) runtime whenever MPI is selected.
-                  CALL gauxc_compute_xc_gradient( &
-                     cache%integrator, &
-                     cache%density_scalar, &
-                     cache%xc_gradient, &
-                     cache%density_zeta, &
-                     params%nspins, &
-                     params%natom, &
-                     gauxc_status, &
-                     model=TRIM(params%model_eval_name))
-               END IF
-               CALL gauxc_check_status(gauxc_status)
-               CALL assert_gauxc_gradient_replicated(cache%xc_gradient%exc_grad, para_env)
-               IF (calculate_forces) THEN
-                  CALL add_gauxc_gradient_to_force( &
-                     cache%xc_gradient%exc_grad, &
-                     force, &
-                     atomic_kind_set, &
-                     para_env)
-               END IF
-               IF (molecular_virial) THEN
-                  CALL print_gauxc_molecular_virial(cache%xc_gradient%exc_grad, particle_set, para_env)
-               END IF
-               IF (molecular_virial_debug) THEN
-                  CALL debug_gauxc_molecular_virial( &
-                     cache%xc_gradient%exc_grad, particle_set, qs_kind_set, cache%density_scalar, params%nspins, &
-                    params%model_eval_name, params%xc_fun_name, params%grid_type, params%radial_quadrature, params%pruning_scheme, &
-                     params%lb_exec_space, params%int_exec_space, params%lwd_kernel, params%batch_size, &
-                     params%device_runtime_fill_fraction, molecular_virial_debug_dx, para_env, &
-                     density_zeta=cache%density_zeta)
-               END IF
-            END IF
+            have_zeta = .TRUE.
          END IF
+
+         CALL evaluate_gauxc_forces(cache, params, para_env, particle_set, qs_kind_set, &
+                                    force, atomic_kind_set, calculate_forces, need_xc_gradient, &
+                                    molecular_virial, molecular_virial_debug, have_zeta, &
+                                    force_numerical_gradient_dx, molecular_virial_debug_dx, &
+                                    gauxc_status)
 
          exc_value = exc_value + cache%xc_result%exc
 
-         IF (params%nspins == 1) THEN
-            IF (img == 1) THEN
-               CALL timeset("gauxc_vxc_assembly", assembly_handle)
-               CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_scalar, &
-                                        rho_ao(1, img), &
-                                        matrix_vxc(1))
-               CALL timestop(assembly_handle)
-            ELSE
-               CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
-            END IF
+         IF (img == 1) THEN
+            CALL timeset("gauxc_vxc_assembly", assembly_handle)
+            CALL assemble_gauxc_vxc(cache, rho_ao, matrix_vxc, img)
+            CALL timestop(assembly_handle)
          ELSE
-            CPASSERT(params%nspins == 2)
-            ! Transform derivatives from total/spin density back to alpha/beta
-            ! channels on the host and convert each spin only once.
-            IF (.NOT. ALLOCATED(cache%vxc_channel)) THEN
-               ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
-            ELSE IF (ANY(SHAPE(cache%vxc_channel) /= SHAPE(cache%xc_result%vxc_scalar))) THEN
-               DEALLOCATE (cache%vxc_channel)
-               ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
-            END IF
-            cache%vxc_channel(:, :) = cache%xc_result%vxc_scalar(:, :) + cache%xc_result%vxc_zeta(:, :)
-            cache%xc_result%vxc_zeta(:, :) = cache%xc_result%vxc_scalar(:, :) - &
-                                             cache%xc_result%vxc_zeta(:, :)
-            IF (img == 1) THEN
-               CALL timeset("gauxc_vxc_assembly", assembly_handle)
-               CALL dense_to_dbcsr_into(cache%dense_layout, cache%vxc_channel, rho_ao(1, 1), &
-                                        matrix_vxc(1))
-               CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_zeta, rho_ao(2, 1), &
-                                        matrix_vxc(2))
-               CALL timestop(assembly_handle)
-            ELSE
-               CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
-            END IF
+            CPABORT("UNIMPLEMENTED: Handling multiple result matrices in k-point integration")
          END IF
       END DO
 
@@ -1960,5 +1817,166 @@ CONTAINS
       END IF
 
    END SUBROUTINE apply_gauxc
+
+
+! **************************************************************************************************
+!> \brief Evaluate GauXC XC and, when requested, its gradient and force/virial consumers.
+!> \param cache ...
+!> \param params ...
+!> \param para_env ...
+!> \param particle_set ...
+!> \param qs_kind_set ...
+!> \param force ...
+!> \param atomic_kind_set ...
+!> \param calculate_forces ...
+!> \param need_xc_gradient ...
+!> \param molecular_virial ...
+!> \param molecular_virial_debug ...
+!> \param have_zeta ...
+!> \param force_numerical_gradient_dx ...
+!> \param molecular_virial_debug_dx ...
+!> \param status ...
+! **************************************************************************************************
+   SUBROUTINE evaluate_gauxc_forces(cache, params, para_env, particle_set, qs_kind_set, &
+                                    force, atomic_kind_set, calculate_forces, need_xc_gradient, &
+                                    molecular_virial, molecular_virial_debug, have_zeta, &
+                                    force_numerical_gradient_dx, molecular_virial_debug_dx, &
+                                    status)
+      TYPE(cp_gauxc_cache_type), INTENT(INOUT)           :: cache
+      TYPE(cp_gauxc_cache_params), INTENT(IN)            :: params
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
+      TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
+      LOGICAL, INTENT(IN)                                :: calculate_forces, need_xc_gradient, &
+                                                            molecular_virial, molecular_virial_debug, &
+                                                            have_zeta
+      REAL(KIND=dp), INTENT(IN)                          :: force_numerical_gradient_dx, &
+                                                            molecular_virial_debug_dx
+      TYPE(cp_gauxc_status_type), INTENT(INOUT)          :: status
+
+      IF (have_zeta) THEN
+         CALL gauxc_compute_xc( &
+            cache%integrator, cache%density_scalar, cache%xc_result, cache%density_zeta, &
+            params%nspins, status, model=TRIM(params%model_eval_name))
+      ELSE
+         CALL gauxc_compute_xc( &
+            cache%integrator, cache%density_scalar, cache%xc_result, nspins=params%nspins, &
+            status=status, model=TRIM(params%model_eval_name))
+      END IF
+      CALL gauxc_check_status(status)
+
+      IF (.NOT. need_xc_gradient) RETURN
+
+      IF (params%use_fd_gradient) THEN
+         IF (have_zeta) THEN
+            CALL gauxc_xc_gradient_fd( &
+               particle_set, qs_kind_set, cache%density_scalar, params%nspins, &
+               params%model_eval_name, params%xc_fun_name, params%grid_type, &
+               params%radial_quadrature, params%pruning_scheme, params%lb_exec_space, &
+               params%int_exec_space, params%lwd_kernel, params%batch_size, &
+               params%device_runtime_fill_fraction, force_numerical_gradient_dx, para_env, &
+               cache%xc_gradient%exc_grad, density_zeta=cache%density_zeta)
+         ELSE
+            CALL gauxc_xc_gradient_fd( &
+               particle_set, qs_kind_set, cache%density_scalar, params%nspins, &
+               params%model_eval_name, params%xc_fun_name, params%grid_type, &
+               params%radial_quadrature, params%pruning_scheme, params%lb_exec_space, &
+               params%int_exec_space, params%lwd_kernel, params%batch_size, &
+               params%device_runtime_fill_fraction, force_numerical_gradient_dx, para_env, &
+               cache%xc_gradient%exc_grad)
+         END IF
+      ELSE IF (params%use_gradient_self_runtime) THEN
+         IF (have_zeta) THEN
+            CALL gauxc_compute_xc_gradient( &
+               cache%gradient_integrator, cache%density_scalar, cache%xc_gradient, &
+               cache%density_zeta, params%nspins, params%natom, status, &
+               model=TRIM(params%model_eval_name))
+         ELSE
+            CALL gauxc_compute_xc_gradient( &
+               cache%gradient_integrator, cache%density_scalar, cache%xc_gradient, &
+               nspins=params%nspins, natom=params%natom, status=status, &
+               model=TRIM(params%model_eval_name))
+         END IF
+      ELSE
+         IF (have_zeta) THEN
+            CALL gauxc_compute_xc_gradient( &
+               cache%integrator, cache%density_scalar, cache%xc_gradient, cache%density_zeta, &
+               params%nspins, params%natom, status, model=TRIM(params%model_eval_name))
+         ELSE
+            CALL gauxc_compute_xc_gradient( &
+               cache%integrator, cache%density_scalar, cache%xc_gradient, &
+               nspins=params%nspins, natom=params%natom, status=status, &
+               model=TRIM(params%model_eval_name))
+         END IF
+      END IF
+      CALL gauxc_check_status(status)
+      CALL assert_gauxc_gradient_replicated(cache%xc_gradient%exc_grad, para_env)
+
+      IF (calculate_forces) THEN
+         CALL add_gauxc_gradient_to_force( &
+            cache%xc_gradient%exc_grad, force, atomic_kind_set, para_env)
+      END IF
+      IF (molecular_virial) THEN
+         CALL print_gauxc_molecular_virial(cache%xc_gradient%exc_grad, particle_set, para_env)
+      END IF
+      IF (molecular_virial_debug) THEN
+         IF (have_zeta) THEN
+            CALL debug_gauxc_molecular_virial( &
+               cache%xc_gradient%exc_grad, particle_set, qs_kind_set, cache%density_scalar, &
+               params%nspins, params%model_eval_name, params%xc_fun_name, params%grid_type, &
+               params%radial_quadrature, params%pruning_scheme, params%lb_exec_space, &
+               params%int_exec_space, params%lwd_kernel, params%batch_size, &
+               params%device_runtime_fill_fraction, molecular_virial_debug_dx, para_env, &
+               density_zeta=cache%density_zeta)
+         ELSE
+            CALL debug_gauxc_molecular_virial( &
+               cache%xc_gradient%exc_grad, particle_set, qs_kind_set, cache%density_scalar, &
+               params%nspins, params%model_eval_name, params%xc_fun_name, params%grid_type, &
+               params%radial_quadrature, params%pruning_scheme, params%lb_exec_space, &
+               params%int_exec_space, params%lwd_kernel, params%batch_size, &
+               params%device_runtime_fill_fraction, molecular_virial_debug_dx, para_env)
+         END IF
+      END IF
+
+   END SUBROUTINE evaluate_gauxc_forces
+
+! **************************************************************************************************
+!> \brief Convert the evaluated GauXC VXC into the CP2K DBCSR matrix channels.
+!> \param cache ...
+!> \param rho_ao ...
+!> \param matrix_vxc ...
+!> \param img ...
+! **************************************************************************************************
+   SUBROUTINE assemble_gauxc_vxc(cache, rho_ao, matrix_vxc, img)
+      TYPE(cp_gauxc_cache_type), INTENT(INOUT)           :: cache
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_vxc
+      INTEGER, INTENT(IN)                                :: img
+
+      IF (SIZE(matrix_vxc) == 1) THEN
+         CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_scalar, &
+                                  rho_ao(1, img), matrix_vxc(1))
+      ELSE
+         CPASSERT(SIZE(matrix_vxc) == 2)
+         ! Transform derivatives from total/spin density back to alpha/beta
+         ! channels on the host and convert each spin only once.
+         IF (.NOT. ALLOCATED(cache%vxc_channel)) THEN
+            ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
+         ELSE IF (ANY(SHAPE(cache%vxc_channel) /= SHAPE(cache%xc_result%vxc_scalar))) THEN
+            DEALLOCATE (cache%vxc_channel)
+            ALLOCATE (cache%vxc_channel, mold=cache%xc_result%vxc_scalar)
+         END IF
+         cache%vxc_channel(:, :) = cache%xc_result%vxc_scalar(:, :) + cache%xc_result%vxc_zeta(:, :)
+         cache%xc_result%vxc_zeta(:, :) = cache%xc_result%vxc_scalar(:, :) - &
+                                          cache%xc_result%vxc_zeta(:, :)
+         CALL dense_to_dbcsr_into(cache%dense_layout, cache%vxc_channel, rho_ao(1, img), &
+                                  matrix_vxc(1))
+         CALL dense_to_dbcsr_into(cache%dense_layout, cache%xc_result%vxc_zeta, rho_ao(2, img), &
+                                  matrix_vxc(2))
+      END IF
+
+   END SUBROUTINE assemble_gauxc_vxc
 
 END MODULE xc_gauxc_functional

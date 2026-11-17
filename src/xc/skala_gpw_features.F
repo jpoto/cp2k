@@ -2408,6 +2408,47 @@ CONTAINS
    END SUBROUTINE add_subchunk_feature_tensors
 
 ! **************************************************************************************************
+!> \brief Stage-upload the three dynamic feature tensors and report reallocation.
+!> \param density_t ...
+!> \param density ...
+!> \param grad_t ...
+!> \param grad ...
+!> \param kin_t ...
+!> \param kin ...
+!> \param requires_grad ...
+!> \param cuda_device ...
+!> \param dynamic_reallocated ...
+! **************************************************************************************************
+   SUBROUTINE staged_upload_dynamic(density_t, density, grad_t, grad, kin_t, kin, &
+                                    requires_grad, cuda_device, dynamic_reallocated)
+      TYPE(torch_tensor_type), INTENT(INOUT)             :: density_t, grad_t, kin_t
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), INTENT(IN) :: density, kin
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), INTENT(IN) :: grad
+      LOGICAL, INTENT(IN)                                :: requires_grad
+      INTEGER, INTENT(IN)                                :: cuda_device
+      LOGICAL, INTENT(OUT)                               :: dynamic_reallocated
+
+      INTEGER(KIND=int_8)                                :: upload_offset, upload_total
+      LOGICAL                                            :: reallocated_density, reallocated_grad, &
+                                                            reallocated_kin
+
+      upload_total = INT(SIZE(density), KIND=int_8) + INT(SIZE(grad), KIND=int_8) + &
+                     INT(SIZE(kin), KIND=int_8)
+      IF (cuda_device >= 0) CALL torch_pinned_reserve(upload_total)
+      upload_offset = 0_int_8
+      upload_offset = staged_upload(density_t, density, upload_offset, requires_grad, &
+                                    reallocated_density)
+      upload_offset = staged_upload(grad_t, grad, upload_offset, requires_grad, &
+                                    reallocated_grad)
+      upload_offset = staged_upload(kin_t, kin, upload_offset, requires_grad, &
+                                    reallocated_kin)
+      CALL torch_stream_synchronize()
+      CALL torch_pinned_finish()
+      dynamic_reallocated = reallocated_density .OR. reallocated_grad .OR. reallocated_kin
+
+   END SUBROUTINE staged_upload_dynamic
+
+! **************************************************************************************************
 !> \brief Insert all SKALA feature tensors into the Torch dictionary.
 !> \param features ...
 !> \param requires_grad ...
@@ -2424,11 +2465,8 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: requires_weight_grad
 
       INTEGER                                            :: grad_mode
-      INTEGER(KIND=int_8)                                :: upload_offset, upload_total
       LOGICAL                                            :: dynamic_reallocated, &
-                                                            my_requires_weight_grad, &
-                                                            reallocated_density, reallocated_grad, &
-                                                            reallocated_kin
+                                                            my_requires_weight_grad
 
       my_requires_weight_grad = .FALSE.
       IF (PRESENT(requires_weight_grad)) my_requires_weight_grad = requires_weight_grad
@@ -2470,23 +2508,14 @@ CONTAINS
             cached_layout%chunk_dynamic_input_views_active = .FALSE.
          END IF
 
-         upload_total = INT(SIZE(features%chunk_density), KIND=int_8) + &
-                        INT(SIZE(features%chunk_grad), KIND=int_8) + &
-                        INT(SIZE(features%chunk_kin), KIND=int_8)
-         IF (cached_layout%cuda_device >= 0) CALL torch_pinned_reserve(upload_total)
-         upload_offset = 0_int_8
-         upload_offset = staged_upload(cached_layout%chunk_density_t, features%chunk_density, &
-                                       upload_offset, requires_grad, reallocated_density)
+         CALL staged_upload_dynamic(cached_layout%chunk_density_t, features%chunk_density, &
+                                    cached_layout%chunk_grad_t, features%chunk_grad, &
+                                    cached_layout%chunk_kin_t, features%chunk_kin, &
+                                    requires_grad, cached_layout%cuda_device, &
+                                    dynamic_reallocated)
          features%density_t = cached_layout%chunk_density_t
-         upload_offset = staged_upload(cached_layout%chunk_grad_t, features%chunk_grad, &
-                                       upload_offset, requires_grad, reallocated_grad)
          features%grad_t = cached_layout%chunk_grad_t
-         upload_offset = staged_upload(cached_layout%chunk_kin_t, features%chunk_kin, &
-                                       upload_offset, requires_grad, reallocated_kin)
          features%kin_t = cached_layout%chunk_kin_t
-         CALL torch_stream_synchronize()
-         CALL torch_pinned_finish()
-         dynamic_reallocated = reallocated_density .OR. reallocated_grad .OR. reallocated_kin
          IF (dynamic_reallocated) THEN
             IF (cached_layout%chunk_inputs_active) THEN
                CALL torch_dict_release(cached_layout%chunk_inputs)
@@ -2552,23 +2581,14 @@ CONTAINS
          features%atomic_grid_sizes_t = cached_layout%atomic_grid_sizes_t
          features%atomic_grid_size_bound_shape_t = cached_layout%atomic_grid_size_bound_shape_t
 
-         upload_total = INT(SIZE(features%density), KIND=int_8) + &
-                        INT(SIZE(features%grad), KIND=int_8) + &
-                        INT(SIZE(features%kin), KIND=int_8)
-         IF (cached_layout%cuda_device >= 0) CALL torch_pinned_reserve(upload_total)
-         upload_offset = 0_int_8
-         upload_offset = staged_upload(cached_layout%density_t, features%density, &
-                                       upload_offset, requires_grad, reallocated_density)
+         CALL staged_upload_dynamic(cached_layout%density_t, features%density, &
+                                    cached_layout%grad_t, features%grad, &
+                                    cached_layout%kin_t, features%kin, &
+                                    requires_grad, cached_layout%cuda_device, &
+                                    dynamic_reallocated)
          features%density_t = cached_layout%density_t
-         upload_offset = staged_upload(cached_layout%grad_t, features%grad, &
-                                       upload_offset, requires_grad, reallocated_grad)
          features%grad_t = cached_layout%grad_t
-         upload_offset = staged_upload(cached_layout%kin_t, features%kin, &
-                                       upload_offset, requires_grad, reallocated_kin)
          features%kin_t = cached_layout%kin_t
-         CALL torch_stream_synchronize()
-         CALL torch_pinned_finish()
-         dynamic_reallocated = reallocated_density .OR. reallocated_grad .OR. reallocated_kin
          IF (dynamic_reallocated .AND. cached_layout%inputs_active) THEN
             CALL torch_dict_release(cached_layout%inputs)
             cached_layout%inputs_active = .FALSE.

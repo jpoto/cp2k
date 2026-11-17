@@ -2149,6 +2149,56 @@ CONTAINS
 !> \param index ...
 !> \return ...
 ! **************************************************************************************************
+!> \brief Prepare scaled alltoall counts/displacements and exchange buffers.
+!> \param send_src_counts ...
+!> \param send_src_displs ...
+!> \param recv_src_counts ...
+!> \param recv_src_displs ...
+!> \param factor ...
+!> \param send_base_size unscaled send element count
+!> \param recv_base_size unscaled receive element count
+!> \param send_counts ...
+!> \param send_displs ...
+!> \param recv_counts ...
+!> \param recv_displs ...
+!> \param send_buffer ...
+!> \param recv_buffer ...
+!> \param zero_buffers ...
+! **************************************************************************************************
+   SUBROUTINE prepare_route_exchange(send_src_counts, send_src_displs, recv_src_counts, &
+                                     recv_src_displs, factor, send_base_size, recv_base_size, &
+                                     send_counts, send_displs, recv_counts, recv_displs, &
+                                     send_buffer, recv_buffer, zero_buffers)
+      INTEGER, DIMENSION(:), INTENT(IN)                  :: send_src_counts, send_src_displs, &
+                                                            recv_src_counts, recv_src_displs
+      INTEGER, INTENT(IN)                                :: factor, send_base_size, recv_base_size
+      INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(OUT)    :: send_counts, send_displs, &
+                                                            recv_counts, recv_displs
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), INTENT(OUT) :: send_buffer, recv_buffer
+      LOGICAL, INTENT(IN), OPTIONAL                      :: zero_buffers
+
+      LOGICAL                                            :: zero
+
+      zero = .FALSE.
+      IF (PRESENT(zero_buffers)) zero = zero_buffers
+
+      ALLOCATE (send_counts(SIZE(send_src_counts)), send_displs(SIZE(send_src_displs)), &
+                recv_counts(SIZE(recv_src_counts)), recv_displs(SIZE(recv_src_displs)))
+      send_counts(:) = factor*send_src_counts
+      send_displs(:) = factor*send_src_displs
+      recv_counts(:) = factor*recv_src_counts
+      recv_displs(:) = factor*recv_src_displs
+
+      ALLOCATE (send_buffer(MAX(1, factor*send_base_size)), &
+                recv_buffer(MAX(1, factor*recv_base_size)))
+      IF (zero) THEN
+         send_buffer = 0.0_dp
+         recv_buffer = 0.0_dp
+      END IF
+
+   END SUBROUTINE prepare_route_exchange
+
+! **************************************************************************************************
 !> \brief Evaluate a rank-local atom chunk as multiple atom-contiguous Torch subchunks.
 !> \param features ...
 !> \param group ...
@@ -2202,20 +2252,13 @@ CONTAINS
          CPASSERT(SIZE(features%route_chunk_offsets) == nroute_recv_points + 1)
          nroute_grad_per_point = ngrad_per_point
          IF (collapse_spin_grads) nroute_grad_per_point = ncollapsed_grad_per_point
-         ALLOCATE (send_grad_buffer(MAX(1, nroute_grad_per_point*nroute_recv_points)), &
-                   recv_grad_buffer(MAX(1, nroute_grad_per_point*nroute_send_points)), &
-                   route_grad_return_send_counts(SIZE(features%route_point_recv_counts)), &
-                   route_grad_return_send_displs(SIZE(features%route_point_recv_displs)), &
-                   route_grad_return_recv_counts(SIZE(features%route_point_send_counts)), &
-                   route_grad_return_recv_displs(SIZE(features%route_point_send_displs)))
-         route_grad_return_send_counts(:) = &
-            nroute_grad_per_point*features%route_point_recv_counts
-         route_grad_return_send_displs(:) = &
-            nroute_grad_per_point*features%route_point_recv_displs
-         route_grad_return_recv_counts(:) = &
-            nroute_grad_per_point*features%route_point_send_counts
-         route_grad_return_recv_displs(:) = &
-            nroute_grad_per_point*features%route_point_send_displs
+         CALL prepare_route_exchange( &
+            features%route_point_recv_counts, features%route_point_recv_displs, &
+            features%route_point_send_counts, features%route_point_send_displs, &
+            nroute_grad_per_point, nroute_recv_points, nroute_send_points, &
+            route_grad_return_send_counts, route_grad_return_send_displs, &
+            route_grad_return_recv_counts, route_grad_return_recv_displs, &
+            send_grad_buffer, recv_grad_buffer)
       END IF
 
       CALL timeset("skala_gpw_atom_subchunks", phase_handle)
@@ -2618,20 +2661,13 @@ CONTAINS
       IF (features%uses_collapsed_rks_dynamic) THEN
          nroute_grad_per_point = ncollapsed_grad_per_point
       END IF
-      ALLOCATE (send_grad_buffer(MAX(1, nroute_grad_per_point*nroute_recv_points)), &
-                recv_grad_buffer(MAX(1, nroute_grad_per_point*nroute_send_points)), &
-                route_grad_return_send_counts(SIZE(features%route_point_recv_counts)), &
-                route_grad_return_send_displs(SIZE(features%route_point_recv_displs)), &
-                route_grad_return_recv_counts(SIZE(features%route_point_send_counts)), &
-                route_grad_return_recv_displs(SIZE(features%route_point_send_displs)))
-      route_grad_return_send_counts(:) = &
-         nroute_grad_per_point*features%route_point_recv_counts
-      route_grad_return_send_displs(:) = &
-         nroute_grad_per_point*features%route_point_recv_displs
-      route_grad_return_recv_counts(:) = &
-         nroute_grad_per_point*features%route_point_send_counts
-      route_grad_return_recv_displs(:) = &
-         nroute_grad_per_point*features%route_point_send_displs
+      CALL prepare_route_exchange( &
+         features%route_point_recv_counts, features%route_point_recv_displs, &
+         features%route_point_send_counts, features%route_point_send_displs, &
+         nroute_grad_per_point, nroute_recv_points, nroute_send_points, &
+         route_grad_return_send_counts, route_grad_return_send_displs, &
+         route_grad_return_recv_counts, route_grad_return_recv_displs, &
+         send_grad_buffer, recv_grad_buffer)
 
       IF (features%chunk_feature_count > 0) THEN
          CALL timeset("skala_gpw_grad_torch_pack", phase_handle)
@@ -2718,18 +2754,12 @@ CONTAINS
          atom_coord_grad = 0.0_dp
       END IF
 
-      ALLOCATE (send_counts(SIZE(features%route_feature_recv_counts)), &
-                send_displs(SIZE(features%route_feature_recv_displs)), &
-                recv_counts(SIZE(features%route_feature_send_counts)), &
-                recv_displs(SIZE(features%route_feature_send_displs)), &
-                send_buffer(MAX(1, comps*features%chunk_feature_count)), &
-                recv_buffer(MAX(1, comps*nfeature_local)))
-      send_counts(:) = comps*features%route_feature_recv_counts
-      send_displs(:) = comps*features%route_feature_recv_displs
-      recv_counts(:) = comps*features%route_feature_send_counts
-      recv_displs(:) = comps*features%route_feature_send_displs
-      send_buffer = 0.0_dp
-      recv_buffer = 0.0_dp
+      CALL prepare_route_exchange( &
+         features%route_feature_recv_counts, features%route_feature_recv_displs, &
+         features%route_feature_send_counts, features%route_feature_send_displs, &
+         comps, features%chunk_feature_count, nfeature_local, &
+         send_counts, send_displs, recv_counts, recv_displs, &
+         send_buffer, recv_buffer, zero_buffers=.TRUE.)
 
       IF (features%chunk_feature_count > 0) THEN
          CALL timeset("skala_gpw_feature_grad_torch", phase_handle)
