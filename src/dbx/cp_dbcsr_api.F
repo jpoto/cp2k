@@ -39,6 +39,11 @@ MODULE cp_dbcsr_api
         dbcsr_iterator_stop_prv => dbcsr_iterator_stop, &
         dbcsr_iterator_type_prv => dbcsr_iterator_type, &
         dbcsr_mp_grid_setup_prv => dbcsr_mp_grid_setup, dbcsr_multiply_prv => dbcsr_multiply, &
+        dbcsr_async_handle_type, dbcsr_multiply_async_prv => dbcsr_multiply_async, &
+        dbcsr_async_set_enabled, dbcsr_async_get_enabled, &
+        dbcsr_multiply_wait_prv => dbcsr_multiply_wait, &
+        dbcsr_multiply_pending_prv => dbcsr_multiply_pending, &
+        dbcsr_multiply_cancel_prv => dbcsr_multiply_cancel, &
         dbcsr_no_transpose, dbcsr_print_config, dbcsr_print_statistics, &
         dbcsr_put_block_prv => dbcsr_put_block, dbcsr_release_prv => dbcsr_release, &
         dbcsr_replicate_all_prv => dbcsr_replicate_all, &
@@ -103,6 +108,12 @@ MODULE cp_dbcsr_api
    PUBLIC :: dbcsr_scale
    PUBLIC :: dbcsr_transposed
    PUBLIC :: dbcsr_multiply
+   PUBLIC :: dbcsr_async_handle_type
+   PUBLIC :: dbcsr_multiply_async
+   PUBLIC :: dbcsr_multiply_wait
+   PUBLIC :: dbcsr_multiply_pending
+   PUBLIC :: dbcsr_multiply_cancel
+   PUBLIC :: dbcsr_async_enabled
    PUBLIC :: dbcsr_copy
    PUBLIC :: dbcsr_desymmetrize
    PUBLIC :: dbcsr_filter
@@ -196,6 +207,8 @@ MODULE cp_dbcsr_api
    END INTERFACE
 
    LOGICAL, PARAMETER, PRIVATE :: USE_DBCSR_BACKEND = .TRUE.
+
+   LOGICAL, SAVE :: async_mm_checked = .FALSE.
 
 CONTAINS
 
@@ -1114,6 +1127,89 @@ CONTAINS
    END SUBROUTINE dbcsr_multiply
 
 ! **************************************************************************************************
+!> \brief Starts an asynchronous matrix multiplication (Layer A).
+!> \param transa ...
+!> \param transb ...
+!> \param alpha ...
+!> \param matrix_a ...
+!> \param matrix_b ...
+!> \param beta ...
+!> \param matrix_c ...
+!> \param handle ...
+! **************************************************************************************************
+   SUBROUTINE dbcsr_multiply_async(transa, transb, alpha, matrix_a, matrix_b, beta, &
+                                   matrix_c, handle, first_row, last_row, &
+                                   first_column, last_column, first_k, last_k, &
+                                   retain_sparsity, filter_eps)
+      CHARACTER(LEN=1), INTENT(IN)                       :: transa, transb
+      REAL(kind=dp), INTENT(IN)                          :: alpha
+      TYPE(dbcsr_type), INTENT(IN)                       :: matrix_a, matrix_b
+      REAL(kind=dp), INTENT(IN)                          :: beta
+      TYPE(dbcsr_type), INTENT(INOUT)                    :: matrix_c
+      TYPE(dbcsr_async_handle_type), INTENT(OUT)         :: handle
+      INTEGER, INTENT(IN), OPTIONAL                      :: first_row, last_row, first_column, &
+                                                            last_column, first_k, last_k
+      LOGICAL, INTENT(IN), OPTIONAL                      :: retain_sparsity
+      REAL(kind=dp), INTENT(IN), OPTIONAL                :: filter_eps
+
+      IF (.NOT. async_mm_checked) CALL init_async_mm_toggle()
+
+      IF (USE_DBCSR_BACKEND) THEN
+         CALL dbcsr_multiply_async_prv(transa, transb, alpha, matrix_a%dbcsr, matrix_b%dbcsr, &
+                                       beta, matrix_c%dbcsr, handle, first_row, last_row, &
+                                       first_column, last_column, first_k, last_k, &
+                                       retain_sparsity, filter_eps=filter_eps)
+      ELSE
+         CPABORT("Not yet implemented for DBM.")
+      END IF
+   END SUBROUTINE dbcsr_multiply_async
+
+! **************************************************************************************************
+!> \brief Waits for an asynchronous multiplication to complete.
+!> \param handle ...
+! **************************************************************************************************
+   SUBROUTINE dbcsr_multiply_wait(handle)
+      TYPE(dbcsr_async_handle_type), INTENT(INOUT)       :: handle
+
+      IF (USE_DBCSR_BACKEND) THEN
+         CALL dbcsr_multiply_wait_prv(handle)
+      ELSE
+         CPABORT("Not yet implemented for DBM.")
+      END IF
+   END SUBROUTINE dbcsr_multiply_wait
+
+! **************************************************************************************************
+!> \brief Returns whether an asynchronous multiplication is still pending.
+!> \param handle ...
+!> \param pending ...
+! **************************************************************************************************
+   SUBROUTINE dbcsr_multiply_pending(handle, pending)
+      TYPE(dbcsr_async_handle_type), INTENT(IN)          :: handle
+      LOGICAL, INTENT(OUT)                               :: pending
+
+      IF (USE_DBCSR_BACKEND) THEN
+         pending = dbcsr_multiply_pending_prv(handle)
+      ELSE
+         pending = .FALSE.
+         CPABORT("Not yet implemented for DBM.")
+      END IF
+   END SUBROUTINE dbcsr_multiply_pending
+
+! **************************************************************************************************
+!> \brief Cancels an asynchronous multiplication.
+!> \param handle ...
+! **************************************************************************************************
+   SUBROUTINE dbcsr_multiply_cancel(handle)
+      TYPE(dbcsr_async_handle_type), INTENT(INOUT)       :: handle
+
+      IF (USE_DBCSR_BACKEND) THEN
+         CALL dbcsr_multiply_cancel_prv(handle)
+      ELSE
+         CPABORT("Not yet implemented for DBM.")
+      END IF
+   END SUBROUTINE dbcsr_multiply_cancel
+
+! **************************************************************************************************
 !> \brief ...
 !> \param matrix ...
 !> \param row ...
@@ -1331,5 +1427,27 @@ CONTAINS
          CPABORT("Not yet implemented for DBM.")
       END IF
    END SUBROUTINE dbcsr_dot_threadsafe
+
+! **************************************************************************************************
+!> Reads the CP2K_ASYNC_MM environment variable once and activates the
+!>        asynchronous DBCSR multiply path if it is set to 1.
+! **************************************************************************************************
+   FUNCTION dbcsr_async_enabled() RESULT(enabled)
+      LOGICAL :: enabled
+
+      IF (.NOT. async_mm_checked) CALL init_async_mm_toggle()
+      enabled = dbcsr_async_get_enabled()
+   END FUNCTION dbcsr_async_enabled
+
+   SUBROUTINE init_async_mm_toggle()
+      CHARACTER(LEN=32) :: val
+      INTEGER :: status
+
+      val = "0"
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_ASYNC_MM", val, status=status)
+      IF (status /= 0) val = "0"
+      CALL dbcsr_async_set_enabled(TRIM(ADJUSTL(val)) == "1")
+      async_mm_checked = .TRUE.
+   END SUBROUTINE init_async_mm_toggle
 
 END MODULE cp_dbcsr_api

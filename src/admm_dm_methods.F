@@ -18,8 +18,9 @@ MODULE admm_dm_methods
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_get_block_p, dbcsr_iterator_blocks_left, &
-        dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type
+        dbcsr_async_enabled, dbcsr_async_handle_type, dbcsr_iterator_next_block, dbcsr_iterator_start, &
+        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, dbcsr_multiply_async, &
+        dbcsr_multiply_wait, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type
    USE cp_dbcsr_contrib,                ONLY: dbcsr_frobenius_norm
    USE cp_dbcsr_operations,             ONLY: dbcsr_deallocate_matrix_set
    USE cp_log_handling,                 ONLY: cp_logger_get_default_unit_nr
@@ -360,7 +361,8 @@ CONTAINS
       REAL(KIND=dp)                                      :: frob_norm
       TYPE(admm_dm_type), POINTER                        :: admm_dm
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s_aux_fit, rho_ao_aux
-      TYPE(dbcsr_type)                                   :: matrix_ps, matrix_psp, matrix_test
+      TYPE(dbcsr_type)                                   :: matrix_ps, matrix_psp, matrix_test, matrix_newp
+      TYPE(dbcsr_async_handle_type)                      :: async_newp
       TYPE(dbcsr_type), POINTER                          :: matrix_p, matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mcweeny_history_type), POINTER                :: history, new_hist_entry
@@ -381,6 +383,7 @@ CONTAINS
       CALL dbcsr_create(matrix_PS, template=matrix_p, matrix_type="N")
       CALL dbcsr_create(matrix_PSP, template=matrix_p, matrix_type="S")
       CALL dbcsr_create(matrix_test, template=matrix_p, matrix_type="S")
+      CALL dbcsr_create(matrix_newp, template=matrix_p)
 
       nspins = dft_control%nspins
       DO ispin = 1, nspins
@@ -410,15 +413,31 @@ CONTAINS
             !test convergence
             CALL dbcsr_copy(matrix_test, matrix_psp)
             CALL dbcsr_add(matrix_test, matrix_p, 1.0_dp, -1.0_dp)
+            IF (dbcsr_async_enabled()) THEN
+               ! Launch the next-P product (PS*PSP) asynchronously and overlap its
+               ! accelerator work with the idempotency check below.
+               CALL dbcsr_multiply_async("N", "N", 1.0_dp, matrix_PS, matrix_PSP, &
+                                         0.0_dp, matrix_newp, async_newp)
+            END IF
             frob_norm = dbcsr_frobenius_norm(matrix_test)
             IF (unit_nr > 0) WRITE (unit_nr, '(t3,a,i5,a,f16.8)') "McWeeny-Step", istep, &
                ": Deviation of idempotency", frob_norm
-            IF (frob_norm < 1000_dp*admm_dm%eps_filter .AND. istep > 1) EXIT
+            IF (frob_norm < 1000_dp*admm_dm%eps_filter .AND. istep > 1) THEN
+               IF (dbcsr_async_enabled()) CALL dbcsr_multiply_wait(async_newp)
+               EXIT
+            END IF
 
             ! build next P matrix
-            CALL dbcsr_copy(matrix_p, matrix_PSP, name="P from McWeeny")
-            CALL dbcsr_multiply("N", "N", -2.0_dp, matrix_PS, matrix_PSP, &
-                                3.0_dp, matrix_p)
+            IF (dbcsr_async_enabled()) THEN
+               ! P = 3*PSP - 2*PS*PSP, with PS*PSP computed above
+               CALL dbcsr_multiply_wait(async_newp)
+               CALL dbcsr_copy(matrix_p, matrix_PSP, name="P from McWeeny")
+               CALL dbcsr_add(matrix_p, matrix_newp, 3.0_dp, -2.0_dp)
+            ELSE
+               CALL dbcsr_copy(matrix_p, matrix_PSP, name="P from McWeeny")
+               CALL dbcsr_multiply("N", "N", -2.0_dp, matrix_PS, matrix_PSP, &
+                                   3.0_dp, matrix_p)
+            END IF
          END DO
          admm_dm%mcweeny_history(ispin)%p => history
          IF (nspins == 1) CALL dbcsr_scale(matrix_p, 2.0_dp)
@@ -428,6 +447,7 @@ CONTAINS
       CALL dbcsr_release(matrix_PS)
       CALL dbcsr_release(matrix_PSP)
       CALL dbcsr_release(matrix_test)
+      CALL dbcsr_release(matrix_newp)
       CALL timestop(handle)
    END SUBROUTINE purify_mcweeny
 
@@ -507,6 +527,7 @@ CONTAINS
       INTEGER                                            :: handle
       TYPE(dbcsr_type)                                   :: matrix_ps, matrix_sp, matrix_sum, &
                                                             matrix_tmp
+      TYPE(dbcsr_async_handle_type)                      :: async_ps, async_sp
 
       CALL timeset(routineN, handle)
       CALL dbcsr_create(matrix_ps, template=matrix_p, matrix_type="N")
@@ -514,10 +535,13 @@ CONTAINS
       CALL dbcsr_create(matrix_tmp, template=matrix_p, matrix_type="N")
       CALL dbcsr_create(matrix_sum, template=matrix_p, matrix_type="N")
 
-      CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_p, matrix_s, &
-                          0.0_dp, matrix_ps)
-      CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_s, matrix_p, &
-                          0.0_dp, matrix_sp)
+      ! P*S and S*P are independent: submit both before waiting.
+      CALL dbcsr_multiply_async("N", "N", 1.0_dp, matrix_p, matrix_s, &
+                                0.0_dp, matrix_ps, async_ps)
+      CALL dbcsr_multiply_async("N", "N", 1.0_dp, matrix_s, matrix_p, &
+                                0.0_dp, matrix_sp, async_sp)
+      CALL dbcsr_multiply_wait(async_ps)
+      CALL dbcsr_multiply_wait(async_sp)
 
       !TODO: can we exploid more symmetry?
       CALL dbcsr_multiply("N", "N", 3.0_dp, matrix_k, matrix_ps, &
