@@ -129,6 +129,7 @@ MODULE hfx_ri_kp
 
    LOGICAL, SAVE, PRIVATE :: image_sym_warned = .FALSE.
    LOGICAL, SAVE, PRIVATE :: force_gauge_warned = .FALSE.
+   LOGICAL, SAVE, PRIVATE :: image_gauge_warned = .FALSE.
    ! Fractional-coordinate residual above which the atom mapping is not a symmetry.
    REAL(dp), PARAMETER, PRIVATE :: hfx_image_symmetry_eps = 1.0E-8_dp
    ! Bits per INTEGER(int_8) word in the compact image-expansion block masks.
@@ -298,12 +299,24 @@ CONTAINS
          CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
                                        img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot, &
                                        inversion_pairs=.FALSE.)
-         IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
-            CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry for 2c integrals; set KP_IMAGE_SYMMETRY FALSE")
+         ! Interim: an atom-dependent gauge breaks the point-group image orbit. The
+         ! coset-closure reduction is not implemented yet, so compute the exact full
+         ! image sum instead (same policy as the force path).
+         IF (image_sym_usable .AND. hfx_gauge_atom_dependent(natom, nops, op_shift)) THEN
+            IF (.NOT. image_gauge_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: atom-dependent gauge; full image sum for integrals")
+               image_gauge_warned = .TRUE.
+            END IF
+            use_image_sym = .FALSE.
          END IF
-         CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
-         IF (.NOT. image_sym_usable) THEN
-            CPABORT("KP_IMAGE_SYMMETRY: missing basis rotations; set KP_IMAGE_SYMMETRY FALSE")
+         IF (use_image_sym) THEN
+            IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
+               CPABORT("KP_IMAGE_SYMMETRY: 2c-integral symmetry unusable")
+            END IF
+            CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
+            IF (.NOT. image_sym_usable) THEN
+               CPABORT("KP_IMAGE_SYMMETRY: missing basis rotations; set KP_IMAGE_SYMMETRY FALSE")
+            END IF
          END IF
       END IF
       do_2c_image(:) = .TRUE.
@@ -5254,12 +5267,22 @@ CONTAINS
          CALL hfx_image_symmetry_setup(kpoints, cell, nimg, image_sym_usable, &
                                        img_rep, img_op, img_inv, nops, op_frac, op_map, op_shift, op_slot, &
                                        inversion_pairs=.FALSE.)
-         IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
-            CPABORT("KP_IMAGE_SYMMETRY: no usable symmetry for 2c derivatives; set KP_IMAGE_SYMMETRY FALSE")
+         ! Interim: atom-dependent gauge -> exact full image sum (see hfx_ri_pre_scf_kp).
+         IF (image_sym_usable .AND. hfx_gauge_atom_dependent(natom, nops, op_shift)) THEN
+            IF (.NOT. image_gauge_warned) THEN
+               CPWARN("KP_IMAGE_SYMMETRY: atom-dependent gauge; full image sum for derivatives")
+               image_gauge_warned = .TRUE.
+            END IF
+            use_image_sym = .FALSE.
          END IF
-         CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
-         IF (.NOT. image_sym_usable) THEN
-            CPABORT("KP_IMAGE_SYMMETRY: missing basis rotations; set KP_IMAGE_SYMMETRY FALSE")
+         IF (use_image_sym) THEN
+            IF (.NOT. image_sym_usable .OR. ANY(img_rep(1:nimg) == 0) .OR. ANY(img_inv(1:nimg))) THEN
+               CPABORT("KP_IMAGE_SYMMETRY: 2c-derivative symmetry unusable")
+            END IF
+            CALL hfx_ri_rotations_ready(kpoints, img_rep, img_op, op_slot, nimg, natom, image_sym_usable)
+            IF (.NOT. image_sym_usable) THEN
+               CPABORT("KP_IMAGE_SYMMETRY: missing basis rotations; set KP_IMAGE_SYMMETRY FALSE")
+            END IF
          END IF
       END IF
       do_deriv_image(:) = .TRUE.
@@ -7329,6 +7352,27 @@ CONTAINS
       bit = ISHFT(1_int_8, INT(MOD(idx, INT(hfx_mask_word_bits, KIND=int_8))))
       is_set = IAND(mask(word), bit) /= 0_int_8
    END FUNCTION hfx_block_mask_test
+
+! **************************************************************************************************
+!> \brief Whether the gauge shift differs between atoms for any operation (atom-dependent gauge).
+!>        Interims: such cases cannot use the image-orbit reduction and must be computed fully.
+! **************************************************************************************************
+   PURE FUNCTION hfx_gauge_atom_dependent(natom, nops, op_shift) RESULT(dependent)
+      INTEGER, INTENT(IN)                                :: natom, nops
+      INTEGER, INTENT(IN)                                :: op_shift(:, :, :)
+      LOGICAL                                            :: dependent
+
+      INTEGER                                            :: g
+
+      dependent = .FALSE.
+      IF (natom <= 1) RETURN
+      DO g = 1, nops
+         IF (ANY(op_shift(:, 2:natom, g) /= SPREAD(op_shift(:, 1, g), 2, natom - 1))) THEN
+            dependent = .TRUE.
+            RETURN
+         END IF
+      END DO
+   END FUNCTION hfx_gauge_atom_dependent
 
 ! **************************************************************************************************
 !> \brief Rotate the AO blocks of an atom-block tensor and optionally transpose the result.
