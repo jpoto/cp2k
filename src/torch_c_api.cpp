@@ -821,6 +821,8 @@ void torch_c_tensor_expand_dim(const torch_c_tensor_t *tensor,
 
 /*******************************************************************************
  * \brief Creates a tensor view narrowed along one dimension.
+ *        The result shares storage with the input tensor and stays on its
+ *        device; the input must already be on the active device.
  ******************************************************************************/
 void torch_c_tensor_narrow(const torch_c_tensor_t *tensor, const int64_t dim,
                            const int64_t start_index, const int64_t length,
@@ -837,8 +839,12 @@ void torch_c_tensor_narrow(const torch_c_tensor_t *tensor, const int64_t dim,
                 "Torch tensor dimension is out of range");
   torch_c_check(start_index + length <= tensor->size(dim),
                 "Torch tensor narrow range is out of bounds");
-  *result =
-      new torch_c_tensor_t(tensor->narrow(dim, start_index, length).to(device));
+  torch_c_check(
+      tensor->device() == device,
+      "Torch tensor narrow requires the tensor to be on the active device");
+  // Keep this a pure view: calling .to(device) would silently copy on a
+  // device mismatch and break storage/autograd aliasing with the parent.
+  *result = new torch_c_tensor_t(tensor->narrow(dim, start_index, length));
   TORCH_C_CATCH("torch_c_tensor_narrow")
 }
 

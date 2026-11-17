@@ -732,6 +732,39 @@ CONTAINS
    END SUBROUTINE ensure_gauxc_periodic_reference_scope
 
 ! **************************************************************************************************
+!> \brief Verify once that the GauXC energy gradient is replicated across MPI ranks.
+!>        The force/virial consumers add the gradient on rank 0 only, which is
+!>        correct only for a replicated vector. GauXC's C-API integrators
+!>        allreduce exc_grad, but make that assumption explicit and audible.
+!> \param exc_grad ...
+!> \param para_env ...
+! **************************************************************************************************
+   SUBROUTINE assert_gauxc_gradient_replicated(exc_grad, para_env)
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: exc_grad
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+
+      LOGICAL, SAVE                                      :: checked = .FALSE.
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: reference
+      REAL(KIND=dp)                                      :: max_diff, scale
+
+      IF (checked .OR. para_env%num_pe <= 1) RETURN
+      ALLOCATE (reference(SIZE(exc_grad)))
+      reference = exc_grad
+      CALL para_env%bcast(reference, 0)
+      max_diff = MAXVAL(ABS(exc_grad - reference))
+      scale = MAX(1.0_dp, MAXVAL(ABS(exc_grad)), MAXVAL(ABS(reference)))
+      DEALLOCATE (reference)
+      IF (max_diff > 1.0E-10_dp*scale) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "GauXC XC gradient is not replicated across MPI ranks, but the "// &
+                       "force/virial consumers add it on rank 0 only. This indicates an "// &
+                       "unsupported non-replicated integrator.")
+      END IF
+      checked = .TRUE.
+
+   END SUBROUTINE assert_gauxc_gradient_replicated
+
+! **************************************************************************************************
 !> \brief adds a replicated GauXC energy gradient to the local CP2K force accumulator
 !> \param exc_grad ...
 !> \param force ...
@@ -1762,6 +1795,7 @@ CONTAINS
                      model=TRIM(params%model_eval_name))
                END IF
                CALL gauxc_check_status(gauxc_status)
+               CALL assert_gauxc_gradient_replicated(cache%xc_gradient%exc_grad, para_env)
                IF (calculate_forces) THEN
                   CALL add_gauxc_gradient_to_force( &
                      cache%xc_gradient%exc_grad, &
@@ -1842,6 +1876,7 @@ CONTAINS
                      model=TRIM(params%model_eval_name))
                END IF
                CALL gauxc_check_status(gauxc_status)
+               CALL assert_gauxc_gradient_replicated(cache%xc_gradient%exc_grad, para_env)
                IF (calculate_forces) THEN
                   CALL add_gauxc_gradient_to_force( &
                      cache%xc_gradient%exc_grad, &
