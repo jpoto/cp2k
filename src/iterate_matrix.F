@@ -16,10 +16,11 @@ MODULE iterate_matrix
    USE bibliography,                    ONLY: Richters2018,&
                                               cite_reference
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_desymmetrize, dbcsr_distribution_get, &
-        dbcsr_distribution_type, dbcsr_filter, dbcsr_get_info, dbcsr_get_matrix_type, &
-        dbcsr_get_occupation, dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, &
-        dbcsr_transposed, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_add, dbcsr_async_enabled, dbcsr_async_handle_type, dbcsr_copy, dbcsr_create, &
+        dbcsr_desymmetrize, dbcsr_distribution_get, dbcsr_distribution_type, dbcsr_filter, &
+        dbcsr_get_info, dbcsr_get_matrix_type, dbcsr_get_occupation, dbcsr_multiply, &
+        dbcsr_multiply_async, dbcsr_multiply_wait, dbcsr_p_type, dbcsr_release, dbcsr_scale, &
+        dbcsr_set, dbcsr_transposed, dbcsr_type, dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_add_on_diag,&
                                               dbcsr_frobenius_norm,&
                                               dbcsr_gershgorin_norm,&
@@ -2294,7 +2295,8 @@ CONTAINS
       INTEGER                                            :: handle, i, ispin, unit_nr
       REAL(KIND=dp)                                      :: frob_norm, trace
       TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(dbcsr_type)                                   :: matrix_ps, matrix_psp, matrix_test
+      TYPE(dbcsr_type)                                   :: matrix_ps, matrix_psp, matrix_test, matrix_newp
+      TYPE(dbcsr_async_handle_type)                      :: async_newp
 
       CALL timeset(routineN, handle)
 
@@ -2308,6 +2310,7 @@ CONTAINS
       CALL dbcsr_create(matrix_ps, template=matrix_p(1), matrix_type=dbcsr_type_no_symmetry)
       CALL dbcsr_create(matrix_psp, template=matrix_p(1), matrix_type=dbcsr_type_no_symmetry)
       CALL dbcsr_create(matrix_test, template=matrix_p(1), matrix_type=dbcsr_type_no_symmetry)
+      CALL dbcsr_create(matrix_newp, template=matrix_p(1))
 
       DO ispin = 1, SIZE(matrix_p)
          DO i = 1, max_steps
@@ -2320,14 +2323,25 @@ CONTAINS
             ! test convergence
             CALL dbcsr_copy(matrix_test, matrix_psp)
             CALL dbcsr_add(matrix_test, matrix_p(ispin), 1.0_dp, -1.0_dp)
+            IF (dbcsr_async_enabled()) THEN
+               ! Overlap the next-P product (PS*PSP) with the idempotency check.
+               CALL dbcsr_multiply_async("N", "N", 1.0_dp, matrix_ps, matrix_psp, &
+                                         0.0_dp, matrix_newp, async_newp, filter_eps=threshold)
+            END IF
             frob_norm = dbcsr_frobenius_norm(matrix_test) ! test = PSP - P
             IF (unit_nr > 0) WRITE (unit_nr, '(t3,a,2f16.8)') "McWeeny: Deviation of idempotency", frob_norm
             IF (unit_nr > 0) CALL m_flush(unit_nr)
 
-            ! construct new P
-            CALL dbcsr_copy(matrix_p(ispin), matrix_psp)
-            CALL dbcsr_multiply("N", "N", -2.0_dp, matrix_ps, matrix_psp, &
-                                3.0_dp, matrix_p(ispin), filter_eps=threshold)
+            ! construct new P: P = 3*PSP - 2*PS*PSP
+            IF (dbcsr_async_enabled()) THEN
+               CALL dbcsr_multiply_wait(async_newp)
+               CALL dbcsr_copy(matrix_p(ispin), matrix_psp)
+               CALL dbcsr_add(matrix_p(ispin), matrix_newp, 3.0_dp, -2.0_dp)
+            ELSE
+               CALL dbcsr_copy(matrix_p(ispin), matrix_psp)
+               CALL dbcsr_multiply("N", "N", -2.0_dp, matrix_ps, matrix_psp, &
+                                   3.0_dp, matrix_p(ispin), filter_eps=threshold)
+            END IF
 
             ! frob_norm < SQRT(trace*threshold)
             IF (frob_norm*frob_norm < trace*threshold) EXIT
@@ -2337,6 +2351,7 @@ CONTAINS
       CALL dbcsr_release(matrix_ps)
       CALL dbcsr_release(matrix_psp)
       CALL dbcsr_release(matrix_test)
+      CALL dbcsr_release(matrix_newp)
       CALL timestop(handle)
    END SUBROUTINE purify_mcweeny_nonorth
 

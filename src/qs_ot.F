@@ -15,10 +15,11 @@
 MODULE qs_ot
    USE arnoldi_api,                     ONLY: arnoldi_extremal
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_distribution_type, dbcsr_filter, &
-        dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, dbcsr_get_occupation, dbcsr_init_p, &
-        dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
-        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, dbcsr_release, dbcsr_release_p, &
+        dbcsr_add, dbcsr_async_enabled, dbcsr_async_handle_type, dbcsr_copy, dbcsr_create, &
+        dbcsr_distribution_type, dbcsr_filter, dbcsr_finalize, dbcsr_get_block_p, dbcsr_get_info, &
+        dbcsr_get_occupation, dbcsr_init_p, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
+        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
+        dbcsr_multiply_async, dbcsr_multiply_wait, dbcsr_release, dbcsr_release_p, &
         dbcsr_reserve_blocks, dbcsr_scale, dbcsr_set, dbcsr_transposed, dbcsr_type, &
         dbcsr_type_no_symmetry
    USE cp_dbcsr_cholesky,               ONLY: cp_dbcsr_cholesky_decompose,&
@@ -132,6 +133,8 @@ CONTAINS
 
       CHARACTER(LEN=1)                                   :: db_op_a, db_op_b
       REAL(KIND=dp)                                      :: sign_a, sign_b
+      LOGICAL                                            :: do_async
+      TYPE(dbcsr_async_handle_type)                      :: handle_1, handle_2
 
       IF (op_a /= 'N' .AND. op_a /= 'C') THEN
          CPABORT("Complex matrix product expects N or C for op_a")
@@ -144,12 +147,29 @@ CONTAINS
       sign_a = MERGE(1.0_dp, -1.0_dp, op_a == 'N')
       sign_b = MERGE(1.0_dp, -1.0_dp, op_b == 'N')
 
-      CALL dbcsr_multiply(db_op_a, db_op_b, 1.0_dp, a_re, b_re, 0.0_dp, c_re)
-      CALL dbcsr_multiply(db_op_a, db_op_b, 1.0_dp, a_im, b_im, 0.0_dp, tmp)
+      do_async = dbcsr_async_enabled()
+      IF (do_async) THEN
+         ! The two products of each pair write different matrices and are
+         ! independent; submit them together and wait once.
+         CALL dbcsr_multiply_async(db_op_a, db_op_b, 1.0_dp, a_re, b_re, 0.0_dp, c_re, handle_1)
+         CALL dbcsr_multiply_async(db_op_a, db_op_b, 1.0_dp, a_im, b_im, 0.0_dp, tmp, handle_2)
+         CALL dbcsr_multiply_wait(handle_1)
+         CALL dbcsr_multiply_wait(handle_2)
+      ELSE
+         CALL dbcsr_multiply(db_op_a, db_op_b, 1.0_dp, a_re, b_re, 0.0_dp, c_re)
+         CALL dbcsr_multiply(db_op_a, db_op_b, 1.0_dp, a_im, b_im, 0.0_dp, tmp)
+      END IF
       CALL dbcsr_add(c_re, tmp, alpha_scalar=1.0_dp, beta_scalar=-sign_a*sign_b)
 
-      CALL dbcsr_multiply(db_op_a, db_op_b, sign_b, a_re, b_im, 0.0_dp, c_im)
-      CALL dbcsr_multiply(db_op_a, db_op_b, sign_a, a_im, b_re, 0.0_dp, tmp)
+      IF (do_async) THEN
+         CALL dbcsr_multiply_async(db_op_a, db_op_b, sign_b, a_re, b_im, 0.0_dp, c_im, handle_1)
+         CALL dbcsr_multiply_async(db_op_a, db_op_b, sign_a, a_im, b_re, 0.0_dp, tmp, handle_2)
+         CALL dbcsr_multiply_wait(handle_1)
+         CALL dbcsr_multiply_wait(handle_2)
+      ELSE
+         CALL dbcsr_multiply(db_op_a, db_op_b, sign_b, a_re, b_im, 0.0_dp, c_im)
+         CALL dbcsr_multiply(db_op_a, db_op_b, sign_a, a_im, b_re, 0.0_dp, tmp)
+      END IF
       CALL dbcsr_add(c_im, tmp, alpha_scalar=1.0_dp, beta_scalar=1.0_dp)
 
    END SUBROUTINE qs_ot_complex_multiply
