@@ -209,6 +209,18 @@ MODULE skala_gpw_functional
    END TYPE skala_grad_scratch_type
    TYPE(skala_grad_scratch_type), SAVE                 :: grad_scratch
 
+   ! Last smooth-partition weight gradient produced by skala_gpw_eval, reused by
+   ! skala_gpw_weight_derivative when the density, geometry and mode match.
+   TYPE skala_weight_grad_cache_type
+      REAL(KIND=dp), POINTER, DIMENSION(:)       :: gradient => NULL()
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :) :: positions
+      REAL(KIND=dp)                              :: rho_sum = 0.0_dp, rho_sumsq = 0.0_dp, &
+                                                    tau_sum = 0.0_dp, tau_sumsq = 0.0_dp
+      INTEGER                                    :: nvals = -1, nspins = -1
+      LOGICAL                                    :: atom_chunks = .FALSE., valid = .FALSE.
+   END TYPE skala_weight_grad_cache_type
+   TYPE(skala_weight_grad_cache_type), SAVE           :: weight_grad_cache
+
 CONTAINS
 
 ! **************************************************************************************************
@@ -751,6 +763,10 @@ CONTAINS
             END IF
             CALL timestop(phase_handle)
          END IF
+         IF (features%atom_partition == skala_gpw_atom_partition_smooth .AND. &
+             (needs_atom_force .OR. compute_virial) .AND. ASSOCIATED(grid_weight_grad_p)) THEN
+            CALL store_weight_grad_cache(grid_weight_grad_p, features, particle_set, rho_r, tau)
+         END IF
          IF (compute_virial) THEN
             IF (native_grid_diagnostics) virial_before = virial_xc
             CALL build_weight_virial(virial_xc, features, exc, &
@@ -913,14 +929,15 @@ CONTAINS
       TYPE(cell_type), POINTER                           :: cell
 
       INTEGER :: chunk_max_rows, feature_begin, feature_end, feature_pos, i, iatom, isub, j, k, &
-         local_row, native_grid_atom_partition, natom, nspins, nsubchunks, row, &
+         local_row, native_grid_atom_partition, natom, nspins, nsubchunks, nvals, row, &
          selected_cuda_device, xc_deriv_method_id, xc_rho_smooth_id
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: subchunk_atom_begin, &
                                                             subchunk_atom_count, &
                                                             subchunk_row_begin, subchunk_row_count
       INTEGER, DIMENSION(2, 3)                           :: bo
-      LOGICAL                                            :: have_exc_tensor, have_weight_grad_t, &
-                                                            lsd, native_grid_atom_chunks
+      LOGICAL                                            :: cache_hit, have_exc_tensor, &
+                                                            have_rho_set, have_weight_grad_t, lsd, &
+                                                            native_grid_atom_chunks
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: local_derivative
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: local_weight_grad, partition_weights
@@ -964,27 +981,65 @@ CONTAINS
       CALL section_vals_val_get(xc_section, "XC_GRID%XC_DERIV", i_val=xc_deriv_method_id)
       CALL section_vals_val_get(xc_section, "XC_GRID%XC_SMOOTH_RHO", i_val=xc_rho_smooth_id)
 
-      CALL xc_rho_set_create(rho_set, &
-                             rho_r(1)%pw_grid%bounds_local, &
-                             rho_cutoff=section_get_rval(xc_section, "density_cutoff"), &
-                             drho_cutoff=section_get_rval(xc_section, "gradient_cutoff"), &
-                             tau_cutoff=section_get_rval(xc_section, "tau_cutoff"))
-      CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
-                             xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
-
       features => cached_features
-      CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
-                                   requires_grad=.FALSE., weights=weights, &
-                                   requires_coordinate_grad=.FALSE., &
-                                   requires_stress_grad=.FALSE., &
-                                   requires_weight_grad=.TRUE., &
-                                   use_atom_chunks=native_grid_atom_chunks, &
-                                   atom_partition=native_grid_atom_partition, &
-                                   cuda_device=selected_cuda_device)
+      have_rho_set = .FALSE.
+      cache_hit = .FALSE.
+
+      ! If the preceding evaluation already produced the weight gradient for this
+      ! exact density/geometry, skip the rho set and feature build entirely.
+      IF (features%active .AND. features%nflat_local == rho_r(1)%pw_grid%ngpts_local .AND. &
+          (features%uses_atom_chunks .EQV. native_grid_atom_chunks)) THEN
+         IF (features%uses_atom_chunks) THEN
+            nvals = -1
+            IF (ASSOCIATED(features%route_send_local_features)) &
+               nvals = SIZE(features%route_send_local_features)
+         ELSE
+            nvals = features%nflat
+         END IF
+         IF (nvals > 0) THEN
+            cache_hit = weight_grad_cache_matches(particle_set, rho_r, tau, nspins, &
+                                                  native_grid_atom_chunks, nvals)
+         END IF
+      END IF
+
+      IF (.NOT. cache_hit) THEN
+         CALL xc_rho_set_create(rho_set, &
+                                rho_r(1)%pw_grid%bounds_local, &
+                                rho_cutoff=section_get_rval(xc_section, "density_cutoff"), &
+                                drho_cutoff=section_get_rval(xc_section, "gradient_cutoff"), &
+                                tau_cutoff=section_get_rval(xc_section, "tau_cutoff"))
+         CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
+                                xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
+         have_rho_set = .TRUE.
+
+         CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
+                                      requires_grad=.FALSE., weights=weights, &
+                                      requires_coordinate_grad=.FALSE., &
+                                      requires_stress_grad=.FALSE., &
+                                      requires_weight_grad=.TRUE., &
+                                      use_atom_chunks=native_grid_atom_chunks, &
+                                      atom_partition=native_grid_atom_partition, &
+                                      cuda_device=selected_cuda_device)
+         IF (features%uses_atom_chunks) THEN
+            nvals = SIZE(features%route_send_local_features)
+         ELSE
+            nvals = features%nflat
+         END IF
+         cache_hit = weight_grad_cache_matches(particle_set, rho_r, tau, nspins, &
+                                               features%uses_atom_chunks, nvals)
+      END IF
+
       have_exc_tensor = .FALSE.
       have_weight_grad_t = .FALSE.
       NULLIFY (grid_weight_grad)
-      IF (features%uses_atom_chunks) THEN
+      IF (cache_hit) THEN
+         IF (features%uses_atom_chunks) THEN
+            ALLOCATE (local_weight_grad(nvals))
+            local_weight_grad(:) = weight_grad_cache%gradient
+         ELSE
+            grid_weight_grad => weight_grad_cache%gradient
+         END IF
+      ELSE IF (features%uses_atom_chunks) THEN
          IF (chunk_max_rows == -1) THEN
             chunk_max_rows = auto_atom_chunk_max_rows(features, rho_r(1)%pw_grid%para%group)
          END IF
@@ -1077,8 +1132,13 @@ CONTAINS
       IF (have_weight_grad_t) CALL torch_tensor_release(grid_weight_grad_t)
       IF (have_exc_tensor) CALL torch_tensor_release(exc_tensor)
       IF (ALLOCATED(local_weight_grad)) DEALLOCATE (local_weight_grad)
-      CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
-      CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
+      ! On an early cache hit the feature bundle belongs to the preceding
+      ! evaluation; leave it intact for potential further reuse. Otherwise
+      ! release the bundle built here (or the fallback path used).
+      IF (.NOT. cache_hit .OR. have_rho_set) THEN
+         CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
+      END IF
+      IF (have_rho_set) CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
 
    END SUBROUTINE skala_gpw_weight_derivative
 
@@ -2336,6 +2396,96 @@ CONTAINS
    END FUNCTION auto_atom_chunk_max_rows
 
 ! **************************************************************************************************
+!> \brief Store the smooth-partition weight gradient for later reuse.
+! **************************************************************************************************
+   SUBROUTINE store_weight_grad_cache(gradient, features, particle_set, rho_r, tau)
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: gradient
+      TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r, tau
+
+      INTEGER                                            :: iatom, ispin
+
+      IF (ASSOCIATED(weight_grad_cache%gradient)) THEN
+         IF (SIZE(weight_grad_cache%gradient) /= SIZE(gradient)) &
+            DEALLOCATE (weight_grad_cache%gradient)
+      END IF
+      IF (.NOT. ASSOCIATED(weight_grad_cache%gradient)) &
+         ALLOCATE (weight_grad_cache%gradient(SIZE(gradient)))
+      weight_grad_cache%gradient = gradient
+
+      IF (ALLOCATED(weight_grad_cache%positions)) THEN
+         IF (SIZE(weight_grad_cache%positions, 2) /= SIZE(particle_set)) &
+            DEALLOCATE (weight_grad_cache%positions)
+      END IF
+      IF (.NOT. ALLOCATED(weight_grad_cache%positions)) &
+         ALLOCATE (weight_grad_cache%positions(3, SIZE(particle_set)))
+      DO iatom = 1, SIZE(particle_set)
+         weight_grad_cache%positions(:, iatom) = particle_set(iatom)%r
+      END DO
+
+      weight_grad_cache%rho_sum = 0.0_dp
+      weight_grad_cache%rho_sumsq = 0.0_dp
+      weight_grad_cache%tau_sum = 0.0_dp
+      weight_grad_cache%tau_sumsq = 0.0_dp
+      DO ispin = 1, SIZE(rho_r)
+         weight_grad_cache%rho_sum = weight_grad_cache%rho_sum + SUM(rho_r(ispin)%array)
+         weight_grad_cache%rho_sumsq = weight_grad_cache%rho_sumsq + &
+                                       SUM(rho_r(ispin)%array*rho_r(ispin)%array)
+         weight_grad_cache%tau_sum = weight_grad_cache%tau_sum + SUM(tau(ispin)%array)
+         weight_grad_cache%tau_sumsq = weight_grad_cache%tau_sumsq + &
+                                       SUM(tau(ispin)%array*tau(ispin)%array)
+      END DO
+      weight_grad_cache%nvals = SIZE(gradient)
+      weight_grad_cache%nspins = SIZE(rho_r)
+      weight_grad_cache%atom_chunks = features%uses_atom_chunks
+      weight_grad_cache%valid = .TRUE.
+
+   END SUBROUTINE store_weight_grad_cache
+
+! **************************************************************************************************
+!> \brief Whether the cached weight gradient matches the requested evaluation.
+! **************************************************************************************************
+   FUNCTION weight_grad_cache_matches(particle_set, rho_r, tau, nspins, atom_chunks, nvals) RESULT(matches)
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r, tau
+      INTEGER, INTENT(IN)                                :: nspins, nvals
+      LOGICAL, INTENT(IN)                                :: atom_chunks
+      LOGICAL                                            :: matches
+
+      INTEGER                                            :: iatom, ispin
+      REAL(KIND=dp)                                      :: rho_sum, rho_sumsq, tau_sum, tau_sumsq
+
+      matches = .FALSE.
+      IF (.NOT. weight_grad_cache%valid) RETURN
+      IF (weight_grad_cache%nspins /= nspins) RETURN
+      IF (weight_grad_cache%atom_chunks .NEQV. atom_chunks) RETURN
+      IF (weight_grad_cache%nvals /= nvals) RETURN
+      IF (.NOT. ALLOCATED(weight_grad_cache%positions)) RETURN
+      IF (SIZE(weight_grad_cache%positions, 2) /= SIZE(particle_set)) RETURN
+      DO iatom = 1, SIZE(particle_set)
+         IF (ANY(weight_grad_cache%positions(:, iatom) /= particle_set(iatom)%r)) RETURN
+      END DO
+
+      rho_sum = 0.0_dp
+      rho_sumsq = 0.0_dp
+      tau_sum = 0.0_dp
+      tau_sumsq = 0.0_dp
+      DO ispin = 1, SIZE(rho_r)
+         rho_sum = rho_sum + SUM(rho_r(ispin)%array)
+         rho_sumsq = rho_sumsq + SUM(rho_r(ispin)%array*rho_r(ispin)%array)
+         tau_sum = tau_sum + SUM(tau(ispin)%array)
+         tau_sumsq = tau_sumsq + SUM(tau(ispin)%array*tau(ispin)%array)
+      END DO
+      IF (rho_sum /= weight_grad_cache%rho_sum) RETURN
+      IF (rho_sumsq /= weight_grad_cache%rho_sumsq) RETURN
+      IF (tau_sum /= weight_grad_cache%tau_sum) RETURN
+      IF (tau_sumsq /= weight_grad_cache%tau_sumsq) RETURN
+      matches = .TRUE.
+
+   END FUNCTION weight_grad_cache_matches
+
+! **************************************************************************************************
 !> \brief Ensure the reusable host gradient scratch has the local-grid shape.
 !> \param nflat_local ...
 ! **************************************************************************************************
@@ -3475,6 +3625,9 @@ CONTAINS
       IF (ASSOCIATED(grad_scratch%density_grad)) THEN
          DEALLOCATE (grad_scratch%density_grad, grad_scratch%grad_grad, grad_scratch%kin_grad)
       END IF
+      weight_grad_cache%valid = .FALSE.
+      IF (ASSOCIATED(weight_grad_cache%gradient)) DEALLOCATE (weight_grad_cache%gradient)
+      IF (ALLOCATED(weight_grad_cache%positions)) DEALLOCATE (weight_grad_cache%positions)
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
 

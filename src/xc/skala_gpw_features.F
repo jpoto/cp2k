@@ -29,6 +29,7 @@ MODULE skala_gpw_features
                                               skala_key_kin
    USE torch_api,                       ONLY: &
         staged_upload, torch_dict_clone, torch_dict_create, torch_dict_insert, torch_dict_release, &
+        torch_dict_set, &
         torch_dict_type, torch_pinned_finish, torch_pinned_reserve, torch_stream_synchronize, &
         torch_tensor_expand_dim, torch_tensor_from_array, torch_tensor_narrow, &
         torch_tensor_release, torch_tensor_set_requires_grad, torch_tensor_to_device_leaf, &
@@ -94,6 +95,7 @@ MODULE skala_gpw_features
                                                             chunk_atomic_grid_size_bound_shape
       TYPE(torch_dict_type)                              :: chunk_inputs
       TYPE(torch_dict_type)                              :: chunk_static_inputs
+      TYPE(torch_dict_type)                              :: grad_inputs
       TYPE(torch_dict_type)                              :: inputs
       TYPE(torch_dict_type)                              :: static_inputs
       TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t
@@ -134,6 +136,7 @@ MODULE skala_gpw_features
                                                             chunk_inputs_use_collapsed_rks = .FALSE., &
                                                             chunk_static_tensors_active = .FALSE., &
                                                             dynamic_tensors_active = .FALSE., &
+                                                            grad_inputs_active = .FALSE., &
                                                             inputs_active = .FALSE., &
                                                             static_tensors_active = .FALSE.
    END TYPE skala_gpw_layout_cache_type
@@ -1935,6 +1938,11 @@ CONTAINS
    SUBROUTINE release_layout_cache(cache)
       TYPE(skala_gpw_layout_cache_type), INTENT(INOUT)   :: cache
 
+      IF (cache%grad_inputs_active) THEN
+         CALL torch_dict_release(cache%grad_inputs)
+         cache%grad_inputs_active = .FALSE.
+      END IF
+
       IF (cache%inputs_active) THEN
          CALL torch_dict_release(cache%inputs)
          cache%inputs_active = .FALSE.
@@ -2619,38 +2627,41 @@ CONTAINS
 
          IF (requires_coordinate_grad .OR. requires_stress_grad .OR. my_requires_weight_grad) THEN
             IF (requires_stress_grad .OR. my_requires_weight_grad) THEN
-               CALL torch_dict_create(features%inputs)
+               ! Reuse one gradient dict per layout: the static keys are cloned
+               ! once, and the per-step leaf tensors replace their entries.
+               IF (.NOT. cached_layout%grad_inputs_active) THEN
+                  CALL torch_dict_clone(cached_layout%static_inputs, cached_layout%grad_inputs)
+                  cached_layout%grad_inputs_active = .TRUE.
+               END IF
                IF (requires_stress_grad) THEN
                   CALL torch_tensor_from_array(features%grid_coords_t, cached_layout%grid_coords)
                   CALL torch_tensor_to_device_leaf(features%grid_coords_t, .TRUE.)
-                  CALL torch_dict_insert(features%inputs, skala_key_grid_coords, &
-                                         features%grid_coords_t)
+                  CALL torch_dict_set(cached_layout%grad_inputs, skala_key_grid_coords, &
+                                      features%grid_coords_t)
                   features%owns_grid_coordinate_tensor = .TRUE.
                ELSE
                   features%grid_coords_t = cached_layout%grid_coords_t
-                  CALL torch_dict_insert(features%inputs, skala_key_grid_coords, &
-                                         features%grid_coords_t)
+                  CALL torch_dict_set(cached_layout%grad_inputs, skala_key_grid_coords, &
+                                      features%grid_coords_t)
                END IF
                CALL torch_tensor_from_array(features%grid_weights_t, cached_layout%grid_weights)
                CALL torch_tensor_to_device_leaf(features%grid_weights_t, .TRUE.)
                CALL torch_tensor_from_array(features%atomic_grid_weights_t, &
                                             cached_layout%atomic_grid_weights)
                CALL torch_tensor_to_device_leaf(features%atomic_grid_weights_t, .TRUE.)
-               CALL torch_dict_insert(features%inputs, skala_key_grid_weights, &
-                                      features%grid_weights_t)
-               CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_weights, &
-                                      features%atomic_grid_weights_t)
-               CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_sizes, &
-                                      features%atomic_grid_sizes_t)
-               CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_size_bound_shape, &
-                                      features%atomic_grid_size_bound_shape_t)
+               CALL torch_dict_set(cached_layout%grad_inputs, skala_key_grid_weights, &
+                                   features%grid_weights_t)
+               CALL torch_dict_set(cached_layout%grad_inputs, skala_key_atomic_grid_weights, &
+                                   features%atomic_grid_weights_t)
+               features%inputs = cached_layout%grad_inputs
+               features%owns_inputs = .FALSE.
                features%owns_weight_tensors = .TRUE.
             ELSE
                CALL torch_dict_clone(cached_layout%static_inputs, features%inputs)
             END IF
-            CALL torch_dict_insert(features%inputs, skala_key_density, features%density_t)
-            CALL torch_dict_insert(features%inputs, skala_key_grad, features%grad_t)
-            CALL torch_dict_insert(features%inputs, skala_key_kin, features%kin_t)
+            CALL torch_dict_set(features%inputs, skala_key_density, features%density_t)
+            CALL torch_dict_set(features%inputs, skala_key_grad, features%grad_t)
+            CALL torch_dict_set(features%inputs, skala_key_kin, features%kin_t)
          ELSE
             IF (.NOT. cached_layout%inputs_active) THEN
                CALL torch_dict_clone(cached_layout%static_inputs, cached_layout%inputs)
@@ -2673,12 +2684,12 @@ CONTAINS
             CALL torch_tensor_from_array(features%coarse_0_atomic_coords_t, &
                                          features%coarse_0_atomic_coords)
             CALL torch_tensor_to_device_leaf(features%coarse_0_atomic_coords_t, .TRUE.)
-            CALL torch_dict_insert(features%inputs, skala_key_coarse_0_atomic_coords, &
-                                   features%coarse_0_atomic_coords_t)
+            CALL torch_dict_set(features%inputs, skala_key_coarse_0_atomic_coords, &
+                                features%coarse_0_atomic_coords_t)
             features%owns_coordinate_tensor = .TRUE.
          ELSE IF (my_requires_weight_grad) THEN
-            CALL torch_dict_insert(features%inputs, skala_key_coarse_0_atomic_coords, &
-                                   cached_layout%coarse_0_atomic_coords_t)
+            CALL torch_dict_set(features%inputs, skala_key_coarse_0_atomic_coords, &
+                                cached_layout%coarse_0_atomic_coords_t)
          END IF
       END IF
 
