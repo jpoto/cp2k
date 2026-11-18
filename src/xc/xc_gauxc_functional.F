@@ -85,6 +85,9 @@ MODULE xc_gauxc_functional
       LOGICAL                                     :: stack_valid = .FALSE.
    END TYPE gauxc_fd_context_type
 
+   ! One-time guard for the mixed execution-space FD warning.
+   LOGICAL, SAVE, PRIVATE :: fd_mixed_space_warned = .FALSE.
+
 CONTAINS
 
 ! **************************************************************************************************
@@ -1141,8 +1144,10 @@ CONTAINS
          OPTIONAL                                        :: density_zeta
 
       CHARACTER(len=default_path_length)                 :: model_key
+      CHARACTER(len=default_string_length)               :: int_key, lb_key
       INTEGER                                            :: iatom, idir, work_index
-      LOGICAL                                            :: distribute_fd, has_work, use_onedft_model
+      LOGICAL                                            :: distribute_fd, has_work, int_device, &
+                                                            lb_device, mixed_spaces, use_onedft_model
       REAL(KIND=dp)                                      :: xc_minus, xc_plus
       TYPE(gauxc_fd_context_type)                        :: fd_ctx
       TYPE(cp_gauxc_status_type)                         :: gauxc_status
@@ -1159,14 +1164,32 @@ CONTAINS
       exc_grad = 0.0_dp
 
       ! The GauXC OneDFT device path still assumes cuda:0, so only distribute
-      ! conventional functionals over ranks; OneDFT stays on rank 0.
+      ! conventional functionals and HOST/CPU OneDFT evaluations over ranks.
       use_onedft_model = .FALSE.
       IF (LEN_TRIM(model_name) > 0) THEN
          model_key = ADJUSTL(model_name)
          CALL uppercase(model_key)
          use_onedft_model = (TRIM(model_key) /= "NONE")
       END IF
-      distribute_fd = (para_env%num_pe > 1) .AND. .NOT. use_onedft_model
+      lb_key = ADJUSTL(lb_exec_space)
+      int_key = ADJUSTL(int_exec_space)
+      CALL uppercase(lb_key)
+      CALL uppercase(int_key)
+      lb_device = (TRIM(lb_key) == "DEVICE")
+      int_device = (TRIM(int_key) == "DEVICE")
+      mixed_spaces = (lb_device .NEQV. int_device)
+      IF (use_onedft_model .AND. para_env%num_pe > 1 .AND. mixed_spaces .AND. &
+          .NOT. fd_mixed_space_warned) THEN
+         fd_mixed_space_warned = .TRUE.
+         CALL cp_warn(__LOCATION__, &
+                      "GauXC finite-difference gradients do not support mixed "// &
+                      "LB_EXECUTION_SPACE/INT_EXECUTION_SPACE settings; the FD sweep "// &
+                      "will stay on rank 0.")
+      END IF
+      ! Distribute only conventional functionals, or OneDFT when both execution
+      ! spaces use the host (the OneDFT device path assumes cuda:0).
+      distribute_fd = (para_env%num_pe > 1) .AND. &
+                      (.NOT. use_onedft_model .OR. (.NOT. lb_device .AND. .NOT. int_device))
       has_work = distribute_fd .OR. (para_env%mepos == 0)
 
       IF (has_work) THEN
