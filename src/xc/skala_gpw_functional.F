@@ -202,6 +202,13 @@ MODULE skala_gpw_functional
    END TYPE atom_chunk_layout_cache_type
    TYPE(atom_chunk_layout_cache_type), SAVE, TARGET    :: chunk_layout_cache
 
+   ! Reusable host scratch for model gradients mapped back to the local grid.
+   TYPE skala_grad_scratch_type
+      REAL(KIND=dp), POINTER, DIMENSION(:, :)    :: density_grad => NULL(), kin_grad => NULL()
+      REAL(KIND=dp), POINTER, DIMENSION(:, :, :) :: grad_grad => NULL()
+   END TYPE skala_grad_scratch_type
+   TYPE(skala_grad_scratch_type), SAVE                 :: grad_scratch
+
 CONTAINS
 
 ! **************************************************************************************************
@@ -516,10 +523,10 @@ CONTAINS
       REAL(KIND=dp)                                      :: density_contraction, tau_contraction
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), TARGET   :: atomic_grid_weight_grad_g, &
                                                             grid_weight_grad_g
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: density_grad, kin_grad
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: density_grad, kin_grad
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
          TARGET                                          :: atom_coord_grad_g, grid_coord_grad_g
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: grad_grad
+      REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: grad_grad
       REAL(KIND=dp), DIMENSION(3, 3)                     :: virial_before
       REAL(KIND=dp), DIMENSION(:), POINTER               :: atomic_grid_weight_grad_p, &
                                                             grid_weight_grad_p
@@ -613,6 +620,10 @@ CONTAINS
                                    compute_diagnostics=native_grid_diagnostics, &
                                    atom_partition=native_grid_atom_partition, &
                                    cuda_device=selected_cuda_device)
+      CALL ensure_grad_scratch(features%nflat_local)
+      density_grad => grad_scratch%density_grad
+      grad_grad => grad_scratch%grad_grad
+      kin_grad => grad_scratch%kin_grad
       use_chunk_static_grad = features%uses_atom_chunks .AND. &
                               (needs_atom_force .OR. compute_virial)
       IF (native_grid_diagnostics) THEN
@@ -852,7 +863,6 @@ CONTAINS
          CALL timestop(phase_handle)
 
          CALL timeset("skala_gpw_grad_release", phase_handle)
-         DEALLOCATE (density_grad, grad_grad, kin_grad)
          IF (use_full_static_grad) THEN
             DO i = 1, static_grad_count
                CALL torch_tensor_release(static_grad_batch_t(i))
@@ -2194,10 +2204,8 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: max_rows
       LOGICAL, INTENT(IN)                                :: compute_grads, collapse_spin_grads
       REAL(KIND=dp), INTENT(OUT)                         :: exc
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: density_grad, kin_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
-         INTENT(OUT)                                     :: grad_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: density_grad, kin_grad
+      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: grad_grad
 
       INTEGER                                            :: isubchunk, nroute_grad_per_point, &
                                                             nroute_recv_points, nroute_send_points, &
@@ -2328,6 +2336,29 @@ CONTAINS
    END FUNCTION auto_atom_chunk_max_rows
 
 ! **************************************************************************************************
+!> \brief Ensure the reusable host gradient scratch has the local-grid shape.
+!> \param nflat_local ...
+! **************************************************************************************************
+   SUBROUTINE ensure_grad_scratch(nflat_local)
+      INTEGER, INTENT(IN)                                :: nflat_local
+
+      IF (ASSOCIATED(grad_scratch%density_grad)) THEN
+         IF (SIZE(grad_scratch%density_grad, 1) == nflat_local .AND. &
+             SIZE(grad_scratch%grad_grad, 1) == nflat_local .AND. &
+             SIZE(grad_scratch%kin_grad, 1) == nflat_local) RETURN
+         DEALLOCATE (grad_scratch%density_grad, grad_scratch%grad_grad, &
+                     grad_scratch%kin_grad)
+      END IF
+      ALLOCATE (grad_scratch%density_grad(nflat_local, 2), &
+                grad_scratch%grad_grad(nflat_local, 3, 2), &
+                grad_scratch%kin_grad(nflat_local, 2))
+      grad_scratch%density_grad = 0.0_dp
+      grad_scratch%grad_grad = 0.0_dp
+      grad_scratch%kin_grad = 0.0_dp
+
+   END SUBROUTINE ensure_grad_scratch
+
+! **************************************************************************************************
 !> \brief Map full Torch feature gradients back to this rank's local grid order.
 !> \param features ...
 !> \param density_grad ...
@@ -2336,12 +2367,9 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE fetch_local_feature_grads(features, density_grad, grad_grad, kin_grad)
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: density_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
-         INTENT(OUT)                                     :: grad_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: kin_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: density_grad
+      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: grad_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: kin_grad
 
       INTEGER                                            :: feature_pos, local_row, row
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: density_grad_all, kin_grad_all
@@ -2359,9 +2387,6 @@ CONTAINS
       CPASSERT(SIZE(kin_grad_all, 1) == features%nflat)
       CPASSERT(SIZE(kin_grad_all, 2) == 2)
 
-      ALLOCATE (density_grad(features%nflat_local, 2), &
-                grad_grad(features%nflat_local, 3, 2), &
-                kin_grad(features%nflat_local, 2))
       density_grad = 0.0_dp
       grad_grad = 0.0_dp
       kin_grad = 0.0_dp
@@ -2489,12 +2514,9 @@ CONTAINS
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: recv_grad_buffer
       LOGICAL, INTENT(IN)                                :: collapse_spin_grads
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: density_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
-         INTENT(OUT)                                     :: grad_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: kin_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: density_grad
+      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: grad_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: kin_grad
 
       INTEGER                                            :: base, local_row, nflat_local, &
                                                             nroute_grad_per_point, nroute_points, &
@@ -2505,8 +2527,6 @@ CONTAINS
       nroute_grad_per_point = ngrad_per_point
       IF (collapse_spin_grads) nroute_grad_per_point = ncollapsed_grad_per_point
       CPASSERT(SIZE(recv_grad_buffer) >= nroute_grad_per_point*nroute_points)
-      ALLOCATE (density_grad(nflat_local, 2), grad_grad(nflat_local, 3, 2), &
-                kin_grad(nflat_local, 2))
 
 !$OMP PARALLEL DO DEFAULT(NONE) &
 !$OMP SHARED(collapse_spin_grads, density_grad, features, grad_grad, kin_grad, nflat_local, &
@@ -2595,10 +2615,8 @@ CONTAINS
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
 
       CLASS(mp_comm_type), INTENT(IN)                    :: group
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
-         INTENT(OUT)                                     :: density_grad, kin_grad
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :), &
-         INTENT(OUT)                                     :: grad_grad
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(INOUT)      :: density_grad, kin_grad
+      REAL(KIND=dp), DIMENSION(:, :, :), INTENT(INOUT)   :: grad_grad
 
       INTEGER                                            :: nroute_grad_per_point, &
                                                             nroute_recv_points, nroute_send_points, &
@@ -3454,6 +3472,9 @@ CONTAINS
       model_context%valid = .FALSE.
       NULLIFY (model_context%xc_section)
       stress_mode_entered = .FALSE.
+      IF (ASSOCIATED(grad_scratch%density_grad)) THEN
+         DEALLOCATE (grad_scratch%density_grad, grad_scratch%grad_grad, grad_scratch%kin_grad)
+      END IF
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
 
