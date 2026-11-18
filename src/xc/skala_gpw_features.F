@@ -156,8 +156,8 @@ MODULE skala_gpw_features
       TYPE(torch_tensor_type)                           :: grid_weights_t
       TYPE(torch_tensor_type)                           :: kin_input_t
       TYPE(torch_tensor_type)                           :: kin_t
-      INTEGER, ALLOCATABLE, DIMENSION(:)                :: local_feature_offsets, &
-                                                           local_feature_rows
+      INTEGER, POINTER, DIMENSION(:)                    :: local_feature_offsets => NULL(), &
+                                                           local_feature_rows => NULL()
       INTEGER, POINTER, DIMENSION(:)                    :: route_point_recv_counts => NULL(), &
                                                            route_point_recv_displs => NULL(), &
                                                            route_point_send_counts => NULL(), &
@@ -175,10 +175,11 @@ MODULE skala_gpw_features
                                                            route_recv_chunk_rows => NULL()
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)    :: atomic_grid_sizes
       INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :) :: atomic_grid_size_bound_shape
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)          :: atomic_grid_weights, grid_weights
+      REAL(KIND=dp), POINTER, DIMENSION(:)              :: atomic_grid_weights => NULL(), &
+                                                           grid_weights => NULL()
+      REAL(KIND=dp), POINTER, DIMENSION(:, :)           :: grid_coords => NULL()
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)       :: chunk_density, chunk_kin, &
-                                                           coarse_0_atomic_coords, density, &
-                                                           grid_coords, kin
+                                                           coarse_0_atomic_coords, density, kin
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)    :: chunk_grad, grad
       REAL(KIND=dp)                                      :: electron_count = 0.0_dp, &
                                                             grid_weight_sum = 0.0_dp, &
@@ -186,6 +187,7 @@ MODULE skala_gpw_features
                                                             spin_moment = 0.0_dp
       LOGICAL                                            :: active = .FALSE., owns_coordinate_tensor = .FALSE., &
                                                             owns_grid_coordinate_tensor = .FALSE., &
+                                                            owns_layout_arrays = .FALSE., &
                                                             owns_weight_tensors = .FALSE., &
                                                             owns_dynamic_tensors = .TRUE., &
                                                             owns_inputs = .TRUE., &
@@ -213,6 +215,16 @@ MODULE skala_gpw_features
    END TYPE skala_gpw_scratch_type
 
    TYPE(skala_gpw_scratch_type), SAVE, TARGET            :: gpw_scratch
+
+   INTERFACE ensure_real_1d
+      MODULE PROCEDURE ensure_real_1d_alloc, ensure_real_1d_ptr
+   END INTERFACE ensure_real_1d
+   INTERFACE ensure_real_2d
+      MODULE PROCEDURE ensure_real_2d_alloc, ensure_real_2d_ptr
+   END INTERFACE ensure_real_2d
+   INTERFACE ensure_int_1d
+      MODULE PROCEDURE ensure_int_1d_alloc, ensure_int_1d_ptr
+   END INTERFACE ensure_int_1d
 
 CONTAINS
 
@@ -1363,20 +1375,19 @@ CONTAINS
       TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
       LOGICAL, INTENT(IN)                                :: needs_grid_coordinate_array
 
-      CALL ensure_real_1d(features%grid_weights, cached_layout%nflat)
-      CALL ensure_int_1d(features%local_feature_offsets, cached_layout%nflat_local + 1)
-      CALL ensure_int_1d(features%local_feature_rows, SIZE(cached_layout%local_feature_rows))
-
-      features%grid_weights(:) = cached_layout%grid_weights
-      features%local_feature_offsets(:) = cached_layout%local_feature_offsets
-      features%local_feature_rows(:) = cached_layout%local_feature_rows
-
+      ! Alias the persistent cache instead of duplicating the arrays. They are
+      ! read-only for the lifetime of this feature bundle and the layout cache is
+      ! rebuilt only after the bundle has been released.
+      features%grid_weights => cached_layout%grid_weights
+      features%local_feature_offsets => cached_layout%local_feature_offsets
+      features%local_feature_rows => cached_layout%local_feature_rows
       IF (needs_grid_coordinate_array) THEN
-         CALL ensure_real_2d(features%grid_coords, 3, cached_layout%nflat)
-         CALL ensure_real_1d(features%atomic_grid_weights, cached_layout%nflat)
-         features%grid_coords(:, :) = cached_layout%grid_coords
-         features%atomic_grid_weights(:) = cached_layout%atomic_grid_weights
+         features%grid_coords => cached_layout%grid_coords
+         features%atomic_grid_weights => cached_layout%atomic_grid_weights
+      ELSE
+         NULLIFY (features%grid_coords, features%atomic_grid_weights)
       END IF
+      features%owns_layout_arrays = .FALSE.
 
    END SUBROUTINE copy_full_layout
 
@@ -1390,6 +1401,12 @@ CONTAINS
       LOGICAL, INTENT(IN)                                :: needs_coordinate_array
 
       INTEGER                                            :: feature_pos
+
+      IF (.NOT. features%owns_layout_arrays) THEN
+         NULLIFY (features%grid_coords, features%grid_weights, features%atomic_grid_weights, &
+                  features%local_feature_offsets, features%local_feature_rows)
+      END IF
+      features%owns_layout_arrays = .TRUE.
 
       IF (needs_coordinate_array) THEN
          ! Routing mode keeps a per-rank local feature layout. Assembly routines
@@ -2101,6 +2118,17 @@ CONTAINS
          features%uses_collapsed_rks_dynamic = .FALSE.
       END IF
 
+      IF (features%owns_layout_arrays) THEN
+         IF (ASSOCIATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
+         IF (ASSOCIATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
+         IF (ASSOCIATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
+         IF (ASSOCIATED(features%grid_weights)) DEALLOCATE (features%grid_weights)
+         IF (ASSOCIATED(features%atomic_grid_weights)) DEALLOCATE (features%atomic_grid_weights)
+      END IF
+      NULLIFY (features%local_feature_offsets, features%local_feature_rows, &
+               features%grid_coords, features%grid_weights, features%atomic_grid_weights)
+      features%owns_layout_arrays = .FALSE.
+
       IF (.NOT. keep) THEN
          IF (ALLOCATED(features%chunk_density)) DEALLOCATE (features%chunk_density)
          IF (ALLOCATED(features%chunk_grad)) DEALLOCATE (features%chunk_grad)
@@ -2118,11 +2146,6 @@ CONTAINS
                features%route_feature_recv_displs, features%route_send_local_features, &
                features%route_recv_chunk_rows)
       IF (.NOT. keep) THEN
-         IF (ALLOCATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
-         IF (ALLOCATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
-         IF (ALLOCATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
-         IF (ALLOCATED(features%grid_weights)) DEALLOCATE (features%grid_weights)
-         IF (ALLOCATED(features%atomic_grid_weights)) DEALLOCATE (features%atomic_grid_weights)
          IF (ALLOCATED(features%atomic_grid_sizes)) DEALLOCATE (features%atomic_grid_sizes)
          IF (ALLOCATED(features%coarse_0_atomic_coords)) DEALLOCATE (features%coarse_0_atomic_coords)
          IF (ALLOCATED(features%atomic_grid_size_bound_shape)) THEN
@@ -2598,7 +2621,7 @@ CONTAINS
             IF (requires_stress_grad .OR. my_requires_weight_grad) THEN
                CALL torch_dict_create(features%inputs)
                IF (requires_stress_grad) THEN
-                  CALL torch_tensor_from_array(features%grid_coords_t, features%grid_coords)
+                  CALL torch_tensor_from_array(features%grid_coords_t, cached_layout%grid_coords)
                   CALL torch_tensor_to_device_leaf(features%grid_coords_t, .TRUE.)
                   CALL torch_dict_insert(features%inputs, skala_key_grid_coords, &
                                          features%grid_coords_t)
@@ -2608,10 +2631,10 @@ CONTAINS
                   CALL torch_dict_insert(features%inputs, skala_key_grid_coords, &
                                          features%grid_coords_t)
                END IF
-               CALL torch_tensor_from_array(features%grid_weights_t, features%grid_weights)
+               CALL torch_tensor_from_array(features%grid_weights_t, cached_layout%grid_weights)
                CALL torch_tensor_to_device_leaf(features%grid_weights_t, .TRUE.)
                CALL torch_tensor_from_array(features%atomic_grid_weights_t, &
-                                            features%atomic_grid_weights)
+                                            cached_layout%atomic_grid_weights)
                CALL torch_tensor_to_device_leaf(features%atomic_grid_weights_t, .TRUE.)
                CALL torch_dict_insert(features%inputs, skala_key_grid_weights, &
                                       features%grid_weights_t)
@@ -3698,7 +3721,7 @@ CONTAINS
 !> \param buf ...
 !> \param n ...
 ! **************************************************************************************************
-   SUBROUTINE ensure_real_1d(buf, n)
+   SUBROUTINE ensure_real_1d_alloc(buf, n)
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:), &
          INTENT(INOUT)                                   :: buf
       INTEGER, INTENT(IN)                                :: n
@@ -3710,14 +3733,14 @@ CONTAINS
       ALLOCATE (buf(MAX(1, n)))
       buf = 0.0_dp
 
-   END SUBROUTINE ensure_real_1d
+   END SUBROUTINE ensure_real_1d_alloc
 
 ! **************************************************************************************************
 !> \brief Ensure a reusable 1D integer scratch buffer has the requested size.
 !> \param buf ...
 !> \param n ...
 ! **************************************************************************************************
-   SUBROUTINE ensure_int_1d(buf, n)
+   SUBROUTINE ensure_int_1d_alloc(buf, n)
       INTEGER, ALLOCATABLE, DIMENSION(:), INTENT(INOUT)  :: buf
       INTEGER, INTENT(IN)                                :: n
 
@@ -3728,7 +3751,57 @@ CONTAINS
       ALLOCATE (buf(MAX(1, n)))
       buf = 0
 
-   END SUBROUTINE ensure_int_1d
+   END SUBROUTINE ensure_int_1d_alloc
+
+! **************************************************************************************************
+!> \brief Pointer variant of ensure_real_1d (owns the allocation).
+! **************************************************************************************************
+   SUBROUTINE ensure_real_1d_ptr(buf, n)
+      REAL(KIND=dp), POINTER, DIMENSION(:), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: n
+
+      IF (ASSOCIATED(buf)) THEN
+         IF (SIZE(buf) == MAX(1, n)) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(MAX(1, n)))
+      buf = 0.0_dp
+
+   END SUBROUTINE ensure_real_1d_ptr
+
+! **************************************************************************************************
+!> \brief Pointer variant of ensure_real_2d (owns the allocation).
+! **************************************************************************************************
+   SUBROUTINE ensure_real_2d_ptr(buf, n, m)
+      REAL(KIND=dp), POINTER, DIMENSION(:, :), &
+         INTENT(INOUT)                                   :: buf
+      INTEGER, INTENT(IN)                                :: n, m
+
+      IF (ASSOCIATED(buf)) THEN
+         IF (SIZE(buf, 1) == n .AND. SIZE(buf, 2) == m) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(n, m))
+      buf = 0.0_dp
+
+   END SUBROUTINE ensure_real_2d_ptr
+
+! **************************************************************************************************
+!> \brief Pointer variant of ensure_int_1d (owns the allocation).
+! **************************************************************************************************
+   SUBROUTINE ensure_int_1d_ptr(buf, n)
+      INTEGER, POINTER, DIMENSION(:), INTENT(INOUT)      :: buf
+      INTEGER, INTENT(IN)                                :: n
+
+      IF (ASSOCIATED(buf)) THEN
+         IF (SIZE(buf) == MAX(1, n)) RETURN
+         DEALLOCATE (buf)
+      END IF
+      ALLOCATE (buf(MAX(1, n)))
+      buf = 0
+
+   END SUBROUTINE ensure_int_1d_ptr
 
 ! **************************************************************************************************
 !> \brief Ensure a reusable 1D int_8 scratch buffer has the requested size.
@@ -3755,7 +3828,7 @@ CONTAINS
 !> \param n ...
 !> \param m ...
 ! **************************************************************************************************
-   SUBROUTINE ensure_real_2d(buf, n, m)
+   SUBROUTINE ensure_real_2d_alloc(buf, n, m)
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :), &
          INTENT(INOUT)                                   :: buf
       INTEGER, INTENT(IN)                                :: n, m
@@ -3767,7 +3840,7 @@ CONTAINS
       ALLOCATE (buf(n, m))
       buf = 0.0_dp
 
-   END SUBROUTINE ensure_real_2d
+   END SUBROUTINE ensure_real_2d_alloc
 
 ! **************************************************************************************************
 !> \brief Ensure a reusable 3D real scratch buffer has the requested shape.
