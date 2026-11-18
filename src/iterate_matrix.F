@@ -1637,15 +1637,17 @@ CONTAINS
 
       INTEGER                                            :: handle, i, unit_nr
       INTEGER(KIND=int_8)                                :: flop1, flop2, flop3, flop4, flop5
-      LOGICAL                                            :: arnoldi_converged, tsym
+      LOGICAL                                            :: arnoldi_converged, tsym, do_async
       REAL(KIND=dp)                                      :: a, b, c, conv, d, frob_matrix, &
                                                             frob_matrix_base, gershgorin_norm, &
                                                             max_ev, min_ev, oa, ob, oc, &
                                                             occ_matrix, od, scaling, t1, t2
       TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(dbcsr_async_handle_type)                      :: async_y, async_z
       TYPE(dbcsr_type)                                   :: tmp1, tmp2, tmp3
 
       CALL timeset(routineN, handle)
+      do_async = dbcsr_async_enabled()
 
       IF (PRESENT(iounit)) THEN
          unit_nr = iounit
@@ -1668,7 +1670,7 @@ CONTAINS
       ! for stability symmetry can not be assumed
       CALL dbcsr_create(tmp1, template=matrix, matrix_type=dbcsr_type_no_symmetry)
       CALL dbcsr_create(tmp2, template=matrix, matrix_type=dbcsr_type_no_symmetry)
-      IF (order >= 4) THEN
+      IF (order >= 4 .OR. do_async) THEN
          CALL dbcsr_create(tmp3, template=matrix, matrix_type=dbcsr_type_no_symmetry)
       END IF
 
@@ -1783,17 +1785,28 @@ CONTAINS
             CPABORT("Illegal order value")
          END SELECT
 
-         ! tmp2 = Yk * tmp1 = Y(k+1)
-         CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_sqrt, tmp1, 0.0_dp, tmp2, &
-                             filter_eps=threshold, flop=flop2)
-         ! CALL dbcsr_filter(tmp2,threshold)
-         CALL dbcsr_copy(matrix_sqrt, tmp2)
+         IF (do_async) THEN
+            ! Y(k+1) = Yk*tmp1 and Z(k+1) = tmp1*Zk are independent; submit both
+            ! into separate buffers and wait once.
+            CALL dbcsr_multiply_async("N", "N", 1.0_dp, matrix_sqrt, tmp1, 0.0_dp, tmp2, &
+                                      async_y, filter_eps=threshold)
+            CALL dbcsr_multiply_async("N", "N", 1.0_dp, tmp1, matrix_sqrt_inv, 0.0_dp, tmp3, &
+                                      async_z, filter_eps=threshold)
+            CALL dbcsr_multiply_wait(async_y)
+            CALL dbcsr_multiply_wait(async_z)
+            CALL dbcsr_copy(matrix_sqrt, tmp2)
+            CALL dbcsr_copy(matrix_sqrt_inv, tmp3)
+         ELSE
+            ! tmp2 = Yk * tmp1 = Y(k+1)
+            CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_sqrt, tmp1, 0.0_dp, tmp2, &
+                                filter_eps=threshold, flop=flop2)
+            CALL dbcsr_copy(matrix_sqrt, tmp2)
 
-         ! tmp2 = tmp1 * Zk = Z(k+1)
-         CALL dbcsr_multiply("N", "N", 1.0_dp, tmp1, matrix_sqrt_inv, 0.0_dp, tmp2, &
-                             filter_eps=threshold, flop=flop3)
-         ! CALL dbcsr_filter(tmp2,threshold)
-         CALL dbcsr_copy(matrix_sqrt_inv, tmp2)
+            ! tmp2 = tmp1 * Zk = Z(k+1)
+            CALL dbcsr_multiply("N", "N", 1.0_dp, tmp1, matrix_sqrt_inv, 0.0_dp, tmp2, &
+                                filter_eps=threshold, flop=flop3)
+            CALL dbcsr_copy(matrix_sqrt_inv, tmp2)
+         END IF
 
          occ_matrix = dbcsr_get_occupation(matrix_sqrt_inv)
 
@@ -1852,7 +1865,7 @@ CONTAINS
 
       CALL dbcsr_release(tmp1)
       CALL dbcsr_release(tmp2)
-      IF (order >= 4) THEN
+      IF (order >= 4 .OR. do_async) THEN
          CALL dbcsr_release(tmp3)
       END IF
 
@@ -2231,7 +2244,8 @@ CONTAINS
       INTEGER                                            :: handle, i, ispin, unit_nr
       REAL(KIND=dp)                                      :: frob_norm, trace
       TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(dbcsr_type)                                   :: matrix_pp, matrix_tmp
+      TYPE(dbcsr_type)                                   :: matrix_pp, matrix_tmp, matrix_newp
+      TYPE(dbcsr_async_handle_type)                      :: async_newp
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -2243,6 +2257,7 @@ CONTAINS
 
       CALL dbcsr_create(matrix_pp, template=matrix_p(1), matrix_type=dbcsr_type_no_symmetry)
       CALL dbcsr_create(matrix_tmp, template=matrix_p(1), matrix_type=dbcsr_type_no_symmetry)
+      CALL dbcsr_create(matrix_newp, template=matrix_p(1), matrix_type=dbcsr_type_no_symmetry)
       CALL dbcsr_trace(matrix_p(1), trace)
 
       DO ispin = 1, SIZE(matrix_p)
@@ -2253,14 +2268,25 @@ CONTAINS
             ! test convergence
             CALL dbcsr_copy(matrix_tmp, matrix_pp)
             CALL dbcsr_add(matrix_tmp, matrix_p(ispin), 1.0_dp, -1.0_dp)
+            IF (dbcsr_async_enabled()) THEN
+               ! Overlap the next-P product (PP*P) with the idempotency check.
+               CALL dbcsr_multiply_async("N", "N", 1.0_dp, matrix_pp, matrix_p(ispin), &
+                                         0.0_dp, matrix_newp, async_newp, filter_eps=threshold)
+            END IF
             frob_norm = dbcsr_frobenius_norm(matrix_tmp) ! tmp = PP - P
             IF (unit_nr > 0) WRITE (unit_nr, '(t3,a,f16.8)') "McWeeny: Deviation of idempotency", frob_norm
             IF (unit_nr > 0) CALL m_flush(unit_nr)
 
-            ! construct new P
-            CALL dbcsr_copy(matrix_tmp, matrix_pp)
-            CALL dbcsr_multiply("N", "N", -2.0_dp, matrix_pp, matrix_p(ispin), &
-                                3.0_dp, matrix_tmp, filter_eps=threshold)
+            ! construct new P: P = 3*PP - 2*PP*P
+            IF (dbcsr_async_enabled()) THEN
+               CALL dbcsr_multiply_wait(async_newp)
+               CALL dbcsr_copy(matrix_tmp, matrix_pp)
+               CALL dbcsr_add(matrix_tmp, matrix_newp, 3.0_dp, -2.0_dp)
+            ELSE
+               CALL dbcsr_copy(matrix_tmp, matrix_pp)
+               CALL dbcsr_multiply("N", "N", -2.0_dp, matrix_pp, matrix_p(ispin), &
+                                   3.0_dp, matrix_tmp, filter_eps=threshold)
+            END IF
             CALL dbcsr_copy(matrix_p(ispin), matrix_tmp) ! tmp = 3PP - 2PPP
 
             ! frob_norm < SQRT(trace*threshold)
@@ -2270,6 +2296,7 @@ CONTAINS
 
       CALL dbcsr_release(matrix_pp)
       CALL dbcsr_release(matrix_tmp)
+      CALL dbcsr_release(matrix_newp)
       CALL timestop(handle)
    END SUBROUTINE purify_mcweeny_orth
 
