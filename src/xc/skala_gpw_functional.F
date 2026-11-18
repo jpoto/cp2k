@@ -2326,9 +2326,9 @@ CONTAINS
          END IF
          CALL timeset("skala_gpw_atom_subchunk_release", subphase_handle)
          CALL torch_tensor_release(subchunk_exc_tensor)
-         CALL skala_gpw_feature_release(subchunk)
          CALL timestop(subphase_handle)
       END DO
+      IF (subchunk%active) CALL skala_gpw_feature_release(subchunk)
       IF (nsubchunks > 0) THEN
          exc = exc + torch_tensor_item_double(subchunk_exc_total_t)
          CALL torch_tensor_release(subchunk_exc_total_t)

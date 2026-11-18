@@ -194,6 +194,7 @@ MODULE skala_gpw_features
                                                             owns_weight_tensors = .FALSE., &
                                                             owns_dynamic_tensors = .TRUE., &
                                                             owns_inputs = .TRUE., &
+                                                            inputs_active = .FALSE., &
                                                             owns_static_tensors = .TRUE., &
                                                             uses_atom_chunks = .FALSE., &
                                                             uses_collapsed_rks_dynamic = .FALSE.
@@ -2115,6 +2116,7 @@ CONTAINS
             CALL torch_tensor_release(features%coarse_0_atomic_coords_t)
          END IF
          IF (features%owns_inputs) CALL torch_dict_release(features%inputs)
+         features%inputs_active = .FALSE.
          features%active = .FALSE.
          features%owns_coordinate_tensor = .FALSE.
          features%owns_grid_coordinate_tensor = .FALSE.
@@ -2326,6 +2328,42 @@ CONTAINS
    END SUBROUTINE skala_gpw_atom_subchunk_layout
 
 ! **************************************************************************************************
+!> \brief Release the view tensors/dict of a reusable subchunk bundle.
+!>        Host arrays and the parent-owned tensors are left untouched.
+! **************************************************************************************************
+   SUBROUTINE release_subchunk_tensors(features)
+      TYPE(skala_gpw_feature_type), INTENT(INOUT)        :: features
+
+      IF (.NOT. features%active) RETURN
+      CALL torch_tensor_release(features%grid_coords_t)
+      CALL torch_tensor_release(features%grid_weights_t)
+      CALL torch_tensor_release(features%atomic_grid_weights_t)
+      CALL torch_tensor_release(features%atomic_grid_sizes_t)
+      CALL torch_tensor_release(features%coarse_0_atomic_coords_t)
+      CALL torch_tensor_release(features%atomic_grid_size_bound_shape_t)
+      CALL torch_tensor_release(features%density_t)
+      CALL torch_tensor_release(features%grad_t)
+      CALL torch_tensor_release(features%kin_t)
+      IF (features%uses_collapsed_rks_dynamic) THEN
+         CALL torch_tensor_release(features%density_input_t)
+         CALL torch_tensor_release(features%grad_input_t)
+         CALL torch_tensor_release(features%kin_input_t)
+      END IF
+      IF (features%inputs_active) THEN
+         CALL torch_dict_release(features%inputs)
+         features%inputs_active = .FALSE.
+      END IF
+      features%active = .FALSE.
+      features%owns_coordinate_tensor = .FALSE.
+      features%owns_grid_coordinate_tensor = .FALSE.
+      features%owns_weight_tensors = .FALSE.
+      features%owns_dynamic_tensors = .FALSE.
+      features%owns_inputs = .TRUE.
+      features%owns_static_tensors = .FALSE.
+
+   END SUBROUTINE release_subchunk_tensors
+
+! **************************************************************************************************
 !> \brief Build an atom-contiguous subchunk feature bundle from precomputed bounds.
 !> \param parent ...
 !> \param features ...
@@ -2343,7 +2381,7 @@ CONTAINS
 
       INTEGER                                            :: atom_end, max_grid_size, row_end
 
-      CALL skala_gpw_feature_release(features)
+      IF (features%active) CALL release_subchunk_tensors(features)
       CPASSERT(parent%uses_atom_chunks)
       atom_end = atom_begin + atom_count - 1
       row_end = row_begin + row_count - 1
@@ -2351,7 +2389,12 @@ CONTAINS
       CPASSERT(row_count > 0)
       max_grid_size = MAXVAL(INT(cached_layout%chunk_atomic_grid_sizes(atom_begin:atom_end)))
 
-      ALLOCATE (features%atomic_grid_size_bound_shape(0, max_grid_size))
+      IF (ALLOCATED(features%atomic_grid_size_bound_shape)) THEN
+         IF (SIZE(features%atomic_grid_size_bound_shape, 2) /= max_grid_size) &
+            DEALLOCATE (features%atomic_grid_size_bound_shape)
+      END IF
+      IF (.NOT. ALLOCATED(features%atomic_grid_size_bound_shape)) &
+         ALLOCATE (features%atomic_grid_size_bound_shape(0, max_grid_size))
       features%atomic_grid_size_bound_shape = 0_int_8
 
       features%chunk_feature_count = row_count
@@ -2414,26 +2457,29 @@ CONTAINS
          CALL torch_tensor_expand_dim(features%kin_t, 0, 2, features%kin_input_t)
       END IF
 
-      CALL torch_dict_create(features%inputs)
-      CALL torch_dict_insert(features%inputs, skala_key_grid_coords, features%grid_coords_t)
-      CALL torch_dict_insert(features%inputs, skala_key_grid_weights, features%grid_weights_t)
-      CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_weights, &
-                             features%atomic_grid_weights_t)
-      CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_sizes, &
-                             features%atomic_grid_sizes_t)
-      CALL torch_dict_insert(features%inputs, skala_key_atomic_grid_size_bound_shape, &
-                             features%atomic_grid_size_bound_shape_t)
-      IF (features%uses_collapsed_rks_dynamic) THEN
-         CALL torch_dict_insert(features%inputs, skala_key_density, features%density_input_t)
-         CALL torch_dict_insert(features%inputs, skala_key_grad, features%grad_input_t)
-         CALL torch_dict_insert(features%inputs, skala_key_kin, features%kin_input_t)
-      ELSE
-         CALL torch_dict_insert(features%inputs, skala_key_density, features%density_t)
-         CALL torch_dict_insert(features%inputs, skala_key_grad, features%grad_t)
-         CALL torch_dict_insert(features%inputs, skala_key_kin, features%kin_t)
+      IF (.NOT. features%inputs_active) THEN
+         CALL torch_dict_create(features%inputs)
+         features%inputs_active = .TRUE.
       END IF
-      CALL torch_dict_insert(features%inputs, skala_key_coarse_0_atomic_coords, &
-                             features%coarse_0_atomic_coords_t)
+      CALL torch_dict_set(features%inputs, skala_key_grid_coords, features%grid_coords_t)
+      CALL torch_dict_set(features%inputs, skala_key_grid_weights, features%grid_weights_t)
+      CALL torch_dict_set(features%inputs, skala_key_atomic_grid_weights, &
+                          features%atomic_grid_weights_t)
+      CALL torch_dict_set(features%inputs, skala_key_atomic_grid_sizes, &
+                          features%atomic_grid_sizes_t)
+      CALL torch_dict_set(features%inputs, skala_key_atomic_grid_size_bound_shape, &
+                          features%atomic_grid_size_bound_shape_t)
+      IF (features%uses_collapsed_rks_dynamic) THEN
+         CALL torch_dict_set(features%inputs, skala_key_density, features%density_input_t)
+         CALL torch_dict_set(features%inputs, skala_key_grad, features%grad_input_t)
+         CALL torch_dict_set(features%inputs, skala_key_kin, features%kin_input_t)
+      ELSE
+         CALL torch_dict_set(features%inputs, skala_key_density, features%density_t)
+         CALL torch_dict_set(features%inputs, skala_key_grad, features%grad_t)
+         CALL torch_dict_set(features%inputs, skala_key_kin, features%kin_t)
+      END IF
+      CALL torch_dict_set(features%inputs, skala_key_coarse_0_atomic_coords, &
+                          features%coarse_0_atomic_coords_t)
 
    END SUBROUTINE add_subchunk_feature_tensors
 
