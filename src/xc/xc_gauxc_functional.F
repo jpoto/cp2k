@@ -62,6 +62,7 @@ MODULE xc_gauxc_functional
         gauxc_create_grid, gauxc_create_integrator, gauxc_create_molecule, &
         gauxc_create_shared_runtime, gauxc_destroy_basisset, gauxc_destroy_grid, &
         gauxc_destroy_integrator, gauxc_destroy_molecule, gauxc_destroy_shared_runtime, &
+        gauxc_model_active, &
         gauxc_write_basisset_hdf5, gauxc_write_molecule_hdf5
    USE xc_rho_cflags_types,             ONLY: xc_rho_cflags_type
 #include "../base/base_uses.f90"
@@ -160,6 +161,30 @@ CONTAINS
 !> \param dense_mat ...
 !> \param para_env ...
 ! **************************************************************************************************
+   SUBROUTINE copy_block_to_dense(dense, block, transposed, symmetry_sign, has_symmetry, &
+                                  irow, icol, row_start, col_start, nrow, ncol)
+      REAL(c_double), DIMENSION(:, :), INTENT(INOUT)     :: dense
+      REAL(c_double), DIMENSION(:, :), INTENT(IN)        :: block
+      LOGICAL, INTENT(IN)                                :: transposed, has_symmetry
+      REAL(KIND=dp), INTENT(IN)                          :: symmetry_sign
+      INTEGER, INTENT(IN)                                :: irow, icol, row_start, col_start, nrow, ncol
+
+      INTEGER                                            :: col_end, row_end
+
+      row_end = row_start + nrow - 1
+      col_end = col_start + ncol - 1
+      IF (transposed) THEN
+         dense(row_start:row_end, col_start:col_end) = symmetry_sign*TRANSPOSE(block)
+      ELSE
+         dense(row_start:row_end, col_start:col_end) = block
+      END IF
+      IF (has_symmetry .AND. irow /= icol) THEN
+         dense(col_start:col_end, row_start:row_end) = &
+            symmetry_sign*TRANSPOSE(dense(row_start:row_end, col_start:col_end))
+      END IF
+
+   END SUBROUTINE copy_block_to_dense
+
    SUBROUTINE dbcsr_to_dense(dbcsr_mat, dense_mat, para_env)
       USE cp_dbcsr_api, ONLY: dbcsr_distribution_get, dbcsr_distribution_type, dbcsr_get_info, &
                               dbcsr_get_matrix_type, dbcsr_iterator_blocks_left, &
@@ -172,9 +197,8 @@ CONTAINS
       TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
 
       CHARACTER                                          :: matrix_type
-      INTEGER                                            :: col_end, col_start, icol, irow, ncol, &
-                                                            ncols, nrow, nrows, numnodes, row_end, &
-                                                            row_start
+      INTEGER                                            :: col_start, icol, irow, ncol, ncols, nrow, &
+                                                            nrows, numnodes, row_start
       LOGICAL                                            :: has_symmetry, transposed
       REAL(c_double), POINTER                            :: block(:, :)
       REAL(KIND=dp)                                      :: symmetry_sign
@@ -206,22 +230,13 @@ CONTAINS
 
       ! Stored blocks and their symmetry mirrors occupy disjoint dense slices.
 !$OMP PARALLEL DEFAULT(NONE) SHARED(dbcsr_mat, dense_mat, has_symmetry, symmetry_sign) &
-!$OMP PRIVATE(iter, irow, icol, block, transposed, row_start, col_start, nrow, ncol, row_end, col_end)
+!$OMP PRIVATE(iter, irow, icol, block, transposed, row_start, col_start, nrow, ncol)
       CALL dbcsr_iterator_readonly_start(iter, dbcsr_mat%matrix)
       DO WHILE (dbcsr_iterator_blocks_left(iter))
          CALL dbcsr_iterator_next_block(iter, irow, icol, block, transposed=transposed, &
                                         row_size=nrow, col_size=ncol, row_offset=row_start, col_offset=col_start)
-         row_end = row_start + nrow - 1
-         col_end = col_start + ncol - 1
-         IF (transposed) THEN
-            dense_mat(row_start:row_end, col_start:col_end) = symmetry_sign*TRANSPOSE(block)
-         ELSE
-            dense_mat(row_start:row_end, col_start:col_end) = block
-         END IF
-         IF (has_symmetry .AND. irow /= icol) THEN
-            dense_mat(col_start:col_end, row_start:row_end) = &
-               symmetry_sign*TRANSPOSE(dense_mat(row_start:row_end, col_start:col_end))
-         END IF
+         CALL copy_block_to_dense(dense_mat, block, transposed, symmetry_sign, has_symmetry, &
+                                  irow, icol, row_start, col_start, nrow, ncol)
       END DO
       CALL dbcsr_iterator_stop(iter)
 !$OMP END PARALLEL
@@ -251,8 +266,8 @@ CONTAINS
       TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
 
       CHARACTER                                          :: matrix_type_a, matrix_type_b
-      INTEGER :: col_end, col_start, col_start_b, icol, icol_b, irow, irow_b, ncol, ncol_b, ncols, &
-         nrow, nrow_b, nrows, numnodes, row_end, row_start, row_start_b
+      INTEGER :: col_start, col_start_b, icol, icol_b, irow, irow_b, ncol, ncol_b, ncols, nrow, &
+         nrow_b, nrows, numnodes, row_start, row_start_b
       LOGICAL                                            :: has_symmetry_a, has_symmetry_b, &
                                                             transposed_a, transposed_b
       REAL(c_double), POINTER                            :: block_a(:, :), block_b(:, :)
@@ -294,7 +309,7 @@ CONTAINS
 !$OMP        symmetry_sign_a, symmetry_sign_b) &
 !$OMP PRIVATE(iter_a, iter_b, irow, icol, irow_b, icol_b, block_a, block_b, transposed_a, &
 !$OMP         transposed_b, row_start, col_start, row_start_b, col_start_b, nrow, ncol, nrow_b, &
-!$OMP         ncol_b, row_end, col_end)
+!$OMP         ncol_b)
       CALL dbcsr_iterator_readonly_start(iter_a, dbcsr_a%matrix)
       CALL dbcsr_iterator_readonly_start(iter_b, dbcsr_b%matrix)
       DO WHILE (dbcsr_iterator_blocks_left(iter_a))
@@ -307,26 +322,10 @@ CONTAINS
                                         col_offset=col_start_b)
          CPASSERT(irow_b == irow .AND. icol_b == icol)
          CPASSERT(nrow_b == nrow .AND. ncol_b == ncol)
-         row_end = row_start + nrow - 1
-         col_end = col_start + ncol - 1
-         IF (transposed_a) THEN
-            dense_a(row_start:row_end, col_start:col_end) = symmetry_sign_a*TRANSPOSE(block_a)
-         ELSE
-            dense_a(row_start:row_end, col_start:col_end) = block_a
-         END IF
-         IF (has_symmetry_a .AND. irow /= icol) THEN
-            dense_a(col_start:col_end, row_start:row_end) = &
-               symmetry_sign_a*TRANSPOSE(dense_a(row_start:row_end, col_start:col_end))
-         END IF
-         IF (transposed_b) THEN
-            dense_b(row_start:row_end, col_start:col_end) = symmetry_sign_b*TRANSPOSE(block_b)
-         ELSE
-            dense_b(row_start:row_end, col_start:col_end) = block_b
-         END IF
-         IF (has_symmetry_b .AND. irow /= icol) THEN
-            dense_b(col_start:col_end, row_start:row_end) = &
-               symmetry_sign_b*TRANSPOSE(dense_b(row_start:row_end, col_start:col_end))
-         END IF
+         CALL copy_block_to_dense(dense_a, block_a, transposed_a, symmetry_sign_a, has_symmetry_a, &
+                                  irow, icol, row_start, col_start, nrow, ncol)
+         CALL copy_block_to_dense(dense_b, block_b, transposed_b, symmetry_sign_b, has_symmetry_b, &
+                                  irow, icol, row_start_b, col_start_b, nrow_b, ncol_b)
       END DO
       CPASSERT(.NOT. dbcsr_iterator_blocks_left(iter_b))
       CALL dbcsr_iterator_stop(iter_a)
@@ -1143,7 +1142,6 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), &
          OPTIONAL                                        :: density_zeta
 
-      CHARACTER(len=default_path_length)                 :: model_key
       CHARACTER(len=default_string_length)               :: int_key, lb_key
       INTEGER                                            :: iatom, idir, work_index
       LOGICAL                                            :: distribute_fd, has_work, int_device, &
@@ -1165,12 +1163,7 @@ CONTAINS
 
       ! The GauXC OneDFT device path still assumes cuda:0, so only distribute
       ! conventional functionals and HOST/CPU OneDFT evaluations over ranks.
-      use_onedft_model = .FALSE.
-      IF (LEN_TRIM(model_name) > 0) THEN
-         model_key = ADJUSTL(model_name)
-         CALL uppercase(model_key)
-         use_onedft_model = (TRIM(model_key) /= "NONE")
-      END IF
+      use_onedft_model = gauxc_model_active(model_name)
       lb_key = ADJUSTL(lb_exec_space)
       int_key = ADJUSTL(int_exec_space)
       CALL uppercase(lb_key)

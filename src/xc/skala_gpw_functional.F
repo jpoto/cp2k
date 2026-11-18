@@ -43,7 +43,8 @@ MODULE skala_gpw_functional
                                               skala_key_grid_weights,&
                                               skala_key_kin
    USE skala_gpw_features,              ONLY: &
-        grid_coordinate, skala_gpw_atom_partition_hard, skala_gpw_atom_partition_smooth, &
+        allocate_empty_bound_shape, grid_coordinate, skala_gpw_atom_partition_hard, &
+        skala_gpw_atom_partition_smooth, &
         sort_chunks_by_padded_rows, &
         skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, skala_gpw_feature_build, &
         skala_gpw_feature_build_atom_subchunk_bounds, skala_gpw_feature_release, &
@@ -1297,7 +1298,6 @@ CONTAINS
       atom_ws%grid_coords = 0.0_dp
       atom_ws%grid_weights = 0.0_dp
       atom_ws%atomic_grid_weights = 0.0_dp
-      atom_ws%atomic_grid_size_bound_shape = 0_int_8
 
       DO iblock = 1, nblocks
          is_hard = (evaluate_hard .AND. iblock == iblock_h)
@@ -1758,8 +1758,7 @@ CONTAINS
             chunk_row_count = chunk_row_counts(ichunk)
             max_grid_size = INT(MAXVAL(atomic_grid_sizes( &
                                        atom_begin:atom_begin + atom_count - 1)))
-            ALLOCATE (atomic_grid_size_bound_shape(0, max_grid_size))
-            atomic_grid_size_bound_shape = 0_int_8
+            CALL allocate_empty_bound_shape(atomic_grid_size_bound_shape, max_grid_size)
 
             CALL torch_tensor_narrow(grid_coords_t, 0, chunk_row_start - 1, &
                                      chunk_row_count, grid_coords_chunk_t)

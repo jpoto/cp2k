@@ -53,7 +53,8 @@ MODULE skala_gpw_features
    INTEGER, PARAMETER, PRIVATE          :: periodic_partition_image_shell = 1
 
    PUBLIC :: skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, &
-             sort_chunks_by_padded_rows, grid_coordinate, skala_gpw_features_release_cache, &
+             sort_chunks_by_padded_rows, grid_coordinate, allocate_empty_bound_shape, &
+             skala_gpw_features_release_cache, &
              skala_gpw_feature_build, skala_gpw_feature_build_atom_subchunk_bounds, &
              skala_gpw_feature_release, &
              skala_gpw_feature_type, smooth_partition_derivative_action, &
@@ -1080,7 +1081,6 @@ CONTAINS
          cached_layout%grid_weights = 0.0_dp
          cached_layout%atomic_grid_weights = 0.0_dp
       END IF
-      cached_layout%atomic_grid_size_bound_shape = 0_int_8
 
       DO iatom = 1, natom
          cached_layout%atom_coords(:, iatom) = particle_set(iatom)%r
@@ -1790,8 +1790,7 @@ CONTAINS
          cache%coarse_0_atomic_coords(:, cache%chunk_atom_begin:cache%chunk_atom_end)
 
       max_grid_size = MAXVAL(INT(cache%chunk_atomic_grid_sizes))
-      ALLOCATE (cache%chunk_atomic_grid_size_bound_shape(0, max_grid_size))
-      cache%chunk_atomic_grid_size_bound_shape = 0_int_8
+      CALL allocate_empty_bound_shape(cache%chunk_atomic_grid_size_bound_shape, max_grid_size)
 
    END SUBROUTINE build_atom_chunk_layout
 
@@ -2395,7 +2394,6 @@ CONTAINS
       END IF
       IF (.NOT. ALLOCATED(features%atomic_grid_size_bound_shape)) &
          ALLOCATE (features%atomic_grid_size_bound_shape(0, max_grid_size))
-      features%atomic_grid_size_bound_shape = 0_int_8
 
       features%chunk_feature_count = row_count
       features%nflat = parent%nflat
@@ -3772,6 +3770,20 @@ CONTAINS
       END IF
 
    END FUNCTION nearest_atom
+
+! **************************************************************************************************
+!> \brief Allocate the zero-row placeholder shape for atomic_grid_size_bound_shape.
+!> \param buf ...
+!> \param max_grid_size ...
+! **************************************************************************************************
+   SUBROUTINE allocate_empty_bound_shape(buf, max_grid_size)
+      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :), &
+         INTENT(OUT)                                     :: buf
+      INTEGER, INTENT(IN)                                :: max_grid_size
+
+      ALLOCATE (buf(0, max_grid_size))
+
+   END SUBROUTINE allocate_empty_bound_shape
 
 ! **************************************************************************************************
 !> \brief Ensure a reusable 1D real scratch buffer has the requested size.

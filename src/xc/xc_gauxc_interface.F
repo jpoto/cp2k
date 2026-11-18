@@ -242,8 +242,32 @@ MODULE xc_gauxc_interface
       gauxc_finalize, &
       gauxc_init, &
       gauxc_write_basisset_hdf5, &
-      gauxc_write_molecule_hdf5
+      gauxc_write_molecule_hdf5, &
+      gauxc_model_active
 CONTAINS
+
+! **************************************************************************************************
+!> \brief Whether a model name selects a GauXC model (non-empty and not NONE).
+!> \param model ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION gauxc_model_active(model) RESULT(active)
+      CHARACTER(len=*), INTENT(IN), OPTIONAL             :: model
+      LOGICAL                                            :: active
+
+      CHARACTER(len=:), ALLOCATABLE                      :: key
+
+      active = .FALSE.
+      IF (.NOT. PRESENT(model)) RETURN
+#ifdef __GAUXC
+      key = ADJUSTL(model)
+      CALL uppercase(key)
+      active = (LEN_TRIM(key) > 0 .AND. TRIM(key) /= "NONE")
+#else
+      MARK_USED(model)
+#endif
+
+   END FUNCTION gauxc_model_active
 
 ! **************************************************************************************************
 !> \brief ...
@@ -531,10 +555,8 @@ CONTAINS
       INTEGER(c_int)                                     :: int_exec_requested, lb_exec_space_local
       LOGICAL                                            :: use_device_runtime
 
-      lb_exec_space_local = read_execution_space(lb_exec_space)
-      int_exec_requested = read_execution_space(int_exec_space)
-      use_device_runtime = (lb_exec_space_local == gauxc_executionspace%device) .OR. &
-                           (int_exec_requested == gauxc_executionspace%device)
+      CALL resolve_runtime_spaces(lb_exec_space, int_exec_space, lb_exec_space_local, &
+                                  int_exec_requested, use_device_runtime)
       IF (use_device_runtime) THEN
 #ifdef GAUXC_HAS_DEVICE
          IF (offload_get_device_count() <= 0) THEN
@@ -653,11 +675,8 @@ CONTAINS
       grid_type_local = read_atomic_grid_size(grid_type)
       radial_quad_local = read_radial_quad(radial_quadrature)
       pruning_scheme_local = read_pruning_scheme(pruning_scheme)
-      lb_exec_space_local = read_execution_space(lb_exec_space)
-      int_exec_requested = read_execution_space("host")
-      IF (PRESENT(int_exec_space)) int_exec_requested = read_execution_space(int_exec_space)
-      use_device_runtime = (lb_exec_space_local == gauxc_executionspace%device) .OR. &
-                           (int_exec_requested == gauxc_executionspace%device)
+      CALL resolve_runtime_spaces(lb_exec_space, int_exec_space, lb_exec_space_local, &
+                                  int_exec_requested, use_device_runtime)
       IF (use_device_runtime) THEN
          int_exec_space_local = gauxc_executionspace%device
       ELSE
@@ -927,7 +946,6 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: energy_only
 
 #ifdef __GAUXC
-      CHARACTER(len=default_path_length)                 :: model_key
       LOGICAL                                            :: my_energy_only, use_gauxc_model
 #ifdef GAUXC_HAS_ONEDFT
 #if defined (__HAS_IEEE_EXCEPTIONS)
@@ -936,12 +954,7 @@ CONTAINS
       INTEGER                                            :: omp_max_threads_restore
 #endif
 
-      use_gauxc_model = .FALSE.
-      IF (PRESENT(model)) THEN
-         model_key = ADJUSTL(model)
-         CALL uppercase(model_key)
-         use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE")
-      END IF
+      use_gauxc_model = gauxc_model_active(model)
       my_energy_only = .FALSE.
       IF (PRESENT(energy_only)) my_energy_only = energy_only
 
@@ -1109,7 +1122,6 @@ CONTAINS
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: model
 
 #ifdef __GAUXC
-      CHARACTER(len=default_path_length)                 :: model_key
       LOGICAL                                            :: use_gauxc_model
 #ifdef GAUXC_HAS_ONEDFT
 #if defined (__HAS_IEEE_EXCEPTIONS)
@@ -1128,12 +1140,7 @@ CONTAINS
       END IF
       res%exc_grad = 0._dp
 
-      use_gauxc_model = .FALSE.
-      IF (PRESENT(model)) THEN
-         model_key = ADJUSTL(model)
-         CALL uppercase(model_key)
-         use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE")
-      END IF
+      use_gauxc_model = gauxc_model_active(model)
 
 #ifdef GAUXC_HAS_DEVICE
       ! Other libraries may have changed the current CUDA device; restore the
@@ -1332,6 +1339,20 @@ CONTAINS
 !> \param spec ...
 !> \return ...
 ! **************************************************************************************************
+   SUBROUTINE resolve_runtime_spaces(lb_exec_space, int_exec_space, lb_local, int_local, use_device)
+      CHARACTER(len=*), INTENT(IN)                       :: lb_exec_space
+      CHARACTER(len=*), INTENT(IN), OPTIONAL             :: int_exec_space
+      INTEGER(c_int), INTENT(OUT)                        :: lb_local, int_local
+      LOGICAL, INTENT(OUT)                               :: use_device
+
+      lb_local = read_execution_space(lb_exec_space)
+      int_local = read_execution_space("host")
+      IF (PRESENT(int_exec_space)) int_local = read_execution_space(int_exec_space)
+      use_device = (lb_local == gauxc_executionspace%device) .OR. &
+                   (int_local == gauxc_executionspace%device)
+
+   END SUBROUTINE resolve_runtime_spaces
+
    PURE FUNCTION read_execution_space(spec) RESULT(val)
       CHARACTER(len=*), INTENT(IN)                       :: spec
       INTEGER(c_int)                                     :: val
