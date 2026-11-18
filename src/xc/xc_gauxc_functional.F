@@ -773,11 +773,10 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: exc_grad
       TYPE(mp_para_env_type), POINTER                    :: para_env
 
-      LOGICAL, SAVE                                      :: checked = .FALSE.
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: reference
       REAL(KIND=dp)                                      :: max_diff, scale
 
-      IF (checked .OR. para_env%num_pe <= 1) RETURN
+      IF (para_env%num_pe <= 1) RETURN
       ALLOCATE (reference(SIZE(exc_grad)))
       reference = exc_grad
       CALL para_env%bcast(reference, 0)
@@ -790,7 +789,6 @@ CONTAINS
                        "force/virial consumers add it on rank 0 only. This indicates an "// &
                        "unsupported non-replicated integrator.")
       END IF
-      checked = .TRUE.
 
    END SUBROUTINE assert_gauxc_gradient_replicated
 

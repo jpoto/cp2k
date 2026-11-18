@@ -254,8 +254,9 @@ CONTAINS
    FUNCTION gauxc_model_active(model) RESULT(active)
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: model
       LOGICAL                                            :: active
-
+#ifdef __GAUXC
       CHARACTER(len=:), ALLOCATABLE                      :: key
+#endif
 
       active = .FALSE.
       IF (.NOT. PRESENT(model)) RETURN
@@ -433,7 +434,7 @@ CONTAINS
 
 #ifdef __GAUXC
       INTEGER                                            :: iatom, ikind, iprim, iset, ishell, lval, &
-                                                            ncgf_shell, nkind, npgf, nset, nshell, &
+                                                            ncgf_shell, nkind, npgf, nset, &
                                                             nsgf_shell, nshell_total, shell_index, natoms
       CHARACTER(len=256)                                 :: error_msg
       REAL(c_double), DIMENSION(3)                       :: shell_origin
@@ -474,7 +475,6 @@ CONTAINS
          nset = gto_basis%nset
          CPASSERT(nset == SIZE(gto_basis%nshell))
          DO iset = 1, nset ! for each shell group
-            nshell = gto_basis%nshell(iset)
             npgf = gto_basis%npgf(iset) ! corresponds with nprim of gauxc
 
             DO ishell = 1, gto_basis%nshell(iset) ! for each shell within the shell group
@@ -552,11 +552,9 @@ CONTAINS
       TYPE(cp_gauxc_status_type), INTENT(OUT)            :: status
 
 #ifdef __GAUXC
-      INTEGER(c_int)                                     :: int_exec_requested, lb_exec_space_local
       LOGICAL                                            :: use_device_runtime
 
-      CALL resolve_runtime_spaces(lb_exec_space, int_exec_space, lb_exec_space_local, &
-                                  int_exec_requested, use_device_runtime)
+      CALL resolve_runtime_spaces(lb_exec_space, int_exec_space, use_device_runtime)
       IF (use_device_runtime) THEN
 #ifdef GAUXC_HAS_DEVICE
          IF (offload_get_device_count() <= 0) THEN
@@ -666,7 +664,6 @@ CONTAINS
 
 #ifdef __GAUXC
       INTEGER(c_int)                                     :: grid_type_local, int_exec_space_local, &
-                                                            int_exec_requested, &
                                                             lb_exec_space_local, &
                                                             pruning_scheme_local, radial_quad_local
       LOGICAL                                            :: force_new_runtime_local, use_device_runtime, &
@@ -675,8 +672,8 @@ CONTAINS
       grid_type_local = read_atomic_grid_size(grid_type)
       radial_quad_local = read_radial_quad(radial_quadrature)
       pruning_scheme_local = read_pruning_scheme(pruning_scheme)
-      CALL resolve_runtime_spaces(lb_exec_space, int_exec_space, lb_exec_space_local, &
-                                  int_exec_requested, use_device_runtime)
+      CALL resolve_runtime_spaces(lb_exec_space, int_exec_space, use_device_runtime, &
+                                  lb_exec_space_local)
       IF (use_device_runtime) THEN
          int_exec_space_local = gauxc_executionspace%device
       ELSE
@@ -1339,17 +1336,20 @@ CONTAINS
 !> \param spec ...
 !> \return ...
 ! **************************************************************************************************
-   SUBROUTINE resolve_runtime_spaces(lb_exec_space, int_exec_space, lb_local, int_local, use_device)
+   SUBROUTINE resolve_runtime_spaces(lb_exec_space, int_exec_space, use_device, lb_local)
       CHARACTER(len=*), INTENT(IN)                       :: lb_exec_space
       CHARACTER(len=*), INTENT(IN), OPTIONAL             :: int_exec_space
-      INTEGER(c_int), INTENT(OUT)                        :: lb_local, int_local
       LOGICAL, INTENT(OUT)                               :: use_device
+      INTEGER(c_int), INTENT(OUT), OPTIONAL              :: lb_local
 
-      lb_local = read_execution_space(lb_exec_space)
-      int_local = read_execution_space("host")
-      IF (PRESENT(int_exec_space)) int_local = read_execution_space(int_exec_space)
-      use_device = (lb_local == gauxc_executionspace%device) .OR. &
-                   (int_local == gauxc_executionspace%device)
+      INTEGER(c_int)                                     :: lb_val, int_val
+
+      lb_val = read_execution_space(lb_exec_space)
+      int_val = read_execution_space("host")
+      IF (PRESENT(int_exec_space)) int_val = read_execution_space(int_exec_space)
+      use_device = (lb_val == gauxc_executionspace%device) .OR. &
+                   (int_val == gauxc_executionspace%device)
+      IF (PRESENT(lb_local)) lb_local = lb_val
 
    END SUBROUTINE resolve_runtime_spaces
 

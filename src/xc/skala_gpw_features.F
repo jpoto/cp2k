@@ -617,6 +617,11 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Check whether the current static layout cache can be reused.
+!>
+!> The decision must be identical on every MPI rank: a reuse skips the layout
+!> rebuild collectives, so a rank-local match while another rank mismatches
+!> would deadlock. The local test (which includes the distributed integration
+!> weights) is therefore reduced with a logical AND across the communicator.
 !> \param pw_grid ...
 !> \param particle_set ...
 !> \param cell ...
@@ -628,6 +633,38 @@ CONTAINS
 ! **************************************************************************************************
    FUNCTION layout_cache_matches(pw_grid, particle_set, cell, weights, atom_partition, &
                                  cuda_device, needs_local_static) RESULT(matches)
+      TYPE(pw_grid_type), POINTER                        :: pw_grid
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(pw_r3d_rs_type), OPTIONAL, POINTER            :: weights
+      INTEGER, INTENT(IN), OPTIONAL                      :: atom_partition
+      INTEGER, INTENT(IN)                                :: cuda_device
+      LOGICAL, INTENT(IN), OPTIONAL                      :: needs_local_static
+      LOGICAL                                            :: matches
+      INTEGER                                            :: hit
+
+      hit = MERGE(1, 0, layout_cache_matches_local(pw_grid, particle_set, cell, weights, &
+                                                   atom_partition, cuda_device, needs_local_static))
+      ! Every rank must agree: a reuse skips the layout rebuild collectives, so a
+      ! rank-local match while another rank mismatches would deadlock.
+      CALL pw_grid%para%group%min(hit)
+      matches = (hit == 1)
+
+   END FUNCTION layout_cache_matches
+
+! **************************************************************************************************
+!> \brief Rank-local part of layout_cache_matches (no collectives).
+!> \param pw_grid ...
+!> \param particle_set ...
+!> \param cell ...
+!> \param weights ...
+!> \param atom_partition ...
+!> \param cuda_device ...
+!> \param needs_local_static ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION layout_cache_matches_local(pw_grid, particle_set, cell, weights, atom_partition, &
+                                       cuda_device, needs_local_static) RESULT(matches)
       TYPE(pw_grid_type), POINTER                        :: pw_grid
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(cell_type), POINTER                           :: cell
@@ -674,7 +711,7 @@ CONTAINS
 
       matches = .TRUE.
 
-   END FUNCTION layout_cache_matches
+   END FUNCTION layout_cache_matches_local
 
 ! **************************************************************************************************
 !> \brief Check whether current optional integration weights match the cached static tensors.
@@ -744,7 +781,7 @@ CONTAINS
          chunk_atom_begin, chunk_atom_end, chunk_feature_counts, chunk_feature_displs, cursor, &
          dist_counts, dist_cursor, dist_displs, dist_recv_counts, dist_recv_displs, &
          dist_send_counts, dist_send_displs, feature_counts, feature_displs, global_owner, &
-         global_source_points, global_to_feature, local_feature_counts_tmp, local_owner, &
+         global_source_points, local_feature_counts_tmp, local_owner, &
          local_source_global, local_source_points, point_counts, point_displs, static_counts, &
          static_displs
       INTEGER, DIMENSION(2, 3)                           :: bo
@@ -987,11 +1024,9 @@ CONTAINS
       IF (needs_full_static_tensors) THEN
          ALLOCATE (cached_layout%dynamic_counts(nproc), cached_layout%dynamic_displs(nproc), &
                    cached_layout%feature_source_points(nflat), &
-                   global_to_feature(npoint), &
                    atom_position(natom), cursor(nflat_local))
          cached_layout%dynamic_counts(:) = ndynamic_per_point*point_counts
          cached_layout%dynamic_displs(:) = ndynamic_per_point*point_displs
-         global_to_feature = 0
          cursor(:) = cached_layout%local_feature_offsets(1:nflat_local)
          DO ipt = 1, nflat
             cached_layout%atomic_grid_sizes(global_owner(ipt)) = &
@@ -1053,28 +1088,33 @@ CONTAINS
          END BLOCK
       END IF
       max_grid_size = MAXVAL(INT(cached_layout%atomic_grid_sizes))
-      CALL build_atom_chunks(cached_layout%atomic_grid_sizes, atom_offset, nproc, &
-                             chunk_atom_begin, chunk_atom_end, &
-                             chunk_feature_counts, chunk_feature_displs)
-      cached_layout%chunk_atom_begin = chunk_atom_begin(pe_index)
-      cached_layout%chunk_atom_end = chunk_atom_end(pe_index)
-      cached_layout%chunk_feature_begin = chunk_feature_displs(pe_index) + 1
-      cached_layout%chunk_feature_count = chunk_feature_counts(pe_index)
-      cached_layout%chunk_natom = cached_layout%chunk_atom_end - &
-                                  cached_layout%chunk_atom_begin + 1
+      ! Atom-chunk partitioning/routing is only used by the atom-chunk layout
+      ! mode; the mode is fixed for the lifetime of the cache, so skip this whole
+      ! subtree (including its collectives) for full-grid layouts.
+      IF (.NOT. needs_full_static_tensors) THEN
+         CALL build_atom_chunks(cached_layout%atomic_grid_sizes, atom_offset, nproc, &
+                                chunk_atom_begin, chunk_atom_end, &
+                                chunk_feature_counts, chunk_feature_displs)
+         cached_layout%chunk_atom_begin = chunk_atom_begin(pe_index)
+         cached_layout%chunk_atom_end = chunk_atom_end(pe_index)
+         cached_layout%chunk_feature_begin = chunk_feature_displs(pe_index) + 1
+         cached_layout%chunk_feature_count = chunk_feature_counts(pe_index)
+         cached_layout%chunk_natom = cached_layout%chunk_atom_end - &
+                                     cached_layout%chunk_atom_begin + 1
 
-      ALLOCATE (atom_chunk_owner(natom))
-      atom_chunk_owner = 0
-      DO pe = 1, nproc
-         DO iatom = chunk_atom_begin(pe), chunk_atom_end(pe)
-            IF (iatom >= 1 .AND. iatom <= natom) atom_chunk_owner(iatom) = pe
+         ALLOCATE (atom_chunk_owner(natom))
+         atom_chunk_owner = 0
+         DO pe = 1, nproc
+            DO iatom = chunk_atom_begin(pe), chunk_atom_end(pe)
+               IF (iatom >= 1 .AND. iatom <= natom) atom_chunk_owner(iatom) = pe
+            END DO
          END DO
-      END DO
+      END IF
 
       ALLOCATE (cached_layout%coarse_0_atomic_coords(3, natom), &
-                cached_layout%atomic_grid_size_bound_shape(0, max_grid_size), &
                 cached_layout%atom_coords(3, natom))
       IF (needs_full_static_tensors) THEN
+         CALL allocate_empty_bound_shape(cached_layout%atomic_grid_size_bound_shape, max_grid_size)
          ALLOCATE (cached_layout%grid_coords(3, nflat), cached_layout%grid_weights(nflat), &
                    cached_layout%atomic_grid_weights(nflat))
          cached_layout%grid_coords = 0.0_dp
@@ -1094,9 +1134,6 @@ CONTAINS
             atom_position(owner) = atom_position(owner) + 1
             source_global = global_source_points(ipt)
             cached_layout%feature_source_points(row) = source_global
-            IF (global_to_feature(source_global) == 0) THEN
-               global_to_feature(source_global) = row
-            END IF
             static_base = nstatic_per_point*(ipt - 1)
             cached_layout%grid_coords(:, row) = global_static(static_base + 1:static_base + 3)
             cached_layout%grid_weights(row) = global_static(static_base + 4)
@@ -1117,7 +1154,6 @@ CONTAINS
                END IF
             END IF
          END DO
-         CPASSERT(ALL(global_to_feature > 0))
          CPASSERT(ALL(cached_layout%local_feature_rows > 0))
       ELSE
          CPASSERT(ALL(cached_layout%local_feature_rows > 0))
@@ -1190,11 +1226,13 @@ CONTAINS
       END IF
 
       CALL timestop(phase_handle)
-      CALL timeset("skala_gpw_layout_chunk_routes", phase_handle)
-      CALL build_atom_chunk_routes(cached_layout, cached_layout%local_feature_rows, &
-                                   local_owner, atom_chunk_owner, pw_grid%para%group)
-      CALL build_atom_chunk_layout(cached_layout)
-      CALL timestop(phase_handle)
+      IF (.NOT. needs_full_static_tensors) THEN
+         CALL timeset("skala_gpw_layout_chunk_routes", phase_handle)
+         CALL build_atom_chunk_routes(cached_layout, cached_layout%local_feature_rows, &
+                                      local_owner, atom_chunk_owner, pw_grid%para%group)
+         CALL build_atom_chunk_layout(cached_layout)
+         CALL timestop(phase_handle)
+      END IF
 
       cached_layout%natom = natom
       cached_layout%nflat = nflat
@@ -1214,9 +1252,10 @@ CONTAINS
       cached_layout%weight_sumsq = weight_sumsq
       cached_layout%has_weights = has_weights
       CALL timeset("skala_gpw_layout_tensors", phase_handle)
-      IF (needs_full_static_tensors) CALL build_full_static_layout_tensors(cached_layout)
-      IF (cached_layout%chunk_feature_count > 0) THEN
-         CALL build_chunk_static_layout_tensors(cached_layout, 0)
+      IF (needs_full_static_tensors) THEN
+         CALL build_full_static_layout_tensors(cached_layout)
+      ELSE IF (cached_layout%chunk_feature_count > 0) THEN
+         CALL build_chunk_static_layout_tensors(cached_layout)
       END IF
       CALL timestop(phase_handle)
       cached_layout%active = .TRUE.
@@ -1273,26 +1312,24 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Build cached atom-chunk Torch tensors for static SKALA inputs.
 !> \param cache ...
-!> \param grad_mode ...
 ! **************************************************************************************************
-   SUBROUTINE build_chunk_static_layout_tensors(cache, grad_mode)
+   SUBROUTINE build_chunk_static_layout_tensors(cache)
       TYPE(skala_gpw_layout_cache_type), INTENT(INOUT)   :: cache
-      INTEGER, INTENT(IN)                                :: grad_mode
 
       CPASSERT(.NOT. cache%chunk_static_tensors_active)
       CALL torch_tensor_from_array(cache%chunk_grid_coords_t, cache%chunk_grid_coords)
-      CALL torch_tensor_to_device_leaf(cache%chunk_grid_coords_t, grad_mode >= 2)
+      CALL torch_tensor_to_device_leaf(cache%chunk_grid_coords_t, .FALSE.)
       CALL torch_tensor_from_array(cache%chunk_grid_weights_t, cache%chunk_grid_weights)
-      CALL torch_tensor_to_device_leaf(cache%chunk_grid_weights_t, grad_mode >= 1)
+      CALL torch_tensor_to_device_leaf(cache%chunk_grid_weights_t, .FALSE.)
       CALL torch_tensor_from_array(cache%chunk_atomic_grid_weights_t, &
                                    cache%chunk_atomic_grid_weights)
-      CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_weights_t, grad_mode >= 2)
+      CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_weights_t, .FALSE.)
       CALL torch_tensor_from_array(cache%chunk_atomic_grid_sizes_t, &
                                    cache%chunk_atomic_grid_sizes)
       CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_sizes_t, .FALSE.)
       CALL torch_tensor_from_array(cache%chunk_coarse_0_atomic_coords_t, &
                                    cache%chunk_coarse_0_atomic_coords)
-      CALL torch_tensor_to_device_leaf(cache%chunk_coarse_0_atomic_coords_t, grad_mode >= 2)
+      CALL torch_tensor_to_device_leaf(cache%chunk_coarse_0_atomic_coords_t, .FALSE.)
       CALL torch_tensor_from_array(cache%chunk_atomic_grid_size_bound_shape_t, &
                                    cache%chunk_atomic_grid_size_bound_shape)
       CALL torch_tensor_to_device_leaf(cache%chunk_atomic_grid_size_bound_shape_t, .FALSE.)
@@ -1768,20 +1805,10 @@ CONTAINS
    SUBROUTINE build_atom_chunk_layout(cache)
       TYPE(skala_gpw_layout_cache_type), INTENT(INOUT)   :: cache
 
-      INTEGER                                            :: max_grid_size, row_begin, row_end
+      INTEGER                                            :: max_grid_size
 
       IF (cache%chunk_feature_count <= 0 .OR. cache%chunk_natom <= 0) RETURN
 
-      row_begin = cache%chunk_feature_begin
-      row_end = row_begin + cache%chunk_feature_count - 1
-      IF (ALLOCATED(cache%grid_coords)) THEN
-         ALLOCATE (cache%chunk_grid_coords(3, cache%chunk_feature_count), &
-                   cache%chunk_grid_weights(cache%chunk_feature_count), &
-                   cache%chunk_atomic_grid_weights(cache%chunk_feature_count))
-         cache%chunk_grid_coords(:, :) = cache%grid_coords(:, row_begin:row_end)
-         cache%chunk_grid_weights(:) = cache%grid_weights(row_begin:row_end)
-         cache%chunk_atomic_grid_weights(:) = cache%atomic_grid_weights(row_begin:row_end)
-      END IF
       ALLOCATE (cache%chunk_atomic_grid_sizes(cache%chunk_natom), &
                 cache%chunk_coarse_0_atomic_coords(3, cache%chunk_natom))
       cache%chunk_atomic_grid_sizes(:) = &
@@ -2127,16 +2154,25 @@ CONTAINS
          features%uses_collapsed_rks_dynamic = .FALSE.
       END IF
 
+      ! The routing-layout arrays are per-rank copies that are reused across
+      ! SCF steps; keep them (and their ownership) when requested. Full-layout
+      ! bundles only alias the persistent cache, so those pointers are always
+      ! dropped.
       IF (features%owns_layout_arrays) THEN
-         IF (ASSOCIATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
-         IF (ASSOCIATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
-         IF (ASSOCIATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
-         IF (ASSOCIATED(features%grid_weights)) DEALLOCATE (features%grid_weights)
-         IF (ASSOCIATED(features%atomic_grid_weights)) DEALLOCATE (features%atomic_grid_weights)
+         IF (.NOT. keep) THEN
+            IF (ASSOCIATED(features%local_feature_offsets)) DEALLOCATE (features%local_feature_offsets)
+            IF (ASSOCIATED(features%local_feature_rows)) DEALLOCATE (features%local_feature_rows)
+            IF (ASSOCIATED(features%grid_coords)) DEALLOCATE (features%grid_coords)
+            IF (ASSOCIATED(features%grid_weights)) DEALLOCATE (features%grid_weights)
+            IF (ASSOCIATED(features%atomic_grid_weights)) DEALLOCATE (features%atomic_grid_weights)
+            NULLIFY (features%local_feature_offsets, features%local_feature_rows, &
+                     features%grid_coords, features%grid_weights, features%atomic_grid_weights)
+            features%owns_layout_arrays = .FALSE.
+         END IF
+      ELSE
+         NULLIFY (features%local_feature_offsets, features%local_feature_rows, &
+                  features%grid_coords, features%grid_weights, features%atomic_grid_weights)
       END IF
-      NULLIFY (features%local_feature_offsets, features%local_feature_rows, &
-               features%grid_coords, features%grid_weights, features%atomic_grid_weights)
-      features%owns_layout_arrays = .FALSE.
 
       IF (.NOT. keep) THEN
          IF (ALLOCATED(features%chunk_density)) DEALLOCATE (features%chunk_density)
@@ -3438,11 +3474,10 @@ CONTAINS
 !> \param weight_grad ...
 !> \param atom_force ...
 !> \param virial_xc ...
-!> \param dweight_column_sum ...
 ! **************************************************************************************************
    SUBROUTINE smooth_partition_derivative_action(grid_point, atom_coords, cell, &
                                                  weights, included, weight_grad, &
-                                                 atom_force, virial_xc, dweight_column_sum)
+                                                 atom_force, virial_xc)
       REAL(KIND=dp), DIMENSION(3), INTENT(IN)            :: grid_point
       REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: atom_coords
       TYPE(cell_type), POINTER                           :: cell
@@ -3453,19 +3488,17 @@ CONTAINS
          OPTIONAL                                        :: atom_force
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(INOUT), &
          OPTIONAL                                        :: virial_xc
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(OUT), &
-         OPTIONAL                                        :: dweight_column_sum
 
       INTEGER                                            :: iatom, idir, jatom, jdir, natom
-      LOGICAL                                            :: do_column_sum, do_force, do_virial
+      LOGICAL                                            :: do_force, do_virial
       REAL(KIND=dp)                                      :: dist_diff, ds_dmu, mu, mu_raw, &
                                                             one_minus_switch, rab, switch, &
                                                             total_weight_grad
       REAL(KIND=dp), DIMENSION(3)                        :: dmu_atom_i, dmu_atom_j, ds_atom_i, &
-                                                            ds_atom_j, pair, total_mean, unit_pair
+                                                            ds_atom_j, pair, unit_pair
       REAL(KIND=dp), DIMENSION(3, 3)                     :: dmu_strain, ds_strain, strain_action, &
                                                             strain_mean
-      REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2))  :: atom_action, atom_mean, log_deriv_sum, &
+      REAL(KIND=dp), DIMENSION(3, SIZE(atom_coords, 2))  :: atom_action, atom_mean, &
                                                             partition_atom_coords, rvecs, &
                                                             unit_rvecs
       REAL(KIND=dp), DIMENSION(SIZE(atom_coords, 2))     :: distances
@@ -3473,17 +3506,12 @@ CONTAINS
       natom = SIZE(atom_coords, 2)
       do_force = PRESENT(atom_force)
       do_virial = PRESENT(virial_xc)
-      do_column_sum = PRESENT(dweight_column_sum)
       CPASSERT(SIZE(weights) == natom)
       CPASSERT(SIZE(weight_grad) == natom)
       CPASSERT(SIZE(included) == natom)
       IF (do_force) THEN
          CPASSERT(SIZE(atom_force, 1) == 3)
          CPASSERT(SIZE(atom_force, 2) == natom)
-      END IF
-      IF (do_column_sum) THEN
-         CPASSERT(SIZE(dweight_column_sum, 1) == 3)
-         CPASSERT(SIZE(dweight_column_sum, 2) == natom)
       END IF
 
       DO iatom = 1, natom
@@ -3500,7 +3528,6 @@ CONTAINS
 
       atom_mean = 0.0_dp
       atom_action = 0.0_dp
-      log_deriv_sum = 0.0_dp
       strain_mean = 0.0_dp
       strain_action = 0.0_dp
       total_weight_grad = 0.0_dp
@@ -3540,8 +3567,6 @@ CONTAINS
                                        weight_grad(iatom)*weights(iatom)*ds_atom_i/switch
                atom_action(:, jatom) = atom_action(:, jatom) + &
                                        weight_grad(iatom)*weights(iatom)*ds_atom_j/switch
-               IF (do_column_sum) log_deriv_sum(:, iatom) = log_deriv_sum(:, iatom) + &
-                                                            (ds_atom_i + ds_atom_j)/switch
             END IF
             IF (included(jatom)) THEN
                atom_mean(:, iatom) = atom_mean(:, iatom) - &
@@ -3552,8 +3577,6 @@ CONTAINS
                                        weight_grad(jatom)*weights(jatom)*ds_atom_i/one_minus_switch
                atom_action(:, jatom) = atom_action(:, jatom) - &
                                        weight_grad(jatom)*weights(jatom)*ds_atom_j/one_minus_switch
-               IF (do_column_sum) log_deriv_sum(:, jatom) = log_deriv_sum(:, jatom) - &
-                                                            (ds_atom_i + ds_atom_j)/one_minus_switch
             END IF
 
             IF (do_virial) THEN
@@ -3584,16 +3607,6 @@ CONTAINS
          DO jatom = 1, natom
             atom_force(:, jatom) = atom_force(:, jatom) + &
                                    atom_action(:, jatom) - total_weight_grad*atom_mean(:, jatom)
-         END DO
-      END IF
-
-      IF (do_column_sum) THEN
-         total_mean = SUM(atom_mean, DIM=2)
-         dweight_column_sum = 0.0_dp
-         DO iatom = 1, natom
-            IF (included(iatom)) THEN
-               dweight_column_sum(:, iatom) = weights(iatom)*(log_deriv_sum(:, iatom) - total_mean)
-            END IF
          END DO
       END IF
 

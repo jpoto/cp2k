@@ -101,6 +101,7 @@ MODULE skala_gpw_functional
                                            atom_chunk_auto_row_quantum = 100000, &
                                            ncollapsed_grad_per_point = 5, &
                                            ngrad_per_point = 10
+   REAL(KIND=dp), PARAMETER, PRIVATE    :: weight_cache_cell_tol = 1.0E-12_dp
    INTEGER, PARAMETER, PUBLIC           :: skala_gapw_density_partition_hard_minus_soft = 1, &
                                            skala_gapw_density_partition_hard_only = 2, &
                                            skala_gapw_density_partition_soft_only = 3, &
@@ -217,7 +218,9 @@ MODULE skala_gpw_functional
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :) :: positions
       REAL(KIND=dp)                              :: rho_sum = 0.0_dp, rho_sumsq = 0.0_dp, &
                                                     tau_sum = 0.0_dp, tau_sumsq = 0.0_dp
-      INTEGER                                    :: nvals = -1, nspins = -1
+      REAL(KIND=dp), DIMENSION(3, 3)             :: cell_hmat = 0.0_dp
+      INTEGER, DIMENSION(3)                      :: cell_perd = 0
+      INTEGER                                    :: nvals = -1, nspins = -1, atom_partition = -1
       LOGICAL                                    :: atom_chunks = .FALSE., valid = .FALSE.
    END TYPE skala_weight_grad_cache_type
    TYPE(skala_weight_grad_cache_type), SAVE           :: weight_grad_cache
@@ -766,7 +769,8 @@ CONTAINS
          END IF
          IF (features%atom_partition == skala_gpw_atom_partition_smooth .AND. &
              (needs_atom_force .OR. compute_virial) .AND. ASSOCIATED(grid_weight_grad_p)) THEN
-            CALL store_weight_grad_cache(grid_weight_grad_p, features, particle_set, rho_r, tau)
+            CALL store_weight_grad_cache(grid_weight_grad_p, features, particle_set, cell, &
+                                         rho_r, tau)
          END IF
          IF (compute_virial) THEN
             IF (native_grid_diagnostics) virial_before = virial_xc
@@ -937,7 +941,7 @@ CONTAINS
                                                             subchunk_row_begin, subchunk_row_count
       INTEGER, DIMENSION(2, 3)                           :: bo
       LOGICAL                                            :: cache_hit, have_exc_tensor, &
-                                                            have_rho_set, have_weight_grad_t, lsd, &
+                                                            have_weight_grad_t, lsd, &
                                                             native_grid_atom_chunks
       LOGICAL, ALLOCATABLE, DIMENSION(:)                 :: included
       REAL(KIND=dp)                                      :: local_derivative
@@ -983,52 +987,34 @@ CONTAINS
       CALL section_vals_val_get(xc_section, "XC_GRID%XC_SMOOTH_RHO", i_val=xc_rho_smooth_id)
 
       features => cached_features
-      have_rho_set = .FALSE.
       cache_hit = .FALSE.
 
-      ! If the preceding evaluation already produced the weight gradient for this
-      ! exact density/geometry, skip the rho set and feature build entirely.
-      IF (features%active .AND. features%nflat_local == rho_r(1)%pw_grid%ngpts_local .AND. &
-          (features%uses_atom_chunks .EQV. native_grid_atom_chunks)) THEN
-         IF (features%uses_atom_chunks) THEN
-            nvals = -1
-            IF (ASSOCIATED(features%route_send_local_features)) &
-               nvals = SIZE(features%route_send_local_features)
-         ELSE
-            nvals = features%nflat
-         END IF
-         IF (nvals > 0) THEN
-            cache_hit = weight_grad_cache_matches(particle_set, rho_r, tau, nspins, &
-                                                  native_grid_atom_chunks, nvals)
-         END IF
-      END IF
+      CALL xc_rho_set_create(rho_set, &
+                             rho_r(1)%pw_grid%bounds_local, &
+                             rho_cutoff=section_get_rval(xc_section, "density_cutoff"), &
+                             drho_cutoff=section_get_rval(xc_section, "gradient_cutoff"), &
+                             tau_cutoff=section_get_rval(xc_section, "tau_cutoff"))
+      CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
+                             xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
 
-      IF (.NOT. cache_hit) THEN
-         CALL xc_rho_set_create(rho_set, &
-                                rho_r(1)%pw_grid%bounds_local, &
-                                rho_cutoff=section_get_rval(xc_section, "density_cutoff"), &
-                                drho_cutoff=section_get_rval(xc_section, "gradient_cutoff"), &
-                                tau_cutoff=section_get_rval(xc_section, "tau_cutoff"))
-         CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, needs, &
-                                xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
-         have_rho_set = .TRUE.
-
-         CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
-                                      requires_grad=.FALSE., weights=weights, &
-                                      requires_coordinate_grad=.FALSE., &
-                                      requires_stress_grad=.FALSE., &
-                                      requires_weight_grad=.TRUE., &
-                                      use_atom_chunks=native_grid_atom_chunks, &
-                                      atom_partition=native_grid_atom_partition, &
-                                      cuda_device=selected_cuda_device)
-         IF (features%uses_atom_chunks) THEN
-            nvals = SIZE(features%route_send_local_features)
-         ELSE
-            nvals = features%nflat
-         END IF
-         cache_hit = weight_grad_cache_matches(particle_set, rho_r, tau, nspins, &
-                                               features%uses_atom_chunks, nvals)
+      CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
+                                   requires_grad=.FALSE., weights=weights, &
+                                   requires_coordinate_grad=.FALSE., &
+                                   requires_stress_grad=.FALSE., &
+                                   requires_weight_grad=.TRUE., &
+                                   use_atom_chunks=native_grid_atom_chunks, &
+                                   atom_partition=native_grid_atom_partition, &
+                                   cuda_device=selected_cuda_device)
+      IF (features%uses_atom_chunks) THEN
+         nvals = SIZE(features%route_send_local_features)
+      ELSE
+         nvals = features%nflat
       END IF
+      ! Always enter the collective reduction, even when this rank owns no rows
+      ! (nvals == 0); otherwise idle ranks would skip the group%min and deadlock.
+      cache_hit = weight_grad_cache_matches(rho_r(1)%pw_grid%para%group, particle_set, cell, &
+                                            rho_r, tau, nspins, features%uses_atom_chunks, &
+                                            native_grid_atom_partition, nvals)
 
       have_exc_tensor = .FALSE.
       have_weight_grad_t = .FALSE.
@@ -1133,13 +1119,8 @@ CONTAINS
       IF (have_weight_grad_t) CALL torch_tensor_release(grid_weight_grad_t)
       IF (have_exc_tensor) CALL torch_tensor_release(exc_tensor)
       IF (ALLOCATED(local_weight_grad)) DEALLOCATE (local_weight_grad)
-      ! On an early cache hit the feature bundle belongs to the preceding
-      ! evaluation; leave it intact for potential further reuse. Otherwise
-      ! release the bundle built here (or the fallback path used).
-      IF (.NOT. cache_hit .OR. have_rho_set) THEN
-         CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
-      END IF
-      IF (have_rho_set) CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
+      CALL skala_gpw_feature_release(features, keep_host_arrays=.TRUE.)
+      CALL xc_rho_set_release(rho_set, pw_pool=pw_pool)
 
    END SUBROUTINE skala_gpw_weight_derivative
 
@@ -2397,10 +2378,11 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Store the smooth-partition weight gradient for later reuse.
 ! **************************************************************************************************
-   SUBROUTINE store_weight_grad_cache(gradient, features, particle_set, rho_r, tau)
+   SUBROUTINE store_weight_grad_cache(gradient, features, particle_set, cell, rho_r, tau)
       REAL(KIND=dp), DIMENSION(:), INTENT(IN)            :: gradient
       TYPE(skala_gpw_feature_type), INTENT(IN)           :: features
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r, tau
 
       INTEGER                                            :: iatom, ispin
@@ -2438,17 +2420,69 @@ CONTAINS
       weight_grad_cache%nvals = SIZE(gradient)
       weight_grad_cache%nspins = SIZE(rho_r)
       weight_grad_cache%atom_chunks = features%uses_atom_chunks
+      weight_grad_cache%atom_partition = features%atom_partition
+      weight_grad_cache%cell_hmat = cell%hmat
+      weight_grad_cache%cell_perd = cell%perd
       weight_grad_cache%valid = .TRUE.
 
    END SUBROUTINE store_weight_grad_cache
 
 ! **************************************************************************************************
 !> \brief Whether the cached weight gradient matches the requested evaluation.
+!>
+!> The reuse decision must be identical on every MPI rank: a hit skips the
+!> model backward and the atom-chunk gradient exchange, so a rank-local hit
+!> while another rank misses would deadlock. The local test is therefore
+!> reduced with a logical AND across the communicator.
+!> \param group ...
+!> \param particle_set ...
+!> \param cell ...
+!> \param rho_r ...
+!> \param tau ...
+!> \param nspins ...
+!> \param atom_chunks ...
+!> \param atom_partition ...
+!> \param nvals ...
+!> \return ...
 ! **************************************************************************************************
-   FUNCTION weight_grad_cache_matches(particle_set, rho_r, tau, nspins, atom_chunks, nvals) RESULT(matches)
+   FUNCTION weight_grad_cache_matches(group, particle_set, cell, rho_r, tau, nspins, &
+                                      atom_chunks, atom_partition, nvals) RESULT(matches)
+      CLASS(mp_comm_type), INTENT(IN)                    :: group
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r, tau
-      INTEGER, INTENT(IN)                                :: nspins, nvals
+      INTEGER, INTENT(IN)                                :: nspins, atom_partition, nvals
+      LOGICAL, INTENT(IN)                                :: atom_chunks
+      LOGICAL                                            :: matches
+      INTEGER                                            :: hit
+
+      hit = MERGE(1, 0, weight_grad_cache_matches_local(particle_set, cell, rho_r, tau, &
+                                                        nspins, atom_chunks, atom_partition, nvals))
+      ! Every rank must agree: a hit skips the model backward and the atom-chunk
+      ! gradient exchange, so a rank-local hit while another misses deadlocks.
+      CALL group%min(hit)
+      matches = (hit == 1)
+
+   END FUNCTION weight_grad_cache_matches
+
+! **************************************************************************************************
+!> \brief Rank-local part of weight_grad_cache_matches (no collectives).
+!> \param particle_set ...
+!> \param cell ...
+!> \param rho_r ...
+!> \param tau ...
+!> \param nspins ...
+!> \param atom_chunks ...
+!> \param atom_partition ...
+!> \param nvals ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION weight_grad_cache_matches_local(particle_set, cell, rho_r, tau, nspins, &
+                                            atom_chunks, atom_partition, nvals) RESULT(matches)
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r, tau
+      INTEGER, INTENT(IN)                                :: nspins, atom_partition, nvals
       LOGICAL, INTENT(IN)                                :: atom_chunks
       LOGICAL                                            :: matches
 
@@ -2456,10 +2490,14 @@ CONTAINS
       REAL(KIND=dp)                                      :: rho_sum, rho_sumsq, tau_sum, tau_sumsq
 
       matches = .FALSE.
+      IF (nvals <= 0) RETURN
       IF (.NOT. weight_grad_cache%valid) RETURN
       IF (weight_grad_cache%nspins /= nspins) RETURN
       IF (weight_grad_cache%atom_chunks .NEQV. atom_chunks) RETURN
+      IF (weight_grad_cache%atom_partition /= atom_partition) RETURN
       IF (weight_grad_cache%nvals /= nvals) RETURN
+      IF (ANY(ABS(weight_grad_cache%cell_hmat - cell%hmat) > weight_cache_cell_tol)) RETURN
+      IF (ANY(weight_grad_cache%cell_perd /= cell%perd)) RETURN
       IF (.NOT. ALLOCATED(weight_grad_cache%positions)) RETURN
       IF (SIZE(weight_grad_cache%positions, 2) /= SIZE(particle_set)) RETURN
       DO iatom = 1, SIZE(particle_set)
@@ -2482,7 +2520,7 @@ CONTAINS
       IF (tau_sumsq /= weight_grad_cache%tau_sumsq) RETURN
       matches = .TRUE.
 
-   END FUNCTION weight_grad_cache_matches
+   END FUNCTION weight_grad_cache_matches_local
 
 ! **************************************************************************************************
 !> \brief Ensure the reusable host gradient scratch has the local-grid shape.

@@ -38,7 +38,6 @@ MODULE skala_torch_api
 
    TYPE skala_torch_model_type
       PRIVATE
-      INTEGER                                            :: protocol_version = -1
       TYPE(torch_model_type)                             :: torch_model
    END TYPE skala_torch_model_type
 
@@ -56,7 +55,7 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: fp64
 
       CHARACTER(:), ALLOCATABLE                          :: features_json, protocol_string
-      INTEGER                                            :: ios
+      INTEGER                                            :: ios, protocol_version
       LOGICAL                                            :: use_fp64
 
       ! The model is loaded on the CPU (even for a CUDA target) so that all
@@ -65,9 +64,9 @@ CONTAINS
                                           "protocol_version", protocol_string, &
                                           "features", features_json)
       CALL torch_model_disable_parameter_gradients(model%torch_model)
-      READ (protocol_string, *, IOSTAT=ios) model%protocol_version
+      READ (protocol_string, *, IOSTAT=ios) protocol_version
       IF (ios /= 0) CPABORT("Could not parse SKALA TorchScript protocol_version metadata")
-      IF (model%protocol_version /= 2) THEN
+      IF (protocol_version /= 2) THEN
          CPABORT("Unsupported SKALA TorchScript protocol version")
       END IF
 
@@ -96,7 +95,6 @@ CONTAINS
       TYPE(skala_torch_model_type), INTENT(INOUT)        :: model
 
       CALL torch_model_release(model%torch_model)
-      model%protocol_version = -1
 
    END SUBROUTINE skala_torch_model_release
 
