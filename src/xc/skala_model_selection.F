@@ -118,7 +118,23 @@ CONTAINS
    END SUBROUTINE find_single_functional_subsection
 
 ! **************************************************************************************************
-!> \brief Return the CP2K-native SKALA functional subsection, if present.
+!> \brief Whether a functional subsection is present and not switched off with
+!>        its _SECTION_PARAMETERS_ keyword (e.g. "&GAUXC OFF").
+!> \param section ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION section_is_active(section) RESULT(active)
+      TYPE(section_vals_type), POINTER                   :: section
+      LOGICAL                                            :: active
+
+      active = .FALSE.
+      IF (.NOT. ASSOCIATED(section)) RETURN
+      CALL section_vals_val_get(section, "_SECTION_PARAMETERS_", l_val=active)
+
+   END FUNCTION section_is_active
+
+! **************************************************************************************************
+!> \brief Return the active CP2K-native SKALA functional subsection, if any.
 !> \param xc_section ...
 !> \return ...
 ! **************************************************************************************************
@@ -127,11 +143,12 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: native_section
 
       native_section => find_functional_subsection(xc_section, "SKALA_NATIVE")
+      IF (.NOT. section_is_active(native_section)) NULLIFY (native_section)
 
    END FUNCTION get_skala_native_section
 
 ! **************************************************************************************************
-!> \brief Return the first GAUXC functional subsection, if present.
+!> \brief Return the first active GAUXC functional subsection, if any.
 !> \param xc_section ...
 !> \return ...
 ! **************************************************************************************************
@@ -140,11 +157,12 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: gauxc_section
 
       gauxc_section => find_functional_subsection(xc_section, "GAUXC")
+      IF (.NOT. section_is_active(gauxc_section)) NULLIFY (gauxc_section)
 
    END FUNCTION get_gauxc_section
 
 ! **************************************************************************************************
-!> \brief Return true if a GAUXC or SKALA_NATIVE subsection is present.
+!> \brief Return true if an active GAUXC or SKALA_NATIVE subsection is present.
 !> \param xc_section ...
 !> \return ...
 ! **************************************************************************************************
@@ -158,7 +176,7 @@ CONTAINS
    END FUNCTION xc_section_uses_gauxc
 
 ! **************************************************************************************************
-!> \brief Return true if the SKALA_NATIVE subsection is present.
+!> \brief Return true if an active SKALA_NATIVE subsection is present.
 !> \param xc_section ...
 !> \return ...
 ! **************************************************************************************************
@@ -171,7 +189,7 @@ CONTAINS
    END FUNCTION xc_section_uses_native_skala_grid
 
 ! **************************************************************************************************
-!> \brief Return true if the GAUXC or SKALA_NATIVE subsection requests a model evaluation.
+!> \brief Return true if an active GAUXC or SKALA_NATIVE subsection requests a model evaluation.
 !> \param xc_section ...
 !> \return ...
 ! **************************************************************************************************
@@ -207,24 +225,17 @@ CONTAINS
       LOGICAL                                            :: uses_skala_model
 
       CHARACTER(len=default_path_length)                 :: model_key, model_name
-      LOGICAL                                            :: section_active
       TYPE(section_vals_type), POINTER                   :: gauxc_section, native_section
 
       uses_skala_model = .FALSE.
       native_section => get_skala_native_section(xc_section)
       IF (ASSOCIATED(native_section)) THEN
-         CALL section_vals_val_get(native_section, "_SECTION_PARAMETERS_", l_val=section_active)
-         IF (section_active) THEN
-            uses_skala_model = .TRUE.
-            RETURN
-         END IF
+         uses_skala_model = .TRUE.
+         RETURN
       END IF
 
       gauxc_section => get_gauxc_section(xc_section)
       IF (.NOT. ASSOCIATED(gauxc_section)) RETURN
-
-      CALL section_vals_val_get(gauxc_section, "_SECTION_PARAMETERS_", l_val=section_active)
-      IF (.NOT. section_active) RETURN
 
       CALL section_vals_val_get(gauxc_section, "MODEL", c_val=model_name)
       model_key = ADJUSTL(model_name)

@@ -175,6 +175,12 @@ CONTAINS
 
       DO i = 1, xc_fun_section%section%n_subsections
          sub_section => xc_fun_section%subs_vals(i, 1)%section_vals
+         ! GAUXC/SKALA_NATIVE are resolved by xc_functional_skala_reference; if we
+         ! get here they are present but inactive and must not contribute.
+         SELECT CASE (TRIM(ADJUSTL(sub_section%section%name)))
+         CASE ("GAUXC", "SKALA_NATIVE")
+            CYCLE
+         END SELECT
          IF (SIZE(sub_section%values, 2) > 0) THEN
             n_explicit = n_explicit + 1
             sub_names(n_explicit) = TRIM(ADJUSTL(sub_section%section%name))

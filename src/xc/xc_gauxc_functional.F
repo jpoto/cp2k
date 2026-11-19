@@ -74,18 +74,6 @@ MODULE xc_gauxc_functional
    PUBLIC :: apply_gauxc, gauxc_gapw_all_all_electron, gauxc_gapw_all_pseudopotentials, &
              gauxc_gapw_has_paw_pseudopotentials, skala_info
 
-   ! Reusable Gauss/XC evaluation context for finite-difference sweeps.
-   TYPE gauxc_fd_context_type
-      TYPE(cp_gauxc_runtime_type)                 :: runtime
-      TYPE(cp_gauxc_molecule_type)                :: molecule
-      TYPE(cp_gauxc_basisset_type)                :: basisset
-      TYPE(cp_gauxc_grid_type)                    :: grid
-      TYPE(cp_gauxc_integrator_type)              :: integrator
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :) :: positions
-      LOGICAL                                     :: runtime_valid = .FALSE.
-      LOGICAL                                     :: stack_valid = .FALSE.
-   END TYPE gauxc_fd_context_type
-
    ! One-time guard for the mixed execution-space FD warning.
    LOGICAL, SAVE, PRIVATE :: fd_mixed_space_warned = .FALSE.
 
@@ -364,8 +352,8 @@ CONTAINS
          OPTIONAL                                        :: dense_zeta
       REAL(c_double), INTENT(IN), OPTIONAL               :: z_sign
 
-      INTEGER                                            :: c1, c2, c1t, c2t, ib, icol, irow, mcols, &
-                                                            mrows, mynode, mypcol, myprow, &
+      INTEGER                                            :: c1, c2, c1t, c2t, ib, icol, irow, mynode, &
+                                                            mypcol, myprow, &
                                                             nblkcols_total, nblkrows_total, nc, ncols, &
                                                             nc_t, nr, nr_t, nrows, r1, r2, r1t, r2t
       REAL(c_double)                                     :: zsign
@@ -401,10 +389,11 @@ CONTAINS
                                  row_dist, col_dist)
       END IF
 
-      ! Reuse an existing matrix when its shape matches, otherwise (re)create it.
+      ! Reuse an existing matrix only if matrix type, block sizes and
+      ! distribution match the cached layout; otherwise recreate from the
+      ! template so blocks are pushed to the correct owners.
       IF (ASSOCIATED(dbcsr_mat%matrix)) THEN
-         CALL dbcsr_get_info(dbcsr_mat%matrix, nfullrows_total=mrows, nfullcols_total=mcols)
-         IF (mrows /= nrows .OR. mcols /= ncols) THEN
+         IF (.NOT. dbcsr_target_matches_layout(dbcsr_mat%matrix, layout)) THEN
             CALL dbcsr_release(dbcsr_mat%matrix)
             DEALLOCATE (dbcsr_mat%matrix)
          END IF
@@ -451,6 +440,58 @@ CONTAINS
 
       CALL dbcsr_finalize(dbcsr_mat%matrix)
    END SUBROUTINE dense_to_dbcsr_into
+
+! **************************************************************************************************
+!> \brief Whether an existing DBCSR matrix can receive the cached block layout.
+!>
+!> Reusing a matrix with matching totals but a different matrix type, block
+!> sizes or distribution would push blocks to the wrong owners. Recreate from
+!> the template unless the target matches the layout exactly.
+!> \param matrix ...
+!> \param layout ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION dbcsr_target_matches_layout(matrix, layout) RESULT(matches)
+      USE cp_dbcsr_api, ONLY: dbcsr_distribution_get, dbcsr_distribution_type, &
+                              dbcsr_get_info, dbcsr_type, dbcsr_type_symmetric
+      TYPE(dbcsr_type), POINTER                          :: matrix
+      TYPE(dense_to_dbcsr_layout_type), INTENT(IN)       :: layout
+      LOGICAL                                            :: matches
+
+      CHARACTER                                          :: matrix_type
+      INTEGER                                            :: mynode, mypcol, myprow, nblkcols, &
+                                                            nblkrows, ncols, nrows
+      INTEGER, DIMENSION(:), POINTER                     :: col_blk_size, col_dist, row_blk_size, &
+                                                            row_dist
+      TYPE(dbcsr_distribution_type)                      :: dist
+
+      matches = .FALSE.
+      IF (.NOT. ASSOCIATED(matrix)) RETURN
+
+      CALL dbcsr_get_info(matrix, nfullrows_total=nrows, nfullcols_total=ncols, &
+                          nblkrows_total=nblkrows, nblkcols_total=nblkcols, &
+                          matrix_type=matrix_type, distribution=dist, &
+                          row_blk_size=row_blk_size, col_blk_size=col_blk_size)
+      IF (matrix_type /= dbcsr_type_symmetric) RETURN
+      IF (nrows /= layout%nrows .OR. ncols /= layout%ncols) RETURN
+      IF (nblkrows /= layout%nblkrows .OR. nblkcols /= layout%nblkcols) RETURN
+      IF (SIZE(row_blk_size) /= SIZE(layout%row_blk_size)) RETURN
+      IF (SIZE(col_blk_size) /= SIZE(layout%col_blk_size)) RETURN
+      IF (ANY(row_blk_size /= layout%row_blk_size)) RETURN
+      IF (ANY(col_blk_size /= layout%col_blk_size)) RETURN
+
+      CALL dbcsr_distribution_get(dist, mynode=mynode, myprow=myprow, mypcol=mypcol, &
+                                  row_dist=row_dist, col_dist=col_dist)
+      IF (mynode /= layout%mynode .OR. myprow /= layout%myprow .OR. &
+          mypcol /= layout%mypcol) RETURN
+      IF (SIZE(row_dist) /= SIZE(layout%row_dist)) RETURN
+      IF (SIZE(col_dist) /= SIZE(layout%col_dist)) RETURN
+      IF (ANY(row_dist /= layout%row_dist)) RETURN
+      IF (ANY(col_dist /= layout%col_dist)) RETURN
+
+      matches = .TRUE.
+
+   END FUNCTION dbcsr_target_matches_layout
 
 ! **************************************************************************************************
 !> \brief Whether the cached dense->DBCSR block layout still matches the template.
@@ -948,159 +989,6 @@ CONTAINS
    END SUBROUTINE gauxc_xc_energy_for_particles
 
 ! **************************************************************************************************
-!> \brief Destroy only the geometry-dependent GauXC objects of an FD context.
-!> \param ctx ...
-!> \param status ...
-! **************************************************************************************************
-   SUBROUTINE gauxc_fd_context_drop_stack(ctx, status)
-      TYPE(gauxc_fd_context_type), INTENT(INOUT)         :: ctx
-      TYPE(cp_gauxc_status_type), INTENT(INOUT)          :: status
-
-      IF (.NOT. ctx%stack_valid) RETURN
-      CALL gauxc_destroy_integrator(ctx%integrator, status)
-      CALL gauxc_check_status(status)
-      CALL gauxc_destroy_grid(ctx%grid, status)
-      CALL gauxc_check_status(status)
-      CALL gauxc_destroy_basisset(ctx%basisset, status)
-      CALL gauxc_check_status(status)
-      CALL gauxc_destroy_molecule(ctx%molecule, status)
-      CALL gauxc_check_status(status)
-      ctx%stack_valid = .FALSE.
-      IF (ALLOCATED(ctx%positions)) DEALLOCATE (ctx%positions)
-
-   END SUBROUTINE gauxc_fd_context_drop_stack
-
-! **************************************************************************************************
-!> \brief Release an FD context, including its shared runtime.
-!> \param ctx ...
-!> \param status ...
-! **************************************************************************************************
-   SUBROUTINE gauxc_fd_context_release(ctx, status)
-      TYPE(gauxc_fd_context_type), INTENT(INOUT)         :: ctx
-      TYPE(cp_gauxc_status_type), INTENT(INOUT)          :: status
-
-      CALL gauxc_fd_context_drop_stack(ctx, status)
-      IF (ctx%runtime_valid) THEN
-         CALL gauxc_destroy_shared_runtime(ctx%runtime, status)
-         CALL gauxc_check_status(status)
-         ctx%runtime_valid = .FALSE.
-      END IF
-
-   END SUBROUTINE gauxc_fd_context_release
-
-! **************************************************************************************************
-!> \brief Rebuild the geometry-dependent GauXC stack when the atom positions changed.
-!> \param ctx ...
-!> \param particle_set_eval ...
-!> \param qs_kind_set ...
-!> \param nspins ...
-!> \param xc_fun_name ...
-!> \param grid_type ...
-!> \param radial_quadrature ...
-!> \param pruning_scheme ...
-!> \param lb_exec_space ...
-!> \param int_exec_space ...
-!> \param lwd_kernel ...
-!> \param batch_size ...
-!> \param device_runtime_fill_fraction ...
-!> \param status ...
-! **************************************************************************************************
-   SUBROUTINE gauxc_fd_context_update(ctx, particle_set_eval, qs_kind_set, nspins, xc_fun_name, &
-                                      grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
-                                      int_exec_space, lwd_kernel, batch_size, &
-                                      device_runtime_fill_fraction, status)
-      TYPE(gauxc_fd_context_type), INTENT(INOUT)         :: ctx
-      TYPE(particle_type), DIMENSION(:), INTENT(IN)      :: particle_set_eval
-      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      INTEGER, INTENT(IN)                                :: nspins, batch_size
-      CHARACTER(len=*), INTENT(IN) :: xc_fun_name, grid_type, radial_quadrature, pruning_scheme, &
-         lb_exec_space, int_exec_space, lwd_kernel
-      REAL(KIND=dp), INTENT(IN)                          :: device_runtime_fill_fraction
-      TYPE(cp_gauxc_status_type), INTENT(INOUT)          :: status
-
-      INTEGER                                            :: iatom, natom
-      LOGICAL                                            :: same
-
-      natom = SIZE(particle_set_eval)
-      IF (ctx%stack_valid .AND. ALLOCATED(ctx%positions)) THEN
-         IF (SIZE(ctx%positions, 2) == natom) THEN
-            same = .TRUE.
-            DO iatom = 1, natom
-               IF (ANY(ctx%positions(:, iatom) /= particle_set_eval(iatom)%r)) THEN
-                  same = .FALSE.
-                  EXIT
-               END IF
-            END DO
-            IF (same) RETURN
-         END IF
-      END IF
-
-      CALL gauxc_fd_context_drop_stack(ctx, status)
-
-      IF (.NOT. ctx%runtime_valid) THEN
-         CALL gauxc_create_shared_runtime(ctx%runtime, mp_comm_self%get_handle(), lb_exec_space, &
-                                          int_exec_space, device_runtime_fill_fraction, status)
-         CALL gauxc_check_status(status)
-         ctx%runtime_valid = .TRUE.
-      END IF
-
-      ctx%molecule = gauxc_create_molecule(particle_set_eval, status)
-      CALL gauxc_check_status(status)
-      ctx%basisset = gauxc_create_basisset(qs_kind_set, particle_set_eval, status)
-      CALL gauxc_check_status(status)
-      ctx%grid = gauxc_create_grid(ctx%molecule, ctx%basisset, grid_type, radial_quadrature, &
-                                   pruning_scheme, lb_exec_space, batch_size, &
-                                   device_runtime_fill_fraction, status, &
-                                   mpi_comm=mp_comm_self%get_handle(), &
-                                   int_exec_space=int_exec_space, runtime=ctx%runtime)
-      CALL gauxc_check_status(status)
-      ctx%integrator = gauxc_create_integrator(TRIM(xc_fun_name), ctx%grid, int_exec_space, &
-                                               lwd_kernel, nspins, status)
-      CALL gauxc_check_status(status)
-      ctx%stack_valid = .TRUE.
-
-      ALLOCATE (ctx%positions(3, natom))
-      DO iatom = 1, natom
-         ctx%positions(:, iatom) = particle_set_eval(iatom)%r
-      END DO
-
-   END SUBROUTINE gauxc_fd_context_update
-
-! **************************************************************************************************
-!> \brief Evaluate the GauXC XC energy through a reusable FD context.
-! **************************************************************************************************
-   SUBROUTINE gauxc_fd_energy(ctx, particle_set_eval, qs_kind_set, density_scalar, nspins, &
-                              model_name, xc_fun_name, grid_type, radial_quadrature, pruning_scheme, &
-                              lb_exec_space, int_exec_space, lwd_kernel, batch_size, &
-                              device_runtime_fill_fraction, res, status, density_zeta)
-      TYPE(gauxc_fd_context_type), INTENT(INOUT)         :: ctx
-      TYPE(particle_type), DIMENSION(:), INTENT(IN)      :: particle_set_eval
-      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN)         :: density_scalar
-      INTEGER, INTENT(IN)                                :: nspins, batch_size
-      CHARACTER(len=*), INTENT(IN) :: model_name, xc_fun_name, grid_type, radial_quadrature, &
-         pruning_scheme, lb_exec_space, int_exec_space, lwd_kernel
-      REAL(KIND=dp), INTENT(IN)                          :: device_runtime_fill_fraction
-      TYPE(cp_gauxc_xc_type), INTENT(INOUT)              :: res
-      TYPE(cp_gauxc_status_type), INTENT(INOUT)          :: status
-      REAL(KIND=dp), DIMENSION(:, :), INTENT(IN), OPTIONAL :: density_zeta
-
-      CALL gauxc_fd_context_update(ctx, particle_set_eval, qs_kind_set, nspins, xc_fun_name, &
-                                   grid_type, radial_quadrature, pruning_scheme, lb_exec_space, &
-                                   int_exec_space, lwd_kernel, batch_size, &
-                                   device_runtime_fill_fraction, status)
-      IF (PRESENT(density_zeta)) THEN
-         CALL gauxc_compute_xc(ctx%integrator, density_scalar, res, density_zeta, nspins, status, &
-                               model=TRIM(model_name), energy_only=.TRUE.)
-      ELSE
-         CALL gauxc_compute_xc(ctx%integrator, density_scalar, res, nspins=nspins, status=status, &
-                               model=TRIM(model_name), energy_only=.TRUE.)
-      END IF
-      CALL gauxc_check_status(status)
-
-   END SUBROUTINE gauxc_fd_energy
-
-! **************************************************************************************************
 !> \brief compute a finite-difference GauXC XC nuclear gradient at fixed density
 !> \param particle_set ...
 !> \param qs_kind_set ...
@@ -1145,7 +1033,7 @@ CONTAINS
       LOGICAL                                            :: distribute_fd, has_work, int_device, &
                                                             lb_device, mixed_spaces, use_onedft_model
       REAL(KIND=dp)                                      :: xc_minus, xc_plus
-      TYPE(gauxc_fd_context_type)                        :: fd_ctx
+      TYPE(cp_gauxc_runtime_type)                        :: fd_runtime
       TYPE(cp_gauxc_status_type)                         :: gauxc_status
       TYPE(cp_gauxc_xc_type)                             :: xc_result
       TYPE(particle_type), ALLOCATABLE, DIMENSION(:)     :: particle_set_minus, particle_set_plus
@@ -1184,8 +1072,12 @@ CONTAINS
       has_work = distribute_fd .OR. (para_env%mepos == 0)
 
       IF (has_work) THEN
-         ! The FD context keeps the shared runtime and rebuilds only the
-         ! geometry-dependent GauXC stack when the displaced positions change.
+         ! One shared runtime for the whole sweep; gauxc_xc_energy_for_particles
+         ! rebuilds the geometry-dependent molecule/basis/grid/integrator stack
+         ! for every displaced geometry.
+         CALL gauxc_create_shared_runtime(fd_runtime, mp_comm_self%get_handle(), lb_exec_space, &
+                                          int_exec_space, device_runtime_fill_fraction, gauxc_status)
+         CALL gauxc_check_status(gauxc_status)
          ALLOCATE (particle_set_minus(SIZE(particle_set)), particle_set_plus(SIZE(particle_set)))
 
          DO iatom = 1, SIZE(particle_set)
@@ -1200,28 +1092,34 @@ CONTAINS
                particle_set_minus(iatom)%r(idir) = particle_set_minus(iatom)%r(idir) - dx
                particle_set_plus(iatom)%r(idir) = particle_set_plus(iatom)%r(idir) + dx
                IF (PRESENT(density_zeta)) THEN
-                  CALL gauxc_fd_energy(fd_ctx, particle_set_plus, qs_kind_set, density_scalar, &
-                                       nspins, model_name, xc_fun_name, grid_type, radial_quadrature, &
-                                       pruning_scheme, lb_exec_space, int_exec_space, lwd_kernel, &
-                                       batch_size, device_runtime_fill_fraction, xc_result, &
-                                       gauxc_status, density_zeta=density_zeta)
+                  CALL gauxc_xc_energy_for_particles(particle_set_plus, qs_kind_set, density_scalar, &
+                                                    nspins, model_name, xc_fun_name, grid_type, &
+                                                    radial_quadrature, pruning_scheme, lb_exec_space, &
+                                                    int_exec_space, lwd_kernel, batch_size, &
+                                                    device_runtime_fill_fraction, xc_result, &
+                                                    runtime=fd_runtime, density_zeta=density_zeta)
                   xc_plus = xc_result%exc
-                  CALL gauxc_fd_energy(fd_ctx, particle_set_minus, qs_kind_set, density_scalar, &
-                                       nspins, model_name, xc_fun_name, grid_type, radial_quadrature, &
-                                       pruning_scheme, lb_exec_space, int_exec_space, lwd_kernel, &
-                                       batch_size, device_runtime_fill_fraction, xc_result, &
-                                       gauxc_status, density_zeta=density_zeta)
+                  CALL gauxc_xc_energy_for_particles(particle_set_minus, qs_kind_set, density_scalar, &
+                                                    nspins, model_name, xc_fun_name, grid_type, &
+                                                    radial_quadrature, pruning_scheme, lb_exec_space, &
+                                                    int_exec_space, lwd_kernel, batch_size, &
+                                                    device_runtime_fill_fraction, xc_result, &
+                                                    runtime=fd_runtime, density_zeta=density_zeta)
                   xc_minus = xc_result%exc
                ELSE
-                  CALL gauxc_fd_energy(fd_ctx, particle_set_plus, qs_kind_set, density_scalar, &
-                                       nspins, model_name, xc_fun_name, grid_type, radial_quadrature, &
-                                       pruning_scheme, lb_exec_space, int_exec_space, lwd_kernel, &
-                                       batch_size, device_runtime_fill_fraction, xc_result, gauxc_status)
+                  CALL gauxc_xc_energy_for_particles(particle_set_plus, qs_kind_set, density_scalar, &
+                                                    nspins, model_name, xc_fun_name, grid_type, &
+                                                    radial_quadrature, pruning_scheme, lb_exec_space, &
+                                                    int_exec_space, lwd_kernel, batch_size, &
+                                                    device_runtime_fill_fraction, xc_result, &
+                                                    runtime=fd_runtime)
                   xc_plus = xc_result%exc
-                  CALL gauxc_fd_energy(fd_ctx, particle_set_minus, qs_kind_set, density_scalar, &
-                                       nspins, model_name, xc_fun_name, grid_type, radial_quadrature, &
-                                       pruning_scheme, lb_exec_space, int_exec_space, lwd_kernel, &
-                                       batch_size, device_runtime_fill_fraction, xc_result, gauxc_status)
+                  CALL gauxc_xc_energy_for_particles(particle_set_minus, qs_kind_set, density_scalar, &
+                                                    nspins, model_name, xc_fun_name, grid_type, &
+                                                    radial_quadrature, pruning_scheme, lb_exec_space, &
+                                                    int_exec_space, lwd_kernel, batch_size, &
+                                                    device_runtime_fill_fraction, xc_result, &
+                                                    runtime=fd_runtime)
                   xc_minus = xc_result%exc
                END IF
                exc_grad(3*iatom - 3 + idir) = (xc_plus - xc_minus)/(2.0_dp*dx)
@@ -1230,7 +1128,7 @@ CONTAINS
 
          DEALLOCATE (particle_set_minus, particle_set_plus)
 
-         CALL gauxc_fd_context_release(fd_ctx, gauxc_status)
+         CALL gauxc_destroy_shared_runtime(fd_runtime, gauxc_status)
          CALL gauxc_check_status(gauxc_status)
       END IF
 

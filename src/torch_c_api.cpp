@@ -34,7 +34,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <exception>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -738,6 +740,14 @@ bool torch_c_tensor_upload_pinned(torch_c_tensor_t **tensor,
   const auto sizes_ref = c10::IntArrayRef(sizes, ndims);
   int64_t count = 1;
   for (int i = 0; i < ndims; i++) {
+    torch_c_check(sizes[i] >= 0,
+                  "Torch tensor upload has a negative dimension");
+    if (sizes[i] == 0) {
+      count = 0;
+      continue;
+    }
+    torch_c_check(count <= std::numeric_limits<int64_t>::max() / sizes[i],
+                  "Torch tensor upload element count overflows");
     count *= sizes[i];
   }
   const bool reallocated =
@@ -754,8 +764,10 @@ bool torch_c_tensor_upload_pinned(torch_c_tensor_t **tensor,
                         pinned_current_slot < static_cast<int>(slots.size()),
                     "Torch staging buffer was not reserved for this thread");
       auto &slot = slots[pinned_current_slot];
-      torch_c_check(slot.tensor.defined() &&
-                        slot.tensor.numel() >= offset + count,
+      torch_c_check(slot.tensor.defined(),
+                    "Torch pinned staging buffer is undefined");
+      const int64_t capacity = slot.tensor.numel();
+      torch_c_check(offset >= 0 && offset <= capacity && count <= capacity - offset,
                     "Torch pinned staging buffer is too small");
       staging = slot.tensor;
       staged_pinned = slot.pinned;
@@ -819,6 +831,7 @@ void torch_c_tensor_expand_dim(const torch_c_tensor_t *tensor,
   std::vector<int64_t> sizes(tensor->sizes().begin(), tensor->sizes().end());
   torch_c_check(sizes[dim] == 1,
                 "Torch tensor expansion requires a singleton dimension");
+  torch_c_check(size >= 0, "Torch tensor expansion size must be non-negative");
   sizes[dim] = size;
   *result = new torch_c_tensor_t(tensor->expand(sizes));
   TORCH_C_CATCH("torch_c_tensor_expand_dim")
@@ -842,7 +855,8 @@ void torch_c_tensor_narrow(const torch_c_tensor_t *tensor, const int64_t dim,
   torch_c_check(length >= 0, "Torch tensor length must be non-negative");
   torch_c_check(dim < tensor->ndimension(),
                 "Torch tensor dimension is out of range");
-  torch_c_check(start_index + length <= tensor->size(dim),
+  torch_c_check(start_index <= tensor->size(dim) &&
+                    length <= tensor->size(dim) - start_index,
                 "Torch tensor narrow range is out of bounds");
   torch_c_check(
       tensor->device() == device,
@@ -997,7 +1011,8 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
                             const bool synchronize) {
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
-  torch_c_check(count > 0, "Torch gradient batch must be non-empty");
+  torch_c_check(count >= 0, "Torch gradient batch size must be non-negative");
+  if (count == 0) return;
   for (int i = 0; i < count; ++i) {
     torch_c_check(tensors[i] != nullptr,
                   "Torch gradient input must not be NULL");
@@ -1409,13 +1424,19 @@ void torch_c_tensor_weighted_sum_segments(const torch_c_tensor_t *values,
   TORCH_C_TRY
   c10::OptionalDeviceGuard guard;
   get_device_with_guard(guard);
+  torch_c_check(nseg >= 0, "Torch weighted sum segment count must be non-negative");
+  if (nseg == 0) return;
+  torch_c_check(values != nullptr && weights != nullptr && offsets != nullptr &&
+                    lengths != nullptr && result != nullptr,
+                "Torch weighted sum received a NULL argument");
   torch::Tensor flat_values, flat_weights;
   flatten_weighted_pair(values, weights, flat_values, flat_weights);
+  const int64_t numel = flat_values.numel();
   std::vector<torch::Tensor> dots;
   dots.reserve(nseg);
   for (int i = 0; i < nseg; ++i) {
-    torch_c_check(offsets[i] >= 0 && lengths[i] >= 0 &&
-                      offsets[i] + lengths[i] <= flat_values.numel(),
+    torch_c_check(offsets[i] >= 0 && lengths[i] >= 0 && offsets[i] <= numel &&
+                      lengths[i] <= numel - offsets[i],
                   "Torch weighted sum range is out of bounds");
     dots.push_back(torch::dot(flat_values.narrow(0, offsets[i], lengths[i]),
                               flat_weights.narrow(0, offsets[i], lengths[i])));
@@ -1437,9 +1458,16 @@ void torch_c_tensor_accumulate(torch_c_tensor_t **accumulator,
   // Only the scalar value is consumed (and it is read back once); never let the
   // accumulator retain the per-chunk autograd graphs.
   torch::NoGradGuard no_grad;
+  torch_c_check(value != nullptr && value->defined(),
+                "Torch accumulator received an undefined value");
   if (*accumulator == nullptr) {
     *accumulator = new torch_c_tensor_t(value->detach().clone());
   } else {
+    torch_c_check((*accumulator)->defined() &&
+                      (*accumulator)->scalar_type() == value->scalar_type() &&
+                      (*accumulator)->device() == value->device() &&
+                      (*accumulator)->sizes().equals(value->sizes()),
+                  "Torch accumulator value shape/dtype/device mismatch");
     (*accumulator)->add_(value->detach());
   }
   TORCH_C_CATCH("torch_c_tensor_accumulate")
