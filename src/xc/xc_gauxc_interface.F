@@ -279,12 +279,14 @@ CONTAINS
 
 #ifdef __GAUXC
       CHARACTER(len=32)                                  :: stderr_env
-      INTEGER                                            :: ierr, iw
+      INTEGER                                            :: env_status, ierr, iw
       LOGICAL                                            :: print_to_stderr
 
       iw = cp_logger_get_default_io_unit()
       ierr = error_unit
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GAUXC_STATUS_STDERR", stderr_env)
+      stderr_env = ""
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GAUXC_STATUS_STDERR", stderr_env, STATUS=env_status)
+      IF (env_status /= 0) stderr_env = ""
       CALL uppercase(stderr_env)
       SELECT CASE (TRIM(stderr_env))
       CASE ("", "0", "FALSE", "F", "OFF", "NO")
@@ -1353,7 +1355,7 @@ CONTAINS
 
    END SUBROUTINE resolve_runtime_spaces
 
-   PURE FUNCTION read_execution_space(spec) RESULT(val)
+   FUNCTION read_execution_space(spec) RESULT(val)
       CHARACTER(len=*), INTENT(IN)                       :: spec
       INTEGER(c_int)                                     :: val
 
@@ -1368,7 +1370,8 @@ CONTAINS
       CASE ("DEVICE")
          val = gauxc_executionspace%device
       CASE DEFAULT
-         val = gauxc_executionspace%host
+         CALL cp_abort(__LOCATION__, &
+                       "Unknown GauXC execution space: '"//TRIM(spec)//"'")
       END SELECT
    END FUNCTION read_execution_space
 
@@ -1377,7 +1380,7 @@ CONTAINS
 !> \param spec ...
 !> \return ...
 ! **************************************************************************************************
-   PURE FUNCTION read_atomic_grid_size(spec) RESULT(val)
+   FUNCTION read_atomic_grid_size(spec) RESULT(val)
       CHARACTER(len=*), INTENT(IN)                       :: spec
       INTEGER(c_int)                                     :: val
 
@@ -1398,7 +1401,8 @@ CONTAINS
       CASE ("GM5")
          val = gauxc_atomicgridsizedefault%gm5
       CASE DEFAULT
-         val = gauxc_atomicgridsizedefault%finegrid
+         CALL cp_abort(__LOCATION__, &
+                       "Unknown GauXC atomic grid size: '"//TRIM(spec)//"'")
       END SELECT
    END FUNCTION read_atomic_grid_size
 
@@ -1407,7 +1411,7 @@ CONTAINS
 !> \param spec ...
 !> \return ...
 ! **************************************************************************************************
-   PURE FUNCTION read_radial_quad(spec) RESULT(val)
+   FUNCTION read_radial_quad(spec) RESULT(val)
       CHARACTER(len=*), INTENT(IN)                       :: spec
       INTEGER(c_int)                                     :: val
 
@@ -1426,7 +1430,8 @@ CONTAINS
       CASE ("MURRAYHANDYLAMING")
          val = gauxc_radialquad%murray_handy_laming
       CASE DEFAULT
-         val = gauxc_radialquad%mura_knowles
+         CALL cp_abort(__LOCATION__, &
+                       "Unknown GauXC radial quadrature: '"//TRIM(spec)//"'")
       END SELECT
    END FUNCTION read_radial_quad
 
@@ -1435,7 +1440,7 @@ CONTAINS
 !> \param spec ...
 !> \return ...
 ! **************************************************************************************************
-   PURE FUNCTION read_pruning_scheme(spec) RESULT(val)
+   FUNCTION read_pruning_scheme(spec) RESULT(val)
       CHARACTER(len=*), INTENT(IN)                       :: spec
       INTEGER(c_int)                                     :: val
 
@@ -1452,7 +1457,8 @@ CONTAINS
       CASE ("TREUTLER")
          val = gauxc_pruningscheme%treutler
       CASE DEFAULT
-         val = gauxc_pruningscheme%robust
+         CALL cp_abort(__LOCATION__, &
+                       "Unknown GauXC pruning scheme: '"//TRIM(spec)//"'")
       END SELECT
    END FUNCTION read_pruning_scheme
 

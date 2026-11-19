@@ -91,6 +91,7 @@ typedef torch::Tensor torch_c_tensor_t;
 typedef c10::Dict<std::string, torch::Tensor> torch_c_dict_t;
 typedef torch::jit::Module torch_c_model_t;
 
+
 class TorchFloatingPointMaskGuard {
 public:
   TorchFloatingPointMaskGuard() : active_(std::feholdexcept(&env_) == 0) {}
@@ -157,8 +158,22 @@ static std::unordered_map<std::string, model_metadata_entry>
 // Deferred gradient readbacks copy on the source tensor's device stream.
 // Remember which devices have pending copies so the later
 // torch_c_stream_synchronize() waits on those devices and not merely on the
-// currently active one.
-static thread_local std::set<int> pending_grad_readback_devices;
+// currently active one. Process-global: a deferred readback may be issued from
+// one thread while the synchronization happens on another.
+static std::set<int> pending_grad_readback_devices;
+static std::mutex pending_grad_mutex;
+
+static void record_pending_device(const int device) {
+  std::lock_guard<std::mutex> lock(pending_grad_mutex);
+  pending_grad_readback_devices.insert(device);
+}
+
+static std::set<int> take_pending_devices() {
+  std::lock_guard<std::mutex> lock(pending_grad_mutex);
+  std::set<int> devices = std::move(pending_grad_readback_devices);
+  pending_grad_readback_devices.clear();
+  return devices;
+}
 
 static void enable_expandable_cuda_segments_if_unconfigured() {
 #if defined(__LIBTORCH_CUDA)
@@ -482,6 +497,22 @@ static torch_c_tensor_t *tensor_from_array(const torch::Dtype dtype,
   return new torch_c_tensor_t(torch::from_blob(source, sizes_ref, opts));
 }
 
+// Reusable pinned host buffers for gradient readbacks, one per leaf tensor.
+// The map is intentionally leaked (raw pointer, never destroyed) because a
+// static torch::Tensor would be destroyed after the CUDA driver has shut down.
+static std::mutex grad_pinned_mutex;
+static std::unordered_map<const torch_c_tensor_t *, torch::Tensor>
+    *grad_pinned_pool = nullptr;
+
+// Drop a pooled pinned buffer before its tensor wrapper is deleted/reallocated.
+static void erase_grad_pool_entry(const torch_c_tensor_t *tensor) {
+  if (tensor == nullptr) return;
+  std::lock_guard<std::mutex> lock(grad_pinned_mutex);
+  if (grad_pinned_pool != nullptr) {
+    grad_pinned_pool->erase(tensor);
+  }
+}
+
 static bool tensor_matches(const torch_c_tensor_t *tensor,
                            const torch::Dtype dtype,
                            const torch::Device &device, const int ndims,
@@ -511,6 +542,7 @@ static bool prepare_target_tensor(torch_c_tensor_t **tensor,
       requires_grad_changed ||
       !tensor_matches(*tensor, torch::kFloat64, device, ndims, sizes);
   if (reallocated) {
+    erase_grad_pool_entry(*tensor);
     delete (*tensor);
     const auto opts =
         torch::TensorOptions().dtype(torch::kFloat64).device(device);
@@ -632,6 +664,20 @@ static std::mutex pinned_pool_mutex;
 // the CUDA driver has shut down and would abort the process at exit.
 static std::vector<staging_slot> *pinned_pool = nullptr;
 static thread_local int pinned_current_slot = -1;
+// The pool is shared between threads but the current slot index is per thread.
+// Bumping the generation on release lets other threads detect that their slot
+// index belongs to a pool generation that no longer exists.
+static std::atomic<uint64_t> pinned_generation{0};
+static thread_local uint64_t pinned_generation_local = 0;
+
+// Requires pinned_pool_mutex to be held.
+static void sync_pinned_generation_locked() {
+  const auto generation = pinned_generation.load(std::memory_order_relaxed);
+  if (generation != pinned_generation_local) {
+    pinned_current_slot = -1;
+    pinned_generation_local = generation;
+  }
+}
 
 static std::vector<staging_slot> &get_pinned_pool() {
   if (pinned_pool == nullptr) {
@@ -667,6 +713,7 @@ static torch::Tensor make_host_buffer(const int64_t n_doubles, bool &pinned) {
 void torch_c_pinned_reserve(const int64_t n_doubles) {
   TORCH_C_TRY
   std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+  sync_pinned_generation_locked();
   auto &slots = get_pinned_pool();
   // A previous batch on this thread may not have called finish (e.g. after an
   // early abort); release it instead of failing.
@@ -708,6 +755,7 @@ void torch_c_pinned_reserve(const int64_t n_doubles) {
 void torch_c_pinned_finish() {
   TORCH_C_TRY
   std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+  sync_pinned_generation_locked();
   release_current_slot_locked();
   TORCH_C_CATCH("torch_c_pinned_finish")
 }
@@ -717,10 +765,26 @@ void torch_c_pinned_finish() {
  ******************************************************************************/
 void torch_c_pinned_release() {
   TORCH_C_TRY
-  std::lock_guard<std::mutex> lock(pinned_pool_mutex);
-  delete pinned_pool;
-  pinned_pool = nullptr;
-  pinned_current_slot = -1;
+  {
+    std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+    sync_pinned_generation_locked();
+    release_current_slot_locked();
+    int in_use = 0;
+    if (pinned_pool != nullptr) {
+      for (const auto &slot : *pinned_pool) {
+        in_use += slot.in_use ? 1 : 0;
+      }
+    }
+    // Never free memory that another thread may still be copying through. If
+    // some slot is still in use, keep the pool (a later release can free it);
+    // the generation bump is then unnecessary because all indices stay valid.
+    if (in_use == 0) {
+      delete pinned_pool;
+      pinned_pool = nullptr;
+      pinned_generation.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+  take_pending_devices();
   TORCH_C_CATCH("torch_c_pinned_release")
 }
 
@@ -759,6 +823,7 @@ bool torch_c_tensor_upload_pinned(torch_c_tensor_t **tensor,
     bool staged_pinned = false;
     {
       std::lock_guard<std::mutex> lock(pinned_pool_mutex);
+      sync_pinned_generation_locked();
       auto &slots = get_pinned_pool();
       torch_c_check(pinned_current_slot >= 0 &&
                         pinned_current_slot < static_cast<int>(slots.size()),
@@ -802,7 +867,8 @@ void torch_c_stream_synchronize() {
     c10::OptionalDeviceGuard guard;
     const auto active = get_device_with_guard(guard);
     c10::cuda::getCurrentCUDAStream().synchronize();
-    for (const int device_index : pending_grad_readback_devices) {
+    const auto devices = take_pending_devices();
+    for (const int device_index : devices) {
       if (active.is_cuda() &&
           static_cast<int>(active.index()) == device_index) {
         continue; // Already synchronized above.
@@ -811,7 +877,6 @@ void torch_c_stream_synchronize() {
           torch::kCUDA, static_cast<c10::DeviceIndex>(device_index)));
       c10::cuda::getCurrentCUDAStream().synchronize();
     }
-    pending_grad_readback_devices.clear();
   }
   TORCH_C_CATCH("torch_c_stream_synchronize")
 }
@@ -955,6 +1020,7 @@ void torch_c_tensor_to_device_leaf(torch_c_tensor_t **tensor,
   const auto device = get_device_with_guard(guard);
   auto moved = (*tensor)->to(device).detach();
   moved.set_requires_grad(req_grad);
+  erase_grad_pool_entry(*tensor);
   delete (*tensor);
   *tensor = new torch_c_tensor_t(moved);
   TORCH_C_CATCH("torch_c_tensor_to_device_leaf")
@@ -998,13 +1064,6 @@ static torch::Tensor materialize_host_gradient(const torch::Tensor &source,
   host.copy_(source);
   return host;
 }
-
-// Reusable pinned host buffers for gradient readbacks, one per leaf tensor.
-// The map is intentionally leaked (raw pointer, never destroyed) because a
-// static torch::Tensor would be destroyed after the CUDA driver has shut down.
-static std::mutex grad_pinned_mutex;
-static std::unordered_map<const torch_c_tensor_t *, torch::Tensor>
-    *grad_pinned_pool = nullptr;
 
 static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
                             const int count, torch_c_tensor_t **grads,
@@ -1089,7 +1148,7 @@ static void grad_batch_impl(const torch_c_tensor_t *const *tensors,
     } else {
       // The caller will synchronize later; remember the source device so the
       // deferred sync waits on the stream the copies were actually issued on.
-      pending_grad_readback_devices.insert(source_device);
+      record_pending_device(source_device);
     }
     for (int i = 0; i < count; ++i) {
       grads[i] = new torch_c_tensor_t(std::move(hosts[i]));
@@ -1123,10 +1182,13 @@ void torch_c_tensor_grad_batch_deferred(const torch_c_tensor_t *const *tensors,
  ******************************************************************************/
 void torch_c_grad_pool_clear() {
   TORCH_C_TRY
-  std::lock_guard<std::mutex> lock(grad_pinned_mutex);
-  if (grad_pinned_pool != nullptr) {
-    grad_pinned_pool->clear();
+  {
+    std::lock_guard<std::mutex> lock(grad_pinned_mutex);
+    if (grad_pinned_pool != nullptr) {
+      grad_pinned_pool->clear();
+    }
   }
+  take_pending_devices();
   TORCH_C_CATCH("torch_c_grad_pool_clear")
 }
 
@@ -1137,12 +1199,7 @@ void torch_c_grad_pool_clear() {
 void torch_c_tensor_release(torch_c_tensor_t *tensor) {
   if (tensor == nullptr)
     return;
-  {
-    std::lock_guard<std::mutex> lock(grad_pinned_mutex);
-    if (grad_pinned_pool != nullptr) {
-      grad_pinned_pool->erase(tensor);
-    }
-  }
+  erase_grad_pool_entry(tensor);
   delete (tensor);
 }
 
@@ -1349,8 +1406,8 @@ static std::unordered_map<const torch_c_model_t *,
                           std::unordered_map<std::string, torch::jit::Method>>
     *model_method_cache = nullptr;
 
-static torch::jit::Method *get_cached_method(torch_c_model_t *model,
-                                             const char *method_name) {
+static torch::jit::Method get_cached_method(torch_c_model_t *model,
+                                            const char *method_name) {
   std::lock_guard<std::mutex> lock(model_method_mutex);
   if (model_method_cache == nullptr) {
     model_method_cache = new std::unordered_map<
@@ -1363,7 +1420,17 @@ static torch::jit::Method *get_cached_method(torch_c_model_t *model,
   if (it == methods.end()) {
     it = methods.emplace(key, model->get_method(key)).first;
   }
-  return &it->second;
+  // Return a value: a pointer into the map could be invalidated by a
+  // concurrent insertion (rehash) in another thread.
+  return it->second;
+}
+
+// Drop cached method handles for a model whose methods are about to change.
+static void invalidate_model_method_cache(const torch_c_model_t *model) {
+  std::lock_guard<std::mutex> lock(model_method_mutex);
+  if (model_method_cache != nullptr) {
+    model_method_cache->erase(model);
+  }
 }
 
 void torch_c_model_forward_mol_tensor(torch_c_model_t *model,
@@ -1380,8 +1447,8 @@ void torch_c_model_forward_mol_tensor(torch_c_model_t *model,
     graph_optimization.emplace(false);
   }
   torch_c_check(*output == NULL, "Torch tensor output must be NULL");
-  auto *method = get_cached_method(model, method_name);
-  *output = new torch_c_tensor_t((*method)({*inputs}).toTensor());
+  auto method = get_cached_method(model, method_name);
+  *output = new torch_c_tensor_t(method({*inputs}).toTensor());
   TORCH_C_CATCH("torch_c_model_forward_mol_tensor")
 }
 
@@ -1609,6 +1676,7 @@ void torch_c_allow_tf32(const bool allow_tf32) {
 void torch_c_model_freeze(torch_c_model_t *model) {
   TORCH_C_TRY
 
+  invalidate_model_method_cache(model);
   *model = torch::jit::freeze(*model);
   TORCH_C_CATCH("torch_c_model_freeze")
 }
@@ -1621,6 +1689,7 @@ void torch_c_model_freeze_preserving_method(torch_c_model_t *model,
   TORCH_C_TRY
 
   const std::vector<std::string> preserved_methods = {method_name};
+  invalidate_model_method_cache(model);
   torch::jit::freeze_module_inplace(model, preserved_methods);
   TORCH_C_CATCH("torch_c_model_freeze_preserving_method")
 }
