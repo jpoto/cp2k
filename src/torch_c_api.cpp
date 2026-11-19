@@ -285,9 +285,15 @@ static void set_jit_fusion_strategy() {
 
 static void copy_string_to_c_buffer(const std::string &source, char **content,
                                     int *length) {
-  *length = source.length();
-  *content = (char *)malloc(source.length() + 1); // +1 for null terminator
-  strcpy(*content, source.c_str());
+  torch_c_check(content != nullptr && length != nullptr,
+                "Torch string output must not be NULL");
+  torch_c_check(source.size() <= static_cast<size_t>(INT_MAX),
+                "Torch string exceeds the maximum supported length");
+  char *buffer = static_cast<char *>(std::malloc(source.size() + 1));
+  torch_c_check(buffer != nullptr, "Torch string allocation failed");
+  std::memcpy(buffer, source.c_str(), source.size() + 1);
+  *content = buffer;
+  *length = static_cast<int>(source.size());
 }
 
 static bool can_load_directly_to_device(const torch::Device &device) {
@@ -578,7 +584,8 @@ static void *get_data_ptr(const torch_c_tensor_t *tensor,
 static constexpr size_t torch_c_attr_string_length = 80;
 
 static void copy_attr_string_to_fortran(const std::string &source, char *dest) {
-  if (source.size() >= torch_c_attr_string_length) {
+  torch_c_check(dest != nullptr, "Torch attribute destination must not be NULL");
+  if (source.size() > torch_c_attr_string_length) {
     torch_c_api_abort("Torch attribute string exceeds CP2K default length");
   }
   // Blank-pad the whole Fortran buffer: the caller passes an INTENT(OUT)
@@ -1734,7 +1741,10 @@ void torch_c_model_get_attr_string(const torch_c_model_t *model,
 void torch_c_model_get_attr_list_size(const torch_c_model_t *model,
                                       const char *key, int *size) {
   TORCH_C_TRY
-  *size = model->attr(key).toList().size();
+  const auto list_size = model->attr(key).toList().size();
+  torch_c_check(list_size <= static_cast<size_t>(INT_MAX),
+                "Torch attribute list is too long");
+  *size = static_cast<int>(list_size);
   TORCH_C_CATCH("torch_c_model_get_attr_list_size")
 }
 
@@ -1747,6 +1757,8 @@ void torch_c_model_get_attr_strlist(const torch_c_model_t *model,
                                     char *dest) {
   TORCH_C_TRY
   const auto list = model->attr(key).toList();
+  torch_c_check(index >= 0 && static_cast<size_t>(index) < list.size(),
+                "Torch attribute list index is out of bounds");
   copy_attr_string_to_fortran(list[index].toStringRef(), dest);
   TORCH_C_CATCH("torch_c_model_get_attr_strlist")
 }

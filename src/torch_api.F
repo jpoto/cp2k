@@ -1687,8 +1687,11 @@ CONTAINS
       INTEGER, INTENT(OUT)                               :: dest
 
       INTEGER(kind=int_8)                                :: temp
+      LOGICAL                                            :: in_range
       CALL torch_model_get_attr_int64(model, key, temp)
-      CPASSERT(ABS(temp) < HUGE(dest))
+      in_range = temp >= -INT(HUGE(dest), KIND=int_8) - 1_int_8
+      in_range = in_range .AND. temp <= INT(HUGE(dest), KIND=int_8)
+      CPASSERT(in_range)
       dest = INT(temp)
    END SUBROUTINE torch_model_get_attr_int32
 
