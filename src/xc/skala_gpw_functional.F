@@ -43,8 +43,11 @@ MODULE skala_gpw_functional
                                               skala_key_grid_weights,&
                                               skala_key_kin
    USE skala_gpw_features,              ONLY: &
-        allocate_empty_bound_shape, grid_coordinate, skala_gpw_atom_partition_hard, &
-        skala_gpw_atom_partition_smooth, &
+        allocate_empty_bound_shape, atom_chunk_layout_cache_type, grid_coordinate, &
+        skala_atom_ws_type, skala_execution_target_type, &
+        skala_gapw_atom_cuda_tensor_cache_type, skala_grad_scratch_type, &
+        skala_gpw_atom_partition_hard, skala_gpw_atom_partition_smooth, &
+        skala_model_context_type, skala_state, skala_weight_grad_cache_type, &
         sort_chunks_by_padded_rows, &
         skala_gpw_atom_subchunk_count, skala_gpw_atom_subchunk_layout, skala_gpw_feature_build, &
         skala_gpw_feature_build_atom_subchunk_bounds, skala_gpw_feature_release, &
@@ -55,7 +58,6 @@ MODULE skala_gpw_functional
                                               get_skala_native_section,&
                                               resolve_skala_execution_target,&
                                               resolve_skala_model_path,&
-                                              skala_execution_target_type,&
                                               xc_section_uses_gauxc_model
    USE skala_torch_api,                 ONLY: skala_torch_model_get_exc,&
                                               skala_torch_model_get_exc_device,&
@@ -106,44 +108,6 @@ MODULE skala_gpw_functional
                                            skala_gapw_density_partition_hard_only = 2, &
                                            skala_gapw_density_partition_soft_only = 3, &
                                            skala_gapw_density_partition_none = 4
-
-   TYPE skala_gapw_atom_cuda_tensor_cache_type
-      TYPE(torch_tensor_type)                            :: atomic_coords_t, atomic_grid_weights_t, &
-                                                            density_t, grad_t, grid_coords_t, &
-                                                            grid_weights_t, kin_t
-   END TYPE skala_gapw_atom_cuda_tensor_cache_type
-
-   ! Reusable per-atom workspace for skala_gapw_atom_vxc_of_r_pair. Kept at module
-   ! scope so it can be released explicitly (skala_gpw_release_caches) and so host
-   ! arrays, input tensors and the input dict are reused across atoms instead of
-   ! being reallocated/recreated for every atom.
-   TYPE skala_atom_ws_type
-      INTEGER                                            :: na = -1
-      INTEGER                                            :: nr = -1
-      INTEGER                                            :: nspins = -1
-      INTEGER                                            :: nblocks = -1
-      INTEGER                                            :: nflat_tot = -1
-      INTEGER                                            :: device = -2
-      LOGICAL                                            :: tensors_active = .FALSE.
-      LOGICAL                                            :: dict_active = .FALSE.
-      LOGICAL                                            :: int_tensors_active = .FALSE.
-      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: atomic_grid_sizes, seg_lengths, &
-                                                            seg_offsets
-      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:, :)  :: atomic_grid_size_bound_shape
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: atomic_grid_weights, exc_segments, &
-                                                            grid_weights
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: coarse_0_atomic_coords, density, &
-                                                            grid_coords, kin, weight_b
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: grad
-      TYPE(torch_tensor_type)                            :: atomic_grid_size_bound_shape_t, &
-                                                            atomic_grid_sizes_t, &
-                                                            atomic_grid_weights_t, &
-                                                            coarse_0_atomic_coords_t, density_t, &
-                                                            grad_t, grid_coords_t, grid_weights_t, &
-                                                            kin_t
-      TYPE(torch_dict_type)                              :: inputs
-   END TYPE skala_atom_ws_type
-
    PUBLIC :: build_vxc_from_feature_grads, ensure_native_skala_grid_scope, &
              skala_gapw_atom_composite_energy, skala_gapw_atom_vxc_of_r_pair, &
              native_skala_gapw_atom_composite_requested, &
@@ -152,78 +116,6 @@ MODULE skala_gpw_functional
              native_skala_gapw_density_partition, skala_gpw_eval, skala_gpw_weight_derivative, &
              skala_execution_use_cuda, skala_gpw_release_caches, skala_gapw_representation
 
-   TYPE(skala_torch_model_type), SAVE                  :: cached_model
-   TYPE(skala_gapw_atom_cuda_tensor_cache_type), SAVE, TARGET :: cached_atom_cuda_tensors
-   LOGICAL, SAVE                                       :: cached_atom_cuda_tensors_active = .FALSE.
-   ! Static (geometry-only) device tensors: uploaded only when the geometry,
-   ! grid shape, or device changes instead of on every SCF step.
-   LOGICAL, SAVE                                       :: cached_atom_static_valid = .FALSE.
-   INTEGER, SAVE                                       :: cached_atom_static_device = -1, &
-                                                          cached_atom_static_nrow = -1, &
-                                                          cached_atom_static_natom = -1
-   TYPE(skala_atom_ws_type), SAVE                      :: atom_ws
-
-   ! Resolved model context (path, execution target, CUDA device). Resolved once
-   ! per XC section instead of on every one-center atom evaluation.
-   TYPE skala_model_context_type
-      LOGICAL                                            :: valid = .FALSE.
-      TYPE(section_vals_type), POINTER                   :: xc_section => NULL()
-      LOGICAL                                            :: use_cuda = .FALSE.
-      INTEGER                                            :: device = -1
-   END TYPE skala_model_context_type
-   TYPE(skala_model_context_type), SAVE                :: model_context
-
-   ! Stress/virial is a run-level property of the native SKALA path. CP2K may
-   ! perform an initial non-stress energy evaluation before the stress/force
-   ! evaluation, but once stress has been requested the run must stay in stress
-   ! mode; a later non-stress evaluation aborts instead of mixing the two.
-   LOGICAL, SAVE                                       :: stress_mode_entered = .FALSE.
-
-   LOGICAL, SAVE                                       :: logged_torch_threads = .FALSE.
-   CHARACTER(len=default_path_length), SAVE            :: cached_model_path = ""
-   CHARACTER(len=default_path_length), SAVE            :: cached_model_stamp = ""
-   LOGICAL, SAVE                                       :: cached_model_loaded = .FALSE.
-   LOGICAL, SAVE                                       :: cached_model_fp64 = .FALSE.
-   INTEGER, SAVE                                       :: cached_model_cuda_device = -3
-   INTEGER, SAVE                                       :: logged_cuda_device = -3, &
-                                                          logged_cuda_device_count = -1, &
-                                                          logged_cuda_nproc = -1
-
-   ! Persistent feature bundle reused across SCF steps: both the host arrays and
-   ! the cached layout's Torch (static/dynamic) tensors are kept and refreshed in
-   ! place. The common-grid evaluation and the accurate-XCINT weight derivative are
-   ! never nested, so a single bundle is shared to bound the persistent memory.
-   TYPE(skala_gpw_feature_type), SAVE, TARGET          :: cached_features
-
-   ! Cached atom-composite chunk layout, keyed on the per-atom grid sizes.
-   TYPE atom_chunk_layout_cache_type
-      INTEGER                                            :: max_rows = -1
-      INTEGER, ALLOCATABLE, DIMENSION(:)                 :: atom_begin, atom_count, &
-                                                            row_begin, row_counts
-      INTEGER(KIND=int_8), ALLOCATABLE, DIMENSION(:)     :: grid_sizes
-   END TYPE atom_chunk_layout_cache_type
-   TYPE(atom_chunk_layout_cache_type), SAVE, TARGET    :: chunk_layout_cache
-
-   ! Reusable host scratch for model gradients mapped back to the local grid.
-   TYPE skala_grad_scratch_type
-      REAL(KIND=dp), POINTER, DIMENSION(:, :)    :: density_grad => NULL(), kin_grad => NULL()
-      REAL(KIND=dp), POINTER, DIMENSION(:, :, :) :: grad_grad => NULL()
-   END TYPE skala_grad_scratch_type
-   TYPE(skala_grad_scratch_type), SAVE                 :: grad_scratch
-
-   ! Last smooth-partition weight gradient produced by skala_gpw_eval, reused by
-   ! skala_gpw_weight_derivative when the density, geometry and mode match.
-   TYPE skala_weight_grad_cache_type
-      REAL(KIND=dp), POINTER, DIMENSION(:)       :: gradient => NULL()
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :) :: positions
-      REAL(KIND=dp)                              :: rho_sum = 0.0_dp, rho_sumsq = 0.0_dp, &
-                                                    tau_sum = 0.0_dp, tau_sumsq = 0.0_dp
-      REAL(KIND=dp), DIMENSION(3, 3)             :: cell_hmat = 0.0_dp
-      INTEGER, DIMENSION(3)                      :: cell_perd = 0
-      INTEGER                                    :: nvals = -1, nspins = -1, atom_partition = -1
-      LOGICAL                                    :: atom_chunks = .FALSE., valid = .FALSE.
-   END TYPE skala_weight_grad_cache_type
-   TYPE(skala_weight_grad_cache_type), SAVE           :: weight_grad_cache
 
 CONTAINS
 
@@ -233,8 +125,8 @@ CONTAINS
    SUBROUTINE ensure_skala_torch_threads()
       INTEGER                                            :: iw, omp_threads, torch_threads
 
-      IF (logged_torch_threads) RETURN
-      logged_torch_threads = .TRUE.
+      IF (skala_state%logged_torch_threads) RETURN
+      skala_state%logged_torch_threads = .TRUE.
       omp_threads = omp_get_max_threads()
       CALL torch_set_default_threads(omp_threads)
       torch_threads = torch_get_num_threads()
@@ -573,8 +465,8 @@ CONTAINS
       ! do not build feature gradients and are exempt.
       IF (.NOT. my_just_energy) THEN
          IF (compute_virial) THEN
-            stress_mode_entered = .TRUE.
-         ELSE IF (stress_mode_entered) THEN
+            skala_state%stress_mode_entered = .TRUE.
+         ELSE IF (skala_state%stress_mode_entered) THEN
             CALL cp_abort(__LOCATION__, &
                           "SKALA: a stress/virial evaluation was performed earlier in this "// &
                           "run, but a non-stress evaluation was requested. Mixing stress and "// &
@@ -627,7 +519,7 @@ CONTAINS
                              xc_deriv_method_id, xc_rho_smooth_id, pw_pool)
 
       CALL section_vals_val_get(native_section, "DIAGNOSTICS", l_val=native_grid_diagnostics)
-      features => cached_features
+      features => skala_state%features
       CALL skala_gpw_feature_build(features, rho_set, rho_r, particle_set, cell, &
                                    requires_grad=(.NOT. my_just_energy), weights=weights, &
                                    requires_coordinate_grad=(needs_atom_force .OR. compute_virial), &
@@ -637,9 +529,9 @@ CONTAINS
                                    atom_partition=native_grid_atom_partition, &
                                    cuda_device=selected_cuda_device)
       CALL ensure_grad_scratch(features%nflat_local)
-      density_grad => grad_scratch%density_grad
-      grad_grad => grad_scratch%grad_grad
-      kin_grad => grad_scratch%kin_grad
+      density_grad => skala_state%grad_scratch%density_grad
+      grad_grad => skala_state%grad_scratch%grad_grad
+      kin_grad => skala_state%grad_scratch%kin_grad
       use_chunk_static_grad = features%uses_atom_chunks .AND. &
                               (needs_atom_force .OR. compute_virial)
       IF (native_grid_diagnostics) THEN
@@ -674,7 +566,7 @@ CONTAINS
                                       density_grad=density_grad, grad_grad=grad_grad, &
                                       kin_grad=kin_grad, collapse_spin_grads=(nspins == 1))
       ELSE IF (has_atom_chunk_work) THEN
-         CALL skala_torch_model_get_exc(cached_model, features%inputs, &
+         CALL skala_torch_model_get_exc(skala_state%model, features%inputs, &
                                         features%grid_weights_t, exc_tensor, exc)
       END IF
       IF (features%uses_atom_chunks) CALL rho_r(1)%pw_grid%para%group%sum(exc)
@@ -986,7 +878,7 @@ CONTAINS
       CALL section_vals_val_get(xc_section, "XC_GRID%XC_DERIV", i_val=xc_deriv_method_id)
       CALL section_vals_val_get(xc_section, "XC_GRID%XC_SMOOTH_RHO", i_val=xc_rho_smooth_id)
 
-      features => cached_features
+      features => skala_state%features
       cache_hit = .FALSE.
 
       CALL xc_rho_set_create(rho_set, &
@@ -1022,9 +914,9 @@ CONTAINS
       IF (cache_hit) THEN
          IF (features%uses_atom_chunks) THEN
             ALLOCATE (local_weight_grad(nvals))
-            local_weight_grad(:) = weight_grad_cache%gradient
+            local_weight_grad(:) = skala_state%weight_grad%gradient
          ELSE
-            grid_weight_grad => weight_grad_cache%gradient
+            grid_weight_grad => skala_state%weight_grad%gradient
          END IF
       ELSE IF (features%uses_atom_chunks) THEN
          IF (chunk_max_rows == -1) THEN
@@ -1049,7 +941,7 @@ CONTAINS
                CALL skala_gpw_feature_build_atom_subchunk_bounds( &
                   features, subchunk, subchunk_atom_begin(isub), subchunk_atom_count(isub), &
                   subchunk_row_begin(isub), subchunk_row_count(isub))
-               CALL skala_torch_model_get_exc_device(cached_model, subchunk%inputs, &
+               CALL skala_torch_model_get_exc_device(skala_state%model, subchunk%inputs, &
                                                      subchunk%grid_weights_t, exc_tensor)
                CALL torch_tensor_backward_scalar(exc_tensor)
                CALL torch_tensor_release(exc_tensor)
@@ -1058,7 +950,7 @@ CONTAINS
             DEALLOCATE (subchunk_atom_begin, subchunk_atom_count, subchunk_row_begin, &
                         subchunk_row_count)
          ELSE IF (features%chunk_feature_count > 0) THEN
-            CALL skala_torch_model_get_exc_device(cached_model, features%inputs, &
+            CALL skala_torch_model_get_exc_device(skala_state%model, features%inputs, &
                                                   features%grid_weights_t, exc_tensor)
             CALL torch_tensor_backward_scalar(exc_tensor)
             have_exc_tensor = .TRUE.
@@ -1067,7 +959,7 @@ CONTAINS
                                                weight_only=.TRUE., &
                                                local_grid_weight_grad=local_weight_grad)
       ELSE
-         CALL skala_torch_model_get_exc_device(cached_model, features%inputs, &
+         CALL skala_torch_model_get_exc_device(skala_state%model, features%inputs, &
                                                features%grid_weights_t, exc_tensor)
          CALL torch_tensor_backward_scalar(exc_tensor)
          CALL torch_tensor_grad(features%grid_weights_t, grid_weight_grad_t)
@@ -1246,39 +1138,39 @@ CONTAINS
 
       nflat = na*nr
       nflat_tot = nblocks*nflat
-      IF (atom_ws%nflat_tot /= nflat_tot .OR. atom_ws%na /= na .OR. atom_ws%nr /= nr .OR. &
-          atom_ws%nspins /= nspins .OR. atom_ws%nblocks /= nblocks .OR. &
-          atom_ws%device /= selected_cuda_device) THEN
+      IF (skala_state%atom_ws%nflat_tot /= nflat_tot .OR. skala_state%atom_ws%na /= na .OR. skala_state%atom_ws%nr /= nr .OR. &
+          skala_state%atom_ws%nspins /= nspins .OR. skala_state%atom_ws%nblocks /= nblocks .OR. &
+          skala_state%atom_ws%device /= selected_cuda_device) THEN
          CALL release_atom_ws()
-         ALLOCATE (atom_ws%density(nflat_tot, 2), atom_ws%grad(nflat_tot, 3, 2), &
-                   atom_ws%kin(nflat_tot, 2), atom_ws%grid_coords(3, nflat_tot), &
-                   atom_ws%grid_weights(nflat_tot), atom_ws%atomic_grid_weights(nflat_tot), &
-                   atom_ws%atomic_grid_sizes(nblocks), &
-                   atom_ws%coarse_0_atomic_coords(3, nblocks), &
-                   atom_ws%atomic_grid_size_bound_shape(0, nflat), atom_ws%weight_b(na, nr), &
-                   atom_ws%seg_offsets(nblocks), atom_ws%seg_lengths(nblocks), &
-                   atom_ws%exc_segments(nblocks))
-         atom_ws%na = na
-         atom_ws%nr = nr
-         atom_ws%nspins = nspins
-         atom_ws%nblocks = nblocks
-         atom_ws%nflat_tot = nflat_tot
-         atom_ws%device = selected_cuda_device
+         ALLOCATE (skala_state%atom_ws%density(nflat_tot, 2), skala_state%atom_ws%grad(nflat_tot, 3, 2), &
+                   skala_state%atom_ws%kin(nflat_tot, 2), skala_state%atom_ws%grid_coords(3, nflat_tot), &
+                   skala_state%atom_ws%grid_weights(nflat_tot), skala_state%atom_ws%atomic_grid_weights(nflat_tot), &
+                   skala_state%atom_ws%atomic_grid_sizes(nblocks), &
+                   skala_state%atom_ws%coarse_0_atomic_coords(3, nblocks), &
+                   skala_state%atom_ws%atomic_grid_size_bound_shape(0, nflat), skala_state%atom_ws%weight_b(na, nr), &
+                   skala_state%atom_ws%seg_offsets(nblocks), skala_state%atom_ws%seg_lengths(nblocks), &
+                   skala_state%atom_ws%exc_segments(nblocks))
+         skala_state%atom_ws%na = na
+         skala_state%atom_ws%nr = nr
+         skala_state%atom_ws%nspins = nspins
+         skala_state%atom_ws%nblocks = nblocks
+         skala_state%atom_ws%nflat_tot = nflat_tot
+         skala_state%atom_ws%device = selected_cuda_device
          ! These two integer tensors are fully determined by the workspace
          ! dimensions, so create them once per workspace instead of on every call.
-         CALL torch_tensor_from_array(atom_ws%atomic_grid_sizes_t, atom_ws%atomic_grid_sizes)
-         CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_sizes_t, .FALSE.)
-         CALL torch_tensor_from_array(atom_ws%atomic_grid_size_bound_shape_t, &
-                                      atom_ws%atomic_grid_size_bound_shape)
-         CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_size_bound_shape_t, .FALSE.)
-         atom_ws%int_tensors_active = .TRUE.
+         CALL torch_tensor_from_array(skala_state%atom_ws%atomic_grid_sizes_t, skala_state%atom_ws%atomic_grid_sizes)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%atomic_grid_sizes_t, .FALSE.)
+         CALL torch_tensor_from_array(skala_state%atom_ws%atomic_grid_size_bound_shape_t, &
+                                      skala_state%atom_ws%atomic_grid_size_bound_shape)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%atomic_grid_size_bound_shape_t, .FALSE.)
+         skala_state%atom_ws%int_tensors_active = .TRUE.
       END IF
-      atom_ws%density = 0.0_dp
-      atom_ws%grad = 0.0_dp
-      atom_ws%kin = 0.0_dp
-      atom_ws%grid_coords = 0.0_dp
-      atom_ws%grid_weights = 0.0_dp
-      atom_ws%atomic_grid_weights = 0.0_dp
+      skala_state%atom_ws%density = 0.0_dp
+      skala_state%atom_ws%grad = 0.0_dp
+      skala_state%atom_ws%kin = 0.0_dp
+      skala_state%atom_ws%grid_coords = 0.0_dp
+      skala_state%atom_ws%grid_weights = 0.0_dp
+      skala_state%atom_ws%atomic_grid_weights = 0.0_dp
 
       DO iblock = 1, nblocks
          is_hard = (evaluate_hard .AND. iblock == iblock_h)
@@ -1286,120 +1178,123 @@ CONTAINS
             rho_b => rho_h
             drho_b => drho_h
             tau_b => tau_h
-            atom_ws%weight_b = weight_h
+            skala_state%atom_ws%weight_b = weight_h
          ELSE
             rho_b => rho_s
             drho_b => drho_s
             tau_b => tau_s
-            atom_ws%weight_b = weight_s
+            skala_state%atom_ws%weight_b = weight_s
          END IF
-         atom_ws%coarse_0_atomic_coords(:, iblock) = atom_coord
-         atom_ws%atomic_grid_sizes(iblock) = INT(nflat, KIND=int_8)
+         skala_state%atom_ws%coarse_0_atomic_coords(:, iblock) = atom_coord
+         skala_state%atom_ws%atomic_grid_sizes(iblock) = INT(nflat, KIND=int_8)
          DO ir = 1, nr
             DO ia = 1, na
                row_in_block = (ir - 1)*na + ia
                row = (iblock - 1)*nflat + row_in_block
-               atom_ws%grid_coords(1, row) = atom_coord(1) + grid_atom%rad(ir)* &
+               skala_state%atom_ws%grid_coords(1, row) = atom_coord(1) + grid_atom%rad(ir)* &
                                              grid_atom%sin_pol(ia)*grid_atom%cos_azi(ia)
-               atom_ws%grid_coords(2, row) = atom_coord(2) + grid_atom%rad(ir)* &
+               skala_state%atom_ws%grid_coords(2, row) = atom_coord(2) + grid_atom%rad(ir)* &
                                              grid_atom%sin_pol(ia)*grid_atom%sin_azi(ia)
-               atom_ws%grid_coords(3, row) = atom_coord(3) + grid_atom%rad(ir)*grid_atom%cos_pol(ia)
-               atom_ws%grid_weights(row) = atom_ws%weight_b(ia, ir)
-               atom_ws%atomic_grid_weights(row) = atom_ws%weight_b(ia, ir)
+               skala_state%atom_ws%grid_coords(3, row) = atom_coord(3) + grid_atom%rad(ir)*grid_atom%cos_pol(ia)
+               skala_state%atom_ws%grid_weights(row) = skala_state%atom_ws%weight_b(ia, ir)
+               skala_state%atom_ws%atomic_grid_weights(row) = skala_state%atom_ws%weight_b(ia, ir)
                IF (nspins == 1) THEN
-                  atom_ws%density(row, :) = 0.5_dp*rho_b(ia, ir, 1)
+                  skala_state%atom_ws%density(row, :) = 0.5_dp*rho_b(ia, ir, 1)
                   DO idir = 1, 3
-                     atom_ws%grad(row, idir, :) = 0.5_dp*drho_b(idir, ia, ir, 1)
+                     skala_state%atom_ws%grad(row, idir, :) = 0.5_dp*drho_b(idir, ia, ir, 1)
                   END DO
-                  atom_ws%kin(row, :) = 0.5_dp*tau_b(ia, ir, 1)
+                  skala_state%atom_ws%kin(row, :) = 0.5_dp*tau_b(ia, ir, 1)
                ELSE
-                  atom_ws%density(row, :) = rho_b(ia, ir, 1:2)
+                  skala_state%atom_ws%density(row, :) = rho_b(ia, ir, 1:2)
                   DO idir = 1, 3
-                     atom_ws%grad(row, idir, :) = drho_b(idir, ia, ir, 1:2)
+                     skala_state%atom_ws%grad(row, idir, :) = drho_b(idir, ia, ir, 1:2)
                   END DO
-                  atom_ws%kin(row, :) = tau_b(ia, ir, 1:2)
+                  skala_state%atom_ws%kin(row, :) = tau_b(ia, ir, 1:2)
                END IF
             END DO
          END DO
       END DO
 
       IF (native_grid_use_cuda) THEN
-         upload_total = INT(SIZE(atom_ws%grid_coords), KIND=int_8) + &
-                        INT(SIZE(atom_ws%grid_weights), KIND=int_8) + &
-                        INT(SIZE(atom_ws%atomic_grid_weights), KIND=int_8) + &
-                        INT(SIZE(atom_ws%coarse_0_atomic_coords), KIND=int_8) + &
-                        INT(SIZE(atom_ws%density), KIND=int_8) + INT(SIZE(atom_ws%grad), KIND=int_8) + &
-                        INT(SIZE(atom_ws%kin), KIND=int_8)
+         upload_total = INT(SIZE(skala_state%atom_ws%grid_coords), KIND=int_8) + &
+                        INT(SIZE(skala_state%atom_ws%grid_weights), KIND=int_8) + &
+                        INT(SIZE(skala_state%atom_ws%atomic_grid_weights), KIND=int_8) + &
+                        INT(SIZE(skala_state%atom_ws%coarse_0_atomic_coords), KIND=int_8) + &
+                        INT(SIZE(skala_state%atom_ws%density), KIND=int_8) + INT(SIZE(skala_state%atom_ws%grad), KIND=int_8) + &
+                        INT(SIZE(skala_state%atom_ws%kin), KIND=int_8)
          CALL torch_pinned_reserve(upload_total)
          upload_offset = 0_int_8
-         upload_offset = staged_upload(atom_ws%grid_coords_t, atom_ws%grid_coords, upload_offset, &
+         upload_offset = staged_upload(skala_state%atom_ws%grid_coords_t, skala_state%atom_ws%grid_coords, upload_offset, &
                                        need_coord_grad)
-         upload_offset = staged_upload(atom_ws%grid_weights_t, atom_ws%grid_weights, upload_offset, .FALSE.)
-         upload_offset = staged_upload(atom_ws%atomic_grid_weights_t, atom_ws%atomic_grid_weights, &
+         upload_offset = staged_upload(skala_state%atom_ws%grid_weights_t, skala_state%atom_ws%grid_weights, upload_offset, .FALSE.)
+         upload_offset = staged_upload(skala_state%atom_ws%atomic_grid_weights_t, skala_state%atom_ws%atomic_grid_weights, &
                                        upload_offset, .FALSE.)
-         upload_offset = staged_upload(atom_ws%coarse_0_atomic_coords_t, atom_ws%coarse_0_atomic_coords, &
+         upload_offset = staged_upload(skala_state%atom_ws%coarse_0_atomic_coords_t, skala_state%atom_ws%coarse_0_atomic_coords, &
                                        upload_offset, need_coord_grad)
-         upload_offset = staged_upload(atom_ws%density_t, atom_ws%density, upload_offset, &
+         upload_offset = staged_upload(skala_state%atom_ws%density_t, skala_state%atom_ws%density, upload_offset, &
                                        .NOT. my_energy_only)
-         upload_offset = staged_upload(atom_ws%grad_t, atom_ws%grad, upload_offset,.NOT. my_energy_only)
-         upload_offset = staged_upload(atom_ws%kin_t, atom_ws%kin, upload_offset,.NOT. my_energy_only)
+         upload_offset = staged_upload(skala_state%atom_ws%grad_t, skala_state%atom_ws%grad, upload_offset,.NOT. my_energy_only)
+         upload_offset = staged_upload(skala_state%atom_ws%kin_t, skala_state%atom_ws%kin, upload_offset,.NOT. my_energy_only)
          CALL torch_stream_synchronize()
          CALL torch_pinned_finish()
-         atom_ws%tensors_active = .TRUE.
+         skala_state%atom_ws%tensors_active = .TRUE.
       ELSE
-         CALL torch_tensor_from_array(atom_ws%grid_coords_t, atom_ws%grid_coords)
-         CALL torch_tensor_to_device_leaf(atom_ws%grid_coords_t, need_coord_grad)
-         CALL torch_tensor_from_array(atom_ws%grid_weights_t, atom_ws%grid_weights)
-         CALL torch_tensor_to_device_leaf(atom_ws%grid_weights_t, .FALSE.)
-         CALL torch_tensor_from_array(atom_ws%atomic_grid_weights_t, atom_ws%atomic_grid_weights)
-         CALL torch_tensor_to_device_leaf(atom_ws%atomic_grid_weights_t, .FALSE.)
-         CALL torch_tensor_from_array(atom_ws%coarse_0_atomic_coords_t, atom_ws%coarse_0_atomic_coords)
-         CALL torch_tensor_to_device_leaf(atom_ws%coarse_0_atomic_coords_t, need_coord_grad)
-         CALL torch_tensor_from_array(atom_ws%density_t, atom_ws%density)
-         CALL torch_tensor_to_device_leaf(atom_ws%density_t,.NOT. my_energy_only)
-         CALL torch_tensor_from_array(atom_ws%grad_t, atom_ws%grad)
-         CALL torch_tensor_to_device_leaf(atom_ws%grad_t,.NOT. my_energy_only)
-         CALL torch_tensor_from_array(atom_ws%kin_t, atom_ws%kin)
-         CALL torch_tensor_to_device_leaf(atom_ws%kin_t,.NOT. my_energy_only)
+         CALL torch_tensor_from_array(skala_state%atom_ws%grid_coords_t, skala_state%atom_ws%grid_coords)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%grid_coords_t, need_coord_grad)
+         CALL torch_tensor_from_array(skala_state%atom_ws%grid_weights_t, skala_state%atom_ws%grid_weights)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%grid_weights_t, .FALSE.)
+         CALL torch_tensor_from_array(skala_state%atom_ws%atomic_grid_weights_t, skala_state%atom_ws%atomic_grid_weights)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%atomic_grid_weights_t, .FALSE.)
+         CALL torch_tensor_from_array(skala_state%atom_ws%coarse_0_atomic_coords_t, skala_state%atom_ws%coarse_0_atomic_coords)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%coarse_0_atomic_coords_t, need_coord_grad)
+         CALL torch_tensor_from_array(skala_state%atom_ws%density_t, skala_state%atom_ws%density)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%density_t,.NOT. my_energy_only)
+         CALL torch_tensor_from_array(skala_state%atom_ws%grad_t, skala_state%atom_ws%grad)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%grad_t,.NOT. my_energy_only)
+         CALL torch_tensor_from_array(skala_state%atom_ws%kin_t, skala_state%atom_ws%kin)
+         CALL torch_tensor_to_device_leaf(skala_state%atom_ws%kin_t,.NOT. my_energy_only)
       END IF
 
-      IF (.NOT. atom_ws%dict_active) THEN
-         CALL torch_dict_create(atom_ws%inputs)
-         atom_ws%dict_active = .TRUE.
+      IF (.NOT. skala_state%atom_ws%dict_active) THEN
+         CALL torch_dict_create(skala_state%atom_ws%inputs)
+         skala_state%atom_ws%dict_active = .TRUE.
       END IF
-      CALL torch_dict_set(atom_ws%inputs, skala_key_grid_coords, atom_ws%grid_coords_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_grid_weights, atom_ws%grid_weights_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_atomic_grid_weights, &
-                          atom_ws%atomic_grid_weights_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_atomic_grid_sizes, atom_ws%atomic_grid_sizes_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_atomic_grid_size_bound_shape, &
-                          atom_ws%atomic_grid_size_bound_shape_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_density, atom_ws%density_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_grad, atom_ws%grad_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_kin, atom_ws%kin_t)
-      CALL torch_dict_set(atom_ws%inputs, skala_key_coarse_0_atomic_coords, &
-                          atom_ws%coarse_0_atomic_coords_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_grid_coords, skala_state%atom_ws%grid_coords_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_grid_weights, skala_state%atom_ws%grid_weights_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_atomic_grid_weights, &
+                          skala_state%atom_ws%atomic_grid_weights_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_atomic_grid_sizes, skala_state%atom_ws%atomic_grid_sizes_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_atomic_grid_size_bound_shape, &
+                          skala_state%atom_ws%atomic_grid_size_bound_shape_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_density, skala_state%atom_ws%density_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_grad, skala_state%atom_ws%grad_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_kin, skala_state%atom_ws%kin_t)
+      CALL torch_dict_set(skala_state%atom_ws%inputs, skala_key_coarse_0_atomic_coords, &
+                          skala_state%atom_ws%coarse_0_atomic_coords_t)
 
       DO iblock = 1, nblocks
-         atom_ws%seg_offsets(iblock) = INT((iblock - 1)*nflat, KIND=int_8)
-         atom_ws%seg_lengths(iblock) = INT(nflat, KIND=int_8)
+         skala_state%atom_ws%seg_offsets(iblock) = INT((iblock - 1)*nflat, KIND=int_8)
+         skala_state%atom_ws%seg_lengths(iblock) = INT(nflat, KIND=int_8)
       END DO
-      CALL skala_torch_model_get_exc_segments(cached_model, atom_ws%inputs, atom_ws%grid_weights_t, &
-                                              atom_ws%seg_offsets, atom_ws%seg_lengths, exc_tensor, atom_ws%exc_segments)
-      IF (evaluate_hard) exc_h = atom_ws%exc_segments(iblock_h)
-      IF (evaluate_soft) exc_s = atom_ws%exc_segments(iblock_s)
+      CALL skala_torch_model_get_exc_segments(skala_state%model, skala_state%atom_ws%inputs, &
+                                              skala_state%atom_ws%grid_weights_t, &
+                                              skala_state%atom_ws%seg_offsets, skala_state%atom_ws%seg_lengths, &
+                                              exc_tensor, skala_state%atom_ws%exc_segments)
+      IF (evaluate_hard) exc_h = skala_state%atom_ws%exc_segments(iblock_h)
+      IF (evaluate_soft) exc_s = skala_state%atom_ws%exc_segments(iblock_s)
 
       IF (.NOT. my_energy_only) THEN
          NULLIFY (atom_coord_grad, density_grad, grad_grad, grid_coord_grad, kin_grad)
          CALL torch_tensor_backward_scalar(exc_tensor)
          IF (need_coord_grad) THEN
             CALL torch_tensor_grad_batch_deferred( &
-               [atom_ws%grid_coords_t, atom_ws%coarse_0_atomic_coords_t], grad_batch_t)
+               [skala_state%atom_ws%grid_coords_t, skala_state%atom_ws%coarse_0_atomic_coords_t], grad_batch_t)
             CALL torch_tensor_data_ptr(grad_batch_t(1), grid_coord_grad)
             CALL torch_tensor_data_ptr(grad_batch_t(2), atom_coord_grad)
          END IF
-         CALL torch_tensor_grad_batch3_deferred(atom_ws%density_t, atom_ws%grad_t, atom_ws%kin_t, density_grad_t, &
-                                                grad_grad_t, kin_grad_t)
+         CALL torch_tensor_grad_batch3_deferred(skala_state%atom_ws%density_t, &
+                                                skala_state%atom_ws%grad_t, skala_state%atom_ws%kin_t, &
+                                                density_grad_t, grad_grad_t, kin_grad_t)
          CALL torch_tensor_data_ptr(density_grad_t, density_grad)
          CALL torch_tensor_data_ptr(grad_grad_t, grad_grad)
          CALL torch_tensor_data_ptr(kin_grad_t, kin_grad)
@@ -1436,14 +1331,14 @@ CONTAINS
                      row = (iblock - 1)*nflat + row_in_block
                      DO idir = 1, 3
                         DO jdir = 1, 3
-                           tmp = grid_coord_grad(idir, row)*atom_ws%coarse_0_atomic_coords(jdir, iblock)
+                           tmp = grid_coord_grad(idir, row)*skala_state%atom_ws%coarse_0_atomic_coords(jdir, iblock)
                            atom_virial_h(idir, jdir) = atom_virial_h(idir, jdir) + tmp
                         END DO
                      END DO
                   END DO
                   DO idir = 1, 3
                      DO jdir = 1, 3
-                        tmp = atom_coord_grad(idir, iblock)*atom_ws%coarse_0_atomic_coords(jdir, iblock)
+                        tmp = atom_coord_grad(idir, iblock)*skala_state%atom_ws%coarse_0_atomic_coords(jdir, iblock)
                         atom_virial_h(idir, jdir) = atom_virial_h(idir, jdir) + tmp
                      END DO
                   END DO
@@ -1452,14 +1347,14 @@ CONTAINS
                      row = (iblock - 1)*nflat + row_in_block
                      DO idir = 1, 3
                         DO jdir = 1, 3
-                           tmp = grid_coord_grad(idir, row)*atom_ws%coarse_0_atomic_coords(jdir, iblock)
+                           tmp = grid_coord_grad(idir, row)*skala_state%atom_ws%coarse_0_atomic_coords(jdir, iblock)
                            atom_virial_s(idir, jdir) = atom_virial_s(idir, jdir) + tmp
                         END DO
                      END DO
                   END DO
                   DO idir = 1, 3
                      DO jdir = 1, 3
-                        tmp = atom_coord_grad(idir, iblock)*atom_ws%coarse_0_atomic_coords(jdir, iblock)
+                        tmp = atom_coord_grad(idir, iblock)*skala_state%atom_ws%coarse_0_atomic_coords(jdir, iblock)
                         atom_virial_s(idir, jdir) = atom_virial_s(idir, jdir) + tmp
                      END DO
                   END DO
@@ -1501,14 +1396,14 @@ CONTAINS
       ! The input tensors and dict are pooled for reuse on the GPU path. The CPU
       ! path rebuilds tensors from the host arrays on every call, so release them
       ! there; the pooled dict keeps its reference until the next update.
-      IF (.NOT. atom_ws%tensors_active) THEN
-         CALL torch_tensor_release(atom_ws%density_t)
-         CALL torch_tensor_release(atom_ws%grad_t)
-         CALL torch_tensor_release(atom_ws%kin_t)
-         CALL torch_tensor_release(atom_ws%grid_coords_t)
-         CALL torch_tensor_release(atom_ws%grid_weights_t)
-         CALL torch_tensor_release(atom_ws%atomic_grid_weights_t)
-         CALL torch_tensor_release(atom_ws%coarse_0_atomic_coords_t)
+      IF (.NOT. skala_state%atom_ws%tensors_active) THEN
+         CALL torch_tensor_release(skala_state%atom_ws%density_t)
+         CALL torch_tensor_release(skala_state%atom_ws%grad_t)
+         CALL torch_tensor_release(skala_state%atom_ws%kin_t)
+         CALL torch_tensor_release(skala_state%atom_ws%grid_coords_t)
+         CALL torch_tensor_release(skala_state%atom_ws%grid_weights_t)
+         CALL torch_tensor_release(skala_state%atom_ws%atomic_grid_weights_t)
+         CALL torch_tensor_release(skala_state%atom_ws%coarse_0_atomic_coords_t)
       END IF
 
    END SUBROUTINE skala_gapw_atom_vxc_of_r_pair
@@ -1635,30 +1530,30 @@ CONTAINS
          CALL timeset("skala_atom_tensor_setup", phase_handle)
          CALL ensure_model_loaded(model_path, selected_cuda_device, xc_section)
          CALL ensure_atom_chunk_layout(atomic_grid_sizes, chunk_max_rows)
-         chunk_atom_begin => chunk_layout_cache%atom_begin
-         chunk_atom_count => chunk_layout_cache%atom_count
-         chunk_row_begin => chunk_layout_cache%row_begin
-         chunk_row_counts => chunk_layout_cache%row_counts
+         chunk_atom_begin => skala_state%chunk_layout%atom_begin
+         chunk_atom_count => skala_state%chunk_layout%atom_count
+         chunk_row_begin => skala_state%chunk_layout%row_begin
+         chunk_row_counts => skala_state%chunk_layout%row_counts
          nchunks = SIZE(chunk_atom_begin)
          CPASSERT(nchunks > 0)
 
          IF (native_grid_use_cuda) THEN
-            grid_coords_t => cached_atom_cuda_tensors%grid_coords_t
-            grid_weights_t => cached_atom_cuda_tensors%grid_weights_t
-            atomic_grid_weights_t => cached_atom_cuda_tensors%atomic_grid_weights_t
-            atomic_coords_t => cached_atom_cuda_tensors%atomic_coords_t
-            density_t => cached_atom_cuda_tensors%density_t
-            grad_t => cached_atom_cuda_tensors%grad_t
-            kin_t => cached_atom_cuda_tensors%kin_t
+            grid_coords_t => skala_state%atom_cuda_tensors%grid_coords_t
+            grid_weights_t => skala_state%atom_cuda_tensors%grid_weights_t
+            atomic_grid_weights_t => skala_state%atom_cuda_tensors%atomic_grid_weights_t
+            atomic_coords_t => skala_state%atom_cuda_tensors%atomic_coords_t
+            density_t => skala_state%atom_cuda_tensors%density_t
+            grad_t => skala_state%atom_cuda_tensors%grad_t
+            kin_t => skala_state%atom_cuda_tensors%kin_t
             ! Static tensors depend only on the (unchanged) geometry/layout and
             ! device; skip their host->device upload when the caller confirms the
             ! geometry is unchanged. Only density/grad/kin are re-uploaded per SCF.
             upload_static = .TRUE.
             IF (PRESENT(static_geometry_valid)) THEN
-               IF (static_geometry_valid .AND. cached_atom_static_valid .AND. &
-                   cached_atom_static_device == selected_cuda_device .AND. &
-                   cached_atom_static_nrow == local_nrow .AND. &
-                   cached_atom_static_natom == local_natom) upload_static = .FALSE.
+               IF (static_geometry_valid .AND. skala_state%atom_static_valid .AND. &
+                   skala_state%atom_static_device == selected_cuda_device .AND. &
+                   skala_state%atom_static_nrow == local_nrow .AND. &
+                   skala_state%atom_static_natom == local_natom) upload_static = .FALSE.
             END IF
             IF (upload_static) THEN
                upload_total = INT(SIZE(grid_coords), KIND=int_8) + &
@@ -1697,12 +1592,12 @@ CONTAINS
             upload_offset = staged_upload(kin_t, kin, upload_offset, need_derivatives)
             CALL torch_stream_synchronize()
             CALL torch_pinned_finish()
-            cached_atom_cuda_tensors_active = .TRUE.
+            skala_state%atom_cuda_tensors_active = .TRUE.
             IF (upload_static) THEN
-               cached_atom_static_valid = .TRUE.
-               cached_atom_static_device = selected_cuda_device
-               cached_atom_static_nrow = local_nrow
-               cached_atom_static_natom = local_natom
+               skala_state%atom_static_valid = .TRUE.
+               skala_state%atom_static_device = selected_cuda_device
+               skala_state%atom_static_nrow = local_nrow
+               skala_state%atom_static_natom = local_natom
             END IF
          ELSE
             grid_coords_t => grid_coords_local_t
@@ -1773,7 +1668,7 @@ CONTAINS
             CALL torch_dict_set(inputs, skala_key_coarse_0_atomic_coords, atomic_coords_chunk_t)
 
             CALL timeset("skala_atom_torch_forward", phase_handle)
-            CALL skala_torch_model_get_exc_device(cached_model, inputs, grid_weights_chunk_t, &
+            CALL skala_torch_model_get_exc_device(skala_state%model, inputs, grid_weights_chunk_t, &
                                                   exc_tensor)
             CALL torch_tensor_accumulate(exc_total_t, exc_tensor)
             CALL timestop(phase_handle)
@@ -1925,33 +1820,33 @@ CONTAINS
 
       LOGICAL                                            :: valid
 
-      valid = chunk_layout_cache%max_rows == max_rows
+      valid = skala_state%chunk_layout%max_rows == max_rows
       IF (valid) THEN
-         valid = ALLOCATED(chunk_layout_cache%grid_sizes)
-         IF (valid) valid = SIZE(chunk_layout_cache%grid_sizes) == SIZE(atomic_grid_sizes)
-         IF (valid) valid = ALL(chunk_layout_cache%grid_sizes == atomic_grid_sizes)
+         valid = ALLOCATED(skala_state%chunk_layout%grid_sizes)
+         IF (valid) valid = SIZE(skala_state%chunk_layout%grid_sizes) == SIZE(atomic_grid_sizes)
+         IF (valid) valid = ALL(skala_state%chunk_layout%grid_sizes == atomic_grid_sizes)
       END IF
       IF (valid) RETURN
 
-      IF (ALLOCATED(chunk_layout_cache%atom_begin)) THEN
-         DEALLOCATE (chunk_layout_cache%atom_begin, chunk_layout_cache%atom_count, &
-                     chunk_layout_cache%row_begin, chunk_layout_cache%row_counts)
+      IF (ALLOCATED(skala_state%chunk_layout%atom_begin)) THEN
+         DEALLOCATE (skala_state%chunk_layout%atom_begin, skala_state%chunk_layout%atom_count, &
+                     skala_state%chunk_layout%row_begin, skala_state%chunk_layout%row_counts)
       END IF
       CALL atom_composite_chunk_layout(atomic_grid_sizes, max_rows, &
-                                       chunk_layout_cache%atom_begin, &
-                                       chunk_layout_cache%atom_count, &
-                                       chunk_layout_cache%row_begin, &
-                                       chunk_layout_cache%row_counts)
-      IF (ALLOCATED(chunk_layout_cache%grid_sizes)) THEN
-         IF (SIZE(chunk_layout_cache%grid_sizes) /= SIZE(atomic_grid_sizes)) THEN
-            DEALLOCATE (chunk_layout_cache%grid_sizes)
+                                       skala_state%chunk_layout%atom_begin, &
+                                       skala_state%chunk_layout%atom_count, &
+                                       skala_state%chunk_layout%row_begin, &
+                                       skala_state%chunk_layout%row_counts)
+      IF (ALLOCATED(skala_state%chunk_layout%grid_sizes)) THEN
+         IF (SIZE(skala_state%chunk_layout%grid_sizes) /= SIZE(atomic_grid_sizes)) THEN
+            DEALLOCATE (skala_state%chunk_layout%grid_sizes)
          END IF
       END IF
-      IF (.NOT. ALLOCATED(chunk_layout_cache%grid_sizes)) THEN
-         ALLOCATE (chunk_layout_cache%grid_sizes(SIZE(atomic_grid_sizes)))
+      IF (.NOT. ALLOCATED(skala_state%chunk_layout%grid_sizes)) THEN
+         ALLOCATE (skala_state%chunk_layout%grid_sizes(SIZE(atomic_grid_sizes)))
       END IF
-      chunk_layout_cache%grid_sizes = atomic_grid_sizes
-      chunk_layout_cache%max_rows = max_rows
+      skala_state%chunk_layout%grid_sizes = atomic_grid_sizes
+      skala_state%chunk_layout%max_rows = max_rows
 
    END SUBROUTINE ensure_atom_chunk_layout
 
@@ -2295,7 +2190,7 @@ CONTAINS
                                                            subchunk_row_count(isubchunk))
          CALL timestop(subphase_handle)
          CALL timeset("skala_gpw_atom_subchunk_forward", subphase_handle)
-         CALL skala_torch_model_get_exc_device(cached_model, subchunk%inputs, &
+         CALL skala_torch_model_get_exc_device(skala_state%model, subchunk%inputs, &
                                                subchunk%grid_weights_t, subchunk_exc_tensor)
          CALL torch_tensor_accumulate(subchunk_exc_total_t, subchunk_exc_tensor)
          CALL timestop(subphase_handle)
@@ -2387,43 +2282,43 @@ CONTAINS
 
       INTEGER                                            :: iatom, ispin
 
-      IF (ASSOCIATED(weight_grad_cache%gradient)) THEN
-         IF (SIZE(weight_grad_cache%gradient) /= SIZE(gradient)) &
-            DEALLOCATE (weight_grad_cache%gradient)
+      IF (ASSOCIATED(skala_state%weight_grad%gradient)) THEN
+         IF (SIZE(skala_state%weight_grad%gradient) /= SIZE(gradient)) &
+            DEALLOCATE (skala_state%weight_grad%gradient)
       END IF
-      IF (.NOT. ASSOCIATED(weight_grad_cache%gradient)) &
-         ALLOCATE (weight_grad_cache%gradient(SIZE(gradient)))
-      weight_grad_cache%gradient = gradient
+      IF (.NOT. ASSOCIATED(skala_state%weight_grad%gradient)) &
+         ALLOCATE (skala_state%weight_grad%gradient(SIZE(gradient)))
+      skala_state%weight_grad%gradient = gradient
 
-      IF (ALLOCATED(weight_grad_cache%positions)) THEN
-         IF (SIZE(weight_grad_cache%positions, 2) /= SIZE(particle_set)) &
-            DEALLOCATE (weight_grad_cache%positions)
+      IF (ALLOCATED(skala_state%weight_grad%positions)) THEN
+         IF (SIZE(skala_state%weight_grad%positions, 2) /= SIZE(particle_set)) &
+            DEALLOCATE (skala_state%weight_grad%positions)
       END IF
-      IF (.NOT. ALLOCATED(weight_grad_cache%positions)) &
-         ALLOCATE (weight_grad_cache%positions(3, SIZE(particle_set)))
+      IF (.NOT. ALLOCATED(skala_state%weight_grad%positions)) &
+         ALLOCATE (skala_state%weight_grad%positions(3, SIZE(particle_set)))
       DO iatom = 1, SIZE(particle_set)
-         weight_grad_cache%positions(:, iatom) = particle_set(iatom)%r
+         skala_state%weight_grad%positions(:, iatom) = particle_set(iatom)%r
       END DO
 
-      weight_grad_cache%rho_sum = 0.0_dp
-      weight_grad_cache%rho_sumsq = 0.0_dp
-      weight_grad_cache%tau_sum = 0.0_dp
-      weight_grad_cache%tau_sumsq = 0.0_dp
+      skala_state%weight_grad%rho_sum = 0.0_dp
+      skala_state%weight_grad%rho_sumsq = 0.0_dp
+      skala_state%weight_grad%tau_sum = 0.0_dp
+      skala_state%weight_grad%tau_sumsq = 0.0_dp
       DO ispin = 1, SIZE(rho_r)
-         weight_grad_cache%rho_sum = weight_grad_cache%rho_sum + SUM(rho_r(ispin)%array)
-         weight_grad_cache%rho_sumsq = weight_grad_cache%rho_sumsq + &
+         skala_state%weight_grad%rho_sum = skala_state%weight_grad%rho_sum + SUM(rho_r(ispin)%array)
+         skala_state%weight_grad%rho_sumsq = skala_state%weight_grad%rho_sumsq + &
                                        SUM(rho_r(ispin)%array*rho_r(ispin)%array)
-         weight_grad_cache%tau_sum = weight_grad_cache%tau_sum + SUM(tau(ispin)%array)
-         weight_grad_cache%tau_sumsq = weight_grad_cache%tau_sumsq + &
+         skala_state%weight_grad%tau_sum = skala_state%weight_grad%tau_sum + SUM(tau(ispin)%array)
+         skala_state%weight_grad%tau_sumsq = skala_state%weight_grad%tau_sumsq + &
                                        SUM(tau(ispin)%array*tau(ispin)%array)
       END DO
-      weight_grad_cache%nvals = SIZE(gradient)
-      weight_grad_cache%nspins = SIZE(rho_r)
-      weight_grad_cache%atom_chunks = features%uses_atom_chunks
-      weight_grad_cache%atom_partition = features%atom_partition
-      weight_grad_cache%cell_hmat = cell%hmat
-      weight_grad_cache%cell_perd = cell%perd
-      weight_grad_cache%valid = .TRUE.
+      skala_state%weight_grad%nvals = SIZE(gradient)
+      skala_state%weight_grad%nspins = SIZE(rho_r)
+      skala_state%weight_grad%atom_chunks = features%uses_atom_chunks
+      skala_state%weight_grad%atom_partition = features%atom_partition
+      skala_state%weight_grad%cell_hmat = cell%hmat
+      skala_state%weight_grad%cell_perd = cell%perd
+      skala_state%weight_grad%valid = .TRUE.
 
    END SUBROUTINE store_weight_grad_cache
 
@@ -2491,17 +2386,17 @@ CONTAINS
 
       matches = .FALSE.
       IF (nvals <= 0) RETURN
-      IF (.NOT. weight_grad_cache%valid) RETURN
-      IF (weight_grad_cache%nspins /= nspins) RETURN
-      IF (weight_grad_cache%atom_chunks .NEQV. atom_chunks) RETURN
-      IF (weight_grad_cache%atom_partition /= atom_partition) RETURN
-      IF (weight_grad_cache%nvals /= nvals) RETURN
-      IF (ANY(ABS(weight_grad_cache%cell_hmat - cell%hmat) > weight_cache_cell_tol)) RETURN
-      IF (ANY(weight_grad_cache%cell_perd /= cell%perd)) RETURN
-      IF (.NOT. ALLOCATED(weight_grad_cache%positions)) RETURN
-      IF (SIZE(weight_grad_cache%positions, 2) /= SIZE(particle_set)) RETURN
+      IF (.NOT. skala_state%weight_grad%valid) RETURN
+      IF (skala_state%weight_grad%nspins /= nspins) RETURN
+      IF (skala_state%weight_grad%atom_chunks .NEQV. atom_chunks) RETURN
+      IF (skala_state%weight_grad%atom_partition /= atom_partition) RETURN
+      IF (skala_state%weight_grad%nvals /= nvals) RETURN
+      IF (ANY(ABS(skala_state%weight_grad%cell_hmat - cell%hmat) > weight_cache_cell_tol)) RETURN
+      IF (ANY(skala_state%weight_grad%cell_perd /= cell%perd)) RETURN
+      IF (.NOT. ALLOCATED(skala_state%weight_grad%positions)) RETURN
+      IF (SIZE(skala_state%weight_grad%positions, 2) /= SIZE(particle_set)) RETURN
       DO iatom = 1, SIZE(particle_set)
-         IF (ANY(weight_grad_cache%positions(:, iatom) /= particle_set(iatom)%r)) RETURN
+         IF (ANY(skala_state%weight_grad%positions(:, iatom) /= particle_set(iatom)%r)) RETURN
       END DO
 
       rho_sum = 0.0_dp
@@ -2514,10 +2409,10 @@ CONTAINS
          tau_sum = tau_sum + SUM(tau(ispin)%array)
          tau_sumsq = tau_sumsq + SUM(tau(ispin)%array*tau(ispin)%array)
       END DO
-      IF (rho_sum /= weight_grad_cache%rho_sum) RETURN
-      IF (rho_sumsq /= weight_grad_cache%rho_sumsq) RETURN
-      IF (tau_sum /= weight_grad_cache%tau_sum) RETURN
-      IF (tau_sumsq /= weight_grad_cache%tau_sumsq) RETURN
+      IF (rho_sum /= skala_state%weight_grad%rho_sum) RETURN
+      IF (rho_sumsq /= skala_state%weight_grad%rho_sumsq) RETURN
+      IF (tau_sum /= skala_state%weight_grad%tau_sum) RETURN
+      IF (tau_sumsq /= skala_state%weight_grad%tau_sumsq) RETURN
       matches = .TRUE.
 
    END FUNCTION weight_grad_cache_matches_local
@@ -2529,19 +2424,19 @@ CONTAINS
    SUBROUTINE ensure_grad_scratch(nflat_local)
       INTEGER, INTENT(IN)                                :: nflat_local
 
-      IF (ASSOCIATED(grad_scratch%density_grad)) THEN
-         IF (SIZE(grad_scratch%density_grad, 1) == nflat_local .AND. &
-             SIZE(grad_scratch%grad_grad, 1) == nflat_local .AND. &
-             SIZE(grad_scratch%kin_grad, 1) == nflat_local) RETURN
-         DEALLOCATE (grad_scratch%density_grad, grad_scratch%grad_grad, &
-                     grad_scratch%kin_grad)
+      IF (ASSOCIATED(skala_state%grad_scratch%density_grad)) THEN
+         IF (SIZE(skala_state%grad_scratch%density_grad, 1) == nflat_local .AND. &
+             SIZE(skala_state%grad_scratch%grad_grad, 1) == nflat_local .AND. &
+             SIZE(skala_state%grad_scratch%kin_grad, 1) == nflat_local) RETURN
+         DEALLOCATE (skala_state%grad_scratch%density_grad, skala_state%grad_scratch%grad_grad, &
+                     skala_state%grad_scratch%kin_grad)
       END IF
-      ALLOCATE (grad_scratch%density_grad(nflat_local, 2), &
-                grad_scratch%grad_grad(nflat_local, 3, 2), &
-                grad_scratch%kin_grad(nflat_local, 2))
-      grad_scratch%density_grad = 0.0_dp
-      grad_scratch%grad_grad = 0.0_dp
-      grad_scratch%kin_grad = 0.0_dp
+      ALLOCATE (skala_state%grad_scratch%density_grad(nflat_local, 2), &
+                skala_state%grad_scratch%grad_grad(nflat_local, 3, 2), &
+                skala_state%grad_scratch%kin_grad(nflat_local, 2))
+      skala_state%grad_scratch%density_grad = 0.0_dp
+      skala_state%grad_scratch%grad_grad = 0.0_dp
+      skala_state%grad_scratch%kin_grad = 0.0_dp
 
    END SUBROUTINE ensure_grad_scratch
 
@@ -3462,9 +3357,9 @@ CONTAINS
       ! number of calls can differ between MPI ranks. Do not use collectives
       ! here; the device choice is local and the log is written by the I/O rank.
       IF (group%mepos /= 0) RETURN
-      IF (selected_device == logged_cuda_device .AND. &
-          cuda_device_count == logged_cuda_device_count .AND. &
-          group%num_pe == logged_cuda_nproc) RETURN
+      IF (selected_device == skala_state%logged_cuda_device .AND. &
+          cuda_device_count == skala_state%logged_cuda_device_count .AND. &
+          group%num_pe == skala_state%logged_cuda_nproc) RETURN
 
       iw = cp_logger_get_default_io_unit()
       IF (iw <= 0) RETURN
@@ -3472,9 +3367,9 @@ CONTAINS
          "SKALA_GPW| Native grid Torch CUDA device", selected_device, &
          "of", cuda_device_count
 
-      logged_cuda_device = selected_device
-      logged_cuda_device_count = cuda_device_count
-      logged_cuda_nproc = group%num_pe
+      skala_state%logged_cuda_device = selected_device
+      skala_state%logged_cuda_device_count = cuda_device_count
+      skala_state%logged_cuda_nproc = group%num_pe
 
    END FUNCTION configure_native_grid_cuda
 
@@ -3496,22 +3391,22 @@ CONTAINS
 
       CHARACTER(len=default_path_length)                 :: model_path
 
-      IF (model_context%valid) THEN
-         IF (ASSOCIATED(model_context%xc_section, xc_section)) THEN
-            IF (PRESENT(use_cuda)) use_cuda = model_context%use_cuda
-            cuda_device = model_context%device
+      IF (skala_state%model_context%valid) THEN
+         IF (ASSOCIATED(skala_state%model_context%xc_section, xc_section)) THEN
+            IF (PRESENT(use_cuda)) use_cuda = skala_state%model_context%use_cuda
+            cuda_device = skala_state%model_context%device
             RETURN
          END IF
       END IF
 
       CALL get_skala_model_path(xc_section, model_path)
-      model_context%use_cuda = skala_execution_use_cuda(xc_section)
-      model_context%device = configure_native_grid_cuda(model_context%use_cuda, group)
-      CALL ensure_model_loaded(model_path, model_context%device, xc_section)
-      model_context%xc_section => xc_section
-      model_context%valid = .TRUE.
-      IF (PRESENT(use_cuda)) use_cuda = model_context%use_cuda
-      cuda_device = model_context%device
+      skala_state%model_context%use_cuda = skala_execution_use_cuda(xc_section)
+      skala_state%model_context%device = configure_native_grid_cuda(skala_state%model_context%use_cuda, group)
+      CALL ensure_model_loaded(model_path, skala_state%model_context%device, xc_section)
+      skala_state%model_context%xc_section => xc_section
+      skala_state%model_context%valid = .TRUE.
+      IF (PRESENT(use_cuda)) use_cuda = skala_state%model_context%use_cuda
+      cuda_device = skala_state%model_context%device
 
    END SUBROUTINE ensure_model_context
 
@@ -3538,21 +3433,21 @@ CONTAINS
       END IF
       CALL torch_file_stamp(TRIM(model_path), model_stamp)
 
-      IF (cached_model_loaded) THEN
-         IF (TRIM(cached_model_path) == TRIM(model_path) .AND. &
-             cached_model_cuda_device == cuda_device .AND. &
-             (cached_model_fp64 .EQV. fp64) .AND. &
-             TRIM(cached_model_stamp) == TRIM(model_stamp)) RETURN
-         CALL skala_torch_model_release(cached_model)
-         cached_model_loaded = .FALSE.
+      IF (skala_state%model_loaded) THEN
+         IF (TRIM(skala_state%model_path) == TRIM(model_path) .AND. &
+             skala_state%model_cuda_device == cuda_device .AND. &
+             (skala_state%model_fp64 .EQV. fp64) .AND. &
+             TRIM(skala_state%model_stamp) == TRIM(model_stamp)) RETURN
+         CALL skala_torch_model_release(skala_state%model)
+         skala_state%model_loaded = .FALSE.
       END IF
 
-      CALL skala_torch_model_load(cached_model, TRIM(model_path), fp64=fp64)
-      cached_model_path = model_path
-      cached_model_stamp = model_stamp
-      cached_model_cuda_device = cuda_device
-      cached_model_fp64 = fp64
-      cached_model_loaded = .TRUE.
+      CALL skala_torch_model_load(skala_state%model, TRIM(model_path), fp64=fp64)
+      skala_state%model_path = model_path
+      skala_state%model_stamp = model_stamp
+      skala_state%model_cuda_device = cuda_device
+      skala_state%model_fp64 = fp64
+      skala_state%model_loaded = .TRUE.
 
       IF (cuda_device >= 0) THEN
          iw = cp_logger_get_default_io_unit()
@@ -3596,75 +3491,102 @@ CONTAINS
 !> \brief Release the reusable per-atom workspace (host arrays, tensors, dict).
 ! **************************************************************************************************
    SUBROUTINE release_atom_ws()
-      IF (atom_ws%tensors_active) THEN
-         CALL torch_tensor_release(atom_ws%grid_coords_t)
-         CALL torch_tensor_release(atom_ws%grid_weights_t)
-         CALL torch_tensor_release(atom_ws%atomic_grid_weights_t)
-         CALL torch_tensor_release(atom_ws%coarse_0_atomic_coords_t)
-         CALL torch_tensor_release(atom_ws%density_t)
-         CALL torch_tensor_release(atom_ws%grad_t)
-         CALL torch_tensor_release(atom_ws%kin_t)
-         atom_ws%tensors_active = .FALSE.
+      IF (skala_state%atom_ws%tensors_active) THEN
+         CALL torch_tensor_release(skala_state%atom_ws%grid_coords_t)
+         CALL torch_tensor_release(skala_state%atom_ws%grid_weights_t)
+         CALL torch_tensor_release(skala_state%atom_ws%atomic_grid_weights_t)
+         CALL torch_tensor_release(skala_state%atom_ws%coarse_0_atomic_coords_t)
+         CALL torch_tensor_release(skala_state%atom_ws%density_t)
+         CALL torch_tensor_release(skala_state%atom_ws%grad_t)
+         CALL torch_tensor_release(skala_state%atom_ws%kin_t)
+         skala_state%atom_ws%tensors_active = .FALSE.
       END IF
-      IF (atom_ws%int_tensors_active) THEN
-         CALL torch_tensor_release(atom_ws%atomic_grid_sizes_t)
-         CALL torch_tensor_release(atom_ws%atomic_grid_size_bound_shape_t)
-         atom_ws%int_tensors_active = .FALSE.
+      IF (skala_state%atom_ws%int_tensors_active) THEN
+         CALL torch_tensor_release(skala_state%atom_ws%atomic_grid_sizes_t)
+         CALL torch_tensor_release(skala_state%atom_ws%atomic_grid_size_bound_shape_t)
+         skala_state%atom_ws%int_tensors_active = .FALSE.
       END IF
-      IF (atom_ws%dict_active) THEN
-         CALL torch_dict_release(atom_ws%inputs)
-         atom_ws%dict_active = .FALSE.
+      IF (skala_state%atom_ws%dict_active) THEN
+         CALL torch_dict_release(skala_state%atom_ws%inputs)
+         skala_state%atom_ws%dict_active = .FALSE.
       END IF
-      IF (ALLOCATED(atom_ws%density)) THEN
-         DEALLOCATE (atom_ws%density, atom_ws%grad, atom_ws%kin, atom_ws%grid_coords, &
-                     atom_ws%grid_weights, atom_ws%atomic_grid_weights, atom_ws%atomic_grid_sizes, &
-                     atom_ws%coarse_0_atomic_coords, atom_ws%atomic_grid_size_bound_shape, &
-                     atom_ws%weight_b, atom_ws%seg_offsets, atom_ws%seg_lengths, atom_ws%exc_segments)
+      IF (ALLOCATED(skala_state%atom_ws%density)) THEN
+         DEALLOCATE (skala_state%atom_ws%density, skala_state%atom_ws%grad, &
+                     skala_state%atom_ws%kin, skala_state%atom_ws%grid_coords, &
+                     skala_state%atom_ws%grid_weights, skala_state%atom_ws%atomic_grid_weights, &
+                     skala_state%atom_ws%atomic_grid_sizes, &
+                     skala_state%atom_ws%coarse_0_atomic_coords, &
+                     skala_state%atom_ws%atomic_grid_size_bound_shape, &
+                     skala_state%atom_ws%weight_b, skala_state%atom_ws%seg_offsets, &
+                     skala_state%atom_ws%seg_lengths, skala_state%atom_ws%exc_segments)
       END IF
-      atom_ws%na = -1
-      atom_ws%nr = -1
-      atom_ws%nspins = -1
-      atom_ws%nblocks = -1
-      atom_ws%nflat_tot = -1
-      atom_ws%device = -2
+      skala_state%atom_ws%na = -1
+      skala_state%atom_ws%nr = -1
+      skala_state%atom_ws%nspins = -1
+      skala_state%atom_ws%nblocks = -1
+      skala_state%atom_ws%nflat_tot = -1
+      skala_state%atom_ws%device = -2
    END SUBROUTINE release_atom_ws
 
 ! **************************************************************************************************
 !> \brief Release all module-level SKALA/Torch caches.
 ! **************************************************************************************************
    SUBROUTINE skala_gpw_release_caches()
-      IF (cached_model_loaded) THEN
-         CALL skala_torch_model_release(cached_model)
-         cached_model_loaded = .FALSE.
+      IF (skala_state%model_loaded) THEN
+         CALL skala_torch_model_release(skala_state%model)
+         skala_state%model_loaded = .FALSE.
       END IF
       CALL torch_grad_pool_clear()
       CALL torch_pinned_release()
       CALL torch_model_metadata_clear()
-      CALL skala_gpw_feature_release(cached_features)
-      IF (cached_atom_cuda_tensors_active) THEN
-         CALL torch_tensor_release(cached_atom_cuda_tensors%grid_coords_t)
-         CALL torch_tensor_release(cached_atom_cuda_tensors%grid_weights_t)
-         CALL torch_tensor_release(cached_atom_cuda_tensors%atomic_grid_weights_t)
-         CALL torch_tensor_release(cached_atom_cuda_tensors%atomic_coords_t)
-         CALL torch_tensor_release(cached_atom_cuda_tensors%density_t)
-         CALL torch_tensor_release(cached_atom_cuda_tensors%grad_t)
-         CALL torch_tensor_release(cached_atom_cuda_tensors%kin_t)
-         cached_atom_cuda_tensors_active = .FALSE.
+      CALL skala_gpw_feature_release(skala_state%features)
+      IF (skala_state%atom_cuda_tensors_active) THEN
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%grid_coords_t)
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%grid_weights_t)
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%atomic_grid_weights_t)
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%atomic_coords_t)
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%density_t)
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%grad_t)
+         CALL torch_tensor_release(skala_state%atom_cuda_tensors%kin_t)
+         skala_state%atom_cuda_tensors_active = .FALSE.
       END IF
-      cached_atom_static_valid = .FALSE.
-      cached_atom_static_device = -1
-      cached_atom_static_nrow = -1
-      cached_atom_static_natom = -1
+      skala_state%atom_static_valid = .FALSE.
+      skala_state%atom_static_device = -1
+      skala_state%atom_static_nrow = -1
+      skala_state%atom_static_natom = -1
       CALL release_atom_ws()
-      model_context%valid = .FALSE.
-      NULLIFY (model_context%xc_section)
-      stress_mode_entered = .FALSE.
-      IF (ASSOCIATED(grad_scratch%density_grad)) THEN
-         DEALLOCATE (grad_scratch%density_grad, grad_scratch%grad_grad, grad_scratch%kin_grad)
+      skala_state%model_context%valid = .FALSE.
+      NULLIFY (skala_state%model_context%xc_section)
+      skala_state%stress_mode_entered = .FALSE.
+      IF (ASSOCIATED(skala_state%grad_scratch%density_grad)) THEN
+         DEALLOCATE (skala_state%grad_scratch%density_grad, skala_state%grad_scratch%grad_grad, skala_state%grad_scratch%kin_grad)
       END IF
-      weight_grad_cache%valid = .FALSE.
-      IF (ASSOCIATED(weight_grad_cache%gradient)) DEALLOCATE (weight_grad_cache%gradient)
-      IF (ALLOCATED(weight_grad_cache%positions)) DEALLOCATE (weight_grad_cache%positions)
+      skala_state%weight_grad%valid = .FALSE.
+      IF (ASSOCIATED(skala_state%weight_grad%gradient)) DEALLOCATE (skala_state%weight_grad%gradient)
+      IF (ALLOCATED(skala_state%weight_grad%positions)) DEALLOCATE (skala_state%weight_grad%positions)
+      skala_state%weight_grad = skala_weight_grad_cache_type()
+      skala_state%model_context = skala_model_context_type()
+      IF (ALLOCATED(skala_state%chunk_layout%atom_begin)) &
+         DEALLOCATE (skala_state%chunk_layout%atom_begin)
+      IF (ALLOCATED(skala_state%chunk_layout%atom_count)) &
+         DEALLOCATE (skala_state%chunk_layout%atom_count)
+      IF (ALLOCATED(skala_state%chunk_layout%row_begin)) &
+         DEALLOCATE (skala_state%chunk_layout%row_begin)
+      IF (ALLOCATED(skala_state%chunk_layout%row_counts)) &
+         DEALLOCATE (skala_state%chunk_layout%row_counts)
+      IF (ALLOCATED(skala_state%chunk_layout%grid_sizes)) &
+         DEALLOCATE (skala_state%chunk_layout%grid_sizes)
+      skala_state%chunk_layout%max_rows = -1
+      skala_state%logged_torch_threads = .FALSE.
+      skala_state%logged_cuda_device = -3
+      skala_state%logged_cuda_device_count = -1
+      skala_state%logged_cuda_nproc = -1
+      skala_state%model_path = ""
+      skala_state%model_stamp = ""
+      skala_state%model_fp64 = .FALSE.
+      skala_state%model_cuda_device = -3
+      skala_state%execution_resolved = .FALSE.
+      skala_state%execution_target = skala_execution_target_type()
       CALL skala_gpw_features_release_cache()
    END SUBROUTINE skala_gpw_release_caches
 

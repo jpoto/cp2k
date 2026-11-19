@@ -20,6 +20,7 @@ MODULE skala_model_selection
    USE kinds,                           ONLY: default_path_length
    USE offload_api,                     ONLY: offload_get_chosen_device,&
                                               offload_get_device_count
+   USE skala_gpw_features,              ONLY: skala_execution_target_type, skala_state
    USE string_utilities,                ONLY: uppercase
    USE torch_api,                       ONLY: torch_cuda_device_count,&
                                               torch_cuda_is_available,&
@@ -29,15 +30,6 @@ MODULE skala_model_selection
    IMPLICIT NONE
 
    PRIVATE
-
-   TYPE :: skala_execution_target_type
-      INTEGER                                            :: gpu_mode = do_gpu_auto
-      LOGICAL                                            :: use_cuda = .FALSE.
-      INTEGER                                            :: device = -1
-   END TYPE skala_execution_target_type
-
-   LOGICAL, SAVE, PRIVATE                               :: execution_resolved = .FALSE.
-   TYPE(skala_execution_target_type), SAVE, PRIVATE     :: execution_target
 
    PUBLIC :: find_single_functional_subsection, &
              gauxc_model_none_selected, get_gauxc_section, get_skala_native_section, &
@@ -324,16 +316,16 @@ CONTAINS
          CPABORT("Unknown USE_GPU execution-space value.")
       END SELECT
 
-      IF (execution_resolved) THEN
-         IF (execution_target%use_cuda .NEQV. exec_target%use_cuda) THEN
+      IF (skala_state%execution_resolved) THEN
+         IF (skala_state%execution_target%use_cuda .NEQV. exec_target%use_cuda) THEN
             msg = "Conflicting CPU/GPU execution targets across backends. "// &
                   "All backends must agree; set USE_GPU HOST consistently."
             CPABORT(TRIM(msg))
          END IF
-         exec_target = execution_target
+         exec_target = skala_state%execution_target
       ELSE
-         execution_target = exec_target
-         execution_resolved = .TRUE.
+         skala_state%execution_target = exec_target
+         skala_state%execution_resolved = .TRUE.
          CALL torch_use_cuda(exec_target%use_cuda)
       END IF
    END SUBROUTINE resolve_skala_execution_target
