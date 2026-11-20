@@ -60,7 +60,8 @@ MODULE xc_gauxc_functional
    USE xc_gauxc_interface,              ONLY: &
         cp_gauxc_basisset_type, cp_gauxc_grid_type, cp_gauxc_integrator_type, &
         cp_gauxc_molecule_type, cp_gauxc_status_type, cp_gauxc_xc_gradient_type, cp_gauxc_xc_type, &
-        gauxc_check_status, gauxc_compute_xc, gauxc_compute_xc_gradient, gauxc_create_basisset, &
+        gauxc_alloc_dense, gauxc_check_status, gauxc_compute_xc, gauxc_compute_xc_gradient, &
+        gauxc_create_basisset, gauxc_dealloc_dense, gauxc_use_pinned, &
         gauxc_create_grid, gauxc_create_integrator, gauxc_create_molecule, gauxc_destroy_basisset, &
         gauxc_destroy_grid, gauxc_destroy_integrator, gauxc_destroy_molecule, &
         gauxc_write_basisset_hdf5, gauxc_write_molecule_hdf5
@@ -155,22 +156,23 @@ CONTAINS
 !> \param dense_mat ...
 !> \param para_env ...
 ! **************************************************************************************************
-   SUBROUTINE dbcsr_to_dense(dbcsr_mat, dense_mat, para_env)
+   SUBROUTINE dbcsr_to_dense(dbcsr_mat, dense_mat, para_env, pinned)
       USE cp_dbcsr_api, ONLY: dbcsr_distribution_get, dbcsr_distribution_type, dbcsr_get_info, &
                               dbcsr_get_matrix_type, dbcsr_iterator_blocks_left, &
                               dbcsr_iterator_next_block, dbcsr_iterator_readonly_start, &
                               dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_type_antisymmetric, &
                               dbcsr_type_symmetric
       TYPE(dbcsr_p_type), INTENT(IN)                     :: dbcsr_mat
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :), &
+      REAL(c_double), DIMENSION(:, :), POINTER, &
          INTENT(INOUT)                                   :: dense_mat
       TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
+      LOGICAL, INTENT(IN), OPTIONAL                      :: pinned
 
       CHARACTER                                          :: matrix_type
       INTEGER                                            :: col_end, col_start, icol, irow, ncol, &
                                                             ncols, nrow, nrows, numnodes, row_end, &
                                                             row_start
-      LOGICAL                                            :: has_symmetry, transposed
+      LOGICAL                                            :: has_symmetry, transposed, use_pinned
       REAL(c_double), POINTER                            :: block(:, :)
       REAL(KIND=dp)                                      :: symmetry_sign
       TYPE(dbcsr_distribution_type)                      :: dist
@@ -186,14 +188,14 @@ CONTAINS
       symmetry_sign = 1.0_dp
       IF (matrix_type == dbcsr_type_antisymmetric) symmetry_sign = -1.0_dp
 
-      IF (.NOT. ALLOCATED(dense_mat)) THEN
-         ALLOCATE (dense_mat(nrows, ncols))
-      ELSE IF (.NOT. ALL(SHAPE(dense_mat) == [nrows, ncols])) THEN
-         DEALLOCATE (dense_mat)
-         ALLOCATE (dense_mat(nrows, ncols))
-      ELSE
-         CPASSERT(ALL(SHAPE(dense_mat) == [nrows, ncols]))
+      use_pinned = .FALSE.
+      IF (PRESENT(pinned)) use_pinned = pinned
+
+      IF (ASSOCIATED(dense_mat)) THEN
+         IF (.NOT. ALL(SHAPE(dense_mat) == [nrows, ncols])) &
+            CALL gauxc_dealloc_dense(dense_mat, use_pinned)
       END IF
+      CALL gauxc_alloc_dense(dense_mat, nrows, ncols, use_pinned)
       dense_mat = 0._dp
 
       ! Replicated DBCSR blocks must enter the following MPI sum exactly once.
@@ -657,8 +659,8 @@ CONTAINS
       CALL gauxc_check_status(gauxc_status)
       exc = gauxc_xc_result%exc
 
-      IF (ALLOCATED(gauxc_xc_result%vxc_scalar)) DEALLOCATE (gauxc_xc_result%vxc_scalar)
-      IF (ALLOCATED(gauxc_xc_result%vxc_zeta)) DEALLOCATE (gauxc_xc_result%vxc_zeta)
+      CALL gauxc_dealloc_dense(gauxc_xc_result%vxc_scalar, gauxc_use_pinned())
+      CALL gauxc_dealloc_dense(gauxc_xc_result%vxc_zeta, gauxc_use_pinned())
 
       CALL gauxc_destroy_integrator(gauxc_integrator_fd, gauxc_status)
       CALL gauxc_check_status(gauxc_status)
@@ -1042,9 +1044,9 @@ CONTAINS
       LOGICAL :: atom_chunk_size_explicit, do_kpoints, external_density, gapw_method, &
          gapw_paw_pseudopotentials, gapw_pseudopotentials, grid_explicit, hdf5_output, &
          is_periodic, low_spin_scope, molecular_virial, molecular_virial_debug, need_xc_gradient, &
-         periodic_reference, pruning_explicit, use_skala_model, write_hdf5_output
+         periodic_reference, pruning_explicit, use_pinned, use_skala_model, write_hdf5_output
       REAL(KIND=dp)                                      :: exc_value, molecular_virial_debug_dx
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: density_scalar, density_zeta
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: density_scalar => NULL(), density_zeta => NULL()
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_gauxc_cache_params)                        :: params
@@ -1432,11 +1434,14 @@ CONTAINS
       IF (ASSOCIATED(matrix_vxc)) CALL dbcsr_deallocate_matrix_set(matrix_vxc)
       CALL dbcsr_allocate_matrix_set(matrix_vxc, params%nspins)
 
+      ! Host-pinned dense buffers make GauXC's device transfers (cudaMemcpyDefault) asynchronous.
+      use_pinned = gauxc_use_pinned()
+
       DO img = 1, nimages
          IF (img > 1) THEN
             CPABORT("UNIMPLEMENTED: Handling nimg>1 in k-point integration")
          END IF
-         CALL dbcsr_to_dense(rho_ao(1, img), density_scalar, para_env)
+         CALL dbcsr_to_dense(rho_ao(1, img), density_scalar, para_env, pinned=use_pinned)
          CALL para_env%sum(density_scalar)
          IF (params%nspins == 1) THEN
             gauxc_xc_result = gauxc_compute_xc( &
@@ -1496,7 +1501,7 @@ CONTAINS
             ! In here:
             ! scalar <- rho_ao(1, :) + rho_ao(2, :)
             ! zeta   <- rho_ao(1, :) - rho_ao(2, :)
-            CALL dbcsr_to_dense(rho_ao(2, img), density_zeta, para_env)
+            CALL dbcsr_to_dense(rho_ao(2, img), density_zeta, para_env, pinned=use_pinned)
             CALL para_env%sum(density_zeta)
             ! Do NOT reorder the following lines!
             density_scalar(:, :) = density_scalar(:, :) + density_zeta(:, :)
@@ -1593,10 +1598,10 @@ CONTAINS
          END IF
       END DO
 
-      DEALLOCATE (density_scalar)
-      IF (ALLOCATED(density_zeta)) DEALLOCATE (density_zeta)
-      DEALLOCATE (gauxc_xc_result%vxc_scalar)
-      IF (ALLOCATED(gauxc_xc_result%vxc_zeta)) DEALLOCATE (gauxc_xc_result%vxc_zeta)
+      CALL gauxc_dealloc_dense(density_scalar, use_pinned)
+      CALL gauxc_dealloc_dense(density_zeta, use_pinned)
+      CALL gauxc_dealloc_dense(gauxc_xc_result%vxc_scalar, use_pinned)
+      CALL gauxc_dealloc_dense(gauxc_xc_result%vxc_zeta, use_pinned)
 
       IF (external_density) THEN
          exc_external = exc_value

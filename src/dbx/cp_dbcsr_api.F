@@ -7,6 +7,14 @@
 
 MODULE cp_dbcsr_api
    USE dbcsr_api,                       ONLY: &
+        dbcsr_acc_hostmem_alloc_r8_1d, dbcsr_acc_hostmem_alloc_r8_2d, &
+        dbcsr_acc_hostmem_available, dbcsr_acc_hostmem_dealloc_r8_1d, &
+        dbcsr_acc_hostmem_dealloc_r8_2d, &
+        dbcsr_acc_device_buffer_type, dbcsr_acc_device_buffer_init, &
+        dbcsr_acc_device_buffer_finalize, dbcsr_acc_device_buffer_ptr, &
+        dbcsr_acc_device_buffer_size, dbcsr_acc_device_buffer_sync, &
+        dbcsr_acc_device_buffer_h2d_r8_1d, dbcsr_acc_device_buffer_d2h_r8_1d, &
+        dbcsr_acc_device_buffer_h2d_r8_2d, dbcsr_acc_device_buffer_d2h_r8_2d, &
         convert_csr_to_dbcsr_prv => dbcsr_convert_csr_to_dbcsr, &
         convert_dbcsr_to_csr_prv => dbcsr_convert_dbcsr_to_csr, dbcsr_add_prv => dbcsr_add, &
         dbcsr_binary_read_prv => dbcsr_binary_read, dbcsr_binary_write_prv => dbcsr_binary_write, &
@@ -75,6 +83,25 @@ MODULE cp_dbcsr_api
    PUBLIC :: dbcsr_p_type
    PUBLIC :: dbcsr_distribution_type
    PUBLIC :: dbcsr_iterator_type
+
+   ! accelerator host-pinned staging memory
+   PUBLIC :: dbcsr_acc_hostmem_alloc_r8_1d
+   PUBLIC :: dbcsr_acc_hostmem_dealloc_r8_1d
+   PUBLIC :: dbcsr_acc_hostmem_alloc_r8_2d
+   PUBLIC :: dbcsr_acc_hostmem_dealloc_r8_2d
+   PUBLIC :: dbcsr_acc_hostmem_available
+
+   ! persistent accelerator device buffer
+   PUBLIC :: dbcsr_acc_device_buffer_type
+   PUBLIC :: dbcsr_acc_device_buffer_init
+   PUBLIC :: dbcsr_acc_device_buffer_finalize
+   PUBLIC :: dbcsr_acc_device_buffer_ptr
+   PUBLIC :: dbcsr_acc_device_buffer_size
+   PUBLIC :: dbcsr_acc_device_buffer_sync
+   PUBLIC :: dbcsr_acc_device_buffer_h2d_r8_1d
+   PUBLIC :: dbcsr_acc_device_buffer_d2h_r8_1d
+   PUBLIC :: dbcsr_acc_device_buffer_h2d_r8_2d
+   PUBLIC :: dbcsr_acc_device_buffer_d2h_r8_2d
 
    ! lib init/finalize
    PUBLIC :: dbcsr_clear_mempools

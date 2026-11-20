@@ -15,7 +15,8 @@ MODULE hfx_communication
    USE atomic_kind_types,               ONLY: atomic_kind_type,&
                                               get_atomic_kind_set
    USE cp_control_types,                ONLY: dft_control_type
-   USE cp_dbcsr_api,                    ONLY: dbcsr_get_block_p,&
+   USE cp_dbcsr_api,                    ONLY: dbcsr_acc_hostmem_dealloc_r8_2d,&
+                                              dbcsr_get_block_p,&
                                               dbcsr_iterator_blocks_left,&
                                               dbcsr_iterator_next_block,&
                                               dbcsr_iterator_start,&
@@ -355,7 +356,11 @@ CONTAINS
                                    actual_x_data%block_offset, kind_of, basis_parameter, &
                                    off_diag_fac=0.5_dp)
       END DO
-      DEALLOCATE (actual_x_data%full_ks_alpha)
+      IF (actual_x_data%full_ks_pinned) THEN
+         CALL dbcsr_acc_hostmem_dealloc_r8_2d(actual_x_data%full_ks_alpha)
+      ELSE
+         DEALLOCATE (actual_x_data%full_ks_alpha)
+      END IF
 
       IF (nspins == 2) THEN
          full_ks => actual_x_data%full_ks_beta
@@ -367,7 +372,11 @@ CONTAINS
                                       actual_x_data%block_offset, kind_of, basis_parameter, &
                                       off_diag_fac=0.5_dp)
          END DO
-         DEALLOCATE (actual_x_data%full_ks_beta)
+         IF (actual_x_data%full_ks_pinned) THEN
+            CALL dbcsr_acc_hostmem_dealloc_r8_2d(actual_x_data%full_ks_beta)
+         ELSE
+            DEALLOCATE (actual_x_data%full_ks_beta)
+         END IF
       END IF
 
       DEALLOCATE (last_sgf_global)

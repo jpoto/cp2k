@@ -32,7 +32,10 @@ MODULE hfx_energy_potential
                                  cp_print_key_should_output, &
                                  cp_print_key_unit_nr
    USE message_passing, ONLY: mp_para_env_type
-   USE cp_dbcsr_api, ONLY: dbcsr_copy, &
+   USE cp_dbcsr_api, ONLY: dbcsr_acc_hostmem_alloc_r8_2d, &
+                           dbcsr_acc_hostmem_available, &
+                           dbcsr_acc_hostmem_dealloc_r8_2d, &
+                           dbcsr_copy, &
                            dbcsr_get_matrix_type, &
                            dbcsr_p_type, &
                            dbcsr_type_antisymmetric, &
@@ -258,6 +261,7 @@ CONTAINS
       logical :: use_libint, use_libgint, use_only_alpha_spin
       logical :: cp2k_was_compiled_with_cuda_offload, cp2k_was_compiled_with_libint
       logical :: cp2k_was_compiled_with_libGint
+      logical :: pinned_staging
 
       NULLIFY (dft_control, matrix_ks_aux_fit_hfx)
 
@@ -417,7 +421,7 @@ CONTAINS
 !$OMP         ene_x_bb_diag,act_atomic_block_offset,act_set_offset,j,handle_dist_ks,tmp_i8,tmp_i4,dft_control,&
 !$OMP         etmp,nkimages,img,bin,eps_scaling_str,eps_schwarz_min_str, &
 !$OMP         i,inla,nla,gcc,first_set_of_atom,max_abs_delta_KS, screened, &
-!$OMP         iatom_set,jatom_set,katom_set,latom_set,use_only_alpha_spin)
+!$OMP         iatom_set,jatom_set,katom_set,latom_set,use_only_alpha_spin,pinned_staging)
 
       ln_10 = LOG(10.0_dp)
       i_thread = 0
@@ -483,6 +487,10 @@ CONTAINS
          use_libint = .true.
          use_libGint = .true.
       END IF
+
+      ! Use host-pinned staging for the dense density/Fock buffers only when the exchange is
+      ! evaluated on the GPU (libGint), so that the surrounding H2D/D2H copies hit pinned memory.
+      pinned_staging = use_libGint .AND. dbcsr_acc_hostmem_available()
 
       max_am = basis_info%max_am
 
@@ -738,7 +746,11 @@ CONTAINS
       !! Let master thread get the density (avoid problems with MPI)
       !! Get the full density from all the processors
       NULLIFY (full_density_alpha, full_density_beta)
-      ALLOCATE (full_density_alpha(shm_block_offset(ncpu + 1), nkimages))
+      IF (pinned_staging) THEN
+         CALL dbcsr_acc_hostmem_alloc_r8_2d(full_density_alpha, shm_block_offset(ncpu + 1), nkimages)
+      ELSE
+         ALLOCATE (full_density_alpha(shm_block_offset(ncpu + 1), nkimages))
+      END IF
       IF (.NOT. treat_lsd_in_core .OR. my_nspins == 1) THEN
          CALL timeset(routineN//"_getP", handle_getP)
          DO img = 1, nkimages
@@ -748,7 +760,11 @@ CONTAINS
          END DO
 
          IF (my_nspins == 2) THEN
-            ALLOCATE (full_density_beta(shm_block_offset(ncpu + 1), nkimages))
+            IF (pinned_staging) THEN
+               CALL dbcsr_acc_hostmem_alloc_r8_2d(full_density_beta, shm_block_offset(ncpu + 1), nkimages)
+            ELSE
+               ALLOCATE (full_density_beta(shm_block_offset(ncpu + 1), nkimages))
+            END IF
             DO img = 1, nkimages
                CALL get_full_density(para_env, full_density_beta(:, img), rho_ao(2, img)%matrix, shm_number_of_p_entries, &
                                      shm_master_x_data%block_offset, &
@@ -813,13 +829,22 @@ CONTAINS
       END IF
 
       NULLIFY (full_ks_alpha, full_ks_beta)
-      ALLOCATE (shm_master_x_data%full_ks_alpha(shm_block_offset(ncpu + 1), nkimages))
+      shm_master_x_data%full_ks_pinned = pinned_staging
+      IF (pinned_staging) THEN
+         CALL dbcsr_acc_hostmem_alloc_r8_2d(shm_master_x_data%full_ks_alpha, shm_block_offset(ncpu + 1), nkimages)
+      ELSE
+         ALLOCATE (shm_master_x_data%full_ks_alpha(shm_block_offset(ncpu + 1), nkimages))
+      END IF
       full_ks_alpha => shm_master_x_data%full_ks_alpha
       full_ks_alpha = 0.0_dp
 
       IF (.NOT. treat_lsd_in_core) THEN
          IF (my_nspins == 2) THEN
-            ALLOCATE (shm_master_x_data%full_ks_beta(shm_block_offset(ncpu + 1), nkimages))
+            IF (pinned_staging) THEN
+               CALL dbcsr_acc_hostmem_alloc_r8_2d(shm_master_x_data%full_ks_beta, shm_block_offset(ncpu + 1), nkimages)
+            ELSE
+               ALLOCATE (shm_master_x_data%full_ks_beta(shm_block_offset(ncpu + 1), nkimages))
+            END IF
             full_ks_beta => shm_master_x_data%full_ks_beta
             full_ks_beta = 0.0_dp
          END IF
@@ -2055,7 +2080,11 @@ CONTAINS
          END DO
 
          NULLIFY (full_ks_alpha)
-         DEALLOCATE (shm_master_x_data%full_ks_alpha)
+         IF (shm_master_x_data%full_ks_pinned) THEN
+            CALL dbcsr_acc_hostmem_dealloc_r8_2d(shm_master_x_data%full_ks_alpha)
+         ELSE
+            DEALLOCATE (shm_master_x_data%full_ks_alpha)
+         END IF
          IF (.NOT. treat_lsd_in_core) THEN
             IF (my_nspins == 2) THEN
                DO img = 1, nkimages
@@ -2064,7 +2093,11 @@ CONTAINS
                                             off_diag_fac=0.5_dp, diag_fac=afac)
                END DO
                NULLIFY (full_ks_beta)
-               DEALLOCATE (shm_master_x_data%full_ks_beta)
+               IF (shm_master_x_data%full_ks_pinned) THEN
+                  CALL dbcsr_acc_hostmem_dealloc_r8_2d(shm_master_x_data%full_ks_beta)
+               ELSE
+                  DEALLOCATE (shm_master_x_data%full_ks_beta)
+               END IF
             END IF
          END IF
          CALL timestop(handle_dist_ks)
@@ -2273,10 +2306,18 @@ CONTAINS
       !! Clean up
       DEALLOCATE (last_sgf_global)
 !$OMP MASTER
-      DEALLOCATE (full_density_alpha)
+      IF (pinned_staging) THEN
+         CALL dbcsr_acc_hostmem_dealloc_r8_2d(full_density_alpha)
+      ELSE
+         DEALLOCATE (full_density_alpha)
+      END IF
       IF (.NOT. treat_lsd_in_core) THEN
          IF (my_nspins == 2) THEN
-            DEALLOCATE (full_density_beta)
+            IF (pinned_staging) THEN
+               CALL dbcsr_acc_hostmem_dealloc_r8_2d(full_density_beta)
+            ELSE
+               DEALLOCATE (full_density_beta)
+            END IF
          END IF
       END IF
       IF (do_dynamic_load_balancing) THEN

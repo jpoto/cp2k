@@ -497,6 +497,7 @@ MODULE hfx_types
                                                   b_first_load_balance_forces = .FALSE.
       REAL(dp), DIMENSION(:, :), POINTER        :: full_ks_alpha => NULL()
       REAL(dp), DIMENSION(:, :), POINTER        :: full_ks_beta => NULL()
+      LOGICAL                                   :: full_ks_pinned = .FALSE.
       TYPE(four_center_integral_context_type) :: eri4_context
       TYPE(hfx_basis_info_type)                :: basis_info = hfx_basis_info_type()
       TYPE(hfx_screen_coeff_type), &

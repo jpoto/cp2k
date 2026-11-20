@@ -40,6 +40,9 @@ MODULE xc_gauxc_interface
       get_qs_kind, &
       qs_kind_type
    USE cp_dbcsr_api, ONLY: &
+      dbcsr_acc_hostmem_alloc_r8_2d, &
+      dbcsr_acc_hostmem_available, &
+      dbcsr_acc_hostmem_dealloc_r8_2d, &
       dbcsr_p_type
    USE cp_log_handling, ONLY: &
       cp_logger_get_default_io_unit
@@ -204,7 +207,7 @@ MODULE xc_gauxc_interface
 
    TYPE cp_gauxc_xc_type
       REAL(c_double) :: exc = 0.0_c_double
-      REAL(c_double), DIMENSION(:, :), ALLOCATABLE :: vxc_scalar, vxc_zeta
+      REAL(c_double), DIMENSION(:, :), POINTER :: vxc_scalar => NULL(), vxc_zeta => NULL()
    END TYPE cp_gauxc_xc_type
 
    TYPE cp_gauxc_xc_gradient_type
@@ -232,6 +235,9 @@ MODULE xc_gauxc_interface
       gauxc_destroy_grid, &
       gauxc_destroy_integrator, &
       gauxc_destroy_molecule, &
+      gauxc_alloc_dense, &
+      gauxc_dealloc_dense, &
+      gauxc_use_pinned, &
       gauxc_finalize, &
       gauxc_init, &
       gauxc_write_basisset_hdf5, &
@@ -740,11 +746,11 @@ CONTAINS
 
 #ifdef __GAUXC
       CHARACTER(len=default_path_length)                 :: model_key
-      LOGICAL                                            :: use_gauxc_model
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_scalar_rks
+      LOGICAL                                            :: use_gauxc_model, use_pinned
+      REAL(c_double), DIMENSION(:, :), POINTER           :: density_scalar_rks => NULL()
 #ifdef GAUXC_HAS_ONEDFT
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_zeta_zero
-#if defined (__HAS_IEEE_EXCEPTIONS)
+      REAL(c_double), DIMENSION(:, :), POINTER           :: density_zeta_zero => NULL()
+#ifdef __HAS_IEEE_EXCEPTIONS
       LOGICAL, DIMENSION(5)                              :: ieee_halt
 #endif
       INTEGER                                            :: omp_max_threads_restore
@@ -756,9 +762,10 @@ CONTAINS
          CALL uppercase(model_key)
          use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE")
       END IF
+      use_pinned = gauxc_use_pinned()
 
-      IF (.NOT. ALLOCATED(res%vxc_scalar)) THEN
-         ALLOCATE (res%vxc_scalar, mold=density_scalar)
+      IF (.NOT. ASSOCIATED(res%vxc_scalar)) THEN
+         CALL gauxc_alloc_dense(res%vxc_scalar, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
       ELSE
          CPASSERT(ALL(SHAPE(res%vxc_scalar) == SHAPE(density_scalar)))
       END IF
@@ -775,15 +782,15 @@ CONTAINS
          CALL ieee_get_halting_mode(IEEE_ALL, ieee_halt)
          CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
 #endif
-         IF (.NOT. ALLOCATED(res%vxc_zeta)) THEN
-            ALLOCATE (res%vxc_zeta, mold=density_scalar)
+         IF (.NOT. ASSOCIATED(res%vxc_zeta)) THEN
+            CALL gauxc_alloc_dense(res%vxc_zeta, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
          ELSE
             CPASSERT(ALL(SHAPE(res%vxc_zeta) == SHAPE(density_scalar)))
          END IF
          res%vxc_zeta = 0._dp
 
          IF (nspins == 1) THEN
-            ALLOCATE (density_zeta_zero, mold=density_scalar)
+            CALL gauxc_alloc_dense(density_zeta_zero, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
             density_zeta_zero = 0._dp
             CALL gauxc_integrator_eval_exc_vxc_onedft_uks( &
                status%status, &
@@ -794,7 +801,7 @@ CONTAINS
                res%exc, &
                res%vxc_scalar, &
                res%vxc_zeta)
-            DEALLOCATE (density_zeta_zero)
+            CALL gauxc_dealloc_dense(density_zeta_zero, use_pinned)
          ELSE
             CPASSERT(PRESENT(density_zeta))
             CALL gauxc_integrator_eval_exc_vxc_onedft_uks( &
@@ -820,7 +827,7 @@ CONTAINS
          ! xmat factor 2 is applied by both CP2K and GauXC
          ! "unapply" it here to even things back out.
          ! This is NOT necessary in the Skala branch.
-         ALLOCATE (density_scalar_rks, mold=density_scalar)
+         CALL gauxc_alloc_dense(density_scalar_rks, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
          density_scalar_rks(:, :) = 0.5_dp*density_scalar
          CALL gauxc_integrator_eval_exc_vxc_rks( &
             status%status, &
@@ -828,12 +835,12 @@ CONTAINS
             density_scalar_rks, &
             res%exc, &
             res%vxc_scalar)
-         DEALLOCATE (density_scalar_rks)
+         CALL gauxc_dealloc_dense(density_scalar_rks, use_pinned)
       ELSE
          CPASSERT(PRESENT(density_zeta))
 
-         IF (.NOT. ALLOCATED(res%vxc_zeta)) THEN
-            ALLOCATE (res%vxc_zeta, mold=density_zeta)
+         IF (.NOT. ASSOCIATED(res%vxc_zeta)) THEN
+            CALL gauxc_alloc_dense(res%vxc_zeta, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
          ELSE
             CPASSERT(ALL(SHAPE(res%vxc_zeta) == SHAPE(density_scalar)))
          END IF
@@ -892,10 +899,10 @@ CONTAINS
 
 #ifdef __GAUXC
       CHARACTER(len=default_path_length)                 :: model_key
-      LOGICAL                                            :: use_gauxc_model
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_scalar_rks
+      LOGICAL                                            :: use_gauxc_model, use_pinned
+      REAL(c_double), DIMENSION(:, :), POINTER           :: density_scalar_rks => NULL()
 #ifdef GAUXC_HAS_ONEDFT
-      REAL(c_double), ALLOCATABLE, DIMENSION(:, :)       :: density_zeta_zero
+      REAL(c_double), DIMENSION(:, :), POINTER           :: density_zeta_zero => NULL()
 #if defined (__HAS_IEEE_EXCEPTIONS)
       LOGICAL, DIMENSION(5)                              :: ieee_halt
 #endif
@@ -911,6 +918,7 @@ CONTAINS
          CALL uppercase(model_key)
          use_gauxc_model = (TRIM(model_key) /= "" .AND. TRIM(model_key) /= "NONE")
       END IF
+      use_pinned = gauxc_use_pinned()
 
       IF (use_gauxc_model) THEN
 #ifndef GAUXC_HAS_ONEDFT
@@ -924,7 +932,7 @@ CONTAINS
          CALL ieee_set_halting_mode(IEEE_ALL, .FALSE.)
 #endif
          IF (nspins == 1) THEN
-            ALLOCATE (density_zeta_zero, mold=density_scalar)
+            CALL gauxc_alloc_dense(density_zeta_zero, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
             density_zeta_zero = 0._dp
             CALL gauxc_integrator_eval_exc_grad_onedft_uks( &
                status%status, &
@@ -933,7 +941,7 @@ CONTAINS
                density_zeta_zero, &
                TRIM(model), &
                res%exc_grad)
-            DEALLOCATE (density_zeta_zero)
+            CALL gauxc_dealloc_dense(density_zeta_zero, use_pinned)
          ELSE
             CPASSERT(PRESENT(density_zeta))
             CALL gauxc_integrator_eval_exc_grad_onedft_uks( &
@@ -954,14 +962,14 @@ CONTAINS
       END IF
 
       IF (nspins == 1) THEN
-         ALLOCATE (density_scalar_rks, mold=density_scalar)
+         CALL gauxc_alloc_dense(density_scalar_rks, SIZE(density_scalar, 1), SIZE(density_scalar, 2), use_pinned)
          density_scalar_rks(:, :) = 0.5_dp*density_scalar
          CALL gauxc_integrator_eval_exc_grad_rks( &
             status%status, &
             integrator%integrator, &
             density_scalar_rks, &
             res%exc_grad)
-         DEALLOCATE (density_scalar_rks)
+         CALL gauxc_dealloc_dense(density_scalar_rks, use_pinned)
       ELSE
          CPASSERT(PRESENT(density_zeta))
          CALL gauxc_integrator_eval_exc_grad_uks( &
@@ -1265,5 +1273,68 @@ CONTAINS
       CPABORT("GauXC HDF5 output requires GauXC to be built with HDF5 support.")
 #endif
    END SUBROUTINE gauxc_write_basisset_hdf5
+
+! **************************************************************************************************
+!> \brief Allocates a dense 2D buffer, optionally as host-pinned memory so that the device runtime
+!>        of GauXC can copy it asynchronously (cudaMemcpyDefault).
+!> \param[in,out] mat     pointer to the buffer (reused if already associated)
+!> \param[in]     n1,n2   dimensions
+!> \param[in]     pinned  allocate host-pinned memory
+! **************************************************************************************************
+   SUBROUTINE gauxc_alloc_dense(mat, n1, n2, pinned)
+
+      REAL(c_double), DIMENSION(:, :), POINTER          :: mat
+      INTEGER, INTENT(IN)                                :: n1, n2
+      LOGICAL, INTENT(IN)                                :: pinned
+
+      IF (ASSOCIATED(mat)) THEN
+         CPASSERT(SIZE(mat, 1) == n1 .AND. SIZE(mat, 2) == n2)
+         RETURN
+      END IF
+      IF (pinned) THEN
+         CALL dbcsr_acc_hostmem_alloc_r8_2d(mat, n1, n2)
+      ELSE
+         ALLOCATE (mat(n1, n2))
+      END IF
+   END SUBROUTINE gauxc_alloc_dense
+
+! **************************************************************************************************
+!> \brief Releases a dense buffer obtained from gauxc_alloc_dense.
+!> \param[in,out] mat     pointer to the buffer, nullified on return
+!> \param[in]     pinned  the buffer was allocated host-pinned
+! **************************************************************************************************
+   SUBROUTINE gauxc_dealloc_dense(mat, pinned)
+
+      REAL(c_double), DIMENSION(:, :), POINTER          :: mat
+      LOGICAL, INTENT(IN)                                :: pinned
+
+      IF (.NOT. ASSOCIATED(mat)) RETURN
+      IF (pinned) THEN
+         CALL dbcsr_acc_hostmem_dealloc_r8_2d(mat)
+      ELSE
+         DEALLOCATE (mat)
+      END IF
+   END SUBROUTINE gauxc_dealloc_dense
+
+! **************************************************************************************************
+!> \brief Whether the GauXC dense buffers should be allocated host-pinned. Defaults to on when the
+!>        accelerator build is available; set CP2K_GAUXC_PINNED=0 to disable (e.g. for benchmarking).
+! **************************************************************************************************
+   FUNCTION gauxc_use_pinned() RESULT(res)
+
+      LOGICAL                                            :: res
+      CHARACTER(len=32)                                  :: val
+      INTEGER                                            :: status
+
+      res = dbcsr_acc_hostmem_available()
+      IF (.NOT. res) RETURN
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_GAUXC_PINNED", val, STATUS=status)
+      IF (status == 0) THEN
+         val = ADJUSTL(val)
+         IF (LEN_TRIM(val) > 0) THEN
+            IF (val(1:1) == "0" .OR. val(1:1) == "F" .OR. val(1:1) == "f") res = .FALSE.
+         END IF
+      END IF
+   END FUNCTION gauxc_use_pinned
 
 END MODULE xc_gauxc_interface
