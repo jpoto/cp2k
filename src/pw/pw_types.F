@@ -25,6 +25,7 @@ MODULE pw_types
 
    USE cp_log_handling, ONLY: cp_to_string
    USE kinds, ONLY: dp
+   USE iso_c_binding, ONLY: C_NULL_PTR, C_PTR
    USE pw_grid_types, ONLY: pw_grid_type
    USE pw_grids, ONLY: pw_grid_release, &
                        pw_grid_retain
@@ -47,6 +48,11 @@ MODULE pw_types
          TYPE pw_${kind}$_${space}$_type
             ${type}$, CONTIGUOUS, POINTER :: array => NULL()
             TYPE(pw_grid_type), POINTER :: pw_grid => NULL()
+            !> Optional device-resident mirror of `array` (managed by the pw GPU
+            !! offload path; `C_NULL_PTR` when no device copy exists).
+            TYPE(C_PTR) :: device_data = C_NULL_PTR
+            LOGICAL :: device_valid = .FALSE.
+            LOGICAL :: host_valid = .TRUE.
          CONTAINS
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: create => pw_create_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: release => pw_release_${kind}$_${space}$
