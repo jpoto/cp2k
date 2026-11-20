@@ -55,6 +55,28 @@ void offload_buffer_h2d(offload_buffer *buffer, const int length);
  ******************************************************************************/
 void offload_buffer_d2h(offload_buffer *buffer, const int length);
 
+/*******************************************************************************
+ * \brief Allocate device-only memory (no host mirror), reusable across calls.
+ ******************************************************************************/
+void *offload_device_malloc(size_t bytes);
+
+/*******************************************************************************
+ * \brief Free device-only memory obtained from offload_device_malloc.
+ ******************************************************************************/
+void offload_device_free(void *device_memory);
+
+/*******************************************************************************
+ * \brief Copy host -> device-only buffer (synchronous).
+ ******************************************************************************/
+void offload_device_h2d(void *device_memory, const void *host_memory,
+                        size_t bytes);
+
+/*******************************************************************************
+ * \brief Copy device-only buffer -> host (synchronous).
+ ******************************************************************************/
+void offload_device_d2h(void *host_memory, const void *device_memory,
+                        size_t bytes);
+
 #endif
 
 // EOF

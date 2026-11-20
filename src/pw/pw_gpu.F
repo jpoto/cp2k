@@ -24,7 +24,7 @@
 !> \author Benjamin G. Levine
 ! **************************************************************************************************
 MODULE pw_gpu
-   USE ISO_C_BINDING,                   ONLY: C_DOUBLE,&
+   USE ISO_C_BINDING,                   ONLY: C_ASSOCIATED, C_DOUBLE,&
                                               C_INT,&
                                               C_LOC,&
                                               C_PTR
@@ -46,6 +46,7 @@ MODULE pw_gpu
    PUBLIC :: pw_gpu_r3dc1d_3d
    PUBLIC :: pw_gpu_c1dr3d_3d
    PUBLIC :: pw_gpu_r3dc1d_3d_ps
+   PUBLIC :: pw_gpu_r3dc1d_3d_dev, pw_gpu_c1dr3d_3d_dev
    PUBLIC :: pw_gpu_c1dr3d_3d_ps
    PUBLIC :: pw_gpu_init, pw_gpu_finalize
 
@@ -895,6 +896,95 @@ CONTAINS
 
       CALL timestop(handle)
    END SUBROUTINE pw_gpu_sf
+
+
+! **************************************************************************************************
+!> \brief device-pointer variant of pw_gpu_r3dc1d_3d: input and output are
+!!        already resident in the pw device mirrors (no data H2D/D2H).
+! **************************************************************************************************
+   SUBROUTINE pw_gpu_r3dc1d_3d_dev(pw1, pw2)
+      TYPE(pw_r3d_rs_type), INTENT(IN)                   :: pw1
+      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw2
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_gpu_r3dc1d_3d_dev'
+
+      INTEGER                                            :: handle, l1, l2, l3, ngpts
+      INTEGER, DIMENSION(:), POINTER                     :: npts
+      INTEGER, POINTER                                   :: ptr_ghatmap
+      REAL(KIND=dp)                                      :: scale
+      INTERFACE
+         SUBROUTINE pw_gpu_cfffg_dev_c(din, zout, ghatmap, npts, ngpts, scale) BIND(C, name="pw_gpu_cfffg_dev")
+            IMPORT
+            TYPE(C_PTR), INTENT(IN), VALUE               :: din
+            TYPE(C_PTR), VALUE                           :: zout
+            TYPE(C_PTR), INTENT(IN), VALUE               :: ghatmap
+            INTEGER(KIND=C_INT), DIMENSION(*), INTENT(IN):: npts
+            INTEGER(KIND=C_INT), INTENT(IN), VALUE       :: ngpts
+            REAL(KIND=C_DOUBLE), INTENT(IN), VALUE       :: scale
+         END SUBROUTINE pw_gpu_cfffg_dev_c
+      END INTERFACE
+
+      CALL timeset(routineN, handle)
+      CPASSERT(C_ASSOCIATED(pw1%device_data))
+      CPASSERT(C_ASSOCIATED(pw2%device_data))
+      scale = 1.0_dp/REAL(pw1%pw_grid%ngpts, KIND=dp)
+      ngpts = SIZE(pw2%pw_grid%gsq)
+      l1 = LBOUND(pw1%array, 1); l2 = LBOUND(pw1%array, 2); l3 = LBOUND(pw1%array, 3)
+      npts => pw1%pw_grid%npts
+      ptr_ghatmap => pw2%pw_grid%g_hatmap(1, 1)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+      CALL pw_gpu_cfffg_dev_c(pw1%device_data, pw2%device_data, c_loc(ptr_ghatmap), npts, ngpts, scale)
+#else
+      CPABORT("Compiled without pw offloading.")
+#endif
+      pw2%device_valid = .TRUE.
+      pw2%host_valid = .FALSE.
+      CALL timestop(handle)
+   END SUBROUTINE pw_gpu_r3dc1d_3d_dev
+
+! **************************************************************************************************
+!> \brief device-pointer variant of pw_gpu_c1dr3d_3d.
+! **************************************************************************************************
+   SUBROUTINE pw_gpu_c1dr3d_3d_dev(pw1, pw2)
+      TYPE(pw_c1d_gs_type), INTENT(IN)                   :: pw1
+      TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw2
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_gpu_c1dr3d_3d_dev'
+
+      INTEGER                                            :: handle, l1, l2, l3, ngpts, nmaps
+      INTEGER, DIMENSION(:), POINTER                     :: npts
+      INTEGER, POINTER                                   :: ptr_ghatmap
+      REAL(KIND=dp)                                      :: scale
+      INTERFACE
+         SUBROUTINE pw_gpu_sfffc_dev_c(zin, dout, ghatmap, npts, ngpts, nmaps, scale) BIND(C, name="pw_gpu_sfffc_dev")
+            IMPORT
+            TYPE(C_PTR), INTENT(IN), VALUE               :: zin
+            TYPE(C_PTR), VALUE                           :: dout
+            TYPE(C_PTR), INTENT(IN), VALUE               :: ghatmap
+            INTEGER(KIND=C_INT), DIMENSION(*), INTENT(IN):: npts
+            INTEGER(KIND=C_INT), INTENT(IN), VALUE       :: ngpts, nmaps
+            REAL(KIND=C_DOUBLE), INTENT(IN), VALUE       :: scale
+         END SUBROUTINE pw_gpu_sfffc_dev_c
+      END INTERFACE
+
+      CALL timeset(routineN, handle)
+      CPASSERT(C_ASSOCIATED(pw1%device_data))
+      CPASSERT(C_ASSOCIATED(pw2%device_data))
+      scale = 1.0_dp
+      ngpts = SIZE(pw1%pw_grid%gsq)
+      l1 = LBOUND(pw2%array, 1); l2 = LBOUND(pw2%array, 2); l3 = LBOUND(pw2%array, 3)
+      npts => pw1%pw_grid%npts
+      nmaps = SIZE(pw1%pw_grid%g_hatmap, 2)
+      ptr_ghatmap => pw1%pw_grid%g_hatmap(1, 1)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+      CALL pw_gpu_sfffc_dev_c(pw1%device_data, pw2%device_data, c_loc(ptr_ghatmap), npts, ngpts, nmaps, scale)
+#else
+      CPABORT("Compiled without pw offloading")
+#endif
+      pw2%device_valid = .TRUE.
+      pw2%host_valid = .FALSE.
+      CALL timestop(handle)
+   END SUBROUTINE pw_gpu_c1dr3d_3d_dev
 
 END MODULE pw_gpu
 

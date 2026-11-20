@@ -518,6 +518,71 @@ void pw_gpu_sf(const double *zin, double *zout, const int *ghatmap,
   offloadStreamSynchronize(stream);
 }
 
+/*******************************************************************************
+ * \brief   Device-pointer variant of pw_gpu_cfffg: real input and complex
+ *          output are already resident on the device (no H2D/D2H of the data).
+ ******************************************************************************/
+void pw_gpu_cfffg_dev(const double *din_dev, double *zout_dev,
+                      const int *ghatmap, const int *npts, const int ngpts,
+                      const double scale) {
+  assert(omp_get_num_threads() == 1);
+  const int nrpts = npts[0] * npts[1] * npts[2];
+  assert(ngpts <= nrpts);
+  if (nrpts == 0 || ngpts == 0) {
+    return;
+  }
+
+  offload_activate_chosen_device();
+  const size_t buffer_size = 2 * sizeof(double) * nrpts;
+  const size_t map_size = sizeof(int) * ngpts;
+  ensure_memory_sizes(buffer_size, map_size);
+
+  // REAL input already on the device: convert to COMPLEX in device scratch.
+  pw_gpu_launch_real_to_complex((double *)din_dev, buffer_dev_2, nrpts, stream);
+  fft_3d(OFFLOAD_FFT_FORWARD, npts[2], npts[1], npts[0], buffer_dev_2);
+
+  offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
+  pw_gpu_launch_gather(buffer_dev_1, buffer_dev_2, scale, ngpts, ghatmap_dev,
+                       stream);
+
+  // COMPLEX result stays on the device.
+  offloadMemcpyAsyncDtoD(zout_dev, buffer_dev_1, 2 * sizeof(double) * ngpts,
+                         stream);
+  offloadStreamSynchronize(stream);
+}
+
+/*******************************************************************************
+ * \brief   Device-pointer variant of pw_gpu_sfffc: complex input and real
+ *          output are already resident on the device (no H2D/D2H of the data).
+ ******************************************************************************/
+void pw_gpu_sfffc_dev(const double *zin_dev, double *dout_dev,
+                      const int *ghatmap, const int *npts, const int ngpts,
+                      const int nmaps, const double scale) {
+  assert(omp_get_num_threads() == 1);
+  const int nrpts = npts[0] * npts[1] * npts[2];
+  assert(ngpts <= nrpts);
+  if (nrpts == 0 || ngpts == 0) {
+    return;
+  }
+
+  offload_activate_chosen_device();
+  const size_t buffer_size = 2 * sizeof(double) * nrpts;
+  const size_t map_size = sizeof(int) * nmaps * ngpts;
+  ensure_memory_sizes(buffer_size, map_size);
+
+  offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
+  offloadMemsetAsync(buffer_dev_2, 0, buffer_size, stream);
+  pw_gpu_launch_scatter(buffer_dev_2, (double *)zin_dev, scale, ngpts, nmaps,
+                        ghatmap_dev, stream);
+
+  fft_3d(OFFLOAD_FFT_INVERSE, npts[2], npts[1], npts[0], buffer_dev_2);
+  pw_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
+
+  // REAL result stays on the device.
+  offloadMemcpyAsyncDtoD(dout_dev, buffer_dev_1, buffer_size / 2, stream);
+  offloadStreamSynchronize(stream);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF
