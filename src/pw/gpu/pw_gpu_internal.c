@@ -583,6 +583,17 @@ void pw_gpu_sfffc_dev(const double *zin_dev, double *dout_dev,
   offloadStreamSynchronize(stream);
 }
 
+/*******************************************************************************
+ * \brief Elementwise multiply of two device-resident complex vectors.
+ ******************************************************************************/
+void pw_gpu_multiply_c1d_dev(double *a, const double *b, const int n) {
+  assert(omp_get_num_threads() == 1);
+  if (n <= 0) return;
+  offload_activate_chosen_device();
+  pw_gpu_launch_multiply_c1d(a, b, n, stream);
+  offloadStreamSynchronize(stream);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF

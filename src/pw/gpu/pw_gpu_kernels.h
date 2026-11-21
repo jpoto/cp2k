@@ -45,6 +45,12 @@ void pw_gpu_launch_scatter(double *c, const double *pwcc, const double scale,
                            const int ngpts, const int nmaps, const int *ghatmap,
                            offloadStream_t stream);
 
+/*******************************************************************************
+ * \brief Launcher for pw_multiply_c1d kernel (elementwise complex a *= b).
+ ******************************************************************************/
+void pw_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
+                                offloadStream_t stream);
+
 #ifdef __cplusplus
 }
 #endif

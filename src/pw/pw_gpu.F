@@ -51,6 +51,7 @@ MODULE pw_gpu
    PUBLIC :: pw_gpu_r3dc1d_3d_dev, pw_gpu_c1dr3d_3d_dev
    PUBLIC :: pw_gpu_ensure_device_r3d, pw_gpu_ensure_host_r3d, pw_gpu_release_device_r3d
    PUBLIC :: pw_gpu_prepare_device_r3d, pw_gpu_prepare_device_c1d
+   PUBLIC :: pw_gpu_multiply_device_c1d
    PUBLIC :: pw_gpu_ensure_device_c1d, pw_gpu_ensure_host_c1d, pw_gpu_release_device_c1d
    PUBLIC :: pw_gpu_c1dr3d_3d_ps
    PUBLIC :: pw_gpu_init, pw_gpu_finalize
@@ -1110,6 +1111,31 @@ CONTAINS
       nbytes = INT(n, KIND=C_SIZE_T)*16_C_SIZE_T
       IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
    END SUBROUTINE pw_gpu_prepare_device_c1d
+
+
+! **************************************************************************************************
+!> \brief Elementwise multiply of two device-resident reciprocal-space arrays (pw1 *= pw2).
+!!        Requires both device mirrors to be allocated and current.
+! **************************************************************************************************
+   SUBROUTINE pw_gpu_multiply_device_c1d(pw1, pw2)
+      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw1
+      TYPE(pw_c1d_gs_type), INTENT(IN)                   :: pw2
+      INTERFACE
+         SUBROUTINE pw_gpu_multiply_c1d_dev_c(a, b, n) BIND(C, name="pw_gpu_multiply_c1d_dev")
+            IMPORT :: C_INT, C_PTR
+            TYPE(C_PTR), VALUE                          :: a, b
+            INTEGER(KIND=C_INT), VALUE                  :: n
+         END SUBROUTINE pw_gpu_multiply_c1d_dev_c
+      END INTERFACE
+      CPASSERT(C_ASSOCIATED(pw1%device_data))
+      CPASSERT(C_ASSOCIATED(pw2%device_data))
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+      CALL pw_gpu_multiply_c1d_dev_c(pw1%device_data, pw2%device_data, INT(SIZE(pw1%array), KIND=C_INT))
+      CALL pw1%mark_device_current()
+#else
+      CPABORT("Compiled without pw offloading.")
+#endif
+   END SUBROUTINE pw_gpu_multiply_device_c1d
 
 END MODULE pw_gpu
 

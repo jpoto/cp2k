@@ -132,6 +132,24 @@ void pw_gpu_launch_scatter(double *c, const double *pwcc, const double scale,
                                                         nmaps, ghatmap);
 }
 
+/*******************************************************************************
+ * \brief Elementwise complex multiply a *= b (each of n complex numbers).
+ ******************************************************************************/
+__global__ void pw_multiply_c1d(double *a, const double *b, const int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    a[2 * i] *= b[2 * i];
+    a[2 * i + 1] *= b[2 * i + 1];
+  }
+}
+
+void pw_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
+                                offloadStream_t stream) {
+  const int threadsPerBlock = 32;
+  const int numBlocks = (n + threadsPerBlock - 1) / threadsPerBlock;
+  pw_multiply_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(a, b, n);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF
