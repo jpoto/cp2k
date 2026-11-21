@@ -281,7 +281,7 @@ CONTAINS
             INTEGER                                            :: handle
 
             CALL timeset(routineN, handle)
-            CALL pw%invalidate_device()
+            CALL pw%sync_host()
 
 !$OMP PARALLEL WORKSHARE DEFAULT(NONE) SHARED(A, pw)
             pw%array = a*pw%array
@@ -745,7 +745,7 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
-            CALL pw2%invalidate_device()
+            CALL pw2%sync_host()
 
             my_alpha = 1.0_dp
             IF (PRESENT(alpha)) my_alpha = alpha
@@ -973,7 +973,7 @@ CONTAINS
                      INTEGER                                            :: handle
 
                      CALL timeset(routineN, handle)
-                     CALL pw1%invalidate_device()
+                     CALL pw1%sync_host()
 
                      IF (.NOT. ASSOCIATED(pw1%pw_grid, pw2%pw_grid)) &
                         CPABORT("Incompatible grids!")
@@ -1993,7 +1993,7 @@ CONTAINS
                      INTEGER                                            :: handle, m, idx, idir
 
                      CALL timeset(routineN, handle)
-                     CALL pw%invalidate_device()
+                     CALL pw%sync_host()
 
                      IF (ANY(n < 0)) &
                         CPABORT("Nonnegative exponents are not supported!")
