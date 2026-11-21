@@ -566,11 +566,13 @@ CONTAINS
                   ELSE
                      influence_fn = poisson_env%green_fft%influence_fn
                   END IF
+                  CALL influence_fn%ensure_device()
                   CALL pw_multiply_with(rhog, influence_fn)
                   IF (PRESENT(aux_density)) THEN
                      CALL pw_multiply_with(rhog_aux, influence_fn)
                   END IF
                   CALL pw_transfer(rhog, vhartree)
+                  CALL vhartree%sync_host()
                   IF (PRESENT(ehartree)) THEN
                      IF (PRESENT(aux_density)) THEN
                         #:if kindd==kindv
@@ -790,6 +792,7 @@ CONTAINS
                   ELSE
                      influence_fn = poisson_env%green_fft%influence_fn
                   END IF
+                  CALL influence_fn%ensure_device()
                   CALL pw_multiply_with(rhog, influence_fn)
                   IF (PRESENT(aux_density)) THEN
                      CALL pw_multiply_with(rhog_aux, influence_fn)
@@ -979,11 +982,13 @@ CONTAINS
                      ELSE
                         influence_fn = poisson_env%green_fft%influence_fn
                      END IF
-                     CALL pw_multiply_with(rhog, influence_fn)
+                     CALL influence_fn%ensure_device()
+                  CALL pw_multiply_with(rhog, influence_fn)
                      IF (PRESENT(aux_density)) THEN
                         CALL pw_multiply_with(rhog_aux, influence_fn)
                      END IF
                      CALL pw_transfer(rhog, vhartree)
+                  CALL vhartree%sync_host()
                      IF (PRESENT(ehartree)) THEN
                         IF (PRESENT(aux_density)) THEN
                            #:if kindd==kindv

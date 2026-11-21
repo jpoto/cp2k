@@ -47,6 +47,7 @@ MODULE pw_methods
                      pw_gpu_prepare_device_c1d, &
                      pw_gpu_prepare_device_r3d, &
                      pw_gpu_r3dc1d_3d, &
+                     pw_gpu_multiply_device_c1d, &
                      pw_gpu_r3dc1d_3d_dev, &
                      pw_gpu_r3dc1d_3d_ps
    USE pw_grid_types, ONLY: HALFSPACE, &
@@ -973,6 +974,15 @@ CONTAINS
                      INTEGER                                            :: handle
 
                      CALL timeset(routineN, handle)
+#:if kind=="c1d" and kind2=="c1d" and space=="gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                     IF (pw1%device_valid .AND. pw2%device_valid) THEN
+                        CALL pw_gpu_multiply_device_c1d(pw1, pw2)
+                        CALL timestop(handle)
+                        RETURN
+                     END IF
+#endif
+#:endif
                      CALL pw1%sync_host()
 
                      IF (.NOT. ASSOCIATED(pw1%pw_grid, pw2%pw_grid)) &

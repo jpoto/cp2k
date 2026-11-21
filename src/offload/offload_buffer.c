@@ -166,10 +166,10 @@ void *offload_device_malloc(size_t bytes) {
   void *memory = NULL;
   if (0 == bytes) return NULL;
   offload_activate_chosen_device();
-#if defined(OFFLOAD_BUFFER_MEMPOOL)
-  memory = offload_mempool_device_malloc(bytes);
-#elif defined(__OFFLOAD)
+#if defined(__OFFLOAD)
   offloadMalloc(&memory, bytes);
+#elif defined(OFFLOAD_BUFFER_MEMPOOL)
+  memory = offload_mempool_device_malloc(bytes);
 #else
   memory = malloc(bytes);
 #endif
@@ -181,10 +181,10 @@ void *offload_device_malloc(size_t bytes) {
  ******************************************************************************/
 void offload_device_free(void *device_memory) {
   if (NULL == device_memory) return;
-#if defined(OFFLOAD_BUFFER_MEMPOOL)
-  offload_mempool_device_free(device_memory);
-#elif defined(__OFFLOAD)
+#if defined(__OFFLOAD)
   offloadFree(device_memory);
+#elif defined(OFFLOAD_BUFFER_MEMPOOL)
+  offload_mempool_device_free(device_memory);
 #else
   free(device_memory);
 #endif

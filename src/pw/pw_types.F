@@ -26,7 +26,7 @@ MODULE pw_types
    USE cp_log_handling, ONLY: cp_to_string
    USE kinds, ONLY: dp
    USE iso_c_binding, ONLY: C_ASSOCIATED, C_LOC, C_NULL_PTR, C_PTR, C_SIZE_T
-   USE offload_api, ONLY: offload_device_free, offload_device_d2h
+   USE offload_api, ONLY: offload_device_alloc, offload_device_free, offload_device_h2d, offload_device_d2h
    USE pw_grid_types, ONLY: pw_grid_type
    USE pw_grids, ONLY: pw_grid_release, &
                        pw_grid_retain
@@ -60,6 +60,7 @@ MODULE pw_types
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: invalidate_device => pw_invalidate_device_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: mark_device_current => pw_mark_device_current_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: sync_host => pw_sync_host_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: ensure_device => pw_ensure_device_${kind}$_${space}$
          END TYPE pw_${kind}$_${space}$_type
 
 ! **************************************************************************************************
@@ -131,6 +132,22 @@ CONTAINS
             END IF
             pw%device_valid = .FALSE.
          END SUBROUTINE pw_sync_host_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Ensures a current device mirror of the host array (allocates and H2D as needed).
+! **************************************************************************************************
+         SUBROUTINE pw_ensure_device_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            INTEGER(KIND=C_SIZE_T)                            :: nbytes
+            IF (.NOT. ASSOCIATED(pw%array)) RETURN
+            nbytes = INT(STORAGE_SIZE(pw%array)/8, KIND=C_SIZE_T)
+            IF (nbytes <= 0) RETURN
+            IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+            IF (pw%host_valid .AND. .NOT. pw%device_valid) THEN
+               CALL offload_device_h2d(pw%device_data, C_LOC(pw%array), nbytes)
+               pw%device_valid = .TRUE.
+            END IF
+         END SUBROUTINE pw_ensure_device_${kind}$_${space}$
 
 ! **************************************************************************************************
 !> \brief allocates and initializes pw_r3d_rs_type
