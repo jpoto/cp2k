@@ -246,6 +246,7 @@ CONTAINS
             INTEGER                                            :: handle
 
             CALL timeset(routineN, handle)
+            CALL pw%invalidate_device()
 
 #if !defined(__INTEL_LLVM_COMPILER) || (20250000 <= __INTEL_LLVM_COMPILER)
 !$OMP PARALLEL WORKSHARE DEFAULT(NONE) SHARED(pw)
@@ -276,6 +277,7 @@ CONTAINS
             INTEGER                                            :: handle
 
             CALL timeset(routineN, handle)
+            CALL pw%invalidate_device()
 
 !$OMP PARALLEL WORKSHARE DEFAULT(NONE) SHARED(A, pw)
             pw%array = a*pw%array
@@ -557,6 +559,7 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
+            CALL pw2%invalidate_device()
 
             IF (pw1%pw_grid%spherical .neqv. pw2%pw_grid%spherical) &
                CPABORT("Both grids must be either spherical or non-spherical!")
@@ -738,6 +741,7 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
+            CALL pw2%invalidate_device()
 
             my_alpha = 1.0_dp
             IF (PRESENT(alpha)) my_alpha = alpha
@@ -965,6 +969,7 @@ CONTAINS
                      INTEGER                                            :: handle
 
                      CALL timeset(routineN, handle)
+                     CALL pw1%invalidate_device()
 
                      IF (.NOT. ASSOCIATED(pw1%pw_grid, pw2%pw_grid)) &
                         CPABORT("Incompatible grids!")
@@ -1972,6 +1977,7 @@ CONTAINS
                      INTEGER                                            :: handle, m, idx, idir
 
                      CALL timeset(routineN, handle)
+                     CALL pw%invalidate_device()
 
                      IF (ANY(n < 0)) &
                         CPABORT("Nonnegative exponents are not supported!")
