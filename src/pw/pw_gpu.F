@@ -51,7 +51,7 @@ MODULE pw_gpu
    PUBLIC :: pw_gpu_r3dc1d_3d_dev, pw_gpu_c1dr3d_3d_dev
    PUBLIC :: pw_gpu_ensure_device_r3d, pw_gpu_ensure_host_r3d, pw_gpu_release_device_r3d
    PUBLIC :: pw_gpu_prepare_device_r3d, pw_gpu_prepare_device_c1d
-   PUBLIC :: pw_gpu_multiply_device_c1d
+   PUBLIC :: pw_gpu_multiply_device_c1d, pw_gpu_axpy_device_c1d
    PUBLIC :: pw_gpu_ensure_device_c1d, pw_gpu_ensure_host_c1d, pw_gpu_release_device_c1d
    PUBLIC :: pw_gpu_c1dr3d_3d_ps
    PUBLIC :: pw_gpu_init, pw_gpu_finalize
@@ -1136,6 +1136,32 @@ CONTAINS
       CPABORT("Compiled without pw offloading.")
 #endif
    END SUBROUTINE pw_gpu_multiply_device_c1d
+
+
+! **************************************************************************************************
+!> \brief Device axpy on two device-resident reciprocal-space arrays: y = a*x + b*y.
+! **************************************************************************************************
+   SUBROUTINE pw_gpu_axpy_device_c1d(y, x, a, b)
+      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: y
+      TYPE(pw_c1d_gs_type), INTENT(IN)                   :: x
+      REAL(KIND=C_DOUBLE), INTENT(IN)                    :: a, b
+      INTERFACE
+         SUBROUTINE pw_gpu_axpy_c1d_dev_c(yy, xx, aa, bb, n) BIND(C, name="pw_gpu_axpy_c1d_dev")
+            IMPORT :: C_DOUBLE, C_INT, C_PTR
+            TYPE(C_PTR), VALUE                          :: yy, xx
+            REAL(KIND=C_DOUBLE), VALUE                  :: aa, bb
+            INTEGER(KIND=C_INT), VALUE                  :: n
+         END SUBROUTINE pw_gpu_axpy_c1d_dev_c
+      END INTERFACE
+      CPASSERT(C_ASSOCIATED(y%device_data))
+      CPASSERT(C_ASSOCIATED(x%device_data))
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+      CALL pw_gpu_axpy_c1d_dev_c(y%device_data, x%device_data, a, b, INT(SIZE(y%array), KIND=C_INT))
+      CALL y%mark_device_current()
+#else
+      CPABORT("Compiled without pw offloading.")
+#endif
+   END SUBROUTINE pw_gpu_axpy_device_c1d
 
 END MODULE pw_gpu
 

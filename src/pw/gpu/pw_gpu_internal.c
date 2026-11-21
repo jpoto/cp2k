@@ -594,6 +594,18 @@ void pw_gpu_multiply_c1d_dev(double *a, const double *b, const int n) {
   offloadStreamSynchronize(stream);
 }
 
+/*******************************************************************************
+ * \brief Device axpy on two device-resident complex vectors: y = a*x + b*y.
+ ******************************************************************************/
+void pw_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
+                         const double b, const int n) {
+  assert(omp_get_num_threads() == 1);
+  if (n <= 0) return;
+  offload_activate_chosen_device();
+  pw_gpu_launch_axpy_c1d(y, x, a, b, n, stream);
+  offloadStreamSynchronize(stream);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF

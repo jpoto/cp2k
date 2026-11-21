@@ -150,6 +150,25 @@ void pw_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
   pw_multiply_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(a, b, n);
 }
 
+/*******************************************************************************
+ * \brief Complex vector axpy: y = a*x + b*y.
+ ******************************************************************************/
+__global__ void pw_axpy_c1d(double *y, const double *x, const double a,
+                            const double b, const int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    y[2 * i] = a * x[2 * i] + b * y[2 * i];
+    y[2 * i + 1] = a * x[2 * i + 1] + b * y[2 * i + 1];
+  }
+}
+
+void pw_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
+                            const double b, const int n, offloadStream_t stream) {
+  const int threadsPerBlock = 32;
+  const int numBlocks = (n + threadsPerBlock - 1) / threadsPerBlock;
+  pw_axpy_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(y, x, a, b, n);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF

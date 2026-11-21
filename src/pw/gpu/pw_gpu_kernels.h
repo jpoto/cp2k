@@ -51,6 +51,12 @@ void pw_gpu_launch_scatter(double *c, const double *pwcc, const double scale,
 void pw_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
                                 offloadStream_t stream);
 
+/*******************************************************************************
+ * \brief Launcher for pw_axpy_c1d kernel (y = a*x + b*y, complex).
+ ******************************************************************************/
+void pw_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
+                            const double b, const int n, offloadStream_t stream);
+
 #ifdef __cplusplus
 }
 #endif
