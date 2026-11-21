@@ -1238,6 +1238,7 @@ CONTAINS
                                        #:elif kind=="r3d" and kind2=="c1d"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
                                           CALL pw_gpu_r3dc1d_3d(pw1, pw2)
+                                          CALL pw2%invalidate_device()
 #elif defined (__PW_FPGA)
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           ! check if bitstream for the fft size is present
@@ -1287,6 +1288,7 @@ CONTAINS
                                        #:elif kind=="c1d" and kind2=="r3d"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
                                           CALL pw_gpu_c1dr3d_3d(pw1, pw2)
+                                          CALL pw2%invalidate_device()
 #elif defined (__PW_FPGA)
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           ! check if bitstream for the fft size is present
@@ -1375,6 +1377,7 @@ CONTAINS
                                           use_pw_gpu = pw1%pw_grid%para%ray_distribution
                                           IF (use_pw_gpu) THEN
                                              CALL pw_gpu_r3dc1d_3d_ps(pw1, pw2)
+                                             CALL pw2%invalidate_device()
                                           ELSE
 #endif
 !..   prepare input
@@ -1425,6 +1428,7 @@ CONTAINS
                                           use_pw_gpu = pw1%pw_grid%para%ray_distribution
                                           IF (use_pw_gpu) THEN
                                              CALL pw_gpu_c1dr3d_3d_ps(pw1, pw2)
+                                             CALL pw2%invalidate_device()
                                           ELSE
 #endif
 !..   prepare input

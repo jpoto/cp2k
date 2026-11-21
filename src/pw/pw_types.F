@@ -25,7 +25,8 @@ MODULE pw_types
 
    USE cp_log_handling, ONLY: cp_to_string
    USE kinds, ONLY: dp
-   USE iso_c_binding, ONLY: C_NULL_PTR, C_PTR
+   USE iso_c_binding, ONLY: C_ASSOCIATED, C_NULL_PTR, C_PTR
+   USE offload_api, ONLY: offload_device_free
    USE pw_grid_types, ONLY: pw_grid_type
    USE pw_grids, ONLY: pw_grid_release, &
                        pw_grid_retain
@@ -56,6 +57,8 @@ MODULE pw_types
          CONTAINS
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: create => pw_create_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: release => pw_release_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: invalidate_device => pw_invalidate_device_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: mark_device_current => pw_mark_device_current_${kind}$_${space}$
          END TYPE pw_${kind}$_${space}$_type
 
 ! **************************************************************************************************
@@ -83,9 +86,33 @@ CONTAINS
          SUBROUTINE pw_release_${kind}$_${space}$ (pw)
             CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)                       :: pw
 
+            IF (C_ASSOCIATED(pw%device_data)) THEN
+               CALL offload_device_free(pw%device_data)
+               pw%device_data = C_NULL_PTR
+            END IF
+            pw%device_valid = .FALSE.
+            pw%host_valid = .TRUE.
             IF (ASSOCIATED(pw%array)) DEALLOCATE (pw%array)
             CALL pw_grid_release(pw%pw_grid)
          END SUBROUTINE pw_release_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Marks the host copy as authoritative (device mirror stale/must be re-uploaded).
+! **************************************************************************************************
+         SUBROUTINE pw_invalidate_device_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            pw%device_valid = .FALSE.
+            pw%host_valid = .TRUE.
+         END SUBROUTINE pw_invalidate_device_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Marks the device mirror as authoritative (host copy stale).
+! **************************************************************************************************
+         SUBROUTINE pw_mark_device_current_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            pw%device_valid = .TRUE.
+            pw%host_valid = .FALSE.
+         END SUBROUTINE pw_mark_device_current_${kind}$_${space}$
 
 ! **************************************************************************************************
 !> \brief allocates and initializes pw_r3d_rs_type
