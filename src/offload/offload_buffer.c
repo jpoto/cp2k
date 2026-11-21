@@ -216,4 +216,18 @@ void offload_device_d2h(void *host_memory, const void *device_memory,
 #endif
 }
 
+/*******************************************************************************
+ * \brief Copy device-only buffer -> device-only buffer.
+ ******************************************************************************/
+void offload_device_d2d(void *dst_device, const void *src_device,
+                        size_t bytes) {
+  if (NULL == dst_device || NULL == src_device || 0 == bytes) return;
+#if defined(__OFFLOAD)
+  offloadMemcpyAsyncDtoD(dst_device, src_device, bytes, 0);
+  offloadDeviceSynchronize();
+#else
+  memcpy(dst_device, src_device, bytes);
+#endif
+}
+
 // EOF

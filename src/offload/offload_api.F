@@ -33,7 +33,7 @@ MODULE offload_api
              offload_get_buffer_device_pointer, offload_device_synchronize
    PUBLIC :: offload_malloc_pinned_mem, offload_free_pinned_mem
    PUBLIC :: offload_device_alloc, offload_device_free, offload_device_h2d, &
-             offload_device_d2h
+             offload_device_d2h, offload_device_d2d
    PUBLIC :: offload_mempool_stats_print
    PUBLIC :: offload_get_buffer_host_pointer
 
@@ -542,5 +542,21 @@ CONTAINS
 
       CALL offload_device_d2h_c(host_ptr, device_ptr, bytes)
    END SUBROUTINE offload_device_d2h
+
+! **************************************************************************************************
+!> \brief Copies device-only buffer to device-only buffer (synchronous).
+! **************************************************************************************************
+   SUBROUTINE offload_device_d2d(dst_device_ptr, src_device_ptr, bytes)
+      TYPE(C_PTR), INTENT(IN)                            :: dst_device_ptr, src_device_ptr
+      INTEGER(KIND=C_SIZE_T), INTENT(IN)                 :: bytes
+      INTERFACE
+         SUBROUTINE offload_device_d2d_c(dst, src, bytes) BIND(C, name="offload_device_d2d")
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), VALUE                         :: dst, src
+            INTEGER(KIND=C_SIZE_T), VALUE              :: bytes
+         END SUBROUTINE offload_device_d2d_c
+      END INTERFACE
+      CALL offload_device_d2d_c(dst_device_ptr, src_device_ptr, bytes)
+   END SUBROUTINE offload_device_d2d
 
 END MODULE offload_api

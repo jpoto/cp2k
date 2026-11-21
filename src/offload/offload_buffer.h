@@ -77,6 +77,11 @@ void offload_device_h2d(void *device_memory, const void *host_memory,
 void offload_device_d2h(void *host_memory, const void *device_memory,
                         size_t bytes);
 
+/*******************************************************************************
+ * \brief Copy device-only buffer -> device-only buffer (synchronous).
+ ******************************************************************************/
+void offload_device_d2d(void *dst_device, const void *src_device, size_t bytes);
+
 #endif
 
 // EOF
