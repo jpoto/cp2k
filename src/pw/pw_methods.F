@@ -42,8 +42,12 @@ MODULE pw_methods
                       pw_fpga_r3dc1d_3d_dp, &
                       pw_fpga_r3dc1d_3d_sp
    USE pw_gpu, ONLY: pw_gpu_c1dr3d_3d, &
+                     pw_gpu_c1dr3d_3d_dev, &
                      pw_gpu_c1dr3d_3d_ps, &
+                     pw_gpu_prepare_device_c1d, &
+                     pw_gpu_prepare_device_r3d, &
                      pw_gpu_r3dc1d_3d, &
+                     pw_gpu_r3dc1d_3d_dev, &
                      pw_gpu_r3dc1d_3d_ps
    USE pw_grid_types, ONLY: HALFSPACE, &
                             PW_MODE_DISTRIBUTED, &
@@ -1242,8 +1246,14 @@ CONTAINS
                                           DEALLOCATE (c_out)
                                        #:elif kind=="r3d" and kind2=="c1d"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                          CALL pw_gpu_r3dc1d_3d(pw1, pw2)
-                                          CALL pw2%invalidate_device()
+                                          IF (pw1%device_valid) THEN
+                                             CALL pw_gpu_prepare_device_c1d(pw2)
+                                             CALL pw_gpu_r3dc1d_3d_dev(pw1, pw2)
+                                             CALL pw2%mark_device_current()
+                                          ELSE
+                                             CALL pw_gpu_r3dc1d_3d(pw1, pw2)
+                                             CALL pw2%invalidate_device()
+                                          END IF
 #elif defined (__PW_FPGA)
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           ! check if bitstream for the fft size is present
@@ -1292,8 +1302,14 @@ CONTAINS
                                           CALL fft3d(BWFFT, n, c_out, debug=test)
                                        #:elif kind=="c1d" and kind2=="r3d"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                                          CALL pw_gpu_c1dr3d_3d(pw1, pw2)
-                                          CALL pw2%invalidate_device()
+                                          IF (pw1%device_valid) THEN
+                                             CALL pw_gpu_prepare_device_r3d(pw2)
+                                             CALL pw_gpu_c1dr3d_3d_dev(pw1, pw2)
+                                             CALL pw2%mark_device_current()
+                                          ELSE
+                                             CALL pw_gpu_c1dr3d_3d(pw1, pw2)
+                                             CALL pw2%invalidate_device()
+                                          END IF
 #elif defined (__PW_FPGA)
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           ! check if bitstream for the fft size is present

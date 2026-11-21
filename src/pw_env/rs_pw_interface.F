@@ -20,6 +20,9 @@ MODULE rs_pw_interface
    USE gaussian_gridlevels,             ONLY: gridlevel_info_type
    USE input_section_types,             ONLY: section_vals_val_get
    USE kinds,                           ONLY: dp
+   USE iso_c_binding,                   ONLY: C_ASSOCIATED, C_LOC, C_SIZE_T
+   USE offload_api,                     ONLY: offload_device_alloc, offload_device_d2d, &
+                                             offload_device_d2h, offload_get_buffer_device_pointer
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
    USE pw_methods,                      ONLY: pw_axpy,&
@@ -72,6 +75,7 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'density_rs2pw'
 
       INTEGER                                            :: handle, igrid_level, interp_kind
+      INTEGER(KIND=C_SIZE_T)                             :: nbytes
       TYPE(gridlevel_info_type), POINTER                 :: gridlevel_info
       TYPE(pw_c1d_gs_type), ALLOCATABLE, DIMENSION(:)    :: mgrid_gspace
       TYPE(pw_pool_p_type), DIMENSION(:), POINTER        :: pw_pools
@@ -93,9 +97,39 @@ CONTAINS
 
       IF (gridlevel_info%ngrid_levels == 1) THEN
          CALL transfer_rs2pw(rs_rho(1), rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+         ! Grid -> device producer: the collocate result already lives in the
+         ! realspace grid's device buffer. Keep it on the device (device->device)
+         ! so the following FFT can skip its host->device upload. Only valid when
+         ! the rs->pw mapping is a plain copy (single grid, non-distributed,
+         ! no border, equal sizes); otherwise the host path is used.
+         IF (.NOT. rs_rho(1)%desc%distributed .AND. .NOT. rs_rho(1)%desc%parallel .AND. &
+             rs_rho(1)%desc%border == 0 .AND. SIZE(rho%array) == rs_rho(1)%ngpts_local .AND. &
+             pw_gpu_producer_enabled()) THEN
+            nbytes = INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T
+            IF (.NOT. C_ASSOCIATED(rho%device_data)) rho%device_data = offload_device_alloc(nbytes)
+            CALL offload_device_d2d(rho%device_data, offload_get_buffer_device_pointer(rs_rho(1)%buffer), nbytes)
+            rho%device_valid = .TRUE.
+         END IF
+#endif
          CALL pw_transfer(rho, rho_gspace)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+         ! If the FFT produced rho_gspace on the device, bring it back for host consumers.
+         IF (C_ASSOCIATED(rho_gspace%device_data) .AND. .NOT. rho_gspace%host_valid) THEN
+            CALL offload_device_d2h(C_LOC(rho_gspace%array(1)), rho_gspace%device_data, &
+                                    INT(SIZE(rho_gspace%array), KIND=C_SIZE_T)*16_C_SIZE_T)
+            rho_gspace%host_valid = .TRUE.
+         END IF
+#endif
          IF (rho%pw_grid%spherical) THEN ! rho_gspace = rho
             CALL pw_transfer(rho_gspace, rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (C_ASSOCIATED(rho%device_data) .AND. .NOT. rho%host_valid) THEN
+               CALL offload_device_d2h(C_LOC(rho%array(1, 1, 1)), rho%device_data, &
+                                       INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T)
+               rho%host_valid = .TRUE.
+            END IF
+#endif
          END IF
       ELSE
          DO igrid_level = 1, gridlevel_info%ngrid_levels
@@ -226,5 +260,21 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE potential_pw2rs
+
+
+! **************************************************************************************************
+!> \brief Whether the grid->device producer is enabled (CP2K_PW_GPU_PRODUCER=0 disables it).
+! **************************************************************************************************
+   LOGICAL FUNCTION pw_gpu_producer_enabled()
+      CHARACTER(len=8)                                   :: val
+      INTEGER                                            :: status
+      pw_gpu_producer_enabled = .TRUE.
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_PW_GPU_PRODUCER", val, STATUS=status)
+      IF (status == 0) THEN
+         val = ADJUSTL(val)
+         IF (LEN_TRIM(val) > 0) &
+            pw_gpu_producer_enabled = .NOT. (val(1:1) == "0" .OR. val(1:1) == "F" .OR. val(1:1) == "f")
+      END IF
+   END FUNCTION pw_gpu_producer_enabled
 
 END MODULE rs_pw_interface

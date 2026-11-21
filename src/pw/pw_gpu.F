@@ -50,6 +50,7 @@ MODULE pw_gpu
    PUBLIC :: pw_gpu_r3dc1d_3d_ps
    PUBLIC :: pw_gpu_r3dc1d_3d_dev, pw_gpu_c1dr3d_3d_dev
    PUBLIC :: pw_gpu_ensure_device_r3d, pw_gpu_ensure_host_r3d, pw_gpu_release_device_r3d
+   PUBLIC :: pw_gpu_prepare_device_r3d, pw_gpu_prepare_device_c1d
    PUBLIC :: pw_gpu_ensure_device_c1d, pw_gpu_ensure_host_c1d, pw_gpu_release_device_c1d
    PUBLIC :: pw_gpu_c1dr3d_3d_ps
    PUBLIC :: pw_gpu_init, pw_gpu_finalize
@@ -1082,6 +1083,33 @@ CONTAINS
       pw%device_valid = .FALSE.
       pw%host_valid = .TRUE.
    END SUBROUTINE pw_gpu_release_device_c1d
+
+
+! **************************************************************************************************
+!> \brief Allocates the device mirror of a real-space pw array without uploading.
+! **************************************************************************************************
+   SUBROUTINE pw_gpu_prepare_device_r3d(pw)
+      TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
+      INTEGER                                            :: n
+      INTEGER(KIND=C_SIZE_T)                             :: nbytes
+      n = SIZE(pw%array)
+      IF (n == 0) RETURN
+      nbytes = INT(n, KIND=C_SIZE_T)*8_C_SIZE_T
+      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+   END SUBROUTINE pw_gpu_prepare_device_r3d
+
+! **************************************************************************************************
+!> \brief Allocates the device mirror of a reciprocal-space pw array without uploading.
+! **************************************************************************************************
+   SUBROUTINE pw_gpu_prepare_device_c1d(pw)
+      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw
+      INTEGER                                            :: n
+      INTEGER(KIND=C_SIZE_T)                             :: nbytes
+      n = SIZE(pw%array)
+      IF (n == 0) RETURN
+      nbytes = INT(n, KIND=C_SIZE_T)*16_C_SIZE_T
+      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+   END SUBROUTINE pw_gpu_prepare_device_c1d
 
 END MODULE pw_gpu
 
