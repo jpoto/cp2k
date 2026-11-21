@@ -606,6 +606,22 @@ void pw_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
   offloadStreamSynchronize(stream);
 }
 
+/*******************************************************************************
+ * \brief Device reduction of Re(conj(a)*b) over all points, returned on host.
+ ******************************************************************************/
+double pw_gpu_dot_c1d_dev(const double *a, const double *b, const int n) {
+  static double *dot_dev = NULL;
+  assert(omp_get_num_threads() == 1);
+  if (n <= 0) return 0.0;
+  offload_activate_chosen_device();
+  if (dot_dev == NULL) offloadMalloc((void **)&dot_dev, sizeof(double));
+  offloadMemsetAsync(dot_dev, 0, sizeof(double), stream);
+  pw_gpu_launch_dot_c1d(a, b, dot_dev, n, stream);
+  double h = 0.0;
+  offloadMemcpyDtoH(&h, dot_dev, sizeof(double));
+  return h;
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF

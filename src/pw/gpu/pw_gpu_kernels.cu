@@ -169,6 +169,36 @@ void pw_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
   pw_axpy_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(y, x, a, b, n);
 }
 
+/*******************************************************************************
+ * \brief Block reduction of Re(conj(a)*b); accumulates into *out via atomicAdd.
+ ******************************************************************************/
+__global__ void pw_dot_c1d_kernel(const double *a, const double *b, double *out,
+                                  const int n) {
+  double acc = 0.0;
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
+       i += blockDim.x * gridDim.x) {
+    acc += a[2 * i] * b[2 * i] + a[2 * i + 1] * b[2 * i + 1];
+  }
+  __shared__ double sh[256];
+  const int t = threadIdx.x;
+  sh[t] = acc;
+  __syncthreads();
+  for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (t < s) sh[t] += sh[t + s];
+    __syncthreads();
+  }
+  if (t == 0) atomicAdd(out, sh[0]);
+}
+
+void pw_gpu_launch_dot_c1d(const double *a, const double *b, double *out,
+                           const int n, offloadStream_t stream) {
+  const int tpb = 256;
+  int blocks = (n + tpb - 1) / tpb;
+  if (blocks > 4096) blocks = 4096;
+  if (blocks < 1) blocks = 1;
+  pw_dot_c1d_kernel<<<blocks, tpb, 0, stream>>>(a, b, out, n);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
 
 // EOF
