@@ -90,7 +90,7 @@ CONTAINS
       CPASSERT(src%device_valid)
       IF (.NOT. ASSOCIATED(dst%array)) RETURN
       CPASSERT(SIZE(dst%array) == SIZE(src%array))
-      nbytes = INT(STORAGE_SIZE(dst%array)/8, KIND=C_SIZE_T)
+      nbytes = INT(SIZE(dst%array), KIND=C_SIZE_T)*16_C_SIZE_T
       IF (nbytes <= 0) RETURN
       IF (.NOT. C_ASSOCIATED(dst%device_data)) dst%device_data = offload_device_alloc(nbytes)
       CALL offload_device_d2d(dst%device_data, src%device_data, nbytes)

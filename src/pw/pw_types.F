@@ -125,7 +125,11 @@ CONTAINS
             INTEGER(KIND=C_SIZE_T)                            :: nbytes
             IF (pw%device_valid .AND. .NOT. pw%host_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
                IF (ASSOCIATED(pw%array)) THEN
-                  nbytes = INT(STORAGE_SIZE(pw%array)/8, KIND=C_SIZE_T)
+                  IF (SIZE(pw%array) > 0) THEN
+               nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*INT(STORAGE_SIZE(pw%array)/8, KIND=C_SIZE_T)
+            ELSE
+               nbytes = 0_C_SIZE_T
+            END IF
                   IF (nbytes > 0) CALL offload_device_d2h(C_LOC(pw%array), pw%device_data, nbytes)
                END IF
                pw%host_valid = .TRUE.
@@ -140,7 +144,11 @@ CONTAINS
             CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
             INTEGER(KIND=C_SIZE_T)                            :: nbytes
             IF (.NOT. ASSOCIATED(pw%array)) RETURN
-            nbytes = INT(STORAGE_SIZE(pw%array)/8, KIND=C_SIZE_T)
+            IF (SIZE(pw%array) > 0) THEN
+               nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*INT(STORAGE_SIZE(pw%array)/8, KIND=C_SIZE_T)
+            ELSE
+               nbytes = 0_C_SIZE_T
+            END IF
             IF (nbytes <= 0) RETURN
             IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
             IF (pw%host_valid .AND. .NOT. pw%device_valid) THEN
