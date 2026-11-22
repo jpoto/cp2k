@@ -82,6 +82,8 @@ MODULE qs_ks_methods
    USE particle_types,                  ONLY: particle_type
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
+   USE pw_offload,                      ONLY: pw_offload_available, pw_offload_copy_c1d, &
+                                             pw_offload_axpy_c1d
    USE pw_methods,                      ONLY: pw_axpy,&
                                               pw_copy,&
                                               pw_integral_ab,&
@@ -1556,7 +1558,54 @@ CONTAINS
          END DO
       END IF
 
+      ! Fused device mirror (M3): build rho_tot_gspace on the device in addition to
+      ! the host copy, so the Poisson/FFT chain (M4/M5) can stay device-resident.
+      ! The host copy above is kept valid for fallback consumers.
+      IF (pw_fused_enabled() .AND. pw_offload_available()) THEN
+         IF (.NOT. my_skip) THEN
+            IF (dft_control%qs_control%gapw) THEN
+               CALL rho0_s_gs%ensure_device()
+               CALL pw_offload_copy_c1d(rho_tot_gspace, rho0_s_gs)
+               IF (ASSOCIATED(rhoz_cneo_s_gs)) THEN
+                  CALL rhoz_cneo_s_gs%ensure_device()
+                  CALL pw_offload_axpy_c1d(rho_tot_gspace, rhoz_cneo_s_gs, 1.0_dp, 1.0_dp)
+               END IF
+               IF (dft_control%qs_control%gapw_control%nopaw_as_gpw) THEN
+                  CALL rho_core%ensure_device()
+                  CALL pw_offload_axpy_c1d(rho_tot_gspace, rho_core, 1.0_dp, 1.0_dp)
+               END IF
+            ELSE
+               CALL rho_core%ensure_device()
+               CALL pw_offload_copy_c1d(rho_tot_gspace, rho_core)
+            END IF
+            DO ispin = 1, dft_control%nspins
+               CALL rho_g(ispin)%ensure_device()
+               CALL pw_offload_axpy_c1d(rho_tot_gspace, rho_g(ispin), 1.0_dp, 1.0_dp)
+            END DO
+         ELSE
+            ! host already summed; mirror it to the device
+            CALL rho_tot_gspace%ensure_device()
+         END IF
+         ! the host array remains authoritative (built above)
+         rho_tot_gspace%host_valid = .TRUE.
+      END IF
+
    END SUBROUTINE calc_rho_tot_gspace
+
+! **************************************************************************************************
+!> \brief Whether the fused device G-space pipeline is enabled (CP2K_PW_GPU_FUSED=1).
+! **************************************************************************************************
+   LOGICAL FUNCTION pw_fused_enabled()
+      CHARACTER(len=8)                                   :: val
+      INTEGER                                            :: status
+      pw_fused_enabled = .FALSE.
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_PW_GPU_FUSED", val, STATUS=status)
+      IF (status == 0) THEN
+         val = ADJUSTL(val)
+         IF (LEN_TRIM(val) > 0) &
+            pw_fused_enabled = (val(1:1) == "1" .OR. val(1:1) == "T" .OR. val(1:1) == "t")
+      END IF
+   END FUNCTION pw_fused_enabled
 
 ! **************************************************************************************************
 !> \brief compute MO derivatives

@@ -196,6 +196,7 @@ void offload_device_free(void *device_memory) {
 void offload_device_h2d(void *device_memory, const void *host_memory,
                         size_t bytes) {
   if (NULL == device_memory || NULL == host_memory || 0 == bytes) return;
+  offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyHtoD(device_memory, host_memory, bytes);
 #else
@@ -209,6 +210,7 @@ void offload_device_h2d(void *device_memory, const void *host_memory,
 void offload_device_d2h(void *host_memory, const void *device_memory,
                         size_t bytes) {
   if (NULL == device_memory || NULL == host_memory || 0 == bytes) return;
+  offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyDtoH(host_memory, device_memory, bytes);
 #else
@@ -222,6 +224,7 @@ void offload_device_d2h(void *host_memory, const void *device_memory,
 void offload_device_d2d(void *dst_device, const void *src_device,
                         size_t bytes) {
   if (NULL == dst_device || NULL == src_device || 0 == bytes) return;
+  offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyAsyncDtoD(dst_device, src_device, bytes, 0);
   offloadDeviceSynchronize();

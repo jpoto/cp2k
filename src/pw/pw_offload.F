@@ -89,6 +89,7 @@ CONTAINS
       INTEGER(KIND=C_SIZE_T) :: nbytes
       CPASSERT(src%device_valid)
       IF (.NOT. ASSOCIATED(dst%array)) RETURN
+      CPASSERT(SIZE(dst%array) == SIZE(src%array))
       nbytes = INT(STORAGE_SIZE(dst%array)/8, KIND=C_SIZE_T)
       IF (nbytes <= 0) RETURN
       IF (.NOT. C_ASSOCIATED(dst%device_data)) dst%device_data = offload_device_alloc(nbytes)
@@ -111,6 +112,7 @@ CONTAINS
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
       CPASSERT(x%device_valid)
       CPASSERT(C_ASSOCIATED(y%device_data))
+      CPASSERT(SIZE(y%array) == SIZE(x%array))
       CALL pw_gpu_axpy_c1d_dev_c(y%device_data, x%device_data, &
                                  REAL(a, KIND=C_DOUBLE), REAL(b, KIND=C_DOUBLE), &
                                  INT(SIZE(y%array), KIND=C_INT))
