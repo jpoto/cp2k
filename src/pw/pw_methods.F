@@ -50,6 +50,7 @@ MODULE pw_methods
                      pw_gpu_multiply_device_c1d, &
                      pw_gpu_r3dc1d_3d_dev, &
                      pw_gpu_r3dc1d_3d_ps
+   USE pw_offload, ONLY: pw_offload_dot_c1d, pw_offload_g0_c1d
    USE pw_grid_types, ONLY: HALFSPACE, &
                             PW_MODE_DISTRIBUTED, &
                             PW_MODE_LOCAL, &
@@ -367,7 +368,19 @@ CONTAINS
                IF (iop == 1) &
                   CPABORT("Operator ABS not implemented")
                #:if kind[1:]=="1d"
+#:if kind=="c1d" and space=="gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                  IF (fun%device_valid) THEN
+                     IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*REAL(pw_offload_g0_c1d(fun), KIND=dp)
+                  ELSE
+#endif
+#:endif
                   IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
+#:if kind=="c1d" and space=="gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                  END IF
+#endif
+#:endif
                #:else
                   CPABORT("Reciprocal space integration for 3D grids not implemented!")
                #:endif
@@ -1036,6 +1049,20 @@ CONTAINS
 
                      my_just_sum = .FALSE.
                      IF (PRESENT(just_sum)) my_just_sum = just_sum
+
+#:if kind=="c1d" and kind2=="c1d" and space=="gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                     IF (pw1%device_valid .AND. pw2%device_valid .AND. &
+                         pw1%pw_grid%grid_span /= HALFSPACE) THEN
+                        integral_value = pw_offload_dot_c1d(pw1, pw2)
+                        IF (.NOT. my_just_sum) integral_value = integral_value*pw1%pw_grid%vol
+                        IF (.NOT. my_local_only .AND. pw1%pw_grid%para%mode == PW_MODE_DISTRIBUTED) &
+                           CALL pw1%pw_grid%para%group%sum(integral_value)
+                        CALL timestop(handle)
+                        RETURN
+                     END IF
+#endif
+#:endif
 
                      ! do standard sum
                      IF (loc_sumtype == do_standard_sum) THEN
