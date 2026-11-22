@@ -1332,6 +1332,7 @@ list(
   pw/pw_grid_info.F
   pw/pw_grids.F
   pw/pw_gpu.F
+  pw/pw_offload.F
   pw/pw_grid_types.F
   pw/pw_methods.F
   pw/pw_poisson_methods.F
