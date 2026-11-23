@@ -568,11 +568,13 @@ CONTAINS
                   ! M5: device-only Poisson reciprocal chain (no host copies) when the
                   ! density is already device-resident (FULLSPACE, no aux density).
                   IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                      .AND. .NOT. PRESENT(h_stress) &
                       .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
                      CALL influence_fn%ensure_device()
                      CALL pw_offload_copy_c1d(rhog, density)
                      CALL pw_offload_multiply_c1d(rhog, influence_fn)
                      CALL pw_offload_copy_c1d(vhartree, rhog)
+                     CALL vhartree%ensure_host()
                   ELSE
 #endif
 #:endif
@@ -998,11 +1000,13 @@ CONTAINS
 #:if kindd=="c1d_gs" and kindv=="c1d_gs"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
                      IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                         .AND. .NOT. PRESENT(h_stress) &
                          .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
                         CALL influence_fn%ensure_device()
                         CALL pw_offload_copy_c1d(rhog, density)
                         CALL pw_offload_multiply_c1d(rhog, influence_fn)
                         CALL pw_offload_copy_c1d(vhartree, rhog)
+                        CALL vhartree%ensure_host()
                      ELSE
 #endif
 #:endif

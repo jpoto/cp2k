@@ -1289,6 +1289,7 @@ CONTAINS
                                              CALL pw_gpu_prepare_device_c1d(pw2)
                                              CALL pw_gpu_r3dc1d_3d_dev(pw1, pw2)
                                              CALL pw2%mark_device_current()
+                                             CALL pw2%ensure_host()
                                           ELSE
                                              CALL pw_gpu_r3dc1d_3d(pw1, pw2)
                                              CALL pw2%invalidate_device()
@@ -1345,6 +1346,7 @@ CONTAINS
                                              CALL pw_gpu_prepare_device_r3d(pw2)
                                              CALL pw_gpu_c1dr3d_3d_dev(pw1, pw2)
                                              CALL pw2%mark_device_current()
+                                             CALL pw2%ensure_host()
                                           ELSE
                                              CALL pw_gpu_c1dr3d_3d(pw1, pw2)
                                              CALL pw2%invalidate_device()
