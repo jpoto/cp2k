@@ -183,9 +183,220 @@ library, like selecting the actual GFN-xTB method via the
 &END QS
 ```
 
-The [ACCURACY](#CP2K_INPUT.FORCE_EVAL.DFT.QS.XTB.TBLITE.ACCURACY) keyword controls the convergence
-thresholds of the electronic mixer in the tblite library. Lower values correspond to tighter
-convergence.
+The [ACCURACY](#CP2K_INPUT.FORCE_EVAL.DFT.QS.XTB.TBLITE.ACCURACY) keyword
+scales tblite's internal numerical thresholds. With the native tblite SCC mixer
+(the default `SCC_MIXER AUTO` for `GFN_TYPE TBLITE`, or an explicit
+`SCC_MIXER TBLITE`) it is the user-visible convergence control and corresponds
+to native tblite's `--acc` setting. With `SCC_MIXER CP2K`, the SCF convergence
+is instead controlled by `DFT/SCF/EPS_SCF`, while `ACCURACY` still controls the
+tblite numerical setup (for example the distance cutoff used to build the xTB
+basis and neighbour data). Lower values correspond to tighter convergence.
+
+### Element coverage
+
+The two backends have slightly different element ranges:
+
+| Backend | Methods | Supported elements |
+|---|---|---|
+| `tblite` | GFN1-xTB, GFN2-xTB, IPEA1-xTB | H-At (Z = 1-85) |
+| native CP2K | GFN1-xTB, GFN0-xTB | H-Rn (Z = 1-86) |
+
+With `tblite`, elements with Z >= 86 abort with
+`only elements 1-85 are supported by tblite` (verified for Rn and Fr with both
+GFN1 and GFN2). The native GFN1 parameter set includes Rn (Z = 86); Fr (Z = 87)
+is not supported. Lanthanides (La-Lu, Z = 57-71) are present and run with both
+methods, while actinides (Th and heavier, Z >= 90) are not available. Spin
+polarisation (spGFN1/spGFN2) exists for GFN1 and GFN2 but not for GFN0, and a
+custom `TBLITE/PARAM` file changes the model constants but does not extend the
+supported element range.
+
+## SCF convergence options
+
+GFN1-xTB and GFN2-xTB use the same CP2K SCF infrastructure as other Quickstep
+methods, but the `tblite` backend has its own self-consistent-charge (SCC)
+variable mixer that can be selected independently of the CP2K density mixer.
+
+### SCC-variable mixing with tblite
+
+The `XTB/SCC_MIXER` keyword selects how the SCC variables (populations and,
+for GFN2, atomic multipoles) are mixed:
+
+- `AUTO` (default): uses the native tblite modified-Broyden mixer for
+  `GFN_TYPE TBLITE`, the CP2K charge mixer for the native GFN1 implementation,
+  and no mixing for GFN0.
+- `TBLITE`: uses tblite's native SCC mixer. If set explicitly, CP2K also sets
+  `SCF/MAX_SCF` to `TBLITE_MIXER/ITERATIONS`.
+- `CP2K`: routes the SCC variables through the regular `SCF/MIXING` machinery.
+  For GFN2 this mixes shell charges plus atomic dipole and quadrupole
+  variables, and convergence follows `EPS_SCF`.
+- `NONE`: direct updates without mixing, intended for debugging only.
+
+The native mixer is configured through the `XTB/TBLITE_MIXER` section:
+
+| Keyword | Meaning | Default |
+|---|---|---|
+| `ITERATIONS` | Maximum number of SCC-mixer updates | 250 |
+| `MEMORY` | Number of retained Broyden update vectors (0 inherits `ITERATIONS`) | 0 |
+| `DAMPING` | Damping of population/multipole updates | 0.4 |
+| `OMEGA0` | Diagonal regularisation of the Broyden system | 0.01 |
+| `MIN_WEIGHT` | Lower dynamic history weight | 1.0 |
+| `MAX_WEIGHT` | Upper dynamic history weight | 1.0E5 |
+| `WEIGHT_FACTOR` | Residual-to-weight scaling factor | 0.01 |
+| `SOLVER` | Native eigensolver (`GVD` or `GVR`) | `GVD` |
+
+### CP2K density mixing
+
+When `SCC_MIXER CP2K` is used, the SCC variables are mixed by `SCF/MIXING`.
+Not all CP2K mixers are available for semi-empirical charge mixing:
+
+| Method | Usable with xTB | Main parameters |
+|---|---|---|
+| `DIRECT_P_MIXING` | yes | `ALPHA`, `ALPHA_MAG` |
+| `KERKER_MIXING` | yes | `ALPHA`, `BETA`, `ALPHA_MAG`, `BETA_MAG` |
+| `BROYDEN_MIXING` | yes, but unreliable | `ALPHA`, `NBUFFER`, `NMIXING`, `BROY_W0` |
+| `MODIFIED_BROYDEN_MIXING` | GFN2 only | `ALPHA`, `NBUFFER`, `BROY_W0`, `BROY_WREF`, `BROY_WMAX` |
+| `PULAY_MIXING` | no (aborts) | -- |
+| `NEW_PULAY_MIXING` | no (aborts) | -- |
+| `MULTISECANT_MIXING` | no (aborts) | -- |
+| `NONE` | no (aborts) | -- |
+
+`PULAY_MIXING`, `NEW_PULAY_MIXING`, `MULTISECANT_MIXING` and `MIXING NONE`
+stop with an error before the first SCF iteration. `MODIFIED_BROYDEN_MIXING`
+with `SCC_MIXER CP2K` requires GFN2 and aborts for GFN1.
+
+### OT and diagonalization
+
+- `&SCF/&OT` supports `MINIMIZER` `SD`, `CG`, `DIIS`, `BROYDEN` and `LBFGS`,
+  and the usual preconditioners (`FULL_ALL`, `FULL_SINGLE_INVERSE`,
+  `FULL_SINGLE`, `FULL_S_INVERSE`, `FERMI_LOW_RANK`, ...). `FULL_KINETIC` is
+  **not available** for semi-empirical methods and aborts.
+- For the tblite backend OT is a Gamma-point direct SCC-variable update;
+  smearing and `ADDED_MOS` are not supported on that path.
+- `&SCF/&DIAGONALIZATION ALGORITHM OT` selects OT as iterative eigensolver and
+  keeps the parent diagonalisation SCF path. In practice it works well for
+  periodic systems but fails for isolated molecules (`PDSYEVD` diagonalisation
+  or `SmearFixed` bracketing).
+- `UPDATE_METHOD ADIIS` requires a Quickstep DFT Kohn-Sham matrix and is not
+  usable for xTB; keep `UPDATE_METHOD MIXING`.
+
+### Smearing and spin
+
+Periodic systems normally use Fermi-Dirac smearing at room temperature with
+all virtual orbitals available:
+
+```
+&SCF
+  ADDED_MOS -1 -1
+  &SMEAR
+    METHOD FERMI_DIRAC
+    ELECTRONIC_TEMPERATURE 300
+  &END SMEAR
+&END SCF
+```
+
+Isolated molecules usually converge without smearing. Open-shell systems use
+`LSD`/`UKS` and `MULTIPLICITY`; with `GFN_TYPE TBLITE` this selects the
+spin-polarised GFN Hamiltonian.
+
+## Convergence recommendations
+
+The following recommendations were obtained from a 120-input test set
+(29 base systems, 12 periodic supercells, 16 semiconductor/small-gap structures
+and 3 semiconductor supercells, each with GFN1 and GFN2) using
+`EPS_SCF 1.0E-6`, `SCF_GUESS ATOMIC`, `MAX_SCF` 200 for molecules and 300 for
+periodic systems, reference k-point setups, and no level shift.
+
+### General recipe
+
+1. Use the tblite backend with the native SCC mixer:
+   `GFN_TYPE TBLITE`, `SCC_MIXER TBLITE`, `TBLITE_MIXER` with
+   `ITERATIONS 500`, `MEMORY 20` and `DAMPING 0.4`. This was the only setting
+   that converged for 119/120 inputs, with a median of 11 SCF steps and a maximum
+   of 116. The only failure is `Te` with GFN2, where `DIRECT_P` and `KERKER`
+   converge.
+2. `SCC_MIXER AUTO` is a good default (116/120), but difficult periodic
+   insulators such as hBN may need an explicit larger `ITERATIONS` value.
+3. Keep `EPS_SCF 1.0E-6` for routine work and tighten it only when accurate
+   energies or forces are needed.
+4. Use `SCF_GUESS ATOMIC`, avoid level shifts, and choose `MAX_SCF` of at least
+   200.
+5. Use the reference k-point setup for periodic systems; no additional k-mesh
+   scan is needed for convergence.
+
+If a CP2K mixer is preferred (`SCC_MIXER CP2K`), `KERKER_MIXING` with
+`ALPHA 0.8`, `BETA 0.5` was the best choice, followed by
+`DIRECT_P_MIXING` with `ALPHA 0.4`. `BROYDEN_MIXING` is not recommended for
+production: it converged for only 61/120 inputs and often required many
+iterations.
+
+For orbital-transformation calculations on non-periodic systems, use
+`MINIMIZER LBFGS` with `PRECONDITIONER FULL_SINGLE_INVERSE`; this was the most
+robust OT combination.
+
+### Behaviour by system class
+
+| System class | Recommended setting |
+|---|---|
+| Periodic metals | `SCC_MIXER TBLITE` (or `KERKER`); avoid plain OT for odd-electron cells unless LSD is enabled |
+| Periodic semiconductors / insulators | `SCC_MIXER TBLITE` or `DIAGONALIZATION ALGORITHM OT`; `KERKER` works for most, hBN/BN are the difficult cases |
+| Periodic molecular crystals and liquid water | `SCC_MIXER TBLITE` or `DIAGONALIZATION ALGORITHM OT`; `DIRECT_P` also works; for OT use `LBFGS + FULL_SINGLE_INVERSE` |
+| Small closed-shell molecules | `SCC_MIXER TBLITE` or a working CP2K mixer; do not use `DIAGONALIZATION ALGORITHM OT` |
+| Open-shell / transition-metal molecules | `SCC_MIXER TBLITE` or `AUTO`; enable spin polarisation; `DIAGONALIZATION ALGORITHM OT` fails |
+| Large organic molecules (peptides, nucleobases, C60, aromatics) | `SCC_MIXER TBLITE` or `AUTO` (12/12); `DIRECT_P` 11/12; `KERKER` is reliable for GFN2 but failed for three GFN1 large organics; avoid `BROYDEN`, `MODIFIED_BROYDEN` and `DIAGONALIZATION ALGORITHM OT` |
+| Semiconductors / small-gap (GaAs, CdTe, ZnS, AlN, MoS2, Bi2Te3, SiC, diamond, graphite, graphene, As, Te, Se, GeS2, In2S3) | `SCC_MIXER TBLITE` (31/32; `Te`-GFN2 fails) or `DIAGONALIZATION ALGORITHM OT` (29/32); `KERKER`/`DIRECT_P` ~22-23/32; plain `pure_ot` fails almost always; layered MoS2 and small-gap Bi2Te3/Te are the hard cases |
+
+### Cell-size dependence
+
+Supercells (2x2x2 or equivalent, with the k-mesh divided by the supercell factor)
+change convergence in a system-dependent way:
+
+| Method | supercells converged |
+|---|---|
+| `SCC_MIXER TBLITE` | **24/24** |
+| `AUTO` | 23/24 (hBN) |
+| `DIAGONALIZATION ALGORITHM OT` | 23/24 |
+| `KERKER` | 22/24 |
+| `DIRECT_P` | 22/24 |
+| `BROYDEN` | 16/24 |
+| `pure_ot` | 10/24 (+1 timeout) |
+| `MODIFIED_BROYDEN` | 6/24 (+12 GFN1 errors) |
+
+`SCC_MIXER TBLITE` is the only setting that stays fully robust for larger cells.
+OT becomes fragile (`H2O_cell` 2x pure_ot times out, Si-GFN2 needs 185 diag-OT
+steps), while some CP2K mixers improve (hBN-GFN1 auto 176 -> 23 steps, metals
+with KERKER ~10 -> 2-3 steps).
+
+### Semiconductors and small-gap systems
+
+| Method | converged (32 inputs) |
+|---|---|
+| `SCC_MIXER TBLITE` | **31/32** (`Te_gfn2` fails) |
+| `AUTO` | 30/32 (`AlN_gfn2`, `Te_gfn2`) |
+| `DIAGONALIZATION ALGORITHM OT` | 29/32 (`CdTe_gfn2`, `MoS2_gfn2`, `Te_gfn2`) |
+| `KERKER` | 23/32 |
+| `DIRECT_P` | 22/32 |
+| `BROYDEN` | 12/32 |
+| `MODIFIED_BROYDEN` | 4/32 |
+| `pure_ot` | 2/32 |
+
+Three semiconductor supercells (GaAs 2x2x2, SiC 2x2x2, MoS2 2x2x1) were also
+screened with all methods: `SCC_MIXER TBLITE`, `AUTO` and
+`DIAGONALIZATION ALGORITHM OT` converge 6/6; `KERKER`/`DIRECT_P` 3/6;
+`BROYDEN` 1/6; `MODIFIED_BROYDEN` and `pure_ot` 0/6. Simple cubic/2D systems (diamond, graphite,
+graphene, gray As, SiC) are mostly easy; layered MoS2 and small-gap Bi2Te3/Te
+are harder. `Te` with GFN2 is the
+only case where `SCC_MIXER TBLITE` did not converge, but `DIRECT_P` and
+`KERKER` did.
+
+### Iteration cost
+
+`SCC_MIXER TBLITE` is both the most robust and the cheapest per converged
+system (median 11 steps, maximum 116). Large organic molecules need somewhat more
+iterations with tblite (median 16), and CP2K mixers typically need 1.4-2 times
+more iterations; OT can have a small median but successful runs often require
+tens to hundreds of iterations. Varying `WEIGHT_FACTOR` between 0.001 and 0.1
+had no measurable effect on the tblite iteration count, and changing `BETA`
+in `KERKER_MIXING` at fixed `ALPHA 0.4` also had no effect.
 
 ## Simple examples
 
