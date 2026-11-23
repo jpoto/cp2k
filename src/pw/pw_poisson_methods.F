@@ -37,7 +37,7 @@ MODULE pw_poisson_methods
                                WAVELET2D, &
                                WAVELET3D, &
                                ps_wavelet_type
-   USE pw_grid_types, ONLY: pw_grid_type
+   USE pw_grid_types, ONLY: HALFSPACE, pw_grid_type
    USE pw_grids, ONLY: pw_grid_compare, &
                        pw_grid_release, &
                        pw_grid_retain
@@ -558,16 +558,28 @@ CONTAINS
                SELECT CASE (poisson_env%green_fft%method)
                CASE (PERIODIC3D, ANALYTIC2D, ANALYTIC1D, ANALYTIC0D, MT2D, MT1D, MT0D, MULTIPOLE0D)
 
-                  CALL pw_transfer(density, rhog)
-                  IF (PRESENT(aux_density)) THEN
-                     CALL pw_transfer(aux_density, rhog_aux)
-                  END IF
                   IF (PRESENT(greenfn)) THEN
                      influence_fn = greenfn
                   ELSE
                      influence_fn = poisson_env%green_fft%influence_fn
                   END IF
-                  CALL influence_fn%ensure_device()
+#:if kindd=="c1d_gs" and kindv=="c1d_gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                  ! M5: device-only Poisson reciprocal chain (no host copies) when the
+                  ! density is already device-resident (FULLSPACE, no aux density).
+                  IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                      .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                     CALL influence_fn%ensure_device()
+                     CALL pw_offload_copy_c1d(rhog, density)
+                     CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                     CALL pw_offload_copy_c1d(vhartree, rhog)
+                  ELSE
+#endif
+#:endif
+                  CALL pw_transfer(density, rhog)
+                  IF (PRESENT(aux_density)) THEN
+                     CALL pw_transfer(aux_density, rhog_aux)
+                  END IF
                   CALL pw_multiply_with(rhog, influence_fn)
                   IF (PRESENT(aux_density)) THEN
                      CALL pw_multiply_with(rhog_aux, influence_fn)
@@ -575,16 +587,8 @@ CONTAINS
                   CALL pw_transfer(rhog, vhartree)
 #:if kindd=="c1d_gs" and kindv=="c1d_gs"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                  IF (density%device_valid) THEN
-                     CALL pw_offload_copy_c1d(rhog, density)
-                     CALL pw_offload_multiply_c1d(rhog, influence_fn)
-                     CALL pw_offload_copy_c1d(vhartree, rhog)
-                     rhog%host_valid = .TRUE.
-                     vhartree%host_valid = .TRUE.
                   END IF
 #endif
-#:else
-                  CALL vhartree%sync_host()
 #:endif
                   IF (PRESENT(ehartree)) THEN
                      IF (PRESENT(aux_density)) THEN
@@ -986,33 +990,35 @@ CONTAINS
                   SELECT CASE (poisson_env%green_fft%method)
                   CASE (PERIODIC3D, ANALYTIC2D, ANALYTIC1D, ANALYTIC0D, MT2D, MT1D, MT0D, MULTIPOLE0D)
 
-                     CALL pw_transfer(density, rhog)
-                     IF (PRESENT(aux_density)) THEN
-                        CALL pw_transfer(aux_density, rhog_aux)
-                     END IF
                      IF (PRESENT(greenfn)) THEN
                         influence_fn = greenfn
                      ELSE
                         influence_fn = poisson_env%green_fft%influence_fn
                      END IF
-                     CALL influence_fn%ensure_device()
-                  CALL pw_multiply_with(rhog, influence_fn)
+#:if kindd=="c1d_gs" and kindv=="c1d_gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                     IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                         .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                        CALL influence_fn%ensure_device()
+                        CALL pw_offload_copy_c1d(rhog, density)
+                        CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                        CALL pw_offload_copy_c1d(vhartree, rhog)
+                     ELSE
+#endif
+#:endif
+                     CALL pw_transfer(density, rhog)
+                     IF (PRESENT(aux_density)) THEN
+                        CALL pw_transfer(aux_density, rhog_aux)
+                     END IF
+                     CALL pw_multiply_with(rhog, influence_fn)
                      IF (PRESENT(aux_density)) THEN
                         CALL pw_multiply_with(rhog_aux, influence_fn)
                      END IF
                      CALL pw_transfer(rhog, vhartree)
 #:if kindd=="c1d_gs" and kindv=="c1d_gs"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                  IF (density%device_valid) THEN
-                     CALL pw_offload_copy_c1d(rhog, density)
-                     CALL pw_offload_multiply_c1d(rhog, influence_fn)
-                     CALL pw_offload_copy_c1d(vhartree, rhog)
-                     rhog%host_valid = .TRUE.
-                     vhartree%host_valid = .TRUE.
-                  END IF
+                     END IF
 #endif
-#:else
-                  CALL vhartree%sync_host()
 #:endif
                      IF (PRESENT(ehartree)) THEN
                         IF (PRESENT(aux_density)) THEN
