@@ -83,6 +83,7 @@ MODULE qs_ks_methods
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
    USE pw_offload,                      ONLY: pw_offload_available, pw_offload_copy_c1d, &
+                                             pw_offload_fused_enabled, &
                                              pw_offload_axpy_c1d
    USE pw_methods,                      ONLY: pw_axpy,&
                                               pw_copy,&
@@ -1562,7 +1563,7 @@ CONTAINS
       ! Fused device mirror (M3): build rho_tot_gspace on the device in addition to
       ! the host copy, so the Poisson/FFT chain (M4/M5) can stay device-resident.
       ! The host copy above is kept valid for fallback consumers.
-      IF (pw_fused_enabled() .AND. pw_offload_available()) THEN
+      IF (pw_offload_fused_enabled() .AND. pw_offload_available()) THEN
          IF (.NOT. my_skip) THEN
             IF (dft_control%qs_control%gapw) THEN
                CALL rho0_s_gs%ensure_device()
@@ -1593,20 +1594,6 @@ CONTAINS
 
    END SUBROUTINE calc_rho_tot_gspace
 
-! **************************************************************************************************
-!> \brief Whether the fused device G-space pipeline is enabled (CP2K_PW_GPU_FUSED=1).
-! **************************************************************************************************
-   LOGICAL FUNCTION pw_fused_enabled()
-      CHARACTER(len=8)                                   :: val
-      INTEGER                                            :: status
-      pw_fused_enabled = .FALSE.
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_PW_GPU_FUSED", val, STATUS=status)
-      IF (status == 0) THEN
-         val = ADJUSTL(val)
-         IF (LEN_TRIM(val) > 0) &
-            pw_fused_enabled = (val(1:1) == "1" .OR. val(1:1) == "T" .OR. val(1:1) == "t")
-      END IF
-   END FUNCTION pw_fused_enabled
 
 ! **************************************************************************************************
 !> \brief compute MO derivatives

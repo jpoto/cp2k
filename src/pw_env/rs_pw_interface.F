@@ -20,6 +20,7 @@ MODULE rs_pw_interface
    USE gaussian_gridlevels,             ONLY: gridlevel_info_type
    USE input_section_types,             ONLY: section_vals_val_get
    USE kinds,                           ONLY: dp
+   USE pw_offload,                      ONLY: pw_offload_fused_enabled
    USE iso_c_binding,                   ONLY: C_ASSOCIATED, C_LOC, C_SIZE_T
    USE offload_api,                     ONLY: offload_device_alloc, offload_device_d2d, &
                                              offload_device_d2h, offload_get_buffer_device_pointer
@@ -105,7 +106,7 @@ CONTAINS
          ! no border, equal sizes); otherwise the host path is used.
          IF (.NOT. rs_rho(1)%desc%distributed .AND. .NOT. rs_rho(1)%desc%parallel .AND. &
              rs_rho(1)%desc%border == 0 .AND. SIZE(rho%array) == rs_rho(1)%ngpts_local .AND. &
-             pw_gpu_producer_enabled()) THEN
+             pw_offload_fused_enabled()) THEN
             nbytes = INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T
             IF (.NOT. C_ASSOCIATED(rho%device_data)) rho%device_data = offload_device_alloc(nbytes)
             CALL offload_device_d2d(rho%device_data, offload_get_buffer_device_pointer(rs_rho(1)%buffer), nbytes)
@@ -157,11 +158,11 @@ CONTAINS
             ! Multi-grid: keep rho_gspace device-resident for the downstream
             ! Poisson / c1dr3d (M3/M5). Upload rho, run the FFT on the device,
             ! then sync rho_gspace back but leave its device mirror current.
-            IF (pw_gpu_producer_enabled()) CALL rho%ensure_device()
+            IF (pw_offload_fused_enabled()) CALL rho%ensure_device()
 #endif
             CALL pw_transfer(rho, rho_gspace)
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-            IF (pw_gpu_producer_enabled()) CALL rho_gspace%ensure_host()
+            IF (pw_offload_fused_enabled()) CALL rho_gspace%ensure_host()
 #endif
          CASE default
             CALL cp_abort(__LOCATION__, &
@@ -270,19 +271,5 @@ CONTAINS
    END SUBROUTINE potential_pw2rs
 
 
-! **************************************************************************************************
-!> \brief Whether the grid->device producer is enabled (CP2K_PW_GPU_FUSED=1 enables it).
-! **************************************************************************************************
-   LOGICAL FUNCTION pw_gpu_producer_enabled()
-      CHARACTER(len=8)                                   :: val
-      INTEGER                                            :: status
-      pw_gpu_producer_enabled = .FALSE.
-      CALL GET_ENVIRONMENT_VARIABLE("CP2K_PW_GPU_FUSED", val, STATUS=status)
-      IF (status == 0) THEN
-         val = ADJUSTL(val)
-         IF (LEN_TRIM(val) > 0) &
-            pw_gpu_producer_enabled = (val(1:1) == "1" .OR. val(1:1) == "T" .OR. val(1:1) == "t")
-      END IF
-   END FUNCTION pw_gpu_producer_enabled
 
 END MODULE rs_pw_interface

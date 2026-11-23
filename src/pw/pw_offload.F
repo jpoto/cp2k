@@ -35,12 +35,12 @@ MODULE pw_offload
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'pw_offload'
 
    PUBLIC :: pw_offload_available
+   PUBLIC :: pw_offload_fused_enabled
    PUBLIC :: pw_offload_copy_c1d
    PUBLIC :: pw_offload_axpy_c1d
    PUBLIC :: pw_offload_multiply_c1d
    PUBLIC :: pw_offload_dot_c1d
    PUBLIC :: pw_offload_g0_c1d
-   PUBLIC :: pw_offload_prepare_c1d
 
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
    INTERFACE
@@ -182,20 +182,21 @@ CONTAINS
    END FUNCTION pw_offload_g0_c1d
 
 
+
+
 ! **************************************************************************************************
-!> \brief Allocates the device mirror of a c1d array without uploading (for use as an accumulator).
+!> \brief Single feature toggle for the fused device G-space pipeline (CP2K_PW_GPU_FUSED, default off).
 ! **************************************************************************************************
-   SUBROUTINE pw_offload_prepare_c1d(pw)
-      TYPE(pw_c1d_gs_type), INTENT(INOUT) :: pw
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-      INTEGER(KIND=C_SIZE_T) :: nbytes
-      IF (.NOT. ASSOCIATED(pw%array)) RETURN
-      IF (SIZE(pw%array) <= 0) RETURN
-      nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*16_C_SIZE_T
-      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
-#else
-      MARK_USED(pw)
-#endif
-   END SUBROUTINE pw_offload_prepare_c1d
+   LOGICAL FUNCTION pw_offload_fused_enabled()
+      CHARACTER(len=8) :: val
+      INTEGER :: status
+      pw_offload_fused_enabled = .FALSE.
+      CALL GET_ENVIRONMENT_VARIABLE("CP2K_PW_GPU_FUSED", val, STATUS=status)
+      IF (status == 0) THEN
+         val = ADJUSTL(val)
+         IF (LEN_TRIM(val) > 0) &
+            pw_offload_fused_enabled = (val(1:1) == "1" .OR. val(1:1) == "T" .OR. val(1:1) == "t")
+      END IF
+   END FUNCTION pw_offload_fused_enabled
 
 END MODULE pw_offload

@@ -941,8 +941,7 @@ CONTAINS
 #else
       CPABORT("Compiled without pw offloading.")
 #endif
-      pw2%device_valid = .TRUE.
-      pw2%host_valid = .FALSE.
+      CALL pw2%mark_device_current()
       CALL timestop(handle)
    END SUBROUTINE pw_gpu_r3dc1d_3d_dev
 
@@ -985,8 +984,7 @@ CONTAINS
 #else
       CPABORT("Compiled without pw offloading")
 #endif
-      pw2%device_valid = .TRUE.
-      pw2%host_valid = .FALSE.
+      CALL pw2%mark_device_current()
       CALL timestop(handle)
    END SUBROUTINE pw_gpu_c1dr3d_3d_dev
 
