@@ -41,6 +41,7 @@ MODULE pw_poisson_methods
    USE pw_grids, ONLY: pw_grid_compare, &
                        pw_grid_release, &
                        pw_grid_retain
+   USE pw_offload, ONLY: pw_offload_copy_c1d, pw_offload_multiply_c1d
    USE pw_methods, ONLY: pw_copy, &
                          pw_derive, &
                          pw_integral_ab, &
@@ -572,7 +573,19 @@ CONTAINS
                      CALL pw_multiply_with(rhog_aux, influence_fn)
                   END IF
                   CALL pw_transfer(rhog, vhartree)
+#:if kindd=="c1d_gs" and kindv=="c1d_gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                  IF (density%device_valid) THEN
+                     CALL pw_offload_copy_c1d(rhog, density)
+                     CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                     CALL pw_offload_copy_c1d(vhartree, rhog)
+                     rhog%host_valid = .TRUE.
+                     vhartree%host_valid = .TRUE.
+                  END IF
+#endif
+#:else
                   CALL vhartree%sync_host()
+#:endif
                   IF (PRESENT(ehartree)) THEN
                      IF (PRESENT(aux_density)) THEN
                         #:if kindd==kindv
@@ -988,7 +1001,19 @@ CONTAINS
                         CALL pw_multiply_with(rhog_aux, influence_fn)
                      END IF
                      CALL pw_transfer(rhog, vhartree)
+#:if kindd=="c1d_gs" and kindv=="c1d_gs"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+                  IF (density%device_valid) THEN
+                     CALL pw_offload_copy_c1d(rhog, density)
+                     CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                     CALL pw_offload_copy_c1d(vhartree, rhog)
+                     rhog%host_valid = .TRUE.
+                     vhartree%host_valid = .TRUE.
+                  END IF
+#endif
+#:else
                   CALL vhartree%sync_host()
+#:endif
                      IF (PRESENT(ehartree)) THEN
                         IF (PRESENT(aux_density)) THEN
                            #:if kindd==kindv

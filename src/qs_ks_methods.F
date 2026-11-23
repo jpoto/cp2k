@@ -517,6 +517,7 @@ CONTAINS
          dft_control%qs_control%ddapc_restraint_is_spin = .FALSE.
          IF (.NOT. just_energy) THEN
             CALL pw_transfer(v_hartree_gspace, v_hartree_rspace)
+            CALL v_hartree_rspace%sync_host()
             CALL pw_scale(v_hartree_rspace, v_hartree_rspace%pw_grid%dvol)
          END IF
       END IF

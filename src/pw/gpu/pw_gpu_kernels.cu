@@ -138,8 +138,10 @@ void pw_gpu_launch_scatter(double *c, const double *pwcc, const double scale,
 __global__ void pw_multiply_c1d(double *a, const double *b, const int n) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
-    a[2 * i] *= b[2 * i];
-    a[2 * i + 1] *= b[2 * i + 1];
+    const double ar = a[2 * i], ai = a[2 * i + 1];
+    const double br = b[2 * i], bi = b[2 * i + 1];
+    a[2 * i] = ar * br - ai * bi;
+    a[2 * i + 1] = ar * bi + ai * br;
   }
 }
 
