@@ -40,6 +40,7 @@ MODULE pw_offload
    PUBLIC :: pw_offload_multiply_c1d
    PUBLIC :: pw_offload_dot_c1d
    PUBLIC :: pw_offload_g0_c1d
+   PUBLIC :: pw_offload_prepare_c1d
 
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
    INTERFACE
@@ -112,10 +113,9 @@ CONTAINS
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
       CPASSERT(x%device_valid)
       CPASSERT(C_ASSOCIATED(y%device_data))
-      CPASSERT(SIZE(y%array) == SIZE(x%array))
       CALL pw_gpu_axpy_c1d_dev_c(y%device_data, x%device_data, &
                                  REAL(a, KIND=C_DOUBLE), REAL(b, KIND=C_DOUBLE), &
-                                 INT(SIZE(y%array), KIND=C_INT))
+                                 INT(MIN(SIZE(y%array), SIZE(x%array)), KIND=C_INT))
       CALL y%mark_device_current()
 #else
       MARK_USED(y)
@@ -180,5 +180,22 @@ CONTAINS
       g0 = CMPLX(0.0_dp, 0.0_dp, KIND=dp)
 #endif
    END FUNCTION pw_offload_g0_c1d
+
+
+! **************************************************************************************************
+!> \brief Allocates the device mirror of a c1d array without uploading (for use as an accumulator).
+! **************************************************************************************************
+   SUBROUTINE pw_offload_prepare_c1d(pw)
+      TYPE(pw_c1d_gs_type), INTENT(INOUT) :: pw
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+      INTEGER(KIND=C_SIZE_T) :: nbytes
+      IF (.NOT. ASSOCIATED(pw%array)) RETURN
+      IF (SIZE(pw%array) <= 0) RETURN
+      nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*16_C_SIZE_T
+      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+#else
+      MARK_USED(pw)
+#endif
+   END SUBROUTINE pw_offload_prepare_c1d
 
 END MODULE pw_offload

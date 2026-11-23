@@ -20,6 +20,7 @@ MODULE rs_pw_interface
    USE gaussian_gridlevels,             ONLY: gridlevel_info_type
    USE input_section_types,             ONLY: section_vals_val_get
    USE kinds,                           ONLY: dp
+   USE pw_offload,                      ONLY: pw_offload_prepare_c1d, pw_offload_axpy_c1d
    USE iso_c_binding,                   ONLY: C_ASSOCIATED, C_LOC, C_SIZE_T
    USE offload_api,                     ONLY: offload_device_alloc, offload_device_d2d, &
                                              offload_device_d2h, offload_get_buffer_device_pointer
@@ -140,6 +141,22 @@ CONTAINS
          ! we want both rho and rho_gspace, the latter for Hartree and co-workers.
          SELECT CASE (interp_kind)
          CASE (pw_interp)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (pw_gpu_producer_enabled()) THEN
+               ! Device accumulation of the per-level G-space densities (prefix-min like
+               ! the host pw_axpy), so rho_gspace stays device-resident downstream.
+               CALL pw_offload_prepare_c1d(rho_gspace)
+               DO igrid_level = 1, gridlevel_info%ngrid_levels
+                  CALL mgrid_rspace(igrid_level)%ensure_device()
+                  CALL pw_transfer(mgrid_rspace(igrid_level), mgrid_gspace(igrid_level))
+                  CALL pw_offload_axpy_c1d(rho_gspace, mgrid_gspace(igrid_level), 1.0_dp, &
+                                           MERGE(0.0_dp, 1.0_dp, igrid_level == 1))
+               END DO
+               CALL rho_gspace%ensure_host()
+               CALL pw_transfer(rho_gspace, rho)
+               CALL rho%ensure_host()
+            ELSE
+#endif
             CALL pw_zero(rho_gspace)
             DO igrid_level = 1, gridlevel_info%ngrid_levels
                CALL pw_transfer(mgrid_rspace(igrid_level), &
@@ -147,6 +164,9 @@ CONTAINS
                CALL pw_axpy(mgrid_gspace(igrid_level), rho_gspace)
             END DO
             CALL pw_transfer(rho_gspace, rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            END IF
+#endif
          CASE (spline3_pbc_interp)
             DO igrid_level = gridlevel_info%ngrid_levels, 2, -1
                CALL pw_prolongate_s3(mgrid_rspace(igrid_level), &
