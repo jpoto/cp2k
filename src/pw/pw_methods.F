@@ -1052,9 +1052,11 @@ CONTAINS
 
 #:if kind=="c1d" and kind2=="c1d" and space=="gs"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                     IF (pw1%device_valid .AND. pw2%device_valid .AND. &
-                         pw1%pw_grid%grid_span /= HALFSPACE) THEN
+                     IF (pw1%device_valid .AND. pw2%device_valid) THEN
                         integral_value = pw_offload_dot_c1d(pw1, pw2)
+                        IF (pw1%pw_grid%grid_span == HALFSPACE) &
+                           integral_value = 2.0_dp*integral_value - &
+                              REAL(CONJG(pw_offload_g0_c1d(pw1))*pw_offload_g0_c1d(pw2), KIND=dp)
                         IF (.NOT. my_just_sum) integral_value = integral_value*pw1%pw_grid%vol
                         IF (.NOT. my_local_only .AND. pw1%pw_grid%para%mode == PW_MODE_DISTRIBUTED) &
                            CALL pw1%pw_grid%para%group%sum(integral_value)

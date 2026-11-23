@@ -617,6 +617,7 @@ double pw_gpu_dot_c1d_dev(const double *a, const double *b, const int n) {
   if (dot_dev == NULL) offloadMalloc((void **)&dot_dev, sizeof(double));
   offloadMemsetAsync(dot_dev, 0, sizeof(double), stream);
   pw_gpu_launch_dot_c1d(a, b, dot_dev, n, stream);
+  offloadStreamSynchronize(stream);
   double h = 0.0;
   offloadMemcpyDtoH(&h, dot_dev, sizeof(double));
   return h;

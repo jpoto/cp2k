@@ -49,10 +49,8 @@ MODULE pw_gpu
    PUBLIC :: pw_gpu_c1dr3d_3d
    PUBLIC :: pw_gpu_r3dc1d_3d_ps
    PUBLIC :: pw_gpu_r3dc1d_3d_dev, pw_gpu_c1dr3d_3d_dev
-   PUBLIC :: pw_gpu_ensure_device_r3d, pw_gpu_ensure_host_r3d, pw_gpu_release_device_r3d
    PUBLIC :: pw_gpu_prepare_device_r3d, pw_gpu_prepare_device_c1d
-   PUBLIC :: pw_gpu_multiply_device_c1d, pw_gpu_axpy_device_c1d, pw_gpu_dot_device_c1d
-   PUBLIC :: pw_gpu_ensure_device_c1d, pw_gpu_ensure_host_c1d, pw_gpu_release_device_c1d
+   PUBLIC :: pw_gpu_multiply_device_c1d
    PUBLIC :: pw_gpu_c1dr3d_3d_ps
    PUBLIC :: pw_gpu_init, pw_gpu_finalize
 
@@ -996,94 +994,26 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Ensures a device mirror of a real-space pw array exists and is current.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_ensure_device_r3d(pw)
-      TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
-      INTEGER                                            :: n
-      INTEGER(KIND=C_SIZE_T)                             :: nbytes
-      n = SIZE(pw%array)
-      IF (n == 0) RETURN
-      nbytes = INT(n, KIND=C_SIZE_T)*8_C_SIZE_T
-      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
-      IF (pw%host_valid .AND. .NOT. pw%device_valid) THEN
-         CALL offload_device_h2d(pw%device_data, C_LOC(pw%array(1, 1, 1)), nbytes)
-         pw%device_valid = .TRUE.
-      END IF
-   END SUBROUTINE pw_gpu_ensure_device_r3d
 
 ! **************************************************************************************************
 !> \brief Ensures the host copy of a real-space pw array is current.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_ensure_host_r3d(pw)
-      TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
-      INTEGER                                            :: n
-      INTEGER(KIND=C_SIZE_T)                             :: nbytes
-      n = SIZE(pw%array)
-      IF (n == 0) RETURN
-      nbytes = INT(n, KIND=C_SIZE_T)*8_C_SIZE_T
-      IF (pw%device_valid .AND. .NOT. pw%host_valid) THEN
-         CALL offload_device_d2h(C_LOC(pw%array(1, 1, 1)), pw%device_data, nbytes)
-         pw%host_valid = .TRUE.
-      END IF
-   END SUBROUTINE pw_gpu_ensure_host_r3d
 
 ! **************************************************************************************************
 !> \brief Releases the device mirror of a real-space pw array.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_release_device_r3d(pw)
-      TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
-      IF (C_ASSOCIATED(pw%device_data)) THEN
-         CALL offload_device_free(pw%device_data)
-         pw%device_data = C_NULL_PTR
-      END IF
-      pw%device_valid = .FALSE.
-      pw%host_valid = .TRUE.
-   END SUBROUTINE pw_gpu_release_device_r3d
 
 ! **************************************************************************************************
 !> \brief Ensures a device mirror of a reciprocal-space pw array exists and is current.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_ensure_device_c1d(pw)
-      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw
-      INTEGER                                            :: n
-      INTEGER(KIND=C_SIZE_T)                             :: nbytes
-      n = SIZE(pw%array)
-      IF (n == 0) RETURN
-      nbytes = INT(n, KIND=C_SIZE_T)*16_C_SIZE_T
-      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
-      IF (pw%host_valid .AND. .NOT. pw%device_valid) THEN
-         CALL offload_device_h2d(pw%device_data, C_LOC(pw%array(1)), nbytes)
-         pw%device_valid = .TRUE.
-      END IF
-   END SUBROUTINE pw_gpu_ensure_device_c1d
 
 ! **************************************************************************************************
 !> \brief Ensures the host copy of a reciprocal-space pw array is current.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_ensure_host_c1d(pw)
-      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw
-      INTEGER                                            :: n
-      INTEGER(KIND=C_SIZE_T)                             :: nbytes
-      n = SIZE(pw%array)
-      IF (n == 0) RETURN
-      nbytes = INT(n, KIND=C_SIZE_T)*16_C_SIZE_T
-      IF (pw%device_valid .AND. .NOT. pw%host_valid) THEN
-         CALL offload_device_d2h(C_LOC(pw%array(1)), pw%device_data, nbytes)
-         pw%host_valid = .TRUE.
-      END IF
-   END SUBROUTINE pw_gpu_ensure_host_c1d
 
 ! **************************************************************************************************
 !> \brief Releases the device mirror of a reciprocal-space pw array.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_release_device_c1d(pw)
-      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw
-      IF (C_ASSOCIATED(pw%device_data)) THEN
-         CALL offload_device_free(pw%device_data)
-         pw%device_data = C_NULL_PTR
-      END IF
-      pw%device_valid = .FALSE.
-      pw%host_valid = .TRUE.
-   END SUBROUTINE pw_gpu_release_device_c1d
 
 
 ! **************************************************************************************************
@@ -1141,51 +1071,11 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Device axpy on two device-resident reciprocal-space arrays: y = a*x + b*y.
 ! **************************************************************************************************
-   SUBROUTINE pw_gpu_axpy_device_c1d(y, x, a, b)
-      TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: y
-      TYPE(pw_c1d_gs_type), INTENT(IN)                   :: x
-      REAL(KIND=C_DOUBLE), INTENT(IN)                    :: a, b
-      INTERFACE
-         SUBROUTINE pw_gpu_axpy_c1d_dev_c(yy, xx, aa, bb, n) BIND(C, name="pw_gpu_axpy_c1d_dev")
-            IMPORT :: C_DOUBLE, C_INT, C_PTR
-            TYPE(C_PTR), VALUE                          :: yy, xx
-            REAL(KIND=C_DOUBLE), VALUE                  :: aa, bb
-            INTEGER(KIND=C_INT), VALUE                  :: n
-         END SUBROUTINE pw_gpu_axpy_c1d_dev_c
-      END INTERFACE
-      CPASSERT(C_ASSOCIATED(y%device_data))
-      CPASSERT(C_ASSOCIATED(x%device_data))
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-      CALL pw_gpu_axpy_c1d_dev_c(y%device_data, x%device_data, a, b, INT(SIZE(y%array), KIND=C_INT))
-      CALL y%mark_device_current()
-#else
-      CPABORT("Compiled without pw offloading.")
-#endif
-   END SUBROUTINE pw_gpu_axpy_device_c1d
 
 
 ! **************************************************************************************************
 !> \brief Device reduction of Re(conj(pw1)*pw2) over all points (raw sum).
 ! **************************************************************************************************
-   FUNCTION pw_gpu_dot_device_c1d(pw1, pw2) RESULT(val)
-      TYPE(pw_c1d_gs_type), INTENT(IN)                   :: pw1, pw2
-      REAL(KIND=C_DOUBLE)                                :: val
-      INTERFACE
-         FUNCTION pw_gpu_dot_c1d_dev_f(a, b, n) BIND(C, name="pw_gpu_dot_c1d_dev") RESULT(r)
-            IMPORT :: C_DOUBLE, C_INT, C_PTR
-            TYPE(C_PTR), VALUE                          :: a, b
-            INTEGER(KIND=C_INT), VALUE                  :: n
-            REAL(KIND=C_DOUBLE)                         :: r
-         END FUNCTION pw_gpu_dot_c1d_dev_f
-      END INTERFACE
-      CPASSERT(C_ASSOCIATED(pw1%device_data))
-      CPASSERT(C_ASSOCIATED(pw2%device_data))
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-      val = pw_gpu_dot_c1d_dev_f(pw1%device_data, pw2%device_data, INT(SIZE(pw1%array), KIND=C_INT))
-#else
-      CPABORT("Compiled without pw offloading.")
-#endif
-   END FUNCTION pw_gpu_dot_device_c1d
 
 END MODULE pw_gpu
 
