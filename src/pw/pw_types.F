@@ -61,6 +61,7 @@ MODULE pw_types
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: mark_device_current => pw_mark_device_current_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: sync_host => pw_sync_host_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: ensure_device => pw_ensure_device_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: ensure_host => pw_ensure_host_${kind}$_${space}$
          END TYPE pw_${kind}$_${space}$_type
 
 ! **************************************************************************************************
@@ -156,6 +157,21 @@ CONTAINS
                pw%device_valid = .TRUE.
             END IF
          END SUBROUTINE pw_ensure_device_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Brings the host copy up to date (D2H) if needed, keeping the device mirror current.
+! **************************************************************************************************
+         SUBROUTINE pw_ensure_host_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            INTEGER(KIND=C_SIZE_T)                            :: nbytes
+            IF (pw%device_valid .AND. .NOT. pw%host_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
+               IF (ASSOCIATED(pw%array) .AND. SIZE(pw%array) > 0) THEN
+                  nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*INT(STORAGE_SIZE(pw%array)/8, KIND=C_SIZE_T)
+                  CALL offload_device_d2h(C_LOC(pw%array), pw%device_data, nbytes)
+               END IF
+               pw%host_valid = .TRUE.
+            END IF
+         END SUBROUTINE pw_ensure_host_${kind}$_${space}$
 
 ! **************************************************************************************************
 !> \brief allocates and initializes pw_r3d_rs_type

@@ -154,7 +154,16 @@ CONTAINS
                                      pw_env%interp_section)
             END DO
             CALL pw_copy(mgrid_rspace(1), rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            ! Multi-grid: keep rho_gspace device-resident for the downstream
+            ! Poisson / c1dr3d (M3/M5). Upload rho, run the FFT on the device,
+            ! then sync rho_gspace back but leave its device mirror current.
+            IF (pw_gpu_producer_enabled()) CALL rho%ensure_device()
+#endif
             CALL pw_transfer(rho, rho_gspace)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (pw_gpu_producer_enabled()) CALL rho_gspace%ensure_host()
+#endif
          CASE default
             CALL cp_abort(__LOCATION__, &
                           "interpolator "// &
