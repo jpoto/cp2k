@@ -19,17 +19,21 @@ MODULE rs_pw_interface
                                               spline3_pbc_interp
    USE gaussian_gridlevels,             ONLY: gridlevel_info_type
    USE input_section_types,             ONLY: section_vals_val_get
+   USE iso_c_binding,                   ONLY: C_ASSOCIATED,&
+                                              C_LOC,&
+                                              C_SIZE_T
    USE kinds,                           ONLY: dp
-   USE pw_offload,                      ONLY: pw_offload_fused_enabled
-   USE iso_c_binding,                   ONLY: C_ASSOCIATED, C_LOC, C_SIZE_T
-   USE offload_api,                     ONLY: offload_device_alloc, offload_device_d2d, &
-                                             offload_device_d2h, offload_get_buffer_device_pointer
+   USE offload_api,                     ONLY: offload_device_alloc,&
+                                              offload_device_d2d,&
+                                              offload_device_d2h,&
+                                              offload_get_buffer_device_pointer
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
    USE pw_methods,                      ONLY: pw_axpy,&
                                               pw_copy,&
                                               pw_transfer,&
                                               pw_zero
+   USE pw_offload,                      ONLY: pw_offload_fused_enabled
    USE pw_pool_types,                   ONLY: pw_pool_p_type,&
                                               pw_pools_create_pws,&
                                               pw_pools_give_back_pws
@@ -108,9 +112,11 @@ CONTAINS
              rs_rho(1)%desc%border == 0 .AND. SIZE(rho%array) == rs_rho(1)%ngpts_local .AND. &
              pw_offload_fused_enabled()) THEN
             nbytes = INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T
-            IF (.NOT. C_ASSOCIATED(rho%device_data)) rho%device_data = offload_device_alloc(nbytes)
-            CALL offload_device_d2d(rho%device_data, offload_get_buffer_device_pointer(rs_rho(1)%buffer), nbytes)
-            rho%device_valid = .TRUE.
+            IF (C_ASSOCIATED(offload_get_buffer_device_pointer(rs_rho(1)%buffer))) THEN
+               IF (.NOT. C_ASSOCIATED(rho%device_data)) rho%device_data = offload_device_alloc(nbytes)
+               CALL offload_device_d2d(rho%device_data, offload_get_buffer_device_pointer(rs_rho(1)%buffer), nbytes)
+               rho%device_valid = .TRUE.
+            END IF
          END IF
 #endif
          CALL pw_transfer(rho, rho_gspace)
@@ -269,7 +275,5 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE potential_pw2rs
-
-
 
 END MODULE rs_pw_interface

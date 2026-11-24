@@ -21,11 +21,17 @@
 ! **************************************************************************************************
 MODULE pw_offload
 
-   USE iso_c_binding, ONLY: C_ASSOCIATED, C_DOUBLE, C_INT, C_LOC, C_NULL_PTR, C_PTR, C_SIZE_T
-   USE kinds, ONLY: dp
-   USE offload_api, ONLY: offload_device_alloc, offload_device_d2d, offload_device_d2h
-   USE pw_types, ONLY: pw_c1d_gs_type
-
+   USE iso_c_binding,                   ONLY: C_ASSOCIATED,&
+                                              C_DOUBLE,&
+                                              C_INT,&
+                                              C_LOC,&
+                                              C_PTR,&
+                                              C_SIZE_T
+   USE kinds,                           ONLY: dp
+   USE offload_api,                     ONLY: offload_device_alloc,&
+                                              offload_device_d2d,&
+                                              offload_device_d2h
+   USE pw_types,                        ONLY: pw_c1d_gs_type
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -57,7 +63,7 @@ MODULE pw_offload
          INTEGER(KIND=C_INT), VALUE :: n
       END SUBROUTINE pw_gpu_axpy_c1d_dev_c
 
-      FUNCTION pw_gpu_dot_c1d_dev_f(a, b, n) BIND(C, name="pw_gpu_dot_c1d_dev") RESULT(r)
+      FUNCTION pw_gpu_dot_c1d_dev_f(a, b, n) RESULT(r) BIND(C, name="pw_gpu_dot_c1d_dev")
          IMPORT :: C_DOUBLE, C_INT, C_PTR
          TYPE(C_PTR), VALUE :: a, b
          INTEGER(KIND=C_INT), VALUE :: n
@@ -70,6 +76,7 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Whether the device-only operations are available (accelerator + PW offload).
+!> \return ...
 ! **************************************************************************************************
    PURE FUNCTION pw_offload_available() RESULT(res)
       LOGICAL :: res
@@ -82,6 +89,8 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Device-only copy: dst_device <- src_device (no host traffic).
+!> \param dst ...
+!> \param src ...
 ! **************************************************************************************************
    SUBROUTINE pw_offload_copy_c1d(dst, src)
       TYPE(pw_c1d_gs_type), INTENT(INOUT) :: dst
@@ -89,7 +98,8 @@ CONTAINS
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
       INTEGER(KIND=C_SIZE_T) :: nbytes
       CPASSERT(src%device_valid)
-      IF (.NOT. ASSOCIATED(dst%array)) RETURN
+      CPASSERT(ASSOCIATED(dst%array))
+      CPASSERT(ASSOCIATED(src%array))
       CPASSERT(SIZE(dst%array) == SIZE(src%array))
       nbytes = INT(SIZE(dst%array), KIND=C_SIZE_T)*16_C_SIZE_T
       IF (nbytes <= 0) RETURN
@@ -105,6 +115,10 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Device-only axpy: y_device = a*x_device + b*y_device.
+!> \param y ...
+!> \param x ...
+!> \param a ...
+!> \param b ...
 ! **************************************************************************************************
    SUBROUTINE pw_offload_axpy_c1d(y, x, a, b)
       TYPE(pw_c1d_gs_type), INTENT(INOUT) :: y
@@ -112,10 +126,14 @@ CONTAINS
       REAL(KIND=dp), INTENT(IN) :: a, b
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
       CPASSERT(x%device_valid)
+      CPASSERT(ASSOCIATED(x%array))
+      CPASSERT(ASSOCIATED(y%array))
+      CPASSERT(SIZE(x%array) == SIZE(y%array))
+      CPASSERT(C_ASSOCIATED(x%device_data))
       CPASSERT(C_ASSOCIATED(y%device_data))
       CALL pw_gpu_axpy_c1d_dev_c(y%device_data, x%device_data, &
                                  REAL(a, KIND=C_DOUBLE), REAL(b, KIND=C_DOUBLE), &
-                                 INT(MIN(SIZE(y%array), SIZE(x%array)), KIND=C_INT))
+                                 INT(SIZE(y%array), KIND=C_INT))
       CALL y%mark_device_current()
 #else
       MARK_USED(y)
@@ -128,6 +146,8 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Device-only elementwise multiply: a_device *= b_device.
+!> \param a ...
+!> \param b ...
 ! **************************************************************************************************
    SUBROUTINE pw_offload_multiply_c1d(a, b)
       TYPE(pw_c1d_gs_type), INTENT(INOUT) :: a
@@ -146,6 +166,9 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Device-only reduction Re<conj(a)|b> over all points (raw sum on host).
+!> \param a ...
+!> \param b ...
+!> \return ...
 ! **************************************************************************************************
    FUNCTION pw_offload_dot_c1d(a, b) RESULT(res)
       TYPE(pw_c1d_gs_type), INTENT(IN) :: a, b
@@ -164,6 +187,8 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Reads the G=0 coefficient (first complex) of a device-resident array to the host.
+!> \param a ...
+!> \return ...
 ! **************************************************************************************************
    FUNCTION pw_offload_g0_c1d(a) RESULT(g0)
       TYPE(pw_c1d_gs_type), INTENT(IN) :: a
@@ -181,21 +206,21 @@ CONTAINS
 #endif
    END FUNCTION pw_offload_g0_c1d
 
-
-
-
 ! **************************************************************************************************
 !> \brief Single feature toggle for the fused device G-space pipeline (CP2K_PW_GPU_FUSED, default off).
+!> \return ...
 ! **************************************************************************************************
    LOGICAL FUNCTION pw_offload_fused_enabled()
-      CHARACTER(len=8) :: val
-      INTEGER :: status
+      CHARACTER(len=8)                                   :: val
+      INTEGER                                            :: status
+
       pw_offload_fused_enabled = .FALSE.
       CALL GET_ENVIRONMENT_VARIABLE("CP2K_PW_GPU_FUSED", val, STATUS=status)
       IF (status == 0) THEN
          val = ADJUSTL(val)
-         IF (LEN_TRIM(val) > 0) &
+         IF (LEN_TRIM(val) > 0) THEN
             pw_offload_fused_enabled = (val(1:1) == "1" .OR. val(1:1) == "T" .OR. val(1:1) == "t")
+         END IF
       END IF
    END FUNCTION pw_offload_fused_enabled
 

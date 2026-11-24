@@ -82,9 +82,6 @@ MODULE qs_ks_methods
    USE particle_types,                  ONLY: particle_type
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
-   USE pw_offload,                      ONLY: pw_offload_available, pw_offload_copy_c1d, &
-                                             pw_offload_fused_enabled, &
-                                             pw_offload_axpy_c1d
    USE pw_methods,                      ONLY: pw_axpy,&
                                               pw_copy,&
                                               pw_integral_ab,&
@@ -92,6 +89,10 @@ MODULE qs_ks_methods
                                               pw_scale,&
                                               pw_transfer,&
                                               pw_zero
+   USE pw_offload,                      ONLY: pw_offload_available,&
+                                              pw_offload_axpy_c1d,&
+                                              pw_offload_copy_c1d,&
+                                              pw_offload_fused_enabled
    USE pw_poisson_methods,              ONLY: pw_poisson_solve
    USE pw_poisson_types,                ONLY: pw_poisson_implicit,&
                                               pw_poisson_type
@@ -1593,7 +1594,6 @@ CONTAINS
       END IF
 
    END SUBROUTINE calc_rho_tot_gspace
-
 
 ! **************************************************************************************************
 !> \brief compute MO derivatives

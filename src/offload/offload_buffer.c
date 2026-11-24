@@ -164,7 +164,8 @@ void offload_buffer_d2h(offload_buffer *buffer, const int length) {
  ******************************************************************************/
 void *offload_device_malloc(size_t bytes) {
   void *memory = NULL;
-  if (0 == bytes) return NULL;
+  if (0 == bytes)
+    return NULL;
   offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMalloc(&memory, bytes);
@@ -178,7 +179,8 @@ void *offload_device_malloc(size_t bytes) {
  * \brief Free device-only memory.
  ******************************************************************************/
 void offload_device_free(void *device_memory) {
-  if (NULL == device_memory) return;
+  if (NULL == device_memory)
+    return;
 #if defined(__OFFLOAD)
   offloadFree(device_memory);
 #else
@@ -191,7 +193,8 @@ void offload_device_free(void *device_memory) {
  ******************************************************************************/
 void offload_device_h2d(void *device_memory, const void *host_memory,
                         size_t bytes) {
-  if (NULL == device_memory || NULL == host_memory || 0 == bytes) return;
+  if (NULL == device_memory || NULL == host_memory || 0 == bytes)
+    return;
   offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyHtoD(device_memory, host_memory, bytes);
@@ -205,7 +208,8 @@ void offload_device_h2d(void *device_memory, const void *host_memory,
  ******************************************************************************/
 void offload_device_d2h(void *host_memory, const void *device_memory,
                         size_t bytes) {
-  if (NULL == device_memory || NULL == host_memory || 0 == bytes) return;
+  if (NULL == device_memory || NULL == host_memory || 0 == bytes)
+    return;
   offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyDtoH(host_memory, device_memory, bytes);
@@ -219,7 +223,8 @@ void offload_device_d2h(void *host_memory, const void *device_memory,
  ******************************************************************************/
 void offload_device_d2d(void *dst_device, const void *src_device,
                         size_t bytes) {
-  if (NULL == dst_device || NULL == src_device || 0 == bytes) return;
+  if (NULL == dst_device || NULL == src_device || 0 == bytes)
+    return;
   offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyAsyncDtoD(dst_device, src_device, bytes, 0);

@@ -127,10 +127,10 @@ CONTAINS
             IF (pw%device_valid .AND. .NOT. pw%host_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
                IF (ASSOCIATED(pw%array)) THEN
                   IF (SIZE(pw%array) > 0) THEN
-               nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
-            ELSE
-               nbytes = 0_C_SIZE_T
-            END IF
+                     nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
+                  ELSE
+                     nbytes = 0_C_SIZE_T
+                  END IF
                   IF (nbytes > 0) CALL offload_device_d2h(C_LOC(pw%array), pw%device_data, nbytes)
                END IF
                pw%host_valid = .TRUE.

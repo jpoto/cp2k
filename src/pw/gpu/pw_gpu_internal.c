@@ -588,7 +588,8 @@ void pw_gpu_sfffc_dev(const double *zin_dev, double *dout_dev,
  ******************************************************************************/
 void pw_gpu_multiply_c1d_dev(double *a, const double *b, const int n) {
   assert(omp_get_num_threads() == 1);
-  if (n <= 0) return;
+  if (n <= 0)
+    return;
   offload_activate_chosen_device();
   pw_gpu_launch_multiply_c1d(a, b, n, stream);
   offloadStreamSynchronize(stream);
@@ -600,7 +601,8 @@ void pw_gpu_multiply_c1d_dev(double *a, const double *b, const int n) {
 void pw_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
                          const double b, const int n) {
   assert(omp_get_num_threads() == 1);
-  if (n <= 0) return;
+  if (n <= 0)
+    return;
   offload_activate_chosen_device();
   pw_gpu_launch_axpy_c1d(y, x, a, b, n, stream);
   offloadStreamSynchronize(stream);
@@ -612,9 +614,11 @@ void pw_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
 double pw_gpu_dot_c1d_dev(const double *a, const double *b, const int n) {
   static double *dot_dev = NULL;
   assert(omp_get_num_threads() == 1);
-  if (n <= 0) return 0.0;
+  if (n <= 0)
+    return 0.0;
   offload_activate_chosen_device();
-  if (dot_dev == NULL) offloadMalloc((void **)&dot_dev, sizeof(double));
+  if (dot_dev == NULL)
+    offloadMalloc((void **)&dot_dev, sizeof(double));
   offloadMemsetAsync(dot_dev, 0, sizeof(double), stream);
   pw_gpu_launch_dot_c1d(a, b, dot_dev, n, stream);
   offloadStreamSynchronize(stream);

@@ -368,19 +368,17 @@ CONTAINS
                IF (iop == 1) &
                   CPABORT("Operator ABS not implemented")
                #:if kind[1:]=="1d"
-#:if kind=="c1d" and space=="gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                  IF (fun%device_valid) THEN
-                     IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*REAL(pw_offload_g0_c1d(fun), KIND=dp)
-                  ELSE
-#endif
-#:endif
-                  IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
-#:if kind=="c1d" and space=="gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                  END IF
-#endif
-#:endif
+                  #:if kind=="c1d"
+                     IF (fun%pw_grid%have_g0) THEN
+                        IF (fun%device_valid) THEN
+                           total_fun = fun%pw_grid%vol*REAL(pw_offload_g0_c1d(fun), KIND=dp)
+                        ELSE
+                           total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
+                        END IF
+                     END IF
+                  #:else
+                     IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
+                  #:endif
                #:else
                   CPABORT("Reciprocal space integration for 3D grids not implemented!")
                #:endif
@@ -578,6 +576,7 @@ CONTAINS
 
             CALL timeset(routineN, handle)
             CALL pw2%invalidate_device()
+            CPASSERT(pw1%host_valid .OR. .NOT. pw1%device_valid)
 
             IF (pw1%pw_grid%spherical .neqv. pw2%pw_grid%spherical) &
                CPABORT("Both grids must be either spherical or non-spherical!")
@@ -759,6 +758,7 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
+            CPASSERT(pw1%host_valid .OR. .NOT. pw1%device_valid)
             CALL pw2%sync_host()
 
             my_alpha = 1.0_dp
@@ -987,15 +987,13 @@ CONTAINS
                      INTEGER                                            :: handle
 
                      CALL timeset(routineN, handle)
-#:if kind=="c1d" and kind2=="c1d" and space=="gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                     IF (pw1%device_valid .AND. pw2%device_valid) THEN
-                        CALL pw_gpu_multiply_device_c1d(pw1, pw2)
-                        CALL timestop(handle)
-                        RETURN
-                     END IF
-#endif
-#:endif
+                     #:if kind=="c1d" and kind2=="c1d" and space=="gs"
+                        IF (pw1%device_valid .AND. pw2%device_valid) THEN
+                           CALL pw_gpu_multiply_device_c1d(pw1, pw2)
+                           CALL timestop(handle)
+                           RETURN
+                        END IF
+                     #:endif
                      CALL pw1%sync_host()
 
                      IF (.NOT. ASSOCIATED(pw1%pw_grid, pw2%pw_grid)) &
@@ -1050,21 +1048,21 @@ CONTAINS
                      my_just_sum = .FALSE.
                      IF (PRESENT(just_sum)) my_just_sum = just_sum
 
-#:if kind=="c1d" and kind2=="c1d" and space=="gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                     IF (pw1%device_valid .AND. pw2%device_valid) THEN
-                        integral_value = pw_offload_dot_c1d(pw1, pw2)
-                        IF (pw1%pw_grid%grid_span == HALFSPACE) &
-                           integral_value = 2.0_dp*integral_value - &
-                              REAL(CONJG(pw_offload_g0_c1d(pw1))*pw_offload_g0_c1d(pw2), KIND=dp)
-                        IF (.NOT. my_just_sum) integral_value = integral_value*pw1%pw_grid%vol
-                        IF (.NOT. my_local_only .AND. pw1%pw_grid%para%mode == PW_MODE_DISTRIBUTED) &
-                           CALL pw1%pw_grid%para%group%sum(integral_value)
-                        CALL timestop(handle)
-                        RETURN
-                     END IF
-#endif
-#:endif
+                     #:if kind=="c1d" and kind2=="c1d" and space=="gs"
+                        IF (pw1%device_valid .AND. pw2%device_valid) THEN
+                           integral_value = pw_offload_dot_c1d(pw1, pw2)
+                           IF (pw1%pw_grid%grid_span == HALFSPACE) THEN
+                              integral_value = 2.0_dp*integral_value
+                              IF (pw1%pw_grid%have_g0) integral_value = integral_value - &
+                                                                 REAL(CONJG(pw_offload_g0_c1d(pw1))*pw_offload_g0_c1d(pw2), KIND=dp)
+                           END IF
+                           IF (.NOT. my_just_sum) integral_value = integral_value*pw1%pw_grid%vol
+                           IF (.NOT. my_local_only .AND. pw1%pw_grid%para%mode == PW_MODE_DISTRIBUTED) &
+                              CALL pw1%pw_grid%para%group%sum(integral_value)
+                           CALL timestop(handle)
+                           RETURN
+                        END IF
+                     #:endif
 
                      ! do standard sum
                      IF (loc_sumtype == do_standard_sum) THEN

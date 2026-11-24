@@ -55,7 +55,8 @@ void pw_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
  * \brief Launcher for pw_axpy_c1d kernel (y = a*x + b*y, complex).
  ******************************************************************************/
 void pw_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
-                            const double b, const int n, offloadStream_t stream);
+                            const double b, const int n,
+                            offloadStream_t stream);
 
 /*******************************************************************************
  * \brief Device reduction: out += sum Re(conj(a)*b) over n complex numbers.

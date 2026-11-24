@@ -165,7 +165,8 @@ __global__ void pw_axpy_c1d(double *y, const double *x, const double a,
 }
 
 void pw_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
-                            const double b, const int n, offloadStream_t stream) {
+                            const double b, const int n,
+                            offloadStream_t stream) {
   const int threadsPerBlock = 32;
   const int numBlocks = (n + threadsPerBlock - 1) / threadsPerBlock;
   pw_axpy_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(y, x, a, b, n);
@@ -186,18 +187,22 @@ __global__ void pw_dot_c1d_kernel(const double *a, const double *b, double *out,
   sh[t] = acc;
   __syncthreads();
   for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-    if (t < s) sh[t] += sh[t + s];
+    if (t < s)
+      sh[t] += sh[t + s];
     __syncthreads();
   }
-  if (t == 0) atomicAdd(out, sh[0]);
+  if (t == 0)
+    atomicAdd(out, sh[0]);
 }
 
 void pw_gpu_launch_dot_c1d(const double *a, const double *b, double *out,
                            const int n, offloadStream_t stream) {
   const int tpb = 256;
   int blocks = (n + tpb - 1) / tpb;
-  if (blocks > 4096) blocks = 4096;
-  if (blocks < 1) blocks = 1;
+  if (blocks > 4096)
+    blocks = 4096;
+  if (blocks < 1)
+    blocks = 1;
   pw_dot_c1d_kernel<<<blocks, tpb, 0, stream>>>(a, b, out, n);
 }
 

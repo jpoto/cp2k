@@ -24,18 +24,19 @@
 !> \author Benjamin G. Levine
 ! **************************************************************************************************
 MODULE pw_gpu
-   USE ISO_C_BINDING,                   ONLY: C_ASSOCIATED, C_DOUBLE, C_NULL_PTR, C_SIZE_T,&
+   USE ISO_C_BINDING,                   ONLY: C_ASSOCIATED,&
+                                              C_DOUBLE,&
                                               C_INT,&
                                               C_LOC,&
-                                              C_PTR
+                                              C_PTR,&
+                                              C_SIZE_T
    USE fft_tools,                       ONLY: &
         cube_transpose_1, cube_transpose_2, fft_scratch_sizes, fft_scratch_type, get_fft_scratch, &
         release_fft_scratch, x_to_yz, xz_to_yz, yz_to_x, yz_to_xz
    USE kinds,                           ONLY: dp
-   USE offload_api,                     ONLY: offload_device_alloc, offload_device_free, &
-                                             offload_device_h2d, offload_device_d2h
    USE mathconstants,                   ONLY: z_zero
    USE message_passing,                 ONLY: mp_cart_type
+   USE offload_api,                     ONLY: offload_device_alloc
    USE pw_grid_types,                   ONLY: FULLSPACE
    USE pw_types,                        ONLY: pw_c1d_gs_type,&
                                               pw_r3d_rs_type
@@ -901,16 +902,17 @@ CONTAINS
       CALL timestop(handle)
    END SUBROUTINE pw_gpu_sf
 
-
 ! **************************************************************************************************
 !> \brief device-pointer variant of pw_gpu_r3dc1d_3d: input and output are
-!!        already resident in the pw device mirrors (no data H2D/D2H).
+!>!        already resident in the pw device mirrors (no data H2D/D2H).
+!> \param pw1 ...
+!> \param pw2 ...
 ! **************************************************************************************************
    SUBROUTINE pw_gpu_r3dc1d_3d_dev(pw1, pw2)
       TYPE(pw_r3d_rs_type), INTENT(IN)                   :: pw1
       TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw2
 
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_gpu_r3dc1d_3d_dev'
+      CHARACTER(len=*), PARAMETER :: routineN = 'pw_gpu_r3dc1d_3d_dev'
 
       INTEGER                                            :: handle, l1, l2, l3, ngpts
       INTEGER, DIMENSION(:), POINTER                     :: npts
@@ -947,12 +949,14 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief device-pointer variant of pw_gpu_c1dr3d_3d.
+!> \param pw1 ...
+!> \param pw2 ...
 ! **************************************************************************************************
    SUBROUTINE pw_gpu_c1dr3d_3d_dev(pw1, pw2)
       TYPE(pw_c1d_gs_type), INTENT(IN)                   :: pw1
       TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw2
 
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_gpu_c1dr3d_3d_dev'
+      CHARACTER(len=*), PARAMETER :: routineN = 'pw_gpu_c1dr3d_3d_dev'
 
       INTEGER                                            :: handle, l1, l2, l3, ngpts, nmaps
       INTEGER, DIMENSION(:), POINTER                     :: npts
@@ -988,39 +992,16 @@ CONTAINS
       CALL timestop(handle)
    END SUBROUTINE pw_gpu_c1dr3d_3d_dev
 
-
-! **************************************************************************************************
-!> \brief Ensures a device mirror of a real-space pw array exists and is current.
-! **************************************************************************************************
-
-! **************************************************************************************************
-!> \brief Ensures the host copy of a real-space pw array is current.
-! **************************************************************************************************
-
-! **************************************************************************************************
-!> \brief Releases the device mirror of a real-space pw array.
-! **************************************************************************************************
-
-! **************************************************************************************************
-!> \brief Ensures a device mirror of a reciprocal-space pw array exists and is current.
-! **************************************************************************************************
-
-! **************************************************************************************************
-!> \brief Ensures the host copy of a reciprocal-space pw array is current.
-! **************************************************************************************************
-
-! **************************************************************************************************
-!> \brief Releases the device mirror of a reciprocal-space pw array.
-! **************************************************************************************************
-
-
 ! **************************************************************************************************
 !> \brief Allocates the device mirror of a real-space pw array without uploading.
+!> \param pw ...
 ! **************************************************************************************************
    SUBROUTINE pw_gpu_prepare_device_r3d(pw)
       TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
+
       INTEGER                                            :: n
       INTEGER(KIND=C_SIZE_T)                             :: nbytes
+
       n = SIZE(pw%array)
       IF (n == 0) RETURN
       nbytes = INT(n, KIND=C_SIZE_T)*8_C_SIZE_T
@@ -1029,25 +1010,30 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Allocates the device mirror of a reciprocal-space pw array without uploading.
+!> \param pw ...
 ! **************************************************************************************************
    SUBROUTINE pw_gpu_prepare_device_c1d(pw)
       TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw
+
       INTEGER                                            :: n
       INTEGER(KIND=C_SIZE_T)                             :: nbytes
+
       n = SIZE(pw%array)
       IF (n == 0) RETURN
       nbytes = INT(n, KIND=C_SIZE_T)*16_C_SIZE_T
       IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
    END SUBROUTINE pw_gpu_prepare_device_c1d
 
-
 ! **************************************************************************************************
 !> \brief Elementwise multiply of two device-resident reciprocal-space arrays (pw1 *= pw2).
-!!        Requires both device mirrors to be allocated and current.
+!>!        Requires both device mirrors to be allocated and current.
+!> \param pw1 ...
+!> \param pw2 ...
 ! **************************************************************************************************
    SUBROUTINE pw_gpu_multiply_device_c1d(pw1, pw2)
       TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw1
       TYPE(pw_c1d_gs_type), INTENT(IN)                   :: pw2
+
       INTERFACE
          SUBROUTINE pw_gpu_multiply_c1d_dev_c(a, b, n) BIND(C, name="pw_gpu_multiply_c1d_dev")
             IMPORT :: C_INT, C_PTR
@@ -1055,6 +1041,7 @@ CONTAINS
             INTEGER(KIND=C_INT), VALUE                  :: n
          END SUBROUTINE pw_gpu_multiply_c1d_dev_c
       END INTERFACE
+
       CPASSERT(C_ASSOCIATED(pw1%device_data))
       CPASSERT(C_ASSOCIATED(pw2%device_data))
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
@@ -1064,12 +1051,6 @@ CONTAINS
       CPABORT("Compiled without pw offloading.")
 #endif
    END SUBROUTINE pw_gpu_multiply_device_c1d
-
-
-! **************************************************************************************************
-!> \brief Device axpy on two device-resident reciprocal-space arrays: y = a*x + b*y.
-! **************************************************************************************************
-
 
 ! **************************************************************************************************
 !> \brief Device reduction of Re(conj(pw1)*pw2) over all points (raw sum).

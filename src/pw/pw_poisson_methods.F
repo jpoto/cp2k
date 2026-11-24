@@ -563,35 +563,39 @@ CONTAINS
                   ELSE
                      influence_fn = poisson_env%green_fft%influence_fn
                   END IF
-#:if kindd=="c1d_gs" and kindv=="c1d_gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                  ! M5: device-only Poisson reciprocal chain (no host copies) when the
-                  ! density is already device-resident (FULLSPACE, no aux density).
-                  IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
-                      .AND. .NOT. PRESENT(h_stress) &
-                      .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
-                     CALL influence_fn%ensure_device()
-                     CALL pw_offload_copy_c1d(rhog, density)
-                     CALL pw_offload_multiply_c1d(rhog, influence_fn)
-                     CALL pw_offload_copy_c1d(vhartree, rhog)
-                     CALL vhartree%ensure_host()
-                  ELSE
-#endif
-#:endif
-                  CALL pw_transfer(density, rhog)
-                  IF (PRESENT(aux_density)) THEN
-                     CALL pw_transfer(aux_density, rhog_aux)
-                  END IF
-                  CALL pw_multiply_with(rhog, influence_fn)
-                  IF (PRESENT(aux_density)) THEN
-                     CALL pw_multiply_with(rhog_aux, influence_fn)
-                  END IF
-                  CALL pw_transfer(rhog, vhartree)
-#:if kindd=="c1d_gs" and kindv=="c1d_gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                  END IF
-#endif
-#:endif
+                  #:if kindd=="c1d_gs" and kindv=="c1d_gs"
+                     ! M5: device-only Poisson reciprocal chain (no host copies) when the
+                     ! density is already device-resident (FULLSPACE, no aux density).
+                     IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                         .AND. .NOT. PRESENT(h_stress) &
+                         .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                        CALL influence_fn%ensure_device()
+                        CALL pw_offload_copy_c1d(rhog, density)
+                        CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                        CALL pw_offload_copy_c1d(vhartree, rhog)
+                        CALL vhartree%ensure_host()
+                     ELSE
+                        CALL pw_transfer(density, rhog)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_transfer(aux_density, rhog_aux)
+                        END IF
+                        CALL pw_multiply_with(rhog, influence_fn)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_multiply_with(rhog_aux, influence_fn)
+                        END IF
+                        CALL pw_transfer(rhog, vhartree)
+                     END IF
+                  #:else
+                     CALL pw_transfer(density, rhog)
+                     IF (PRESENT(aux_density)) THEN
+                        CALL pw_transfer(aux_density, rhog_aux)
+                     END IF
+                     CALL pw_multiply_with(rhog, influence_fn)
+                     IF (PRESENT(aux_density)) THEN
+                        CALL pw_multiply_with(rhog_aux, influence_fn)
+                     END IF
+                     CALL pw_transfer(rhog, vhartree)
+                  #:endif
                   IF (PRESENT(ehartree)) THEN
                      IF (PRESENT(aux_density)) THEN
                         #:if kindd==kindv
@@ -811,7 +815,6 @@ CONTAINS
                   ELSE
                      influence_fn = poisson_env%green_fft%influence_fn
                   END IF
-                  CALL influence_fn%ensure_device()
                   CALL pw_multiply_with(rhog, influence_fn)
                   IF (PRESENT(aux_density)) THEN
                      CALL pw_multiply_with(rhog_aux, influence_fn)
@@ -997,33 +1000,37 @@ CONTAINS
                      ELSE
                         influence_fn = poisson_env%green_fft%influence_fn
                      END IF
-#:if kindd=="c1d_gs" and kindv=="c1d_gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                     IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
-                         .AND. .NOT. PRESENT(h_stress) &
-                         .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
-                        CALL influence_fn%ensure_device()
-                        CALL pw_offload_copy_c1d(rhog, density)
-                        CALL pw_offload_multiply_c1d(rhog, influence_fn)
-                        CALL pw_offload_copy_c1d(vhartree, rhog)
-                        CALL vhartree%ensure_host()
-                     ELSE
-#endif
-#:endif
-                     CALL pw_transfer(density, rhog)
-                     IF (PRESENT(aux_density)) THEN
-                        CALL pw_transfer(aux_density, rhog_aux)
-                     END IF
-                     CALL pw_multiply_with(rhog, influence_fn)
-                     IF (PRESENT(aux_density)) THEN
-                        CALL pw_multiply_with(rhog_aux, influence_fn)
-                     END IF
-                     CALL pw_transfer(rhog, vhartree)
-#:if kindd=="c1d_gs" and kindv=="c1d_gs"
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
-                     END IF
-#endif
-#:endif
+                     #:if kindd=="c1d_gs" and kindv=="c1d_gs"
+                        IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                            .AND. .NOT. PRESENT(h_stress) &
+                            .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                           CALL influence_fn%ensure_device()
+                           CALL pw_offload_copy_c1d(rhog, density)
+                           CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                           CALL pw_offload_copy_c1d(vhartree, rhog)
+                           CALL vhartree%ensure_host()
+                        ELSE
+                           CALL pw_transfer(density, rhog)
+                           IF (PRESENT(aux_density)) THEN
+                              CALL pw_transfer(aux_density, rhog_aux)
+                           END IF
+                           CALL pw_multiply_with(rhog, influence_fn)
+                           IF (PRESENT(aux_density)) THEN
+                              CALL pw_multiply_with(rhog_aux, influence_fn)
+                           END IF
+                           CALL pw_transfer(rhog, vhartree)
+                        END IF
+                     #:else
+                        CALL pw_transfer(density, rhog)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_transfer(aux_density, rhog_aux)
+                        END IF
+                        CALL pw_multiply_with(rhog, influence_fn)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_multiply_with(rhog_aux, influence_fn)
+                        END IF
+                        CALL pw_transfer(rhog, vhartree)
+                     #:endif
                      IF (PRESENT(ehartree)) THEN
                         IF (PRESENT(aux_density)) THEN
                            #:if kindd==kindv
