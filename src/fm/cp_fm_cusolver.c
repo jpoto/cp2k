@@ -250,7 +250,48 @@ typedef struct {
 #else
   cal_comm_t cal_comm;
 #endif
+  // Cached, grow-on-demand eigensolver workspaces (reused across calls to
+  // avoid per-diagonalization cudaMalloc/cudaFree churn). Owned by this
+  // context, hence bound to ctx->device.
+  void *work_dev;
+  size_t work_dev_cap;
+  void *work_host;
+  size_t work_host_cap;
+  void *mat_A;
+  size_t mat_A_cap;
+  void *mat_B;
+  size_t mat_B_cap;
+  void *mat_Z;
+  size_t mat_Z_cap;
+  void *eval;
+  size_t eval_cap;
+  void *info;
+  size_t info_cap;
 } cp_fm_cusolver_context;
+
+/*******************************************************************************
+ * \brief Grow a cached device buffer on demand (no-op if already big enough).
+ ******************************************************************************/
+static void ensure_dev_buf(void **p, size_t *cap, const size_t need) {
+  if (need > *cap) {
+    if (*p != NULL)
+      CUDA_CHECK(cudaFree(*p));
+    CUDA_CHECK(cudaMalloc(p, need));
+    *cap = need;
+  }
+}
+
+/*******************************************************************************
+ * \brief Grow a cached pinned-host buffer on demand.
+ ******************************************************************************/
+static void ensure_host_buf(void **p, size_t *cap, const size_t need) {
+  if (need > *cap) {
+    if (*p != NULL)
+      CUDA_CHECK(cudaFreeHost(*p));
+    CUDA_CHECK(cudaMallocHost(p, need));
+    *cap = need;
+  }
+}
 
 /*******************************************************************************
  * \brief Lazily initialize the execution resources for a BLACS environment.
@@ -332,6 +373,21 @@ void cp_fm_cusolver_context_destroy(void **context) {
   int device;
   CUDA_CHECK(cudaGetDevice(&device));
   CUDA_CHECK(cudaSetDevice(ctx->device));
+  // Release cached eigensolver workspaces.
+  if (ctx->work_dev)
+    CUDA_CHECK(cudaFree(ctx->work_dev));
+  if (ctx->mat_A)
+    CUDA_CHECK(cudaFree(ctx->mat_A));
+  if (ctx->mat_B)
+    CUDA_CHECK(cudaFree(ctx->mat_B));
+  if (ctx->mat_Z)
+    CUDA_CHECK(cudaFree(ctx->mat_Z));
+  if (ctx->eval)
+    CUDA_CHECK(cudaFree(ctx->eval));
+  if (ctx->info)
+    CUDA_CHECK(cudaFree(ctx->info));
+  if (ctx->work_host)
+    CUDA_CHECK(cudaFreeHost(ctx->work_host));
   CUSOLVER_CHECK(cusolverMpDestroyGrid(ctx->grid));
   CUSOLVER_CHECK(cusolverMpDestroy(ctx->handle));
   CUDA_CHECK(cudaStreamDestroy(ctx->stream));
@@ -391,27 +447,33 @@ void cp_fm_diag_cusolver(void **context, const int fortran_comm,
       &work_host_size));
 
   double *work_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&work_dev, work_dev_size));
+  ensure_dev_buf(&ctx->work_dev, &ctx->work_dev_cap, work_dev_size);
+  work_dev = (double *)ctx->work_dev;
 
   double *work_host = NULL;
-  CUDA_CHECK(cudaMallocHost((void **)&work_host, work_host_size));
+  ensure_host_buf(&ctx->work_host, &ctx->work_host_cap, work_host_size);
+  work_host = (double *)ctx->work_host;
 
   // Upload input matrix.
   const size_t matrix_local_size = ldA * nq * sizeof(double);
   double *matrix_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&matrix_dev, matrix_local_size));
+  ensure_dev_buf(&ctx->mat_A, &ctx->mat_A_cap, matrix_local_size);
+  matrix_dev = (double *)ctx->mat_A;
   CUDA_CHECK(cudaMemcpyAsync(matrix_dev, matrix, matrix_local_size,
                              cudaMemcpyHostToDevice, stream));
 
   // Allocate result buffers.
   int *info_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&info_dev, sizeof(int)));
+  ensure_dev_buf(&ctx->info, &ctx->info_cap, sizeof(int));
+  info_dev = (int *)ctx->info;
 
   double *eigenvectors_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&eigenvectors_dev, matrix_local_size));
+  ensure_dev_buf(&ctx->mat_Z, &ctx->mat_Z_cap, matrix_local_size);
+  eigenvectors_dev = (double *)ctx->mat_Z;
 
   double *eigenvalues_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&eigenvalues_dev, n * sizeof(double)));
+  ensure_dev_buf(&ctx->eval, &ctx->eval_cap, n * sizeof(double));
+  eigenvalues_dev = (double *)ctx->eval;
 
   // Call solver.
   CUSOLVER_CHECK(
@@ -440,13 +502,14 @@ void cp_fm_diag_cusolver(void **context, const int fortran_comm,
   // Wait for download to finish.
   CUDA_CHECK(cudaStreamSynchronize(stream));
 
-  // Free buffers.
-  CUDA_CHECK(cudaFree(matrix_dev));
-  CUDA_CHECK(cudaFree(info_dev));
-  CUDA_CHECK(cudaFree(eigenvectors_dev));
-  CUDA_CHECK(cudaFree(eigenvalues_dev));
-  CUDA_CHECK(cudaFree(work_dev));
-  CUDA_CHECK(cudaFreeHost(work_host));
+  // Workspaces are cached in ctx and reused across calls (no free here).
+  // Bump pointers so unused-variable warnings don't fire.
+  (void)work_dev;
+  (void)work_host;
+  (void)matrix_dev;
+  (void)info_dev;
+  (void)eigenvectors_dev;
+  (void)eigenvalues_dev;
 
   // Destroy matrix descriptor.
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(cusolvermp_matrix_desc));
@@ -515,11 +578,13 @@ void cp_fm_diag_cusolver_sygvd(void **context, const int fortran_comm,
   CUSOLVER_CHECK(cusolverMpCreateMatrixDesc(&descrZ, grid, data_type, n, n,
                                             mb_a, nb_a, rsrc_a, csrc_a, ldA));
 
-  // Allocate device memory for matrices
+  // Allocate (cached) device memory for matrices
   double *dev_A = NULL, *dev_B = NULL;
   size_t matrix_local_size = ldA * nq_a * sizeof(double);
-  CUDA_CHECK(cudaMalloc((void **)&dev_A, matrix_local_size));
-  CUDA_CHECK(cudaMalloc((void **)&dev_B, matrix_local_size));
+  ensure_dev_buf(&ctx->mat_A, &ctx->mat_A_cap, matrix_local_size);
+  ensure_dev_buf(&ctx->mat_B, &ctx->mat_B_cap, matrix_local_size);
+  dev_A = (double *)ctx->mat_A;
+  dev_B = (double *)ctx->mat_B;
 
   // Copy matrices from host to device
   CUDA_CHECK(cudaMemcpyAsync(dev_A, aMatrix, matrix_local_size,
@@ -527,10 +592,12 @@ void cp_fm_diag_cusolver_sygvd(void **context, const int fortran_comm,
   CUDA_CHECK(cudaMemcpyAsync(dev_B, bMatrix, matrix_local_size,
                              cudaMemcpyHostToDevice, stream));
 
-  // Allocate device memory for eigenvalues and eigenvectors
+  // Allocate (cached) device memory for eigenvalues and eigenvectors
   double *dev_Z = NULL, *eigenvalues_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&dev_Z, matrix_local_size));
-  CUDA_CHECK(cudaMalloc((void **)&eigenvalues_dev, n * sizeof(double)));
+  ensure_dev_buf(&ctx->mat_Z, &ctx->mat_Z_cap, matrix_local_size);
+  ensure_dev_buf(&ctx->eval, &ctx->eval_cap, n * sizeof(double));
+  dev_Z = (double *)ctx->mat_Z;
+  eigenvalues_dev = (double *)ctx->eval;
 
   // Query workspace size
   size_t work_dev_size = 0, work_host_size = 0;
@@ -547,12 +614,15 @@ void cp_fm_diag_cusolver_sygvd(void **context, const int fortran_comm,
   }
 
   void *work_dev = NULL, *work_host = NULL;
-  CUDA_CHECK(cudaMalloc(&work_dev, work_dev_size));
-  CUDA_CHECK(cudaMallocHost(&work_host, work_host_size));
+  ensure_dev_buf(&ctx->work_dev, &ctx->work_dev_cap, work_dev_size);
+  ensure_host_buf(&ctx->work_host, &ctx->work_host_cap, work_host_size);
+  work_dev = ctx->work_dev;
+  work_host = ctx->work_host;
 
   // Allocate and initialize device memory for info
   int *info_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&info_dev, sizeof(int)));
+  ensure_dev_buf(&ctx->info, &ctx->info_cap, sizeof(int));
+  info_dev = (int *)ctx->info;
   CUDA_CHECK(cudaMemset(info_dev, 0, sizeof(int)));
 
   // Call cusolverMpSygvd
@@ -598,14 +668,14 @@ void cp_fm_diag_cusolver_sygvd(void **context, const int fortran_comm,
   // Wait for copy to finish
   CUDA_CHECK(cudaStreamSynchronize(stream));
 
-  // Clean up resources
-  CUDA_CHECK(cudaFree(dev_A));
-  CUDA_CHECK(cudaFree(dev_B));
-  CUDA_CHECK(cudaFree(dev_Z));
-  CUDA_CHECK(cudaFree(eigenvalues_dev));
-  CUDA_CHECK(cudaFree(info_dev));
-  CUDA_CHECK(cudaFree(work_dev));
-  CUDA_CHECK(cudaFreeHost(work_host));
+  // Workspaces are cached in ctx (no free here).
+  (void)dev_A;
+  (void)dev_B;
+  (void)dev_Z;
+  (void)eigenvalues_dev;
+  (void)info_dev;
+  (void)work_dev;
+  (void)work_host;
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(descrA));
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(descrB));
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(descrZ));
@@ -669,8 +739,10 @@ void cp_cfm_diag_cusolver_hegvd(
 
   cuDoubleComplex *dev_A = NULL, *dev_B = NULL;
   size_t matrix_local_size = ldA * nq_a * sizeof(cuDoubleComplex);
-  CUDA_CHECK(cudaMalloc((void **)&dev_A, matrix_local_size));
-  CUDA_CHECK(cudaMalloc((void **)&dev_B, matrix_local_size));
+  ensure_dev_buf(&ctx->mat_A, &ctx->mat_A_cap, matrix_local_size);
+  ensure_dev_buf(&ctx->mat_B, &ctx->mat_B_cap, matrix_local_size);
+  dev_A = (cuDoubleComplex *)ctx->mat_A;
+  dev_B = (cuDoubleComplex *)ctx->mat_B;
 
   CUDA_CHECK(cudaMemcpyAsync(dev_A, aMatrix, matrix_local_size,
                              cudaMemcpyHostToDevice, stream));
@@ -679,8 +751,10 @@ void cp_cfm_diag_cusolver_hegvd(
 
   cuDoubleComplex *dev_Z = NULL;
   double *eigenvalues_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&dev_Z, matrix_local_size));
-  CUDA_CHECK(cudaMalloc((void **)&eigenvalues_dev, n * sizeof(double)));
+  ensure_dev_buf(&ctx->mat_Z, &ctx->mat_Z_cap, matrix_local_size);
+  ensure_dev_buf(&ctx->eval, &ctx->eval_cap, n * sizeof(double));
+  dev_Z = (cuDoubleComplex *)ctx->mat_Z;
+  eigenvalues_dev = (double *)ctx->eval;
 
   size_t work_dev_size = 0, work_host_size = 0;
   const int64_t ia = 1, ja = 1, ib = 1, jb = 1, iz = 1, jz = 1;
@@ -696,11 +770,14 @@ void cp_cfm_diag_cusolver_hegvd(
   }
 
   void *work_dev = NULL, *work_host = NULL;
-  CUDA_CHECK(cudaMalloc(&work_dev, work_dev_size));
-  CUDA_CHECK(cudaMallocHost(&work_host, work_host_size));
+  ensure_dev_buf(&ctx->work_dev, &ctx->work_dev_cap, work_dev_size);
+  ensure_host_buf(&ctx->work_host, &ctx->work_host_cap, work_host_size);
+  work_dev = ctx->work_dev;
+  work_host = ctx->work_host;
 
   int *info_dev = NULL;
-  CUDA_CHECK(cudaMalloc((void **)&info_dev, sizeof(int)));
+  ensure_dev_buf(&ctx->info, &ctx->info_cap, sizeof(int));
+  info_dev = (int *)ctx->info;
   CUDA_CHECK(cudaMemset(info_dev, 0, sizeof(int)));
 
   cusolverStatus_t status_sygvd = cusolverMpSygvd(
@@ -742,13 +819,14 @@ void cp_cfm_diag_cusolver_hegvd(
 
   CUDA_CHECK(cudaStreamSynchronize(stream));
 
-  CUDA_CHECK(cudaFree(dev_A));
-  CUDA_CHECK(cudaFree(dev_B));
-  CUDA_CHECK(cudaFree(dev_Z));
-  CUDA_CHECK(cudaFree(eigenvalues_dev));
-  CUDA_CHECK(cudaFree(info_dev));
-  CUDA_CHECK(cudaFree(work_dev));
-  CUDA_CHECK(cudaFreeHost(work_host));
+  // Workspaces are cached in ctx (no free here).
+  (void)dev_A;
+  (void)dev_B;
+  (void)dev_Z;
+  (void)eigenvalues_dev;
+  (void)info_dev;
+  (void)work_dev;
+  (void)work_host;
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(descrA));
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(descrB));
   CUSOLVER_CHECK(cusolverMpDestroyMatrixDesc(descrZ));
