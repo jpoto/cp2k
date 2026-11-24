@@ -1812,7 +1812,8 @@ void fft_gpu_cfffg_dev(const double *din_dev, double *zout_dev,
   // COMPLEX result stays on the device.
   offloadMemcpyAsyncDtoD(zout_dev, buffer_dev_1, 2 * sizeof(double) * ngpts,
                          stream);
-  offloadStreamSynchronize(stream);
+  // No per-op sync: the result stays on the (blocking) stream and is ordered
+  // before the caller's synchronous D2H / subsequent same-stream kernels.
 #else
   (void)din_dev;
   (void)zout_dev;
@@ -1853,7 +1854,7 @@ void fft_gpu_sfffc_dev(const double *zin_dev, double *dout_dev,
 
   // REAL result stays on the device.
   offloadMemcpyAsyncDtoD(dout_dev, buffer_dev_1, buffer_size / 2, stream);
-  offloadStreamSynchronize(stream);
+  // No per-op sync (see fft_gpu_cfffg_dev): ordered via the caller's copy.
 #else
   (void)zin_dev;
   (void)dout_dev;
@@ -1875,7 +1876,8 @@ void fft_gpu_multiply_c1d_dev(double *a, const double *b, const int n) {
   }
   offload_activate_chosen_device();
   fft_gpu_launch_multiply_c1d(a, b, n, stream);
-  offloadStreamSynchronize(stream);
+  // No per-op sync: result is consumed by another op on this stream or by a
+  // synchronous copy (device-wide D2D / D2H) in pw_offload.
 #else
   (void)a;
   (void)b;
@@ -1894,7 +1896,7 @@ void fft_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
   }
   offload_activate_chosen_device();
   fft_gpu_launch_axpy_c1d(y, x, a, b, n, stream);
-  offloadStreamSynchronize(stream);
+  // No per-op sync (see fft_gpu_multiply_c1d_dev).
 #else
   (void)y;
   (void)x;

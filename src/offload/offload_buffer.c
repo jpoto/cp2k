@@ -161,18 +161,20 @@ void offload_buffer_d2h(offload_buffer *buffer, const int length) {
 
 /*******************************************************************************
  * \brief Allocate device-only memory (no host mirror).
+ *
+ * Uses the device mempool (same as offload_buffer) so that repeated
+ * allocate/free of device-only buffers (e.g. the pw device mirrors) reuse
+ * cached chunks instead of hitting cudaMalloc/cudaFree every time.
  ******************************************************************************/
 void *offload_device_malloc(size_t bytes) {
-  void *memory = NULL;
   if (0 == bytes)
     return NULL;
   offload_activate_chosen_device();
 #if defined(__OFFLOAD)
-  offloadMalloc(&memory, bytes);
+  return offload_mempool_device_malloc(bytes);
 #else
-  memory = malloc(bytes);
+  return malloc(bytes);
 #endif
-  return memory;
 }
 
 /*******************************************************************************
@@ -182,7 +184,7 @@ void offload_device_free(void *device_memory) {
   if (NULL == device_memory)
     return;
 #if defined(__OFFLOAD)
-  offloadFree(device_memory);
+  offload_mempool_device_free(device_memory);
 #else
   free(device_memory);
 #endif
