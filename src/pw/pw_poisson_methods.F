@@ -37,10 +37,11 @@ MODULE pw_poisson_methods
                                WAVELET2D, &
                                WAVELET3D, &
                                ps_wavelet_type
-   USE pw_grid_types, ONLY: pw_grid_type
+   USE pw_grid_types, ONLY: HALFSPACE, pw_grid_type
    USE pw_grids, ONLY: pw_grid_compare, &
                        pw_grid_release, &
                        pw_grid_retain
+   USE pw_offload, ONLY: pw_offload_copy_c1d, pw_offload_multiply_c1d
    USE pw_methods, ONLY: pw_copy, &
                          pw_derive, &
                          pw_integral_ab, &
@@ -557,20 +558,44 @@ CONTAINS
                SELECT CASE (poisson_env%green_fft%method)
                CASE (PERIODIC3D, ANALYTIC2D, ANALYTIC1D, ANALYTIC0D, MT2D, MT1D, MT0D, MULTIPOLE0D)
 
-                  CALL pw_transfer(density, rhog)
-                  IF (PRESENT(aux_density)) THEN
-                     CALL pw_transfer(aux_density, rhog_aux)
-                  END IF
                   IF (PRESENT(greenfn)) THEN
                      influence_fn = greenfn
                   ELSE
                      influence_fn = poisson_env%green_fft%influence_fn
                   END IF
-                  CALL pw_multiply_with(rhog, influence_fn)
-                  IF (PRESENT(aux_density)) THEN
-                     CALL pw_multiply_with(rhog_aux, influence_fn)
-                  END IF
-                  CALL pw_transfer(rhog, vhartree)
+                  #:if kindd=="c1d_gs" and kindv=="c1d_gs"
+                     ! M5: device-only Poisson reciprocal chain (no host copies) when the
+                     ! density is already device-resident (FULLSPACE, no aux density).
+                     IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                         .AND. .NOT. PRESENT(h_stress) &
+                         .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                        CALL influence_fn%ensure_device()
+                        CALL pw_offload_copy_c1d(rhog, density)
+                        CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                        CALL pw_offload_copy_c1d(vhartree, rhog)
+                        CALL vhartree%ensure_host()
+                     ELSE
+                        CALL pw_transfer(density, rhog)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_transfer(aux_density, rhog_aux)
+                        END IF
+                        CALL pw_multiply_with(rhog, influence_fn)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_multiply_with(rhog_aux, influence_fn)
+                        END IF
+                        CALL pw_transfer(rhog, vhartree)
+                     END IF
+                  #:else
+                     CALL pw_transfer(density, rhog)
+                     IF (PRESENT(aux_density)) THEN
+                        CALL pw_transfer(aux_density, rhog_aux)
+                     END IF
+                     CALL pw_multiply_with(rhog, influence_fn)
+                     IF (PRESENT(aux_density)) THEN
+                        CALL pw_multiply_with(rhog_aux, influence_fn)
+                     END IF
+                     CALL pw_transfer(rhog, vhartree)
+                  #:endif
                   IF (PRESENT(ehartree)) THEN
                      IF (PRESENT(aux_density)) THEN
                         #:if kindd==kindv
@@ -970,20 +995,42 @@ CONTAINS
                   SELECT CASE (poisson_env%green_fft%method)
                   CASE (PERIODIC3D, ANALYTIC2D, ANALYTIC1D, ANALYTIC0D, MT2D, MT1D, MT0D, MULTIPOLE0D)
 
-                     CALL pw_transfer(density, rhog)
-                     IF (PRESENT(aux_density)) THEN
-                        CALL pw_transfer(aux_density, rhog_aux)
-                     END IF
                      IF (PRESENT(greenfn)) THEN
                         influence_fn = greenfn
                      ELSE
                         influence_fn = poisson_env%green_fft%influence_fn
                      END IF
-                     CALL pw_multiply_with(rhog, influence_fn)
-                     IF (PRESENT(aux_density)) THEN
-                        CALL pw_multiply_with(rhog_aux, influence_fn)
-                     END IF
-                     CALL pw_transfer(rhog, vhartree)
+                     #:if kindd=="c1d_gs" and kindv=="c1d_gs"
+                        IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
+                            .AND. .NOT. PRESENT(h_stress) &
+                            .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                           CALL influence_fn%ensure_device()
+                           CALL pw_offload_copy_c1d(rhog, density)
+                           CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                           CALL pw_offload_copy_c1d(vhartree, rhog)
+                           CALL vhartree%ensure_host()
+                        ELSE
+                           CALL pw_transfer(density, rhog)
+                           IF (PRESENT(aux_density)) THEN
+                              CALL pw_transfer(aux_density, rhog_aux)
+                           END IF
+                           CALL pw_multiply_with(rhog, influence_fn)
+                           IF (PRESENT(aux_density)) THEN
+                              CALL pw_multiply_with(rhog_aux, influence_fn)
+                           END IF
+                           CALL pw_transfer(rhog, vhartree)
+                        END IF
+                     #:else
+                        CALL pw_transfer(density, rhog)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_transfer(aux_density, rhog_aux)
+                        END IF
+                        CALL pw_multiply_with(rhog, influence_fn)
+                        IF (PRESENT(aux_density)) THEN
+                           CALL pw_multiply_with(rhog_aux, influence_fn)
+                        END IF
+                        CALL pw_transfer(rhog, vhartree)
+                     #:endif
                      IF (PRESENT(ehartree)) THEN
                         IF (PRESENT(aux_density)) THEN
                            #:if kindd==kindv

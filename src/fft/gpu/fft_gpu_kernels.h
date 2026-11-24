@@ -45,6 +45,25 @@ void fft_gpu_launch_scatter(double *c, const double *pwcc, const double scale,
                             const int ngpts, const int nmaps,
                             const int *ghatmap, offloadStream_t stream);
 
+/*******************************************************************************
+ * \brief Launcher for pw_multiply_c1d kernel (elementwise complex a *= b).
+ ******************************************************************************/
+void fft_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
+                                 offloadStream_t stream);
+
+/*******************************************************************************
+ * \brief Launcher for pw_axpy_c1d kernel (y = a*x + b*y, complex).
+ ******************************************************************************/
+void fft_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
+                             const double b, const int n,
+                             offloadStream_t stream);
+
+/*******************************************************************************
+ * \brief Device reduction: out += sum Re(conj(a)*b) over n complex numbers.
+ ******************************************************************************/
+void fft_gpu_launch_dot_c1d(const double *a, const double *b, double *out,
+                            const int n, offloadStream_t stream);
+
 #ifdef __cplusplus
 }
 #endif

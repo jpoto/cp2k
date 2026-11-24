@@ -19,13 +19,21 @@ MODULE rs_pw_interface
                                               spline3_pbc_interp
    USE gaussian_gridlevels,             ONLY: gridlevel_info_type
    USE input_section_types,             ONLY: section_vals_val_get
+   USE iso_c_binding,                   ONLY: C_ASSOCIATED,&
+                                              C_LOC,&
+                                              C_SIZE_T
    USE kinds,                           ONLY: dp
+   USE offload_api,                     ONLY: offload_device_alloc,&
+                                              offload_device_d2d,&
+                                              offload_device_d2h,&
+                                              offload_get_buffer_device_pointer
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
    USE pw_methods,                      ONLY: pw_axpy,&
                                               pw_copy,&
                                               pw_transfer,&
                                               pw_zero
+   USE pw_offload,                      ONLY: pw_offload_fused_enabled
    USE pw_pool_types,                   ONLY: pw_pool_p_type,&
                                               pw_pools_create_pws,&
                                               pw_pools_give_back_pws
@@ -72,6 +80,7 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'density_rs2pw'
 
       INTEGER                                            :: handle, igrid_level, interp_kind
+      INTEGER(KIND=C_SIZE_T)                             :: nbytes
       TYPE(gridlevel_info_type), POINTER                 :: gridlevel_info
       TYPE(pw_c1d_gs_type), ALLOCATABLE, DIMENSION(:)    :: mgrid_gspace
       TYPE(pw_pool_p_type), DIMENSION(:), POINTER        :: pw_pools
@@ -93,9 +102,41 @@ CONTAINS
 
       IF (gridlevel_info%ngrid_levels == 1) THEN
          CALL transfer_rs2pw(rs_rho(1), rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+         ! Grid -> device producer: the collocate result already lives in the
+         ! realspace grid's device buffer. Keep it on the device (device->device)
+         ! so the following FFT can skip its host->device upload. Only valid when
+         ! the rs->pw mapping is a plain copy (single grid, non-distributed,
+         ! no border, equal sizes); otherwise the host path is used.
+         IF (.NOT. rs_rho(1)%desc%distributed .AND. .NOT. rs_rho(1)%desc%parallel .AND. &
+             rs_rho(1)%desc%border == 0 .AND. SIZE(rho%array) == rs_rho(1)%ngpts_local .AND. &
+             pw_offload_fused_enabled()) THEN
+            nbytes = INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T
+            IF (C_ASSOCIATED(offload_get_buffer_device_pointer(rs_rho(1)%buffer))) THEN
+               IF (.NOT. C_ASSOCIATED(rho%device_data)) rho%device_data = offload_device_alloc(nbytes)
+               CALL offload_device_d2d(rho%device_data, offload_get_buffer_device_pointer(rs_rho(1)%buffer), nbytes)
+               rho%device_valid = .TRUE.
+            END IF
+         END IF
+#endif
          CALL pw_transfer(rho, rho_gspace)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+         ! If the FFT produced rho_gspace on the device, bring it back for host consumers.
+         IF (C_ASSOCIATED(rho_gspace%device_data) .AND. .NOT. rho_gspace%host_valid) THEN
+            CALL offload_device_d2h(C_LOC(rho_gspace%array(1)), rho_gspace%device_data, &
+                                    INT(SIZE(rho_gspace%array), KIND=C_SIZE_T)*16_C_SIZE_T)
+            rho_gspace%host_valid = .TRUE.
+         END IF
+#endif
          IF (rho%pw_grid%spherical) THEN ! rho_gspace = rho
             CALL pw_transfer(rho_gspace, rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (C_ASSOCIATED(rho%device_data) .AND. .NOT. rho%host_valid) THEN
+               CALL offload_device_d2h(C_LOC(rho%array(1, 1, 1)), rho%device_data, &
+                                       INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T)
+               rho%host_valid = .TRUE.
+            END IF
+#endif
          END IF
       ELSE
          DO igrid_level = 1, gridlevel_info%ngrid_levels
@@ -108,8 +149,7 @@ CONTAINS
          CASE (pw_interp)
             CALL pw_zero(rho_gspace)
             DO igrid_level = 1, gridlevel_info%ngrid_levels
-               CALL pw_transfer(mgrid_rspace(igrid_level), &
-                                mgrid_gspace(igrid_level))
+               CALL pw_transfer(mgrid_rspace(igrid_level), mgrid_gspace(igrid_level))
                CALL pw_axpy(mgrid_gspace(igrid_level), rho_gspace)
             END DO
             CALL pw_transfer(rho_gspace, rho)
@@ -120,7 +160,16 @@ CONTAINS
                                      pw_env%interp_section)
             END DO
             CALL pw_copy(mgrid_rspace(1), rho)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            ! Multi-grid: keep rho_gspace device-resident for the downstream
+            ! Poisson / c1dr3d (M3/M5). Upload rho, run the FFT on the device,
+            ! then sync rho_gspace back but leave its device mirror current.
+            IF (pw_offload_fused_enabled()) CALL rho%ensure_device()
+#endif
             CALL pw_transfer(rho, rho_gspace)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (pw_offload_fused_enabled()) CALL rho_gspace%ensure_host()
+#endif
          CASE default
             CALL cp_abort(__LOCATION__, &
                           "interpolator "// &

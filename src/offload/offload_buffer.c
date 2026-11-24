@@ -12,6 +12,7 @@
 #include "../base/cp_assert.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if 1
 #define OFFLOAD_BUFFER_MEMPOOL
@@ -155,6 +156,81 @@ void offload_buffer_d2h(offload_buffer *buffer, const int length) {
   }
 #else
   (void)length; // no-op on CPU-only builds: host memory is the same store
+#endif
+}
+
+/*******************************************************************************
+ * \brief Allocate device-only memory (no host mirror).
+ ******************************************************************************/
+void *offload_device_malloc(size_t bytes) {
+  void *memory = NULL;
+  if (0 == bytes)
+    return NULL;
+  offload_activate_chosen_device();
+#if defined(__OFFLOAD)
+  offloadMalloc(&memory, bytes);
+#else
+  memory = malloc(bytes);
+#endif
+  return memory;
+}
+
+/*******************************************************************************
+ * \brief Free device-only memory.
+ ******************************************************************************/
+void offload_device_free(void *device_memory) {
+  if (NULL == device_memory)
+    return;
+#if defined(__OFFLOAD)
+  offloadFree(device_memory);
+#else
+  free(device_memory);
+#endif
+}
+
+/*******************************************************************************
+ * \brief Copy host -> device-only buffer.
+ ******************************************************************************/
+void offload_device_h2d(void *device_memory, const void *host_memory,
+                        size_t bytes) {
+  if (NULL == device_memory || NULL == host_memory || 0 == bytes)
+    return;
+  offload_activate_chosen_device();
+#if defined(__OFFLOAD)
+  offloadMemcpyHtoD(device_memory, host_memory, bytes);
+#else
+  memcpy(device_memory, host_memory, bytes);
+#endif
+}
+
+/*******************************************************************************
+ * \brief Copy device-only buffer -> host.
+ ******************************************************************************/
+void offload_device_d2h(void *host_memory, const void *device_memory,
+                        size_t bytes) {
+  if (NULL == device_memory || NULL == host_memory || 0 == bytes)
+    return;
+  offload_activate_chosen_device();
+#if defined(__OFFLOAD)
+  offloadMemcpyDtoH(host_memory, device_memory, bytes);
+#else
+  memcpy(host_memory, device_memory, bytes);
+#endif
+}
+
+/*******************************************************************************
+ * \brief Copy device-only buffer -> device-only buffer.
+ ******************************************************************************/
+void offload_device_d2d(void *dst_device, const void *src_device,
+                        size_t bytes) {
+  if (NULL == dst_device || NULL == src_device || 0 == bytes)
+    return;
+  offload_activate_chosen_device();
+#if defined(__OFFLOAD)
+  offloadMemcpyAsyncDtoD(dst_device, src_device, bytes, 0);
+  offloadDeviceSynchronize();
+#else
+  memcpy(dst_device, src_device, bytes);
 #endif
 }
 

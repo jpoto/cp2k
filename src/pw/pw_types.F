@@ -25,6 +25,8 @@ MODULE pw_types
 
    USE cp_log_handling, ONLY: cp_to_string
    USE kinds, ONLY: dp
+   USE iso_c_binding, ONLY: C_ASSOCIATED, C_LOC, C_NULL_PTR, C_PTR, C_SIZE_T
+   USE offload_api, ONLY: offload_device_alloc, offload_device_free, offload_device_h2d, offload_device_d2h
    USE pw_grid_types, ONLY: pw_grid_type
    USE pw_grids, ONLY: pw_grid_release, &
                        pw_grid_retain
@@ -47,9 +49,19 @@ MODULE pw_types
          TYPE pw_${kind}$_${space}$_type
             ${type}$, CONTIGUOUS, POINTER :: array => NULL()
             TYPE(pw_grid_type), POINTER :: pw_grid => NULL()
+            !> Optional device-resident mirror of `array` (managed by the pw GPU
+            !! offload path; `C_NULL_PTR` when no device copy exists).
+            TYPE(C_PTR) :: device_data = C_NULL_PTR
+            LOGICAL :: device_valid = .FALSE.
+            LOGICAL :: host_valid = .TRUE.
          CONTAINS
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: create => pw_create_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: release => pw_release_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: invalidate_device => pw_invalidate_device_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: mark_device_current => pw_mark_device_current_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: sync_host => pw_sync_host_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: ensure_device => pw_ensure_device_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: ensure_host => pw_ensure_host_${kind}$_${space}$
          END TYPE pw_${kind}$_${space}$_type
 
 ! **************************************************************************************************
@@ -77,9 +89,89 @@ CONTAINS
          SUBROUTINE pw_release_${kind}$_${space}$ (pw)
             CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)                       :: pw
 
+            IF (C_ASSOCIATED(pw%device_data)) THEN
+               CALL offload_device_free(pw%device_data)
+               pw%device_data = C_NULL_PTR
+            END IF
+            pw%device_valid = .FALSE.
+            pw%host_valid = .TRUE.
             IF (ASSOCIATED(pw%array)) DEALLOCATE (pw%array)
             CALL pw_grid_release(pw%pw_grid)
          END SUBROUTINE pw_release_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Marks the host copy as authoritative (device mirror stale/must be re-uploaded).
+! **************************************************************************************************
+         SUBROUTINE pw_invalidate_device_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            pw%device_valid = .FALSE.
+            pw%host_valid = .TRUE.
+         END SUBROUTINE pw_invalidate_device_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Marks the device mirror as authoritative (host copy stale).
+! **************************************************************************************************
+         SUBROUTINE pw_mark_device_current_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            pw%device_valid = .TRUE.
+            pw%host_valid = .FALSE.
+         END SUBROUTINE pw_mark_device_current_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Brings the host copy up to date (D2H if the device mirror is authoritative), then marks
+!!        the device mirror stale. Use before any host access/mutation of `array`.
+! **************************************************************************************************
+         SUBROUTINE pw_sync_host_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            INTEGER(KIND=C_SIZE_T)                            :: nbytes
+            IF (pw%device_valid .AND. .NOT. pw%host_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
+               IF (ASSOCIATED(pw%array)) THEN
+                  IF (SIZE(pw%array) > 0) THEN
+                     nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
+                  ELSE
+                     nbytes = 0_C_SIZE_T
+                  END IF
+                  IF (nbytes > 0) CALL offload_device_d2h(C_LOC(pw%array), pw%device_data, nbytes)
+               END IF
+               pw%host_valid = .TRUE.
+            END IF
+            pw%device_valid = .FALSE.
+         END SUBROUTINE pw_sync_host_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Ensures a current device mirror of the host array (allocates and H2D as needed).
+! **************************************************************************************************
+         SUBROUTINE pw_ensure_device_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            INTEGER(KIND=C_SIZE_T)                            :: nbytes
+            IF (.NOT. ASSOCIATED(pw%array)) RETURN
+            IF (SIZE(pw%array) > 0) THEN
+               nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
+            ELSE
+               nbytes = 0_C_SIZE_T
+            END IF
+            IF (nbytes <= 0) RETURN
+            IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+            IF (pw%host_valid .AND. .NOT. pw%device_valid) THEN
+               CALL offload_device_h2d(pw%device_data, C_LOC(pw%array), nbytes)
+               pw%device_valid = .TRUE.
+            END IF
+         END SUBROUTINE pw_ensure_device_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Brings the host copy up to date (D2H) if needed, keeping the device mirror current.
+! **************************************************************************************************
+         SUBROUTINE pw_ensure_host_${kind}$_${space}$ (pw)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(INOUT)  :: pw
+            INTEGER(KIND=C_SIZE_T)                            :: nbytes
+            IF (pw%device_valid .AND. .NOT. pw%host_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
+               IF (ASSOCIATED(pw%array) .AND. SIZE(pw%array) > 0) THEN
+                  nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
+                  CALL offload_device_d2h(C_LOC(pw%array), pw%device_data, nbytes)
+               END IF
+               pw%host_valid = .TRUE.
+            END IF
+         END SUBROUTINE pw_ensure_host_${kind}$_${space}$
 
 ! **************************************************************************************************
 !> \brief allocates and initializes pw_r3d_rs_type

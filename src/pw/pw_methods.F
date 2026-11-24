@@ -37,9 +37,15 @@ MODULE pw_methods
                             z_zero
    USE pw_copy_all, ONLY: pw_copy_match
    USE fft_gpu, ONLY: fft_gpu_c1dr3d_3d, &
+                      fft_gpu_c1dr3d_3d_dev, &
                       fft_gpu_c1dr3d_3d_ps, &
+                      fft_gpu_prepare_device_c1d, &
+                      fft_gpu_prepare_device_r3d, &
+                      fft_gpu_multiply_device_c1d, &
                       fft_gpu_r3dc1d_3d, &
+                      fft_gpu_r3dc1d_3d_dev, &
                       fft_gpu_r3dc1d_3d_ps
+   USE pw_offload, ONLY: pw_offload_dot_c1d, pw_offload_g0_c1d
    USE pw_grid_types, ONLY: HALFSPACE, &
                             PW_MODE_DISTRIBUTED, &
                             PW_MODE_LOCAL, &
@@ -241,6 +247,7 @@ CONTAINS
             INTEGER                                            :: handle
 
             CALL timeset(routineN, handle)
+            CALL pw%invalidate_device()
 
 #if !defined(__INTEL_LLVM_COMPILER) || (20250000 <= __INTEL_LLVM_COMPILER)
 !$OMP PARALLEL WORKSHARE DEFAULT(NONE) SHARED(pw)
@@ -271,6 +278,7 @@ CONTAINS
             INTEGER                                            :: handle
 
             CALL timeset(routineN, handle)
+            CALL pw%sync_host()
 
 !$OMP PARALLEL WORKSHARE DEFAULT(NONE) SHARED(A, pw)
             pw%array = a*pw%array
@@ -355,7 +363,17 @@ CONTAINS
                IF (iop == 1) &
                   CPABORT("Operator ABS not implemented")
                #:if kind[1:]=="1d"
-                  IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
+                  #:if kind=="c1d"
+                     IF (fun%pw_grid%have_g0) THEN
+                        IF (fun%device_valid) THEN
+                           total_fun = fun%pw_grid%vol*REAL(pw_offload_g0_c1d(fun), KIND=dp)
+                        ELSE
+                           total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
+                        END IF
+                     END IF
+                  #:else
+                     IF (fun%pw_grid%have_g0) total_fun = fun%pw_grid%vol*${type2type("fun%array(1)", kind, "r1d")}$
+                  #:endif
                #:else
                   CPABORT("Reciprocal space integration for 3D grids not implemented!")
                #:endif
@@ -552,6 +570,8 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
+            CALL pw2%invalidate_device()
+            CPASSERT(pw1%host_valid .OR. .NOT. pw1%device_valid)
 
             IF (pw1%pw_grid%spherical .neqv. pw2%pw_grid%spherical) &
                CPABORT("Both grids must be either spherical or non-spherical!")
@@ -733,6 +753,8 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
+            CPASSERT(pw1%host_valid .OR. .NOT. pw1%device_valid)
+            CALL pw2%sync_host()
 
             my_alpha = 1.0_dp
             IF (PRESENT(alpha)) my_alpha = alpha
@@ -960,6 +982,14 @@ CONTAINS
                      INTEGER                                            :: handle
 
                      CALL timeset(routineN, handle)
+                     #:if kind=="c1d" and kind2=="c1d" and space=="gs"
+                        IF (pw1%device_valid .AND. pw2%device_valid) THEN
+                           CALL fft_gpu_multiply_device_c1d(pw1, pw2)
+                           CALL timestop(handle)
+                           RETURN
+                        END IF
+                     #:endif
+                     CALL pw1%sync_host()
 
                      IF (.NOT. ASSOCIATED(pw1%pw_grid, pw2%pw_grid)) &
                         CPABORT("Incompatible grids!")
@@ -1012,6 +1042,22 @@ CONTAINS
 
                      my_just_sum = .FALSE.
                      IF (PRESENT(just_sum)) my_just_sum = just_sum
+
+                     #:if kind=="c1d" and kind2=="c1d" and space=="gs"
+                        IF (pw1%device_valid .AND. pw2%device_valid) THEN
+                           integral_value = pw_offload_dot_c1d(pw1, pw2)
+                           IF (pw1%pw_grid%grid_span == HALFSPACE) THEN
+                              integral_value = 2.0_dp*integral_value
+                              IF (pw1%pw_grid%have_g0) integral_value = integral_value - &
+                                                                 REAL(CONJG(pw_offload_g0_c1d(pw1))*pw_offload_g0_c1d(pw2), KIND=dp)
+                           END IF
+                           IF (.NOT. my_just_sum) integral_value = integral_value*pw1%pw_grid%vol
+                           IF (.NOT. my_local_only .AND. pw1%pw_grid%para%mode == PW_MODE_DISTRIBUTED) &
+                              CALL pw1%pw_grid%para%group%sum(integral_value)
+                           CALL timestop(handle)
+                           RETURN
+                        END IF
+                     #:endif
 
                      ! do standard sum
                      IF (loc_sumtype == do_standard_sum) THEN
@@ -1232,7 +1278,15 @@ CONTAINS
                                           DEALLOCATE (c_out)
                                        #:elif kind=="r3d" and kind2=="c1d"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
-                                          CALL fft_gpu_r3dc1d_3d(pw1, pw2)
+                                          IF (pw1%device_valid) THEN
+                                             CALL fft_gpu_prepare_device_c1d(pw2)
+                                             CALL fft_gpu_r3dc1d_3d_dev(pw1, pw2)
+                                             CALL pw2%mark_device_current()
+                                             CALL pw2%ensure_host()
+                                          ELSE
+                                             CALL fft_gpu_r3dc1d_3d(pw1, pw2)
+                                             CALL pw2%invalidate_device()
+                                          END IF
 #else
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           c_out = 0.0_dp
@@ -1262,7 +1316,15 @@ CONTAINS
                                           CALL fft3d(BWFFT, n, c_out, debug=test)
                                        #:elif kind=="c1d" and kind2=="r3d"
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
-                                          CALL fft_gpu_c1dr3d_3d(pw1, pw2)
+                                          IF (pw1%device_valid) THEN
+                                             CALL fft_gpu_prepare_device_r3d(pw2)
+                                             CALL fft_gpu_c1dr3d_3d_dev(pw1, pw2)
+                                             CALL pw2%mark_device_current()
+                                             CALL pw2%ensure_host()
+                                          ELSE
+                                             CALL fft_gpu_c1dr3d_3d(pw1, pw2)
+                                             CALL pw2%invalidate_device()
+                                          END IF
 #else
                                           ALLOCATE (c_out(n(1), n(2), n(3)))
                                           IF (test .AND. out_unit > 0) WRITE (out_unit, '(A)') "  PW_SCATTER : 3d -> 1d "
@@ -1326,6 +1388,7 @@ CONTAINS
                                           use_fft_gpu = pw1%pw_grid%para%ray_distribution
                                           IF (use_fft_gpu) THEN
                                              CALL fft_gpu_r3dc1d_3d_ps(pw1, pw2)
+                                             CALL pw2%invalidate_device()
                                           ELSE
 #endif
 !..   prepare input
@@ -1376,6 +1439,7 @@ CONTAINS
                                           use_fft_gpu = pw1%pw_grid%para%ray_distribution
                                           IF (use_fft_gpu) THEN
                                              CALL fft_gpu_c1dr3d_3d_ps(pw1, pw2)
+                                             CALL pw2%invalidate_device()
                                           ELSE
 #endif
 !..   prepare input
@@ -1919,6 +1983,7 @@ CONTAINS
                      INTEGER                                            :: handle, m, idx, idir
 
                      CALL timeset(routineN, handle)
+                     CALL pw%sync_host()
 
                      IF (ANY(n < 0)) &
                         CPABORT("Nonnegative exponents are not supported!")

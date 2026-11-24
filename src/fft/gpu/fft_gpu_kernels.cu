@@ -132,6 +132,89 @@ void fft_gpu_launch_scatter(double *c, const double *pwcc, const double scale,
                                                         nmaps, ghatmap);
 }
 
+/*******************************************************************************
+ * \brief Elementwise complex multiply a *= b (each of n complex numbers).
+ ******************************************************************************/
+__global__ void pw_multiply_c1d(double *a, const double *b, const int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    const double ar = a[2 * i], ai = a[2 * i + 1];
+    const double br = b[2 * i], bi = b[2 * i + 1];
+    a[2 * i] = ar * br - ai * bi;
+    a[2 * i + 1] = ar * bi + ai * br;
+  }
+}
+
+/*******************************************************************************
+ * \brief Launcher for pw_multiply_c1d kernel.
+ ******************************************************************************/
+void fft_gpu_launch_multiply_c1d(double *a, const double *b, const int n,
+                                 offloadStream_t stream) {
+  const int threadsPerBlock = 32;
+  const int numBlocks = (n + threadsPerBlock - 1) / threadsPerBlock;
+  pw_multiply_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(a, b, n);
+}
+
+/*******************************************************************************
+ * \brief Complex vector axpy: y = a*x + b*y.
+ ******************************************************************************/
+__global__ void pw_axpy_c1d(double *y, const double *x, const double a,
+                            const double b, const int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    y[2 * i] = a * x[2 * i] + b * y[2 * i];
+    y[2 * i + 1] = a * x[2 * i + 1] + b * y[2 * i + 1];
+  }
+}
+
+/*******************************************************************************
+ * \brief Launcher for pw_axpy_c1d kernel.
+ ******************************************************************************/
+void fft_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
+                             const double b, const int n,
+                             offloadStream_t stream) {
+  const int threadsPerBlock = 32;
+  const int numBlocks = (n + threadsPerBlock - 1) / threadsPerBlock;
+  pw_axpy_c1d<<<numBlocks, threadsPerBlock, 0, stream>>>(y, x, a, b, n);
+}
+
+/*******************************************************************************
+ * \brief Block reduction of Re(conj(a)*b); accumulates into *out via atomicAdd.
+ ******************************************************************************/
+__global__ void pw_dot_c1d_kernel(const double *a, const double *b, double *out,
+                                  const int n) {
+  double acc = 0.0;
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
+       i += blockDim.x * gridDim.x) {
+    acc += a[2 * i] * b[2 * i] + a[2 * i + 1] * b[2 * i + 1];
+  }
+  __shared__ double sh[256];
+  const int t = threadIdx.x;
+  sh[t] = acc;
+  __syncthreads();
+  for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (t < s)
+      sh[t] += sh[t + s];
+    __syncthreads();
+  }
+  if (t == 0)
+    atomicAdd(out, sh[0]);
+}
+
+/*******************************************************************************
+ * \brief Launcher for pw_dot_c1d_kernel.
+ ******************************************************************************/
+void fft_gpu_launch_dot_c1d(const double *a, const double *b, double *out,
+                            const int n, offloadStream_t stream) {
+  const int tpb = 256;
+  int blocks = (n + tpb - 1) / tpb;
+  if (blocks > 4096)
+    blocks = 4096;
+  if (blocks < 1)
+    blocks = 1;
+  pw_dot_c1d_kernel<<<blocks, tpb, 0, stream>>>(a, b, out, n);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 
 // EOF

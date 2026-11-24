@@ -1781,4 +1781,154 @@ void fft_gpu_sf(const double *zin, double *zout, const int *ghatmap,
 #endif
 }
 
+/*******************************************************************************
+ * \brief   Device-pointer variant of fft_gpu_cfffg: real input and complex
+ *          output are already resident on the device (no H2D/D2H of the data).
+ ******************************************************************************/
+void fft_gpu_cfffg_dev(const double *din_dev, double *zout_dev,
+                       const int *ghatmap, const int *npts, const int ngpts,
+                       const double scale) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  const int nrpts = npts[0] * npts[1] * npts[2];
+  cp_assert(ngpts <= nrpts);
+  if (nrpts == 0 || ngpts == 0) {
+    return;
+  }
+
+  offload_activate_chosen_device();
+  const size_t buffer_size = 2 * sizeof(double) * nrpts;
+  const size_t map_size = sizeof(int) * ngpts;
+  ensure_memory_sizes(buffer_size, map_size);
+
+  // REAL input already on the device: convert to COMPLEX in device scratch.
+  fft_gpu_launch_real_to_complex(din_dev, buffer_dev_2, nrpts, stream);
+  fft_gpu_3d(OFFLOAD_FFT_FORWARD, npts[2], npts[1], npts[0], 1, false, false,
+             buffer_dev_2, buffer_dev_2);
+
+  offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
+  fft_gpu_launch_gather(buffer_dev_1, buffer_dev_2, scale, ngpts, ghatmap_dev,
+                        stream);
+
+  // COMPLEX result stays on the device.
+  offloadMemcpyAsyncDtoD(zout_dev, buffer_dev_1, 2 * sizeof(double) * ngpts,
+                         stream);
+  offloadStreamSynchronize(stream);
+#else
+  (void)din_dev;
+  (void)zout_dev;
+  (void)ghatmap;
+  (void)npts;
+  (void)ngpts;
+  (void)scale;
+#endif
+}
+
+/*******************************************************************************
+ * \brief   Device-pointer variant of fft_gpu_sfffc: complex input and real
+ *          output are already resident on the device (no H2D/D2H of the data).
+ ******************************************************************************/
+void fft_gpu_sfffc_dev(const double *zin_dev, double *dout_dev,
+                       const int *ghatmap, const int *npts, const int ngpts,
+                       const int nmaps, const double scale) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  const int nrpts = npts[0] * npts[1] * npts[2];
+  cp_assert(ngpts <= nrpts);
+  if (nrpts == 0 || ngpts == 0) {
+    return;
+  }
+
+  offload_activate_chosen_device();
+  const size_t buffer_size = 2 * sizeof(double) * nrpts;
+  const size_t map_size = sizeof(int) * nmaps * ngpts;
+  ensure_memory_sizes(buffer_size, map_size);
+
+  offloadMemcpyAsyncHtoD(ghatmap_dev, ghatmap, map_size, stream);
+  offloadMemsetAsync(buffer_dev_2, 0, buffer_size, stream);
+  fft_gpu_launch_scatter(buffer_dev_2, zin_dev, scale, ngpts, nmaps,
+                         ghatmap_dev, stream);
+
+  fft_gpu_3d(OFFLOAD_FFT_INVERSE, npts[2], npts[1], npts[0], 1, false, false,
+             buffer_dev_2, buffer_dev_2);
+  fft_gpu_launch_complex_to_real(buffer_dev_2, buffer_dev_1, nrpts, stream);
+
+  // REAL result stays on the device.
+  offloadMemcpyAsyncDtoD(dout_dev, buffer_dev_1, buffer_size / 2, stream);
+  offloadStreamSynchronize(stream);
+#else
+  (void)zin_dev;
+  (void)dout_dev;
+  (void)ghatmap;
+  (void)npts;
+  (void)ngpts;
+  (void)nmaps;
+  (void)scale;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Elementwise multiply of two device-resident complex vectors.
+ ******************************************************************************/
+void fft_gpu_multiply_c1d_dev(double *a, const double *b, const int n) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  if (n <= 0) {
+    return;
+  }
+  offload_activate_chosen_device();
+  fft_gpu_launch_multiply_c1d(a, b, n, stream);
+  offloadStreamSynchronize(stream);
+#else
+  (void)a;
+  (void)b;
+  (void)n;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Device axpy on two device-resident complex vectors: y = a*x + b*y.
+ ******************************************************************************/
+void fft_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
+                          const double b, const int n) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  if (n <= 0) {
+    return;
+  }
+  offload_activate_chosen_device();
+  fft_gpu_launch_axpy_c1d(y, x, a, b, n, stream);
+  offloadStreamSynchronize(stream);
+#else
+  (void)y;
+  (void)x;
+  (void)a;
+  (void)b;
+  (void)n;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Device reduction of Re(conj(a)*b) over all points, returned on host.
+ ******************************************************************************/
+double fft_gpu_dot_c1d_dev(const double *a, const double *b, const int n) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  static double *dot_dev = NULL;
+  if (n <= 0) {
+    return 0.0;
+  }
+  offload_activate_chosen_device();
+  if (dot_dev == NULL) {
+    offloadMalloc((void **)&dot_dev, sizeof(double));
+  }
+  offloadMemsetAsync(dot_dev, 0, sizeof(double), stream);
+  fft_gpu_launch_dot_c1d(a, b, dot_dev, n, stream);
+  offloadStreamSynchronize(stream);
+  double h = 0.0;
+  offloadMemcpyDtoH(&h, dot_dev, sizeof(double));
+  return h;
+#else
+  (void)a;
+  (void)b;
+  (void)n;
+  return 0.0;
+#endif
+}
+
 // EOF

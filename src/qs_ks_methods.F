@@ -89,6 +89,10 @@ MODULE qs_ks_methods
                                               pw_scale,&
                                               pw_transfer,&
                                               pw_zero
+   USE pw_offload,                      ONLY: pw_offload_available,&
+                                              pw_offload_axpy_c1d,&
+                                              pw_offload_copy_c1d,&
+                                              pw_offload_fused_enabled
    USE pw_poisson_methods,              ONLY: pw_poisson_solve
    USE pw_poisson_types,                ONLY: pw_poisson_implicit,&
                                               pw_poisson_type
@@ -514,6 +518,7 @@ CONTAINS
          dft_control%qs_control%ddapc_restraint_is_spin = .FALSE.
          IF (.NOT. just_energy) THEN
             CALL pw_transfer(v_hartree_gspace, v_hartree_rspace)
+            CALL v_hartree_rspace%sync_host()
             CALL pw_scale(v_hartree_rspace, v_hartree_rspace%pw_grid%dvol)
          END IF
       END IF
@@ -1549,6 +1554,38 @@ CONTAINS
          DO ispin = 1, dft_control%nspins
             CALL pw_axpy(rho_g(ispin), rho_tot_gspace)
          END DO
+      END IF
+
+      ! Fused device mirror (M3): build rho_tot_gspace on the device in addition to
+      ! the host copy, so the Poisson/FFT chain (M4/M5) can stay device-resident.
+      ! The host copy above is kept valid for fallback consumers.
+      IF (pw_offload_fused_enabled() .AND. pw_offload_available()) THEN
+         IF (.NOT. my_skip) THEN
+            IF (dft_control%qs_control%gapw) THEN
+               CALL rho0_s_gs%ensure_device()
+               CALL pw_offload_copy_c1d(rho_tot_gspace, rho0_s_gs)
+               IF (ASSOCIATED(rhoz_cneo_s_gs)) THEN
+                  CALL rhoz_cneo_s_gs%ensure_device()
+                  CALL pw_offload_axpy_c1d(rho_tot_gspace, rhoz_cneo_s_gs, 1.0_dp, 1.0_dp)
+               END IF
+               IF (dft_control%qs_control%gapw_control%nopaw_as_gpw) THEN
+                  CALL rho_core%ensure_device()
+                  CALL pw_offload_axpy_c1d(rho_tot_gspace, rho_core, 1.0_dp, 1.0_dp)
+               END IF
+            ELSE
+               CALL rho_core%ensure_device()
+               CALL pw_offload_copy_c1d(rho_tot_gspace, rho_core)
+            END IF
+            DO ispin = 1, dft_control%nspins
+               CALL rho_g(ispin)%ensure_device()
+               CALL pw_offload_axpy_c1d(rho_tot_gspace, rho_g(ispin), 1.0_dp, 1.0_dp)
+            END DO
+         ELSE
+            ! host already summed; mirror it to the device
+            CALL rho_tot_gspace%ensure_device()
+         END IF
+         ! the host array remains authoritative (built above)
+         rho_tot_gspace%host_valid = .TRUE.
       END IF
 
    END SUBROUTINE calc_rho_tot_gspace
