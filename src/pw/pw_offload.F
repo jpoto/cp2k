@@ -33,7 +33,8 @@ MODULE pw_offload
                                               offload_device_d2d,&
                                               offload_device_d2h,&
                                               offload_device_free
-   USE pw_types,                        ONLY: pw_c1d_gs_type
+   USE pw_types,                        ONLY: pw_c1d_gs_type,&
+                                              pw_r3d_rs_type
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -49,6 +50,7 @@ MODULE pw_offload
    PUBLIC :: pw_offload_multiply_c1d
    PUBLIC :: pw_offload_dot_c1d
    PUBLIC :: pw_offload_g0_c1d
+   PUBLIC :: pw_offload_sum_r3d
 
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
    INTERFACE
@@ -71,6 +73,13 @@ MODULE pw_offload
          INTEGER(KIND=C_INT), VALUE :: n
          REAL(KIND=C_DOUBLE) :: r
       END FUNCTION fft_gpu_dot_c1d_dev_f
+
+      FUNCTION fft_gpu_sum_r3d_dev_f(a, n) RESULT(r) BIND(C, name="fft_gpu_sum_r3d_dev")
+         IMPORT :: C_DOUBLE, C_INT, C_PTR
+         TYPE(C_PTR), VALUE :: a
+         INTEGER(KIND=C_INT), VALUE :: n
+         REAL(KIND=C_DOUBLE) :: r
+      END FUNCTION fft_gpu_sum_r3d_dev_f
    END INTERFACE
 #endif
 
@@ -234,5 +243,23 @@ CONTAINS
          END IF
       END IF
    END FUNCTION pw_offload_fused_enabled
+
+! **************************************************************************************************
+!> \brief Full sum of a device-resident real-space pw array (raw sum on host).
+!> \param pw ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION pw_offload_sum_r3d(pw) RESULT(res)
+      TYPE(pw_r3d_rs_type), INTENT(IN) :: pw
+      REAL(KIND=dp) :: res
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+      CPASSERT(pw%device_valid)
+      res = REAL(fft_gpu_sum_r3d_dev_f(pw%device_data, &
+                                       INT(SIZE(pw%array), KIND=C_INT)), KIND=dp)
+#else
+      MARK_USED(pw)
+      res = 0.0_dp
+#endif
+   END FUNCTION pw_offload_sum_r3d
 
 END MODULE pw_offload

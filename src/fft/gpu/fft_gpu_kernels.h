@@ -64,6 +64,12 @@ void fft_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
 void fft_gpu_launch_dot_c1d(const double *a, const double *b, double *out,
                             const int n, offloadStream_t stream);
 
+/*******************************************************************************
+ * \brief Device reduction: out += sum(a) over n real doubles.
+ ******************************************************************************/
+void fft_gpu_launch_sum_r3d(const double *a, double *out, const int n,
+                            offloadStream_t stream);
+
 #ifdef __cplusplus
 }
 #endif

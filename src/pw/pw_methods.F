@@ -47,7 +47,7 @@ MODULE pw_methods
                       fft_gpu_r3dc1d_3d_dev, &
                       fft_gpu_r3dc1d_3d_ps
    USE offload_api, ONLY: offload_device_d2h
-   USE pw_offload, ONLY: pw_offload_dot_c1d, pw_offload_g0_c1d
+   USE pw_offload, ONLY: pw_offload_dot_c1d, pw_offload_g0_c1d, pw_offload_sum_r3d
    USE pw_grid_types, ONLY: HALFSPACE, &
                             PW_MODE_DISTRIBUTED, &
                             PW_MODE_LOCAL, &
@@ -359,7 +359,19 @@ CONTAINS
                IF (iop == 1) THEN
                   total_fun = fun%pw_grid%dvol*accurate_sum(ABS(fun%array))
                ELSE
-                  total_fun = fun%pw_grid%dvol*accurate_sum(${type2type("fun%array", kind, "r1d")}$)
+                  #:if kind=="r3d"
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+                     IF (fun%device_valid) THEN
+                        total_fun = fun%pw_grid%dvol*pw_offload_sum_r3d(fun)
+                     ELSE
+                        total_fun = fun%pw_grid%dvol*accurate_sum(${type2type("fun%array", kind, "r1d")}$)
+                     END IF
+#else
+                     total_fun = fun%pw_grid%dvol*accurate_sum(${type2type("fun%array", kind, "r1d")}$)
+#endif
+                  #:else
+                     total_fun = fun%pw_grid%dvol*accurate_sum(${type2type("fun%array", kind, "r1d")}$)
+                  #:endif
                END IF
             #:elif space == "gs"
                IF (iop == 1) &

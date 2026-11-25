@@ -1909,6 +1909,29 @@ void fft_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
 /*******************************************************************************
  * \brief Device reduction of Re(conj(a)*b) over all points, returned on host.
  ******************************************************************************/
+double fft_gpu_sum_r3d_dev(const double *a, const int n) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  static double *sum_dev = NULL;
+  if (n <= 0) {
+    return 0.0;
+  }
+  offload_activate_chosen_device();
+  if (sum_dev == NULL) {
+    offloadMalloc((void **)&sum_dev, sizeof(double));
+  }
+  offloadMemsetAsync(sum_dev, 0, sizeof(double), stream);
+  fft_gpu_launch_sum_r3d(a, sum_dev, n, stream);
+  offloadStreamSynchronize(stream);
+  double h = 0.0;
+  offloadMemcpyDtoH(&h, sum_dev, sizeof(double));
+  return h;
+#else
+  (void)a;
+  (void)n;
+  return 0.0;
+#endif
+}
+
 double fft_gpu_dot_c1d_dev(const double *a, const double *b, const int n) {
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
   static double *dot_dev = NULL;

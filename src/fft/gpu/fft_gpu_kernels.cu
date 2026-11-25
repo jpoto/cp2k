@@ -215,6 +215,43 @@ void fft_gpu_launch_dot_c1d(const double *a, const double *b, double *out,
   pw_dot_c1d_kernel<<<blocks, tpb, 0, stream>>>(a, b, out, n);
 }
 
+/*******************************************************************************
+ * \brief Block reduction of a real vector sum; accumulates into *out via
+ *        atomicAdd.
+ ******************************************************************************/
+__global__ void pw_sum_r3d_kernel(const double *a, double *out, const int n) {
+  double acc = 0.0;
+  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
+       i += blockDim.x * gridDim.x) {
+    acc += a[i];
+  }
+  __shared__ double sh[256];
+  const int t = threadIdx.x;
+  sh[t] = acc;
+  __syncthreads();
+  for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (t < s)
+      sh[t] += sh[t + s];
+    __syncthreads();
+  }
+  if (t == 0)
+    atomicAdd(out, sh[0]);
+}
+
+/*******************************************************************************
+ * \brief Launcher for pw_sum_r3d_kernel.
+ ******************************************************************************/
+void fft_gpu_launch_sum_r3d(const double *a, double *out, const int n,
+                            offloadStream_t stream) {
+  const int tpb = 256;
+  int blocks = (n + tpb - 1) / tpb;
+  if (blocks > 4096)
+    blocks = 4096;
+  if (blocks < 1)
+    blocks = 1;
+  pw_sum_r3d_kernel<<<blocks, tpb, 0, stream>>>(a, out, n);
+}
+
 #endif // defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
 
 // EOF
