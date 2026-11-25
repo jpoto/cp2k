@@ -567,11 +567,14 @@ CONTAINS
                      ! M5: device-only Poisson reciprocal chain (no host copies) when the
                      ! density is already device-resident (FULLSPACE, no aux density).
                      IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
-                         .AND. .NOT. PRESENT(h_stress) &
+                         .AND. .NOT. PRESENT(h_stress) .AND. .NOT. PRESENT(greenfn) &
                          .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
-                        CALL influence_fn%ensure_device()
+                        ! Ensure the persistent influence function (allocated once and
+                        ! reused across SCF iterations); never ensure the transient copy
+                        ! `influence_fn`, which would leak its device mirror.
+                        CALL poisson_env%green_fft%influence_fn%ensure_device()
                         CALL pw_offload_copy_c1d(rhog, density)
-                        CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                        CALL pw_offload_multiply_c1d(rhog, poisson_env%green_fft%influence_fn)
                         CALL pw_offload_copy_c1d(vhartree, rhog)
                         CALL vhartree%ensure_host()
                      ELSE
@@ -1002,11 +1005,13 @@ CONTAINS
                      END IF
                      #:if kindd=="c1d_gs" and kindv=="c1d_gs"
                         IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
-                            .AND. .NOT. PRESENT(h_stress) &
+                            .AND. .NOT. PRESENT(h_stress) .AND. .NOT. PRESENT(greenfn) &
                             .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
-                           CALL influence_fn%ensure_device()
+                           ! Ensure the persistent influence function (see above) so the
+                           ! transient local copy is never given an owned device mirror.
+                           CALL poisson_env%green_fft%influence_fn%ensure_device()
                            CALL pw_offload_copy_c1d(rhog, density)
-                           CALL pw_offload_multiply_c1d(rhog, influence_fn)
+                           CALL pw_offload_multiply_c1d(rhog, poisson_env%green_fft%influence_fn)
                            CALL pw_offload_copy_c1d(vhartree, rhog)
                            CALL vhartree%ensure_host()
                         ELSE
