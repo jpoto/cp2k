@@ -21,11 +21,13 @@ MODULE rs_pw_interface
    USE input_section_types,             ONLY: section_vals_val_get
    USE iso_c_binding,                   ONLY: C_ASSOCIATED,&
                                               C_LOC,&
+                                              C_NULL_PTR,&
                                               C_SIZE_T
    USE kinds,                           ONLY: dp
    USE offload_api,                     ONLY: offload_device_alloc,&
                                               offload_device_d2d,&
                                               offload_device_d2h,&
+                                              offload_device_free,&
                                               offload_get_buffer_device_pointer
    USE pw_env_types,                    ONLY: pw_env_get,&
                                               pw_env_type
@@ -113,7 +115,16 @@ CONTAINS
              pw_offload_fused_enabled()) THEN
             nbytes = INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T
             IF (C_ASSOCIATED(offload_get_buffer_device_pointer(rs_rho(1)%buffer))) THEN
-               IF (.NOT. C_ASSOCIATED(rho%device_data)) rho%device_data = offload_device_alloc(nbytes)
+               IF (C_ASSOCIATED(rho%device_data) .AND. rho%device_capacity < nbytes) THEN
+                  CALL offload_device_free(rho%device_data)
+                  rho%device_data = C_NULL_PTR
+                  rho%device_capacity = 0_C_SIZE_T
+                  rho%device_valid = .FALSE.
+               END IF
+               IF (.NOT. C_ASSOCIATED(rho%device_data)) THEN
+                  rho%device_data = offload_device_alloc(nbytes)
+                  rho%device_capacity = nbytes
+               END IF
                CALL offload_device_d2d(rho%device_data, offload_get_buffer_device_pointer(rs_rho(1)%buffer), nbytes)
                rho%device_valid = .TRUE.
             END IF

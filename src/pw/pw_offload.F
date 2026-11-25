@@ -25,12 +25,14 @@ MODULE pw_offload
                                               C_DOUBLE,&
                                               C_INT,&
                                               C_LOC,&
+                                              C_NULL_PTR,&
                                               C_PTR,&
                                               C_SIZE_T
    USE kinds,                           ONLY: dp
    USE offload_api,                     ONLY: offload_device_alloc,&
                                               offload_device_d2d,&
-                                              offload_device_d2h
+                                              offload_device_d2h,&
+                                              offload_device_free
    USE pw_types,                        ONLY: pw_c1d_gs_type
 #include "../base/base_uses.f90"
 
@@ -103,7 +105,16 @@ CONTAINS
       CPASSERT(SIZE(dst%array) == SIZE(src%array))
       nbytes = INT(SIZE(dst%array), KIND=C_SIZE_T)*16_C_SIZE_T
       IF (nbytes <= 0) RETURN
-      IF (.NOT. C_ASSOCIATED(dst%device_data)) dst%device_data = offload_device_alloc(nbytes)
+      IF (C_ASSOCIATED(dst%device_data) .AND. dst%device_capacity < nbytes) THEN
+         CALL offload_device_free(dst%device_data)
+         dst%device_data = C_NULL_PTR
+         dst%device_capacity = 0_C_SIZE_T
+         dst%device_valid = .FALSE.
+      END IF
+      IF (.NOT. C_ASSOCIATED(dst%device_data)) THEN
+         dst%device_data = offload_device_alloc(nbytes)
+         dst%device_capacity = nbytes
+      END IF
       CALL offload_device_d2d(dst%device_data, src%device_data, nbytes)
       CALL dst%mark_device_current()
 #else
@@ -132,8 +143,8 @@ CONTAINS
       CPASSERT(C_ASSOCIATED(x%device_data))
       CPASSERT(C_ASSOCIATED(y%device_data))
       CALL fft_gpu_axpy_c1d_dev_c(y%device_data, x%device_data, &
-                                 REAL(a, KIND=C_DOUBLE), REAL(b, KIND=C_DOUBLE), &
-                                 INT(SIZE(y%array), KIND=C_INT))
+                                  REAL(a, KIND=C_DOUBLE), REAL(b, KIND=C_DOUBLE), &
+                                  INT(SIZE(y%array), KIND=C_INT))
       CALL y%mark_device_current()
 #else
       MARK_USED(y)
@@ -177,7 +188,7 @@ CONTAINS
       CPASSERT(a%device_valid)
       CPASSERT(b%device_valid)
       res = REAL(fft_gpu_dot_c1d_dev_f(a%device_data, b%device_data, &
-                                      INT(SIZE(a%array), KIND=C_INT)), KIND=dp)
+                                       INT(SIZE(a%array), KIND=C_INT)), KIND=dp)
 #else
       MARK_USED(a)
       MARK_USED(b)

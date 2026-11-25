@@ -52,11 +52,14 @@ MODULE pw_types
             !> Optional device-resident mirror of `array` (managed by the pw GPU
             !! offload path; `C_NULL_PTR` when no device copy exists).
             TYPE(C_PTR) :: device_data = C_NULL_PTR
+            INTEGER(KIND=C_SIZE_T) :: device_capacity = 0_C_SIZE_T
             LOGICAL :: device_valid = .FALSE.
             LOGICAL :: host_valid = .TRUE.
          CONTAINS
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: create => pw_create_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: release => pw_release_${kind}$_${space}$
+            PROCEDURE, PUBLIC, NON_OVERRIDABLE :: pw_assign_${kind}$_${space}$
+            GENERIC, PUBLIC :: ASSIGNMENT(=) => pw_assign_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: invalidate_device => pw_invalidate_device_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: mark_device_current => pw_mark_device_current_${kind}$_${space}$
             PROCEDURE, PUBLIC, NON_OVERRIDABLE :: sync_host => pw_sync_host_${kind}$_${space}$
@@ -93,11 +96,28 @@ CONTAINS
                CALL offload_device_free(pw%device_data)
                pw%device_data = C_NULL_PTR
             END IF
+            pw%device_capacity = 0_C_SIZE_T
             pw%device_valid = .FALSE.
             pw%host_valid = .TRUE.
             IF (ASSOCIATED(pw%array)) DEALLOCATE (pw%array)
             CALL pw_grid_release(pw%pw_grid)
          END SUBROUTINE pw_release_${kind}$_${space}$
+
+! **************************************************************************************************
+!> \brief Intrinsic copy (`=`) of a pw array: shares the host array (as before) but deliberately
+!!        does NOT inherit the device mirror, so a value copy can never alias or double-free the
+!!        source's device buffer. Device residency must be driven on the source object directly.
+! **************************************************************************************************
+         SUBROUTINE pw_assign_${kind}$_${space}$ (a, b)
+            CLASS(pw_${kind}$_${space}$_type), INTENT(OUT)  :: a
+            CLASS(pw_${kind}$_${space}$_type), INTENT(IN)   :: b
+            a%array => b%array
+            a%pw_grid => b%pw_grid
+            a%device_data = C_NULL_PTR
+            a%device_capacity = 0_C_SIZE_T
+            a%device_valid = .FALSE.
+            a%host_valid = .TRUE.
+         END SUBROUTINE pw_assign_${kind}$_${space}$
 
 ! **************************************************************************************************
 !> \brief Marks the host copy as authoritative (device mirror stale/must be re-uploaded).
@@ -151,7 +171,16 @@ CONTAINS
                nbytes = 0_C_SIZE_T
             END IF
             IF (nbytes <= 0) RETURN
-            IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+            IF (C_ASSOCIATED(pw%device_data) .AND. pw%device_capacity < nbytes) THEN
+               CALL offload_device_free(pw%device_data)
+               pw%device_data = C_NULL_PTR
+               pw%device_capacity = 0_C_SIZE_T
+               pw%device_valid = .FALSE.
+            END IF
+            IF (.NOT. C_ASSOCIATED(pw%device_data)) THEN
+               pw%device_data = offload_device_alloc(nbytes)
+               pw%device_capacity = nbytes
+            END IF
             IF (pw%host_valid .AND. .NOT. pw%device_valid) THEN
                CALL offload_device_h2d(pw%device_data, C_LOC(pw%array), nbytes)
                pw%device_valid = .TRUE.

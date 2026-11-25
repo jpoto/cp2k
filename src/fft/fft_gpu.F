@@ -29,6 +29,7 @@ MODULE fft_gpu
                                               C_DOUBLE,&
                                               C_INT,&
                                               C_LOC,&
+                                              C_NULL_PTR,&
                                               C_PTR,&
                                               C_SIZE_T
    USE fft_tools,                       ONLY: &
@@ -37,7 +38,8 @@ MODULE fft_gpu
    USE kinds,                           ONLY: dp
    USE mathconstants,                   ONLY: z_zero
    USE message_passing,                 ONLY: mp_cart_type
-   USE offload_api,                     ONLY: offload_device_alloc
+   USE offload_api,                     ONLY: offload_device_alloc,&
+                                              offload_device_free
    USE pw_grid_types,                   ONLY: FULLSPACE
    USE pw_types,                        ONLY: pw_c1d_gs_type,&
                                               pw_r3d_rs_type
@@ -272,7 +274,16 @@ CONTAINS
       n = SIZE(pw%array)
       IF (n == 0) RETURN
       nbytes = INT(n, KIND=C_SIZE_T)*8_C_SIZE_T
-      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+      IF (C_ASSOCIATED(pw%device_data) .AND. pw%device_capacity < nbytes) THEN
+         CALL offload_device_free(pw%device_data)
+         pw%device_data = C_NULL_PTR
+         pw%device_capacity = 0_C_SIZE_T
+         pw%device_valid = .FALSE.
+      END IF
+      IF (.NOT. C_ASSOCIATED(pw%device_data)) THEN
+         pw%device_data = offload_device_alloc(nbytes)
+         pw%device_capacity = nbytes
+      END IF
    END SUBROUTINE fft_gpu_prepare_device_r3d
 
 ! **************************************************************************************************
@@ -287,7 +298,16 @@ CONTAINS
       n = SIZE(pw%array)
       IF (n == 0) RETURN
       nbytes = INT(n, KIND=C_SIZE_T)*16_C_SIZE_T
-      IF (.NOT. C_ASSOCIATED(pw%device_data)) pw%device_data = offload_device_alloc(nbytes)
+      IF (C_ASSOCIATED(pw%device_data) .AND. pw%device_capacity < nbytes) THEN
+         CALL offload_device_free(pw%device_data)
+         pw%device_data = C_NULL_PTR
+         pw%device_capacity = 0_C_SIZE_T
+         pw%device_valid = .FALSE.
+      END IF
+      IF (.NOT. C_ASSOCIATED(pw%device_data)) THEN
+         pw%device_data = offload_device_alloc(nbytes)
+         pw%device_capacity = nbytes
+      END IF
    END SUBROUTINE fft_gpu_prepare_device_c1d
 
 ! **************************************************************************************************
