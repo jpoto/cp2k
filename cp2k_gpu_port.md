@@ -83,26 +83,31 @@ ______________________________________________________________________
 
 ## 3. What was changed relative to `master`
 
-`git diff --stat master..HEAD` (15 files, +1349/−70; commits `ed115b7042`, `684a3c99b0`,
-`9b1585887a`, `ad8e161c4d`, `43b940170a`):
+`git diff --stat master..HEAD` at `03e96355d0` — **20 files, +2196/−71** (commits `ed115b7042` …
+`03e96355d0`). Note `cp2k_gpu_port.md` itself and `tools/run_fused_regtests.sh` are new;
+`pw_offload.F` is new.
 
-| file                             | change | purpose                                                                                                                                      |
-| -------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/offload/offload_api.F`      | +102   | Fortran wrappers: `offload_device_alloc/free/h2d/d2h/d2d`                                                                                    |
-| `src/offload/offload_buffer.c`   | +78    | C impl of the above; **mempool‑backed** device malloc; D2D async + sync                                                                      |
-| `src/offload/offload_buffer.h`   | +27    | declarations                                                                                                                                 |
-| `src/pw/pw_types.F`              | +121   | device mirror fields, contract methods, **defined assignment**, capacity                                                                     |
-| `src/pw/pw_offload.F` *(new)*    | +238   | device copy/axpy/multiply/dot/G0, `CP2K_PW_GPU_FUSED` toggle, availability                                                                   |
-| `src/fft/fft_gpu.F`              | +170   | device‑pointer FFT wrappers (`fft_gpu_*_dev`), `prepare_device_*`, `multiply_device_c1d`                                                     |
-| `src/fft/gpu/fft_gpu.c`          | +152   | `fft_gpu_cfffg_dev`/`sfffc_dev` (no data H2D/D2H), c1d multiply/axpy/dot, coarse sync                                                        |
-| `src/fft/gpu/fft_gpu_kernels.cu` | +83    | CUDA kernels + launchers (complex multiply/axpy, block‑reduced dot)                                                                          |
-| `src/fft/gpu/fft_gpu_kernels.h`  | +19    | launcher declarations                                                                                                                        |
-| `src/pw/pw_methods.F`            | +71    | device fast paths (multiply_with/integral_ab/integrate_function), device FFT selection, invalidation on host writes, source‑validity asserts |
-| `src/pw/pw_poisson_methods.F`    | +90/−  | M5 device Poisson reciprocal chain (Γ-point and k-point; stress still host); leak fix                                                        |
-| `src/pw_env/rs_pw_interface.F`   | +64    | grid→device producer, device FFT, capacity                                                                                                   |
-| `src/qs_ks_methods.F`            | +37    | M3 device `rho_tot_gspace` mirror                                                                                                            |
-| `src/fm/cp_fm_cusolver.c`        | +166/− | persistent cuSOLVERMp workspaces (infra; not residency)                                                                                      |
-| `src/CMakeSources.cmake`         | +1     | add `pw/pw_offload.F`                                                                                                                        |
+| file                                  | change | purpose                                                                                                                                                         |
+| ------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/offload/offload_api.F`           | +245   | Fortran device alloc/free/h2d/d2h/d2d; offload_buffer authority flags + sync; mempool-bytes getter                                                              |
+| `src/offload/offload_buffer.c`        | +125   | C impl; **mempool-backed** device alloc; D2D; device_bytes; host/device authority flags + lazy sync                                                             |
+| `src/offload/offload_buffer.h`        | +50    | declarations + `host_current`/`device_current` fields                                                                                                           |
+| `src/offload/offload_mempool.c/.h`    | +6/+6  | `offload_mempool_device_bytes()` (residency/leak test)                                                                                                          |
+| `src/pw/pw_types.F`                   | +121   | device mirror fields, contract methods, **defined assignment**, capacity                                                                                        |
+| `src/pw/pw_offload.F` *(new)*         | +265   | device copy/axpy/multiply/dot/G0/**r3d-sum**, `CP2K_PW_GPU_FUSED`, availability                                                                                 |
+| `src/pw/pw_methods.F`                 | +107   | device fast paths (multiply_with/integral_ab/integrate_function + device r3d sum), device FFT selection, invalidation/sync, read-sync of device-current sources |
+| `src/pw/pw_poisson_methods.F`         | +86/−  | M5 device Poisson reciprocal chain (**Γ-point and k-point**; stress still host); leak fix                                                                       |
+| `src/pw_env/rs_pw_interface.F`        | +64    | grid→device producer, device FFT, capacity                                                                                                                      |
+| `src/qs_ks_methods.F`                 | +42    | M3 device `rho_tot_gspace` mirror; keep Hartree potential device-resident into integrate                                                                        |
+| `src/fft/fft_gpu.F`                   | +178   | device-pointer FFT wrappers (`fft_gpu_*_dev`), `prepare_device_*`, `multiply_device_c1d`                                                                        |
+| `src/fft/gpu/fft_gpu.c`               | +175   | `fft_gpu_cfffg_dev`/`sfffc_dev`, c1d multiply/axpy/dot + r3d sum, coarse sync                                                                                   |
+| `src/fft/gpu/fft_gpu_kernels.cu`      | +120   | CUDA kernels + launchers (complex multiply/axpy, block-reduced dot + **r3d sum**)                                                                               |
+| `src/fft/gpu/fft_gpu_kernels.h`       | +25    | launcher declarations                                                                                                                                           |
+| `src/pw/pw_unittest.F`                | +121   | residency/leak regression test (`check_device_mirror`)                                                                                                          |
+| `src/fm/cp_fm_cusolver.c`             | +166/− | persistent cuSOLVERMp workspaces (infra; not residency)                                                                                                         |
+| `src/CMakeSources.cmake`              | +1     | add `pw/pw_offload.F`                                                                                                                                           |
+| `tools/run_fused_regtests.sh` *(new)* | +79    | CI step: force/stress regtests default+fused                                                                                                                    |
+| `cp2k_gpu_port.md` *(new)*            | +285   | this guide                                                                                                                                                      |
 
 ### 3.1 Device allocator + mempool (`offload_api`/`offload_buffer`)
 
@@ -126,6 +131,8 @@ mirrors) reuses cached chunks instead of hitting `cudaMalloc/cudaFree` every cal
   index map is uploaded and the result is D2D‑copied to the caller's device buffer.
 - Elementwise complex kernels on device‑resident `c1d` arrays: `a *= b` (multiply), `y = a*x + b*y`
   (axpy), and a block‑reduced `Re(conj(a)·b)` (dot, atomicAdd). Launchers take `offloadStream_t`.
+- Real full‑sum reduction (`fft_gpu_launch_sum_r3d`) for device‑resident r3d arrays, backing
+  `pw_offload_sum_r3d`.
 
 ### 3.3 `pw_offload` (new module)
 
@@ -137,9 +144,10 @@ A `pw_gpu`/`fft_gpu`‑independent device‑ops layer used from SCF/Poisson: `pw
 ### 3.4 Integration points
 
 - **`pw_methods.F`**: device fast paths in `pw_multiply_with` (c1d×c1d), `pw_integral_ab` (device
-  dot + HALFSPACE G0 correction), `pw_integrate_function` (device G0 read); device‑pointer FFT
-  selection (`fft_gpu_*_dev` when the input mirror is valid); `invalidate_device`/`sync_host` around
-  host‑only mutations; source‑validity asserts in `pw_axpy`/`pw_copy`.
+  dot + HALFSPACE G0 correction), `pw_integrate_function` (device G0 read and device r3d full‑sum);
+  device‑pointer FFT selection (`fft_gpu_*_dev` when the input mirror is valid);
+  `invalidate_device`/`sync_host` around host‑only mutations; read‑sync (read‑only D2H) of
+  device‑current sources in `pw_axpy`/`pw_copy`.
 - **`pw_poisson_methods.F`**: **M5** — device‑only Poisson reciprocal chain (copy density→rhog,
   multiply by influence fn, copy→vhartree) when the density is device‑resident, `FULLSPACE` (Γ-point
   and k-point), no aux density, no stress, and no one‑off `greenfn`. Ensures the *persistent*
@@ -158,6 +166,21 @@ A `pw_gpu`/`fft_gpu`‑independent device‑ops layer used from SCF/Poisson: `pw
   under the **legacy default stream**.
 - **cuSOLVERMp**: eigensolver workspaces (work/matrix/eigen/info) cached in the cuSOLVERMp context,
   grow‑on‑demand, freed at context destroy (compiled only with `CP2K_USE_CUSOLVER_MP=ON`).
+
+### 3.6 Realspace / grid-residency foundation (and what it showed)
+
+- **`offload_buffer` authority flags** (`host_current`/`device_current`, default `host_current=1`;
+  `h2d` sets device‑current, `d2h` host‑current) plus `mark_*`, `is_*`, `sync_to_host/device`
+  (lazy). Additive; consumers opt in progressively.
+- **Device r3d reduction** (`pw_offload_sum_r3d`) so `pw_integrate_function` doesn't force a host
+  round‑trip just for a scalar.
+- **Conclusion from tracing the grid glue**: `rs%r => rs%buffer%host_buffer` and the grid GPU
+  backend copies host↔device in `grid_gpu_context.cu` (`copy_to_host` collocate `:571`,
+  `copy_to_gpu` integrate `:625`). The realspace `rho`/`rs_v` are read on **host** by many consumers
+  (XC, integrate CPU backend, CDFT/Hirshfeld/CNeo `%r`, STM/ELF/cube output). So skipping a single
+  copy only swaps one D2H for another — realspace residency is **not** a net win without making all
+  those consumers device‑aware. The flags + device sum are the safe foundation; broad realspace
+  residency was therefore **not** pursued.
 
 ______________________________________________________________________
 
@@ -216,13 +239,14 @@ ______________________________________________________________________
   buffers. Provide a **defined assignment** that detaches `device_data`; never `ensure_device()` a
   transient copy (that leaks) — ensure the persistent object and use it directly.
 - **Capacity**: track allocated bytes; grow‑or‑realloc rather than allocate‑once‑from‑`SIZE(array)`.
-- **Guard naming**: FFT code uses `__NO_OFFLOAD_FFT`; the ported `pw_offload.F` still tests
-  `__NO_OFFLOAD_PW` — unify before relying on `__NO_OFFLOAD_FFT` builds.
+- **Guard naming**: use the registered `__NO_OFFLOAD_FFT` everywhere (the stale `__NO_OFFLOAD_PW`
+  was removed; `make_pretty` rejects unregistered flags).
 - **32‑bit `n`**: device kernels take `int n`; guard sizes > 2³¹.
 - **Leaks**: free cached device buffers at object/context teardown (`dot_dev` static, cuSOLVERMp
   caches).
-- **Gating/coverage**: path is default‑**off**, `FULLSPACE`‑only, single‑grid producer,
-  non‑distributed. Validate before widening.
+- **Gating/coverage**: path is default‑**off**; device Poisson covers Γ‑point and k‑point (stress
+  still host); grid→device producer is single‑grid/non‑distributed; multi‑rank distributed FFT is
+  still host. Validate before widening.
 
 ______________________________________________________________________
 
@@ -262,15 +286,20 @@ ______________________________________________________________________
 
 ## 7. Status & open items
 
-**Done (this branch):** device mirror + contract; device allocator (pooled) + copies; device FFT
-variants + c1d kernels; `pw_offload`; M3 density mirror; M4/M5 Poisson device chain (Γ-point and
-k-point; stress still host); grid→device producer; defined assignment + capacity hardening; sync
-coarsening; cuSOLVERMp workspace pooling; multi‑rank fused regtests green.
+**Done (this branch):** device mirror + contract (+defined assignment, capacity); pooled device
+allocator + copies + **host/device authority flags**; device FFT variants + c1d kernels + **r3d
+sum**; `pw_offload`; M3 density mirror; M5 device Poisson chain for **Γ-point and k-point** (stress
+still host); grid→device producer; read-sync of stale sources in `pw_axpy`/`pw_copy`; sync
+coarsening; cuSOLVERMp workspace pooling; **residency/leak unit test** (`pw_unittest`); **force/
+stress CI gate** (`tools/run_fused_regtests.sh`); keep Hartree potential device‑resident into
+integrate (Step 1). Validated: γ‑OT fused≈default; force gate `kp-4`/`gpw-8` default+fused; fused
+regtests `admm-dm`/`gapw-1`/`kp-2`; `make_pretty` clean.
 
 **Open:** cuSOLVERMp build/run validation (needs cuSOLVERMp); nsys before/after counters (needs nsys
-\+ baseline binary); residency/leak regression test; stress device Poisson; distributed‑grid device
-FFT; interp/integrate device glue; deferred `ensure_host`; DBCSR zero‑copy; device‑pointer dense LA;
-unify `__NO_OFFLOAD_*` guards; broaden to forces/stress.
+\+ baseline binary); **stress/virial device Poisson** (device derive/gradient); **distributed-grid
+device FFT** (multi-rank PPC); device-pointer dense LA (cuSOLVERMp/SLATE direct); **DBCSR multiply
+zero-copy** (host cannon, external submodule); grid/realspace residency judged **not worth it**
+(host consumers) — see §3.6.
 
 ______________________________________________________________________
 
