@@ -37,7 +37,7 @@ MODULE pw_poisson_methods
                                WAVELET2D, &
                                WAVELET3D, &
                                ps_wavelet_type
-   USE pw_grid_types, ONLY: HALFSPACE, pw_grid_type
+   USE pw_grid_types, ONLY: pw_grid_type
    USE pw_grids, ONLY: pw_grid_compare, &
                        pw_grid_release, &
                        pw_grid_retain
@@ -567,8 +567,7 @@ CONTAINS
                      ! M5: device-only Poisson reciprocal chain (no host copies) when the
                      ! density is already device-resident (FULLSPACE, no aux density).
                      IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
-                         .AND. .NOT. PRESENT(h_stress) .AND. .NOT. PRESENT(greenfn) &
-                         .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                         .AND. .NOT. PRESENT(h_stress) .AND. .NOT. PRESENT(greenfn)) THEN
                         ! Ensure the persistent influence function (allocated once and
                         ! reused across SCF iterations); never ensure the transient copy
                         ! `influence_fn`, which would leak its device mirror.
@@ -1005,8 +1004,7 @@ CONTAINS
                      END IF
                      #:if kindd=="c1d_gs" and kindv=="c1d_gs"
                         IF (density%device_valid .AND. .NOT. PRESENT(aux_density) &
-                            .AND. .NOT. PRESENT(h_stress) .AND. .NOT. PRESENT(greenfn) &
-                            .AND. density%pw_grid%grid_span /= HALFSPACE) THEN
+                            .AND. .NOT. PRESENT(h_stress) .AND. .NOT. PRESENT(greenfn)) THEN
                            ! Ensure the persistent influence function (see above) so the
                            ! transient local copy is never given an owned device mirror.
                            CALL poisson_env%green_fft%influence_fn%ensure_device()

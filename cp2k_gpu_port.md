@@ -98,7 +98,7 @@ ______________________________________________________________________
 | `src/fft/gpu/fft_gpu_kernels.cu` | +83    | CUDA kernels + launchers (complex multiply/axpy, block‑reduced dot)                                                                          |
 | `src/fft/gpu/fft_gpu_kernels.h`  | +19    | launcher declarations                                                                                                                        |
 | `src/pw/pw_methods.F`            | +71    | device fast paths (multiply_with/integral_ab/integrate_function), device FFT selection, invalidation on host writes, source‑validity asserts |
-| `src/pw/pw_poisson_methods.F`    | +90/−  | M5 device Poisson reciprocal chain (non‑HALFSPACE); leak fix                                                                                 |
+| `src/pw/pw_poisson_methods.F`    | +90/−  | M5 device Poisson reciprocal chain (Γ-point and k-point; stress still host); leak fix                                                        |
 | `src/pw_env/rs_pw_interface.F`   | +64    | grid→device producer, device FFT, capacity                                                                                                   |
 | `src/qs_ks_methods.F`            | +37    | M3 device `rho_tot_gspace` mirror                                                                                                            |
 | `src/fm/cp_fm_cusolver.c`        | +166/− | persistent cuSOLVERMp workspaces (infra; not residency)                                                                                      |
@@ -141,8 +141,8 @@ A `pw_gpu`/`fft_gpu`‑independent device‑ops layer used from SCF/Poisson: `pw
   selection (`fft_gpu_*_dev` when the input mirror is valid); `invalidate_device`/`sync_host` around
   host‑only mutations; source‑validity asserts in `pw_axpy`/`pw_copy`.
 - **`pw_poisson_methods.F`**: **M5** — device‑only Poisson reciprocal chain (copy density→rhog,
-  multiply by influence fn, copy→vhartree) when the density is device‑resident, `FULLSPACE`
-  (non‑HALFSPACE), no aux density, no stress, and no one‑off `greenfn`. Ensures the *persistent*
+  multiply by influence fn, copy→vhartree) when the density is device‑resident, `FULLSPACE` (Γ-point
+  and k-point), no aux density, no stress, and no one‑off `greenfn`. Ensures the *persistent*
   influence function.
 - **`rs_pw_interface.F`**: grid→device producer — when the realspace collocate result lives in the
   grid's device buffer, D2D it into the pw mirror so the FFT can skip its H2D.
@@ -185,10 +185,9 @@ Apply this loop to each hot region identified by profiling:
 
 ### Recipes for the remaining gaps
 
-- **HALFSPACE (Γ‑point) Poisson**: relax the `grid_span /= HALFSPACE` gate in the M5 blocks;
-  implement the HALFSPACE G0/G² conventions on the device (the device dot already handles the
-  `2·dot − g0` identity; guard on `have_g0`). Most OT runs are Γ‑point, so this is the highest‑value
-  next step.
+- **Stress/virial device Poisson**: M5 still excludes `h_stress`; the stress path needs the
+  reciprocal-space chain plus pw_derive/gradient on the device (currently host). HALFSPACE (Γ-point)
+  device Poisson is now enabled and validated.
 - **Distributed‑grid FFT**: extend `fft_gpu_*_dev` to the distributed PPC path (currently only
   `PW_MODE_LOCAL` / `ray_distribution`). Needs device‑resident `ghatmap`/ray mapping and the PPC
   transpose on device.
@@ -264,14 +263,14 @@ ______________________________________________________________________
 ## 7. Status & open items
 
 **Done (this branch):** device mirror + contract; device allocator (pooled) + copies; device FFT
-variants + c1d kernels; `pw_offload`; M3 density mirror; M4/M5 Poisson device chain (non‑HALFSPACE);
-grid→device producer; defined assignment + capacity hardening; sync coarsening; cuSOLVERMp workspace
-pooling; multi‑rank fused regtests green.
+variants + c1d kernels; `pw_offload`; M3 density mirror; M4/M5 Poisson device chain (Γ-point and
+k-point; stress still host); grid→device producer; defined assignment + capacity hardening; sync
+coarsening; cuSOLVERMp workspace pooling; multi‑rank fused regtests green.
 
 **Open:** cuSOLVERMp build/run validation (needs cuSOLVERMp); nsys before/after counters (needs nsys
-\+ baseline binary); residency/leak regression test; HALFSPACE device Poisson; distributed‑grid
-device FFT; interp/integrate device glue; deferred `ensure_host`; DBCSR zero‑copy; device‑pointer
-dense LA; unify `__NO_OFFLOAD_*` guards; broaden to forces/stress.
+\+ baseline binary); residency/leak regression test; stress device Poisson; distributed‑grid device
+FFT; interp/integrate device glue; deferred `ensure_host`; DBCSR zero‑copy; device‑pointer dense LA;
+unify `__NO_OFFLOAD_*` guards; broaden to forces/stress.
 
 ______________________________________________________________________
 
