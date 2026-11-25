@@ -59,6 +59,8 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
       (*buffer)->size = 0;
       (*buffer)->host_buffer = NULL;
       (*buffer)->device_buffer = NULL;
+      (*buffer)->host_current = 0;
+      (*buffer)->device_current = 0;
       return;
     } else if (requested_size <= (*buffer)->size) {
       return; // reuse existing buffer
@@ -73,6 +75,8 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
   (*buffer)->size = requested_size;
   (*buffer)->host_buffer = NULL;
   (*buffer)->device_buffer = NULL;
+  (*buffer)->host_current = 0;
+  (*buffer)->device_current = 0;
   if (0 == requested_size) {
     return;
   }
@@ -94,6 +98,10 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
   if (NULL == (*buffer)->host_buffer) { /* unified memory */
     (*buffer)->host_buffer = (*buffer)->device_buffer;
   }
+  // Host is authoritative right after creation (code fills/uses host first).
+  (*buffer)->host_current = 1;
+  (*buffer)->device_current =
+      ((*buffer)->host_buffer == (*buffer)->device_buffer) ? 1 : 0;
 }
 
 /*******************************************************************************
@@ -136,6 +144,7 @@ void offload_buffer_h2d(offload_buffer *buffer, const int length) {
     const size_t bytes = sizeof(double) * length;
     offloadMemcpyAsyncHtoD(buffer->device_buffer, buffer->host_buffer, bytes,
                            0);
+    buffer->device_current = 1;
   }
 #else
   (void)length; // no-op on CPU-only builds: host memory is the same store
@@ -153,10 +162,48 @@ void offload_buffer_d2h(offload_buffer *buffer, const int length) {
     const size_t bytes = sizeof(double) * length;
     offloadMemcpyAsyncDtoH(buffer->host_buffer, buffer->device_buffer, bytes,
                            0);
+    buffer->host_current = 1;
   }
 #else
   (void)length; // no-op on CPU-only builds: host memory is the same store
 #endif
+}
+
+/*******************************************************************************
+ * \brief Host/device authority flags and lazy sync (grid-residency).
+ ******************************************************************************/
+int offload_buffer_is_device_current(const offload_buffer *buffer) {
+  cp_assert(NULL != buffer);
+  return buffer->device_current;
+}
+
+int offload_buffer_is_host_current(const offload_buffer *buffer) {
+  cp_assert(NULL != buffer);
+  return buffer->host_current;
+}
+
+void offload_buffer_mark_device_current(offload_buffer *buffer) {
+  cp_assert(NULL != buffer);
+  buffer->device_current = 1;
+  buffer->host_current = 0;
+}
+
+void offload_buffer_mark_host_current(offload_buffer *buffer) {
+  cp_assert(NULL != buffer);
+  buffer->host_current = 1;
+  buffer->device_current = 0;
+}
+
+void offload_buffer_sync_to_host(offload_buffer *buffer, const int length) {
+  if (buffer->device_current && !buffer->host_current) {
+    offload_buffer_d2h(buffer, length);
+  }
+}
+
+void offload_buffer_sync_to_device(offload_buffer *buffer, const int length) {
+  if (buffer->host_current && !buffer->device_current) {
+    offload_buffer_h2d(buffer, length);
+  }
 }
 
 /*******************************************************************************

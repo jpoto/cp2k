@@ -17,6 +17,12 @@ typedef struct {
   size_t size;
   double *host_buffer;
   double *device_buffer;
+  /* Host/device authority flags for the grid-residency work. Default: the host
+   * buffer is authoritative (existing behaviour). Unified-memory builds keep
+   * both current. Nothing consumes these yet; consumers opt in progressively.
+   */
+  int host_current;
+  int device_current;
 } offload_buffer;
 
 /*******************************************************************************
@@ -54,6 +60,23 @@ void offload_buffer_h2d(offload_buffer *buffer, const int length);
  * \author Samal Bibek
  ******************************************************************************/
 void offload_buffer_d2h(offload_buffer *buffer, const int length);
+
+/*******************************************************************************
+ * \brief Host/device authority flags (grid-residency). Additive: default is
+ *        host_current=1, device_current=0 (i.e. existing behaviour).
+ ******************************************************************************/
+int offload_buffer_is_device_current(const offload_buffer *buffer);
+int offload_buffer_is_host_current(const offload_buffer *buffer);
+void offload_buffer_mark_device_current(offload_buffer *buffer);
+void offload_buffer_mark_host_current(offload_buffer *buffer);
+/*******************************************************************************
+ * \brief Ensure host is up to date (D2H only if the device is authoritative).
+ ******************************************************************************/
+void offload_buffer_sync_to_host(offload_buffer *buffer, const int length);
+/*******************************************************************************
+ * \brief Ensure device is up to date (H2D only if the host is authoritative).
+ ******************************************************************************/
+void offload_buffer_sync_to_device(offload_buffer *buffer, const int length);
 
 /*******************************************************************************
  * \brief Allocate device-only memory (no host mirror), reusable across calls.

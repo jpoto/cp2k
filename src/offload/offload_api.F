@@ -37,6 +37,9 @@ MODULE offload_api
    PUBLIC :: offload_mempool_stats_print
    PUBLIC :: offload_mempool_device_bytes
    PUBLIC :: offload_get_buffer_host_pointer
+   PUBLIC :: offload_buffer_is_device_current, offload_buffer_is_host_current, &
+             offload_buffer_mark_device_current, offload_buffer_mark_host_current, &
+             offload_buffer_sync_to_host, offload_buffer_sync_to_device
 
    TYPE offload_buffer_type
       REAL(KIND=dp), DIMENSION(:), CONTIGUOUS, POINTER :: host_buffer => Null()
@@ -443,6 +446,127 @@ CONTAINS
 
       device_ptr = offload_get_buffer_device_pointer_c(buffer%c_ptr)
    END FUNCTION offload_get_buffer_device_pointer
+
+! **************************************************************************************************
+!> \brief Host/device authority flags and lazy sync for an offload_buffer.
+!>!        (grid-residency; additive, host_current=1 on creation)
+!> \param buffer ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION offload_buffer_is_device_current(buffer) RESULT(res)
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
+      LOGICAL                                            :: res
+
+      INTERFACE
+         FUNCTION offload_buffer_is_device_current_c(buffer) RESULT(r) &
+            BIND(C, name="offload_buffer_is_device_current")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE                        :: buffer
+            INTEGER(KIND=C_INT)                       :: r
+         END FUNCTION offload_buffer_is_device_current_c
+      END INTERFACE
+
+      res = (offload_buffer_is_device_current_c(buffer%c_ptr) /= 0)
+   END FUNCTION offload_buffer_is_device_current
+
+! **************************************************************************************************
+!> \brief ...
+!> \param buffer ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION offload_buffer_is_host_current(buffer) RESULT(res)
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
+      LOGICAL                                            :: res
+
+      INTERFACE
+         FUNCTION offload_buffer_is_host_current_c(buffer) RESULT(r) &
+            BIND(C, name="offload_buffer_is_host_current")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE                        :: buffer
+            INTEGER(KIND=C_INT)                       :: r
+         END FUNCTION offload_buffer_is_host_current_c
+      END INTERFACE
+
+      res = (offload_buffer_is_host_current_c(buffer%c_ptr) /= 0)
+   END FUNCTION offload_buffer_is_host_current
+
+! **************************************************************************************************
+!> \brief ...
+!> \param buffer ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_mark_device_current(buffer)
+      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+
+      INTERFACE
+         SUBROUTINE offload_buffer_mark_device_current_c(buffer) &
+            BIND(C, name="offload_buffer_mark_device_current")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: buffer
+         END SUBROUTINE offload_buffer_mark_device_current_c
+      END INTERFACE
+
+      CALL offload_buffer_mark_device_current_c(buffer%c_ptr)
+   END SUBROUTINE offload_buffer_mark_device_current
+
+! **************************************************************************************************
+!> \brief ...
+!> \param buffer ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_mark_host_current(buffer)
+      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+
+      INTERFACE
+         SUBROUTINE offload_buffer_mark_host_current_c(buffer) &
+            BIND(C, name="offload_buffer_mark_host_current")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: buffer
+         END SUBROUTINE offload_buffer_mark_host_current_c
+      END INTERFACE
+
+      CALL offload_buffer_mark_host_current_c(buffer%c_ptr)
+   END SUBROUTINE offload_buffer_mark_host_current
+
+! **************************************************************************************************
+!> \brief ...
+!> \param buffer ...
+!> \param length ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_sync_to_host(buffer, length)
+      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+      INTEGER, INTENT(IN)                                :: length
+
+      INTERFACE
+         SUBROUTINE offload_buffer_sync_to_host_c(buffer, length) &
+            BIND(C, name="offload_buffer_sync_to_host")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE                        :: buffer
+            INTEGER(KIND=C_INT), VALUE                :: length
+         END SUBROUTINE offload_buffer_sync_to_host_c
+      END INTERFACE
+
+      CALL offload_buffer_sync_to_host_c(buffer%c_ptr, length)
+   END SUBROUTINE offload_buffer_sync_to_host
+
+! **************************************************************************************************
+!> \brief ...
+!> \param buffer ...
+!> \param length ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_sync_to_device(buffer, length)
+      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+      INTEGER, INTENT(IN)                                :: length
+
+      INTERFACE
+         SUBROUTINE offload_buffer_sync_to_device_c(buffer, length) &
+            BIND(C, name="offload_buffer_sync_to_device")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE                        :: buffer
+            INTEGER(KIND=C_INT), VALUE                :: length
+         END SUBROUTINE offload_buffer_sync_to_device_c
+      END INTERFACE
+
+      CALL offload_buffer_sync_to_device_c(buffer%c_ptr, length)
+   END SUBROUTINE offload_buffer_sync_to_device
 
 ! **************************************************************************************************
 !> \brief Blocks until all outstanding device work has completed.
