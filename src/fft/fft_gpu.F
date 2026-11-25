@@ -181,6 +181,8 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief device-pointer variant of fft_gpu_r3dc1d_3d: input and output are
 !>        already resident in the pw device mirrors (no data H2D/D2H).
+!> \param pw1 ...
+!> \param pw2 ...
 ! **************************************************************************************************
    SUBROUTINE fft_gpu_r3dc1d_3d_dev(pw1, pw2)
       TYPE(pw_r3d_rs_type), INTENT(IN)                   :: pw1
@@ -222,6 +224,8 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief device-pointer variant of fft_gpu_c1dr3d_3d.
+!> \param pw1 ...
+!> \param pw2 ...
 ! **************************************************************************************************
    SUBROUTINE fft_gpu_c1dr3d_3d_dev(pw1, pw2)
       TYPE(pw_c1d_gs_type), INTENT(IN)                   :: pw1
@@ -264,6 +268,7 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Allocates the device mirror of a real-space pw array without uploading.
+!> \param pw ...
 ! **************************************************************************************************
    SUBROUTINE fft_gpu_prepare_device_r3d(pw)
       TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
@@ -288,6 +293,7 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Allocates the device mirror of a reciprocal-space pw array without uploading.
+!> \param pw ...
 ! **************************************************************************************************
    SUBROUTINE fft_gpu_prepare_device_c1d(pw)
       TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw
@@ -313,6 +319,8 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief Elementwise multiply of two device-resident reciprocal-space arrays (pw1 *= pw2).
 !>        Requires both device mirrors to be allocated and current.
+!> \param pw1 ...
+!> \param pw2 ...
 ! **************************************************************************************************
    SUBROUTINE fft_gpu_multiply_device_c1d(pw1, pw2)
       TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: pw1

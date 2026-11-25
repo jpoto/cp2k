@@ -416,9 +416,9 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief Residency/leak regression test for the pw device-mirror path.
-!!        Verifies the device contract (flags) and the copy/multiply/dot kernels
-!!        against their host oracles, and that repeated allocate/free cycles do
-!!        not grow device memory (i.e. mirrors are returned to the mempool).
+!>!        Verifies the device contract (flags) and the copy/multiply/dot kernels
+!>!        against their host oracles, and that repeated allocate/free cycles do
+!>!        not grow device memory (i.e. mirrors are returned to the mempool).
 ! **************************************************************************************************
    SUBROUTINE check_device_mirror()
       INTEGER, PARAMETER                                 :: nloop = 20
@@ -473,8 +473,9 @@ CONTAINS
       IF (.NOT. a%device_valid) ERROR STOP "ensure_device did not mark the device mirror valid"
       CALL pw_offload_copy_c1d(c, a)
       CALL c%ensure_host()
-      IF (MAXVAL(ABS(c%array - a0)) > 1.0e-12_dp) &
+      IF (MAXVAL(ABS(c%array - a0)) > 1.0e-12_dp) THEN
          ERROR STOP "device copy round-trip mismatch"
+      END IF
 
       ! (2) elementwise multiply on device matches the host product.
       a%array = a0
@@ -485,8 +486,9 @@ CONTAINS
       CALL b%ensure_device()
       CALL pw_offload_multiply_c1d(a, b)
       CALL a%ensure_host()
-      IF (MAXVAL(ABS(a%array - a0*b0)) > 1.0e-12_dp) &
+      IF (MAXVAL(ABS(a%array - a0*b0)) > 1.0e-12_dp) THEN
          ERROR STOP "device multiply mismatch"
+      END IF
 
       ! (3) dot product on device matches the host reduction.
       a%array = a0
@@ -497,8 +499,9 @@ CONTAINS
       CALL b%ensure_device()
       ref_dot = SUM(REAL(CONJG(a0)*b0, dp))
       got_dot = pw_offload_dot_c1d(a, b)
-      IF (ABS(got_dot - ref_dot) > 1.0e-11_dp*MAX(1.0_dp, ABS(ref_dot))) &
+      IF (ABS(got_dot - ref_dot) > 1.0e-11_dp*MAX(1.0_dp, ABS(ref_dot))) THEN
          ERROR STOP "device dot mismatch"
+      END IF
 
       ! (4) leak/regression: repeated create+ensure+release must not grow the
       !     device mempool. A missing free leaves the chunk allocated -> growth.

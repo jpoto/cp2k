@@ -50,7 +50,7 @@ MODULE pw_offload
    PUBLIC :: pw_offload_dot_c1d
    PUBLIC :: pw_offload_g0_c1d
 
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
    INTERFACE
       SUBROUTINE fft_gpu_multiply_c1d_dev_c(a, b, n) BIND(C, name="fft_gpu_multiply_c1d_dev")
          IMPORT :: C_INT, C_PTR
@@ -82,7 +82,7 @@ CONTAINS
 ! **************************************************************************************************
    PURE FUNCTION pw_offload_available() RESULT(res)
       LOGICAL :: res
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
       res = .TRUE.
 #else
       res = .FALSE.
@@ -97,7 +97,7 @@ CONTAINS
    SUBROUTINE pw_offload_copy_c1d(dst, src)
       TYPE(pw_c1d_gs_type), INTENT(INOUT) :: dst
       TYPE(pw_c1d_gs_type), INTENT(IN) :: src
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
       INTEGER(KIND=C_SIZE_T) :: nbytes
       CPASSERT(src%device_valid)
       CPASSERT(ASSOCIATED(dst%array))
@@ -135,7 +135,7 @@ CONTAINS
       TYPE(pw_c1d_gs_type), INTENT(INOUT) :: y
       TYPE(pw_c1d_gs_type), INTENT(IN) :: x
       REAL(KIND=dp), INTENT(IN) :: a, b
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
       CPASSERT(x%device_valid)
       CPASSERT(ASSOCIATED(x%array))
       CPASSERT(ASSOCIATED(y%array))
@@ -163,7 +163,7 @@ CONTAINS
    SUBROUTINE pw_offload_multiply_c1d(a, b)
       TYPE(pw_c1d_gs_type), INTENT(INOUT) :: a
       TYPE(pw_c1d_gs_type), INTENT(IN) :: b
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
       CPASSERT(a%device_valid)
       CPASSERT(b%device_valid)
       CALL fft_gpu_multiply_c1d_dev_c(a%device_data, b%device_data, INT(SIZE(a%array), KIND=C_INT))
@@ -184,7 +184,7 @@ CONTAINS
    FUNCTION pw_offload_dot_c1d(a, b) RESULT(res)
       TYPE(pw_c1d_gs_type), INTENT(IN) :: a, b
       REAL(KIND=dp) :: res
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
       CPASSERT(a%device_valid)
       CPASSERT(b%device_valid)
       res = REAL(fft_gpu_dot_c1d_dev_f(a%device_data, b%device_data, &
@@ -204,7 +204,7 @@ CONTAINS
    FUNCTION pw_offload_g0_c1d(a) RESULT(g0)
       TYPE(pw_c1d_gs_type), INTENT(IN) :: a
       COMPLEX(KIND=dp), TARGET :: g0
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
       CPASSERT(a%device_valid)
       IF (ASSOCIATED(a%array)) THEN
          CALL offload_device_d2h(C_LOC(g0), a%device_data, INT(16, KIND=C_SIZE_T))

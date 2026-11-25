@@ -574,7 +574,7 @@ CONTAINS
 
             CALL timeset(routineN, handle)
             CALL pw2%invalidate_device()
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
             IF (pw1%device_valid .AND. .NOT. pw1%host_valid .AND. C_ASSOCIATED(pw1%device_data)) THEN
                IF (ASSOCIATED(pw1%array)) THEN
                   IF (SIZE(pw1%array) > 0) THEN
@@ -766,7 +766,7 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
             IF (pw1%device_valid .AND. .NOT. pw1%host_valid .AND. C_ASSOCIATED(pw1%device_data)) THEN
                IF (ASSOCIATED(pw1%array)) THEN
                   IF (SIZE(pw1%array) > 0) THEN

@@ -577,16 +577,16 @@ CONTAINS
       CALL offload_device_d2d_c(dst_device_ptr, src_device_ptr, bytes)
    END SUBROUTINE offload_device_d2d
 
-
 ! **************************************************************************************************
 !> \brief Total device bytes currently held by the offload mempool (device_size).
 !>        Used by the residency/leak unit test.
+!> \return ...
 ! **************************************************************************************************
    FUNCTION offload_mempool_device_bytes() RESULT(res)
       INTEGER(KIND=int_8)                                :: res
 
       INTERFACE
-         FUNCTION offload_mempool_device_bytes_c() BIND(C, name="offload_mempool_device_bytes") RESULT(r)
+         FUNCTION offload_mempool_device_bytes_c() RESULT(r) BIND(C, name="offload_mempool_device_bytes")
             IMPORT :: int_8
             INTEGER(KIND=int_8)                         :: r
          END FUNCTION offload_mempool_device_bytes_c

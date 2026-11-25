@@ -104,7 +104,7 @@ CONTAINS
 
       IF (gridlevel_info%ngrid_levels == 1) THEN
          CALL transfer_rs2pw(rs_rho(1), rho)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
          ! Grid -> device producer: the collocate result already lives in the
          ! realspace grid's device buffer. Keep it on the device (device->device)
          ! so the following FFT can skip its host->device upload. Only valid when
@@ -131,7 +131,7 @@ CONTAINS
          END IF
 #endif
          CALL pw_transfer(rho, rho_gspace)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
          ! If the FFT produced rho_gspace on the device, bring it back for host consumers.
          IF (C_ASSOCIATED(rho_gspace%device_data) .AND. .NOT. rho_gspace%host_valid) THEN
             CALL offload_device_d2h(C_LOC(rho_gspace%array(1)), rho_gspace%device_data, &
@@ -141,7 +141,7 @@ CONTAINS
 #endif
          IF (rho%pw_grid%spherical) THEN ! rho_gspace = rho
             CALL pw_transfer(rho_gspace, rho)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
             IF (C_ASSOCIATED(rho%device_data) .AND. .NOT. rho%host_valid) THEN
                CALL offload_device_d2h(C_LOC(rho%array(1, 1, 1)), rho%device_data, &
                                        INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T)
@@ -171,14 +171,14 @@ CONTAINS
                                      pw_env%interp_section)
             END DO
             CALL pw_copy(mgrid_rspace(1), rho)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
             ! Multi-grid: keep rho_gspace device-resident for the downstream
             ! Poisson / c1dr3d (M3/M5). Upload rho, run the FFT on the device,
             ! then sync rho_gspace back but leave its device mirror current.
             IF (pw_offload_fused_enabled()) CALL rho%ensure_device()
 #endif
             CALL pw_transfer(rho, rho_gspace)
-#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
             IF (pw_offload_fused_enabled()) CALL rho_gspace%ensure_host()
 #endif
          CASE default
