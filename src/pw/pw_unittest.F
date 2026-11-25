@@ -8,7 +8,8 @@
 PROGRAM pw_unittest
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type
-   USE kinds,                           ONLY: dp
+   USE kinds,                           ONLY: dp,&
+                                              int_8
    USE libcp2k,                         ONLY: cp2k_finalize,&
                                               cp2k_init
    USE mathconstants,                   ONLY: fourpi,&
@@ -17,6 +18,7 @@ PROGRAM pw_unittest
                                               mp_comm_world,&
                                               mp_para_env_type
    USE mt_util,                         ONLY: mt2d_kernel_strain
+   USE offload_api,                     ONLY: offload_mempool_device_bytes
    USE pw_copy_all,                     ONLY: pw_copy_match
    USE pw_grid_types,                   ONLY: FULLSPACE,&
                                               HALFSPACE,&
@@ -26,6 +28,10 @@ PROGRAM pw_unittest
    USE pw_methods,                      ONLY: do_accurate_sum,&
                                               do_standard_sum,&
                                               pw_integral_ab
+   USE pw_offload,                      ONLY: pw_offload_available,&
+                                              pw_offload_copy_c1d,&
+                                              pw_offload_dot_c1d,&
+                                              pw_offload_multiply_c1d
    USE pw_poisson_methods,              ONLY: pw_poisson_set,&
                                               pw_poisson_solve
    USE pw_poisson_types,                ONLY: pw_poisson_mt,&
@@ -55,6 +61,7 @@ PROGRAM pw_unittest
    CALL check_pw_integral_and_poisson()
    CALL check_mt2d_kernel()
    PRINT '(A,ES16.7)', 'PW integral and MT2D kernel maximum scaled error: ', max_error
+   CALL check_device_mirror()
    CALL cp2k_finalize()
 
 CONTAINS
@@ -406,5 +413,114 @@ CONTAINS
          ERROR STOP 'PW integral or MT2D kernel check failed'
       END IF
    END SUBROUTINE check_error
+
+! **************************************************************************************************
+!> \brief Residency/leak regression test for the pw device-mirror path.
+!!        Verifies the device contract (flags) and the copy/multiply/dot kernels
+!!        against their host oracles, and that repeated allocate/free cycles do
+!!        not grow device memory (i.e. mirrors are returned to the mempool).
+! **************************************************************************************************
+   SUBROUTINE check_device_mirror()
+      INTEGER, PARAMETER                                 :: nloop = 20
+
+      COMPLEX(dp)                                        :: got_dot, ref_dot
+      COMPLEX(dp), ALLOCATABLE                           :: a0(:), b0(:)
+      INTEGER                                            :: ig, rep
+      INTEGER(KIND=int_8)                                :: bytes_end, bytes_warm
+      REAL(dp)                                           :: cell(3, 3)
+      TYPE(mp_comm_type)                                 :: comm
+      TYPE(pw_c1d_gs_type)                               :: a, b, c, t
+      TYPE(pw_grid_type), POINTER                        :: grid
+      INTERFACE
+         SUBROUTINE fft_gpu_init_c() BIND(C, name="fft_gpu_init")
+         END SUBROUTINE fft_gpu_init_c
+      END INTERFACE
+      INTERFACE
+         SUBROUTINE fft_gpu_finalize_c() BIND(C, name="fft_gpu_finalize")
+         END SUBROUTINE fft_gpu_finalize_c
+      END INTERFACE
+
+      IF (.NOT. pw_offload_available()) THEN
+         PRINT *, "check_device_mirror: skipped (no PW offload available)"
+         RETURN
+      END IF
+
+      ! The device kernels live in fft_gpu and rely on its per-thread
+      ! streams/buffers, initialized by fft_lib in a normal run. Do it here.
+      CALL fft_gpu_init_c()
+
+      CALL comm%set_handle(mp_comm_world%get_handle())
+      cell = 0.0_dp
+      cell(1, 1) = 6.0_dp
+      cell(2, 2) = 6.0_dp
+      cell(3, 3) = 6.0_dp
+      NULLIFY (grid)
+      CALL pw_grid_create(grid, comm, cell, grid_span=FULLSPACE, npts=[5, 5, 5], odd=.TRUE., &
+                          fft_usage=.FALSE.)
+      CALL a%create(grid)
+      CALL b%create(grid)
+      CALL c%create(grid)
+      ALLOCATE (a0(SIZE(a%array)), b0(SIZE(b%array)))
+      DO ig = 1, SIZE(a%array)
+         a0(ig) = CMPLX(0.1_dp*REAL(ig, dp), -0.03_dp*REAL(ig, dp), dp)
+         b0(ig) = CMPLX(1.0_dp, 0.02_dp*REAL(ig, dp), dp)
+      END DO
+
+      ! (1) device copy round-trip: a -> device -> c -> host must equal a0.
+      a%array = a0
+      CALL a%invalidate_device()
+      CALL a%ensure_device()
+      IF (.NOT. a%device_valid) ERROR STOP "ensure_device did not mark the device mirror valid"
+      CALL pw_offload_copy_c1d(c, a)
+      CALL c%ensure_host()
+      IF (MAXVAL(ABS(c%array - a0)) > 1.0e-12_dp) &
+         ERROR STOP "device copy round-trip mismatch"
+
+      ! (2) elementwise multiply on device matches the host product.
+      a%array = a0
+      CALL a%invalidate_device()
+      b%array = b0
+      CALL b%invalidate_device()
+      CALL a%ensure_device()
+      CALL b%ensure_device()
+      CALL pw_offload_multiply_c1d(a, b)
+      CALL a%ensure_host()
+      IF (MAXVAL(ABS(a%array - a0*b0)) > 1.0e-12_dp) &
+         ERROR STOP "device multiply mismatch"
+
+      ! (3) dot product on device matches the host reduction.
+      a%array = a0
+      CALL a%invalidate_device()
+      b%array = b0
+      CALL b%invalidate_device()
+      CALL a%ensure_device()
+      CALL b%ensure_device()
+      ref_dot = SUM(REAL(CONJG(a0)*b0, dp))
+      got_dot = pw_offload_dot_c1d(a, b)
+      IF (ABS(got_dot - ref_dot) > 1.0e-11_dp*MAX(1.0_dp, ABS(ref_dot))) &
+         ERROR STOP "device dot mismatch"
+
+      ! (4) leak/regression: repeated create+ensure+release must not grow the
+      !     device mempool. A missing free leaves the chunk allocated -> growth.
+      DO rep = 1, nloop
+         CALL t%create(grid)
+         t%array = a0
+         CALL t%ensure_device()
+         IF (rep == 4) bytes_warm = offload_mempool_device_bytes()
+         CALL t%release()
+      END DO
+      bytes_end = offload_mempool_device_bytes()
+      IF (bytes_end > bytes_warm) THEN
+         PRINT *, "check_device_mirror: device bytes warm/end = ", bytes_warm, bytes_end
+         ERROR STOP "device memory grew across alloc/free cycles (leak)"
+      END IF
+
+      CALL a%release()
+      CALL b%release()
+      CALL c%release()
+      CALL fft_gpu_finalize_c()
+      CALL pw_grid_release(grid)
+      PRINT *, "check_device_mirror: OK"
+   END SUBROUTINE check_device_mirror
 
 END PROGRAM pw_unittest

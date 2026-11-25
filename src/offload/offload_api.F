@@ -35,6 +35,7 @@ MODULE offload_api
    PUBLIC :: offload_device_alloc, offload_device_free, offload_device_h2d, &
              offload_device_d2h, offload_device_d2d
    PUBLIC :: offload_mempool_stats_print
+   PUBLIC :: offload_mempool_device_bytes
    PUBLIC :: offload_get_buffer_host_pointer
 
    TYPE offload_buffer_type
@@ -575,5 +576,23 @@ CONTAINS
 
       CALL offload_device_d2d_c(dst_device_ptr, src_device_ptr, bytes)
    END SUBROUTINE offload_device_d2d
+
+
+! **************************************************************************************************
+!> \brief Total device bytes currently held by the offload mempool (device_size).
+!>        Used by the residency/leak unit test.
+! **************************************************************************************************
+   FUNCTION offload_mempool_device_bytes() RESULT(res)
+      INTEGER(KIND=int_8)                                :: res
+
+      INTERFACE
+         FUNCTION offload_mempool_device_bytes_c() BIND(C, name="offload_mempool_device_bytes") RESULT(r)
+            IMPORT :: int_8
+            INTEGER(KIND=int_8)                         :: r
+         END FUNCTION offload_mempool_device_bytes_c
+      END INTERFACE
+
+      res = offload_mempool_device_bytes_c()
+   END FUNCTION offload_mempool_device_bytes
 
 END MODULE offload_api

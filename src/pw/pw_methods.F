@@ -31,6 +31,7 @@ MODULE pw_methods
                         fft3d
    USE kahan_sum, ONLY: accurate_dot_product, &
                         accurate_sum
+   USE iso_c_binding, ONLY: C_ASSOCIATED, C_LOC, C_SIZE_T
    USE kinds, ONLY: dp
    USE machine, ONLY: m_memory
    USE mathconstants, ONLY: gaussi, &
@@ -45,6 +46,7 @@ MODULE pw_methods
                       fft_gpu_r3dc1d_3d, &
                       fft_gpu_r3dc1d_3d_dev, &
                       fft_gpu_r3dc1d_3d_ps
+   USE offload_api, ONLY: offload_device_d2h
    USE pw_offload, ONLY: pw_offload_dot_c1d, pw_offload_g0_c1d
    USE pw_grid_types, ONLY: HALFSPACE, &
                             PW_MODE_DISTRIBUTED, &
@@ -565,13 +567,23 @@ CONTAINS
             CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_copy'
 
             INTEGER                                            :: handle
+            INTEGER(KIND=C_SIZE_T)                             :: nbytes
             #:if kind[1:]=='1d'
                INTEGER :: i, j, ng, ng1, ng2, ns
             #:endif
 
             CALL timeset(routineN, handle)
             CALL pw2%invalidate_device()
-            CPASSERT(pw1%host_valid .OR. .NOT. pw1%device_valid)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (pw1%device_valid .AND. .NOT. pw1%host_valid .AND. C_ASSOCIATED(pw1%device_data)) THEN
+               IF (ASSOCIATED(pw1%array)) THEN
+                  IF (SIZE(pw1%array) > 0) THEN
+                     nbytes = INT(SIZE(pw1%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
+                     CALL offload_device_d2h(C_LOC(pw1%array), pw1%device_data, nbytes)
+                  END IF
+               END IF
+            END IF
+#endif
 
             IF (pw1%pw_grid%spherical .neqv. pw2%pw_grid%spherical) &
                CPABORT("Both grids must be either spherical or non-spherical!")
@@ -746,6 +758,7 @@ CONTAINS
             CHARACTER(len=*), PARAMETER                        :: routineN = 'pw_axpy'
 
             INTEGER                                            :: handle
+            INTEGER(KIND=C_SIZE_T)                             :: nbytes
             LOGICAL                                            :: my_allow_noncompatible_grids
             REAL(KIND=dp)                                      :: my_alpha, my_beta
             #:if kind[1]=='1'
@@ -753,7 +766,16 @@ CONTAINS
             #:endif
 
             CALL timeset(routineN, handle)
-            CPASSERT(pw1%host_valid .OR. .NOT. pw1%device_valid)
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_PW)
+            IF (pw1%device_valid .AND. .NOT. pw1%host_valid .AND. C_ASSOCIATED(pw1%device_data)) THEN
+               IF (ASSOCIATED(pw1%array)) THEN
+                  IF (SIZE(pw1%array) > 0) THEN
+                     nbytes = INT(SIZE(pw1%array), KIND=C_SIZE_T)*${16 if kind[0]=='c' else 8}$_C_SIZE_T
+                     CALL offload_device_d2h(C_LOC(pw1%array), pw1%device_data, nbytes)
+                  END IF
+               END IF
+            END IF
+#endif
             CALL pw2%sync_host()
 
             my_alpha = 1.0_dp

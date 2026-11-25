@@ -66,6 +66,12 @@ typedef struct offload_mempool_stats_t {
 void offload_mempool_stats_get(offload_mempool_stats_t *memstats);
 
 /*******************************************************************************
+ * \brief Total device bytes held by the pool (device_size). A leak of a pooled
+ *        allocation shows up as growth across repeated allocate/free cycles.
+ ******************************************************************************/
+uint64_t offload_mempool_device_bytes(void);
+
+/*******************************************************************************
  * \brief Print allocation statistics.
  * \author Hans Pabst
  ******************************************************************************/

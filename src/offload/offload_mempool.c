@@ -551,6 +551,12 @@ void offload_mempool_stats_get(offload_mempool_stats_t *memstats) {
  * \brief Print allocation statistics..
  * \author Hans Pabst
  ******************************************************************************/
+uint64_t offload_mempool_device_bytes(void) {
+  offload_mempool_stats_t memstats;
+  offload_mempool_stats_get(&memstats);
+  return memstats.device_size;
+}
+
 void offload_mempool_stats_print(int fortran_comm,
                                  void (*print_func)(const char *, int, int),
                                  int output_unit) {
