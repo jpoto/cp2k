@@ -179,6 +179,28 @@ void fft_gpu_launch_axpy_c1d(double *y, const double *x, const double a,
 }
 
 /*******************************************************************************
+ * \brief Real-vector axpy: y = a*x + b*y.
+ ******************************************************************************/
+__global__ void pw_axpy_r3d(double *y, const double *x, const double a,
+                            const double b, const int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    y[i] = a * x[i] + b * y[i];
+  }
+}
+
+/*******************************************************************************
+ * \brief Launcher for pw_axpy_r3d kernel.
+ ******************************************************************************/
+void fft_gpu_launch_axpy_r3d(double *y, const double *x, const double a,
+                             const double b, const int n,
+                             offloadStream_t stream) {
+  const int threadsPerBlock = 256;
+  const int numBlocks = (n + threadsPerBlock - 1) / threadsPerBlock;
+  pw_axpy_r3d<<<numBlocks, threadsPerBlock, 0, stream>>>(y, x, a, b, n);
+}
+
+/*******************************************************************************
  * \brief Block reduction of Re(conj(a)*b); accumulates into *out via atomicAdd.
  ******************************************************************************/
 __global__ void pw_dot_c1d_kernel(const double *a, const double *b, double *out,

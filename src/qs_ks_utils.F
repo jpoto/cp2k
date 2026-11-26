@@ -95,6 +95,7 @@ MODULE qs_ks_utils
                                               pw_scale,&
                                               pw_transfer,&
                                               pw_zero
+   USE pw_offload,                      ONLY: pw_offload_axpy_r3d
    USE pw_poisson_methods,              ONLY: pw_poisson_solve
    USE pw_poisson_types,                ONLY: pw_poisson_implicit,&
                                               pw_poisson_type
@@ -1638,8 +1639,16 @@ CONTAINS
                ! Now the Hartree potential to be integrated with the full basis
                CALL pw_copy(v_rspace, v_rspace_new(ispin))
             ELSE
-               ! Add v_hartree + v_xc = v_rspace_new
-               CALL pw_axpy(v_rspace, v_rspace_new(ispin), 1.0_dp, v_rspace_new(ispin)%pw_grid%dvol)
+               ! Add v_hartree + v_xc = v_rspace_new. Keep it on the device when
+               ! both potentials are already device-resident.
+               IF (use_device_potential .AND. v_rspace%device_valid .AND. &
+                   v_rspace_new(ispin)%device_valid .AND. &
+                   ASSOCIATED(v_rspace%pw_grid, v_rspace_new(ispin)%pw_grid)) THEN
+                  CALL pw_offload_axpy_r3d(v_rspace_new(ispin), v_rspace, &
+                                           1.0_dp, v_rspace_new(ispin)%pw_grid%dvol)
+               ELSE
+                  CALL pw_axpy(v_rspace, v_rspace_new(ispin), 1.0_dp, v_rspace_new(ispin)%pw_grid%dvol)
+               END IF
             END IF ! gapw_xc
             IF (dft_control%qs_control%ddapc_explicit_potential) THEN
                IF (dft_control%qs_control%ddapc_restraint_is_spin) THEN

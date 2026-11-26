@@ -1907,6 +1907,27 @@ void fft_gpu_axpy_c1d_dev(double *y, const double *x, const double a,
 }
 
 /*******************************************************************************
+ * \brief Device axpy on two device-resident real (r3d) vectors: y = a*x + b*y.
+ ******************************************************************************/
+void fft_gpu_axpy_r3d_dev(double *y, const double *x, const double a,
+                          const double b, const int n) {
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+  if (n <= 0) {
+    return;
+  }
+  offload_activate_chosen_device();
+  fft_gpu_launch_axpy_r3d(y, x, a, b, n, stream);
+  // No per-op sync (see fft_gpu_multiply_c1d_dev).
+#else
+  (void)y;
+  (void)x;
+  (void)a;
+  (void)b;
+  (void)n;
+#endif
+}
+
+/*******************************************************************************
  * \brief Device reduction of Re(conj(a)*b) over all points, returned on host.
  ******************************************************************************/
 double fft_gpu_sum_r3d_dev(const double *a, const int n) {

@@ -51,6 +51,7 @@ MODULE pw_offload
    PUBLIC :: pw_offload_dot_c1d
    PUBLIC :: pw_offload_g0_c1d
    PUBLIC :: pw_offload_sum_r3d
+   PUBLIC :: pw_offload_axpy_r3d
 
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
    INTERFACE
@@ -80,6 +81,13 @@ MODULE pw_offload
          INTEGER(KIND=C_INT), VALUE :: n
          REAL(KIND=C_DOUBLE) :: r
       END FUNCTION fft_gpu_sum_r3d_dev_f
+
+      SUBROUTINE fft_gpu_axpy_r3d_dev_c(y, x, a, b, n) BIND(C, name="fft_gpu_axpy_r3d_dev")
+         IMPORT :: C_DOUBLE, C_INT, C_PTR
+         TYPE(C_PTR), VALUE :: y, x
+         REAL(KIND=C_DOUBLE), VALUE :: a, b
+         INTEGER(KIND=C_INT), VALUE :: n
+      END SUBROUTINE fft_gpu_axpy_r3d_dev_c
    END INTERFACE
 #endif
 
@@ -261,5 +269,37 @@ CONTAINS
       res = 0.0_dp
 #endif
    END FUNCTION pw_offload_sum_r3d
+
+! **************************************************************************************************
+!> \brief Device-only real-space axpy: y = a*x + b*y (no host traffic).
+!>        Both arrays must already be device-current.
+!> \param y ...
+!> \param x ...
+!> \param a ...
+!> \param b ...
+! **************************************************************************************************
+   SUBROUTINE pw_offload_axpy_r3d(y, x, a, b)
+      TYPE(pw_r3d_rs_type), INTENT(INOUT) :: y
+      TYPE(pw_r3d_rs_type), INTENT(IN) :: x
+      REAL(KIND=dp), INTENT(IN) :: a, b
+#if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
+      CPASSERT(x%device_valid)
+      CPASSERT(y%device_valid)
+      CPASSERT(ASSOCIATED(x%array))
+      CPASSERT(ASSOCIATED(y%array))
+      CPASSERT(SIZE(x%array) == SIZE(y%array))
+      CALL fft_gpu_axpy_r3d_dev_c(y%device_data, x%device_data, &
+                                  REAL(a, KIND=C_DOUBLE), REAL(b, KIND=C_DOUBLE), &
+                                  INT(SIZE(y%array), KIND=C_INT))
+      y%device_valid = .TRUE.
+      y%host_valid = .FALSE.
+#else
+      MARK_USED(y)
+      MARK_USED(x)
+      MARK_USED(a)
+      MARK_USED(b)
+      CPABORT("pw_offload_axpy_r3d called without accelerator support")
+#endif
+   END SUBROUTINE pw_offload_axpy_r3d
 
 END MODULE pw_offload
