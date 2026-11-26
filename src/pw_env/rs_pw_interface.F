@@ -156,6 +156,9 @@ CONTAINS
             END IF
 #endif
          END IF
+         ! Host consumers of the density (e.g. CPU/GPU-XC reading rho%array)
+         ! need a current host copy; no-op when the host is already current.
+         CALL rho%ensure_host()
       ELSE
          DO igrid_level = 1, gridlevel_info%ngrid_levels
             CALL transfer_rs2pw(rs_rho(igrid_level), &

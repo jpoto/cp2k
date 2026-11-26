@@ -384,7 +384,9 @@ transfer, so integrate skips its H2D. The `v_xc+v_hartree` sum uses a device
 r3d axpy (`pw_offload_axpy_r3d`) when both potentials are device-current (GPU XC);
 otherwise host `pw_axpy` + `ensure_device`. On 4-H₂O nsys, HtoD drops 4801→4699 calls
 and total mem-copy time ~30 %. D2D does a device-wide sync, so larger grids are
-the real target. See `cp2k_gpu_port.md` §4.7.
+the real target. The density host copy is refreshed (`rho%ensure_host()`) for
+host XC consumers; SKALA GPW (RKS/UKS) matches the host path. See
+`cp2k_gpu_port.md` §4.7.
 
 ## Open / not pursued
 - **Stress/virial device Poisson** (needs device `pw_derive`/gradient).

@@ -334,9 +334,12 @@ both potentials are device-current (GPU XC); otherwise it falls back to the host
 shows host→device transfers drop from 4801 to 4699 calls (~+102 D2D instead) and
 total mem-copy time down ~30 %; the collocate D2H and FFT-input H2D also
 disappear. The D2D path does a device-wide synchronize, so larger systems (where
-the grid transfers dominate) are the real target. Raw `rs%r` host consumers
-outside the batched transfer functions still require an explicit sync, and the
-multi-grid / distributed cases are intentionally not covered yet.
+the grid transfers dominate) are the real target. The density host copy is
+refreshed (`rho%ensure_host()`) so host XC consumers (SKALA/libxc on CPU) still
+see current data — this keeps the saved host `dcopy` and FFT-input H2D while
+moving only the D2H. Raw `rs%r` host consumers outside the batched transfer
+functions still require an explicit sync, and the multi-grid / distributed cases
+are intentionally not covered yet.
 
 ______________________________________________________________________
 
