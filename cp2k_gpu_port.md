@@ -439,6 +439,9 @@ ______________________________________________________________________
 - **32-bit `n`**: device kernels take `int n`; guard sizes > 2³¹.
 - **Leaks**: free cached device buffers at object/context teardown (`dot_dev`
   static, cuSOLVERMp caches).
+- **Known pre-existing fused issue**: `CP2K_PW_GPU_FUSED=1` is wrong for
+  GAPW + `PSOLVER WAVELET` (`QS/regtest-gpw-1/h2test`); Phase A resident-only is
+  clean. Tracked in `status.md`.
 - **Gating/coverage**: path is default-**off**; device Poisson covers Γ-point and
   k-point (stress still host); grid→device producer is single-grid/non-distributed;
   multi-rank distributed FFT is still host. Validate before widening.
