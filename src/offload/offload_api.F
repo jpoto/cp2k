@@ -39,7 +39,9 @@ MODULE offload_api
    PUBLIC :: offload_get_buffer_host_pointer
    PUBLIC :: offload_buffer_is_device_current, offload_buffer_is_host_current, &
              offload_buffer_mark_device_current, offload_buffer_mark_host_current, &
-             offload_buffer_sync_to_host, offload_buffer_sync_to_device
+             offload_buffer_sync_to_host, offload_buffer_sync_to_device, &
+             offload_buffer_is_device_resident, offload_buffer_set_device_resident
+   PUBLIC :: offload_grid_resident_enabled
 
    TYPE offload_buffer_type
       REAL(KIND=dp), DIMENSION(:), CONTIGUOUS, POINTER :: host_buffer => Null()
@@ -495,7 +497,7 @@ CONTAINS
 !> \param buffer ...
 ! **************************************************************************************************
    SUBROUTINE offload_buffer_mark_device_current(buffer)
-      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
 
       INTERFACE
          SUBROUTINE offload_buffer_mark_device_current_c(buffer) &
@@ -513,7 +515,7 @@ CONTAINS
 !> \param buffer ...
 ! **************************************************************************************************
    SUBROUTINE offload_buffer_mark_host_current(buffer)
-      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
 
       INTERFACE
          SUBROUTINE offload_buffer_mark_host_current_c(buffer) &
@@ -527,12 +529,79 @@ CONTAINS
    END SUBROUTINE offload_buffer_mark_host_current
 
 ! **************************************************************************************************
+!> \brief Whether the grid backend may keep a buffer device-resident (Phase A).
+!> \param buffer ...
+!> \return ...
+! **************************************************************************************************
+   FUNCTION offload_buffer_is_device_resident(buffer) RESULT(res)
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
+      LOGICAL                                            :: res
+
+      INTERFACE
+         FUNCTION offload_buffer_is_device_resident_c(buffer) RESULT(r) &
+            BIND(C, name="offload_buffer_is_device_resident")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE                        :: buffer
+            INTEGER(KIND=C_INT)                       :: r
+         END FUNCTION offload_buffer_is_device_resident_c
+      END INTERFACE
+
+      res = (offload_buffer_is_device_resident_c(buffer%c_ptr) /= 0)
+   END FUNCTION offload_buffer_is_device_resident
+
+! **************************************************************************************************
+!> \brief Enable/disable device-resident grid handling for a buffer.
+!> \param buffer ...
+!> \param value ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_set_device_resident(buffer, value)
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
+      LOGICAL, INTENT(IN)                                :: value
+
+      INTERFACE
+         SUBROUTINE offload_buffer_set_device_resident_c(buffer, value) &
+            BIND(C, name="offload_buffer_set_device_resident")
+            IMPORT :: C_PTR, C_INT
+            TYPE(C_PTR), VALUE                        :: buffer
+            INTEGER(KIND=C_INT), VALUE                :: value
+         END SUBROUTINE offload_buffer_set_device_resident_c
+      END INTERFACE
+
+      CALL offload_buffer_set_device_resident_c(buffer%c_ptr, MERGE(1_C_INT, 0_C_INT, value))
+   END SUBROUTINE offload_buffer_set_device_resident
+
+! **************************************************************************************************
+!> \brief Runtime toggle for the device-resident grid round-trip (Phase A).
+!>        Default off; requires an accelerator build.
+!> \return ...
+! **************************************************************************************************
+   FUNCTION offload_grid_resident_enabled() RESULT(res)
+      LOGICAL                                            :: res
+#if defined(__OFFLOAD)
+      CHARACTER(LEN=32)                                  :: val
+      INTEGER                                            :: status
+      LOGICAL, SAVE                                      :: initialized = .FALSE.
+      LOGICAL, SAVE                                      :: enabled = .FALSE.
+      IF (.NOT. initialized) THEN
+         CALL GET_ENVIRONMENT_VARIABLE("CP2K_GRID_DEVICE_RESIDENT", val, STATUS=status)
+         IF (status == 0) THEN
+            enabled = (val(1:1) == "1" .OR. val(1:1) == "T" .OR. val(1:1) == "t")
+         END IF
+         initialized = .TRUE.
+      END IF
+      res = enabled
+#else
+      res = .FALSE.
+#endif
+   END FUNCTION offload_grid_resident_enabled
+
+! **************************************************************************************************
 !> \brief ...
 !> \param buffer ...
 !> \param length ...
 ! **************************************************************************************************
    SUBROUTINE offload_buffer_sync_to_host(buffer, length)
-      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
       INTEGER, INTENT(IN)                                :: length
 
       INTERFACE
@@ -553,7 +622,7 @@ CONTAINS
 !> \param length ...
 ! **************************************************************************************************
    SUBROUTINE offload_buffer_sync_to_device(buffer, length)
-      TYPE(offload_buffer_type), INTENT(INOUT)           :: buffer
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
       INTEGER, INTENT(IN)                                :: length
 
       INTERFACE

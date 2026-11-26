@@ -61,6 +61,7 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
       (*buffer)->device_buffer = NULL;
       (*buffer)->host_current = 0;
       (*buffer)->device_current = 0;
+      (*buffer)->device_resident = 0;
       return;
     } else if (requested_size <= (*buffer)->size) {
       return; // reuse existing buffer
@@ -77,6 +78,7 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
   (*buffer)->device_buffer = NULL;
   (*buffer)->host_current = 0;
   (*buffer)->device_current = 0;
+  (*buffer)->device_resident = 0;
   if (0 == requested_size) {
     return;
   }
@@ -192,6 +194,16 @@ void offload_buffer_mark_host_current(offload_buffer *buffer) {
   cp_assert(NULL != buffer);
   buffer->host_current = 1;
   buffer->device_current = 0;
+}
+
+int offload_buffer_is_device_resident(const offload_buffer *buffer) {
+  cp_assert(NULL != buffer);
+  return buffer->device_resident;
+}
+
+void offload_buffer_set_device_resident(offload_buffer *buffer, const int value) {
+  cp_assert(NULL != buffer);
+  buffer->device_resident = value;
 }
 
 void offload_buffer_sync_to_host(offload_buffer *buffer, const int length) {

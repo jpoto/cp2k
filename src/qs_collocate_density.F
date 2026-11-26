@@ -71,6 +71,8 @@ MODULE qs_collocate_density
    USE lri_environment_types, ONLY: lri_kind_type
    USE memory_utilities, ONLY: reallocate
    USE message_passing, ONLY: mp_comm_type
+   USE offload_api, ONLY: offload_buffer_set_device_resident, &
+                          offload_grid_resident_enabled
    USE orbital_pointers, ONLY: coset, &
                                ncoset
    USE particle_types, ONLY: particle_type
@@ -1489,7 +1491,7 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'calculate_rho_elec'
 
       CHARACTER(LEN=default_string_length)               :: my_basis_type
-      INTEGER                                            :: ga_gb_function, handle, img, nimages
+      INTEGER                                            :: ga_gb_function, handle, igrid_level, img, nimages
       LOGICAL                                            :: my_compute_grad, &
                                                             my_compute_tau, my_soft_valid
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_images
@@ -1598,6 +1600,16 @@ CONTAINS
       CALL rs_scatter_matrices(matrix_images, task_list%pab_buffer, task_list, group)
       DEALLOCATE (matrix_images)
 
+      ! Phase A: let the GPU grid backend keep the collocated grid on the
+      ! device (skip the D2H); density_rs2pw then transfers it device->device.
+      ! Only the single-grid (NGRIDS 1) case has a device-only consumer chain;
+      ! the multi-grid interpolation still runs on the host.
+      IF (offload_grid_resident_enabled() .AND. SIZE(rs_rho) == 1) THEN
+         DO igrid_level = 1, SIZE(rs_rho)
+            CALL offload_buffer_set_device_resident(rs_rho(igrid_level)%buffer, .TRUE.)
+         END DO
+      END IF
+
       ! Map all tasks onto the grids
       CALL grid_collocate_task_list(task_list=task_list%grid_task_list, &
                                     ga_gb_function=ga_gb_function, &
@@ -1605,7 +1617,8 @@ CONTAINS
                                     rs_grids=rs_rho)
 
       ! Merge realspace multi-grids into single planewave grid.
-      CALL density_rs2pw(pw_env, rs_rho, rho, rho_gspace)
+      CALL density_rs2pw(pw_env, rs_rho, rho, rho_gspace, &
+                         device=offload_grid_resident_enabled())
       IF (PRESENT(total_rho)) total_rho = pw_integrate_function(rho, isign=-1)
 
       CALL timestop(handle)

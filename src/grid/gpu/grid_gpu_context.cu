@@ -566,9 +566,18 @@ extern "C" void grid_gpu_collocate_task_list(const grid_gpu_task_list *ptr,
     ctx->collocate_one_grid_level(level, func, &lp_diff);
   }
 
-  // download result from device to host.
+  // Download the result to the host, unless the caller opted into keeping the
+  // grid device-resident (Phase A: the next consumer reads device_buffer via a
+  // device->device transfer, e.g. the pw FFT producer). Validation compares the
+  // host buffer against the reference backend, so it always needs host data.
+  const bool allow_device_resident = !grid_library_get_config().validate;
   for (int level = 0; level < ctx->nlevels; level++) {
-    ctx->grid_[level].copy_to_host(ctx->level_streams[level]);
+    if (allow_device_resident && offload_buffer_is_device_resident(grids[level])) {
+      offload_buffer_mark_device_current(grids[level]);
+    } else {
+      ctx->grid_[level].copy_to_host(ctx->level_streams[level]);
+      offload_buffer_mark_host_current(grids[level]);
+    }
   }
 
   // update counters while we wait for kernels to finish. It is not thread safe
@@ -622,7 +631,12 @@ extern "C" void grid_gpu_integrate_task_list(
       ctx->grid_[level].associate(grids[level]->host_buffer,
                                   grids[level]->device_buffer,
                                   grids[level]->size / sizeof(double));
-      ctx->grid_[level].copy_to_gpu(ctx->level_streams[level]);
+      // Phase A: if the producer left the grid device-resident, skip the H2D.
+      if (!(!grid_library_get_config().validate &&
+            offload_buffer_is_device_resident(grids[level]) &&
+            offload_buffer_is_device_current(grids[level]))) {
+        ctx->grid_[level].copy_to_gpu(ctx->level_streams[level]);
+      }
     }
   }
 

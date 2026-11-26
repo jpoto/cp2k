@@ -23,6 +23,12 @@ typedef struct {
    */
   int host_current;
   int device_current;
+  /* Grid-residency opt-in (Phase A). When set, the grid backend may leave a
+   * freshly collocated grid in device_buffer (skip the D2H) and may skip the
+   * H2D before integrate when device_current is set. The caller promises that
+   * the buffer is consumed on the device before any host read. Default: 0
+   * (existing host-authoritative behaviour). */
+  int device_resident;
 } offload_buffer;
 
 /*******************************************************************************
@@ -69,6 +75,8 @@ int offload_buffer_is_device_current(const offload_buffer *buffer);
 int offload_buffer_is_host_current(const offload_buffer *buffer);
 void offload_buffer_mark_device_current(offload_buffer *buffer);
 void offload_buffer_mark_host_current(offload_buffer *buffer);
+int offload_buffer_is_device_resident(const offload_buffer *buffer);
+void offload_buffer_set_device_resident(offload_buffer *buffer, const int value);
 /*******************************************************************************
  * \brief Ensure host is up to date (D2H only if the device is authoritative).
  ******************************************************************************/

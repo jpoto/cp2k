@@ -24,7 +24,8 @@ MODULE rs_pw_interface
                                               C_NULL_PTR,&
                                               C_SIZE_T
    USE kinds,                           ONLY: dp
-   USE offload_api,                     ONLY: offload_device_alloc,&
+   USE offload_api,                     ONLY: offload_buffer_set_device_resident,&
+                                              offload_device_alloc,&
                                               offload_device_d2d,&
                                               offload_device_d2h,&
                                               offload_device_free,&
@@ -67,22 +68,25 @@ CONTAINS
 !> \param rs_rho ...
 !> \param rho ...
 !> \param rho_gspace ...
+!> \param device ...
 !> \note
 !>      should contain all communication in the collocation of the density
 !>      in the case of replicated grids
 ! **************************************************************************************************
-   SUBROUTINE density_rs2pw(pw_env, rs_rho, rho, rho_gspace)
+   SUBROUTINE density_rs2pw(pw_env, rs_rho, rho, rho_gspace, device)
 
       TYPE(pw_env_type), INTENT(IN)                      :: pw_env
       TYPE(realspace_grid_type), DIMENSION(:), &
          INTENT(IN)                                      :: rs_rho
       TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: rho
       TYPE(pw_c1d_gs_type), INTENT(INOUT)                :: rho_gspace
+      LOGICAL, INTENT(IN), OPTIONAL                      :: device
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'density_rs2pw'
 
       INTEGER                                            :: handle, igrid_level, interp_kind
       INTEGER(KIND=C_SIZE_T)                             :: nbytes
+      LOGICAL                                            :: use_device
       TYPE(gridlevel_info_type), POINTER                 :: gridlevel_info
       TYPE(pw_c1d_gs_type), ALLOCATABLE, DIMENSION(:)    :: mgrid_gspace
       TYPE(pw_pool_p_type), DIMENSION(:), POINTER        :: pw_pools
@@ -91,6 +95,8 @@ CONTAINS
          POINTER                                         :: rs_descs
 
       CALL timeset(routineN, handle)
+      use_device = .FALSE.
+      IF (PRESENT(device)) use_device = device
       NULLIFY (gridlevel_info, rs_descs, pw_pools)
       CALL pw_env_get(pw_env, rs_descs=rs_descs, pw_pools=pw_pools)
 
@@ -103,14 +109,15 @@ CONTAINS
       CALL pw_pools_create_pws(pw_pools, mgrid_gspace)
 
       IF (gridlevel_info%ngrid_levels == 1) THEN
-         CALL transfer_rs2pw(rs_rho(1), rho)
+         CALL transfer_rs2pw(rs_rho(1), rho, device=use_device)
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_FFT)
          ! Grid -> device producer: the collocate result already lives in the
          ! realspace grid's device buffer. Keep it on the device (device->device)
          ! so the following FFT can skip its host->device upload. Only valid when
          ! the rs->pw mapping is a plain copy (single grid, non-distributed,
          ! no border, equal sizes); otherwise the host path is used.
-         IF (.NOT. rs_rho(1)%desc%distributed .AND. .NOT. rs_rho(1)%desc%parallel .AND. &
+         IF (.NOT. use_device .AND. .NOT. rs_rho(1)%desc%distributed .AND. &
+             .NOT. rs_rho(1)%desc%parallel .AND. &
              rs_rho(1)%desc%border == 0 .AND. SIZE(rho%array) == rs_rho(1)%ngpts_local .AND. &
              pw_offload_fused_enabled()) THEN
             nbytes = INT(SIZE(rho%array), KIND=C_SIZE_T)*8_C_SIZE_T
@@ -201,6 +208,7 @@ CONTAINS
 !> \param rs_v OUTPUT: the potential on the realspace multigrids
 !> \param v_rspace INPUT : the potential on a planewave grid in Rspace
 !> \param pw_env ...
+!> \param device ...
 !> \par History
 !>      09.2006 created [Joost VandeVondele]
 !> \note
@@ -208,17 +216,19 @@ CONTAINS
 !>      should contain all parallel communication of integrate_v_rspace in the
 !>      case of replicated grids.
 ! **************************************************************************************************
-   SUBROUTINE potential_pw2rs(rs_v, v_rspace, pw_env)
+   SUBROUTINE potential_pw2rs(rs_v, v_rspace, pw_env, device)
 
       TYPE(realspace_grid_type), DIMENSION(:), &
          INTENT(IN)                                      :: rs_v
       TYPE(pw_r3d_rs_type), INTENT(IN)                   :: v_rspace
       TYPE(pw_env_type), INTENT(IN)                      :: pw_env
+      LOGICAL, INTENT(IN), OPTIONAL                      :: device
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'potential_pw2rs'
 
       INTEGER                                            :: auxbas_grid, handle, igrid_level, &
                                                             interp_kind
+      LOGICAL                                            :: use_device
       REAL(KIND=dp)                                      :: scale
       TYPE(gridlevel_info_type), POINTER                 :: gridlevel_info
       TYPE(pw_c1d_gs_type), ALLOCATABLE, DIMENSION(:)    :: mgrid_gspace
@@ -230,6 +240,17 @@ CONTAINS
       ! *** set up of the potential on the multigrids
       CALL pw_env_get(pw_env, pw_pools=pw_pools, gridlevel_info=gridlevel_info, &
                       auxbas_grid=auxbas_grid)
+
+      ! Phase A: only the single-grid case can stay fully device-resident; the
+      ! multi-grid spline path interpolates on the host.
+      use_device = .FALSE.
+      IF (PRESENT(device)) use_device = device
+      use_device = use_device .AND. (gridlevel_info%ngrid_levels == 1)
+      IF (use_device) THEN
+         DO igrid_level = 1, gridlevel_info%ngrid_levels
+            CALL offload_buffer_set_device_resident(rs_v(igrid_level)%buffer, .TRUE.)
+         END DO
+      END IF
 
       CALL pw_pools_create_pws(pw_pools, mgrid_rspace)
 
@@ -278,7 +299,7 @@ CONTAINS
 
       DO igrid_level = 1, gridlevel_info%ngrid_levels
          CALL transfer_pw2rs(rs_v(igrid_level), &
-                             mgrid_rspace(igrid_level))
+                             mgrid_rspace(igrid_level), device=use_device)
       END DO
       ! *** give back the pw multi-grids
       CALL pw_pools_give_back_pws(pw_pools, mgrid_rspace)

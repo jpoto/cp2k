@@ -18,6 +18,11 @@
 MODULE realspace_grid_types
    USE cp_array_utils,                  ONLY: cp_1d_r_p_type
    USE cp_log_handling,                 ONLY: cp_to_string
+   USE iso_c_binding,                   ONLY: C_ASSOCIATED,&
+                                              C_LOC,&
+                                              C_NULL_PTR,&
+                                              C_PTR,&
+                                              C_SIZE_T
    USE kahan_sum,                       ONLY: accurate_sum
    USE kinds,                           ONLY: dp,&
                                               int_8
@@ -29,9 +34,11 @@ MODULE realspace_grid_types
                                               mp_request_type,&
                                               mp_waitall,&
                                               mp_waitany
-   USE offload_api,                     ONLY: offload_buffer_type,&
-                                              offload_create_buffer,&
-                                              offload_free_buffer
+   USE offload_api,                     ONLY: &
+        offload_buffer_is_device_current, offload_buffer_mark_device_current, &
+        offload_buffer_mark_host_current, offload_buffer_sync_to_host, offload_buffer_type, &
+        offload_create_buffer, offload_device_alloc, offload_device_d2d, offload_device_d2h, &
+        offload_device_free, offload_free_buffer, offload_get_buffer_device_pointer
    USE pw_grid_types,                   ONLY: PW_MODE_LOCAL,&
                                               pw_grid_type
    USE pw_grids,                        ONLY: pw_grid_release,&
@@ -647,14 +654,22 @@ CONTAINS
 !> \brief ...
 !> \param rs ...
 !> \param pw ...
+!> \param device ...
 ! **************************************************************************************************
-   SUBROUTINE transfer_rs2pw(rs, pw)
+   SUBROUTINE transfer_rs2pw(rs, pw, device)
       TYPE(realspace_grid_type), INTENT(IN)              :: rs
       TYPE(pw_r3d_rs_type), INTENT(INOUT)                :: pw
+      LOGICAL, INTENT(IN), OPTIONAL                      :: device
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'transfer_rs2pw'
 
       INTEGER                                            :: handle, handle2, i
+      LOGICAL                                            :: use_device
+#if defined(__OFFLOAD)
+      INTEGER(KIND=C_SIZE_T)                             :: nbytes
+      LOGICAL                                            :: simple
+      TYPE(C_PTR)                                        :: rs_dev
+#endif
 
       CALL timeset(routineN, handle2)
       CALL timeset(routineN//"_"//TRIM(ADJUSTL(cp_to_string(CEILING(pw%pw_grid%cutoff/10)*10))), handle)
@@ -662,6 +677,48 @@ CONTAINS
       IF (.NOT. ASSOCIATED(rs%desc%pw, pw%pw_grid)) THEN
          CPABORT("Different rs and pw indentifiers")
       END IF
+
+      use_device = .FALSE.
+      IF (PRESENT(device)) use_device = device
+
+#if defined(__OFFLOAD)
+      ! Phase A: keep the grid device-resident. When the realspace grid lives
+      ! on the device (collocate wrote it there) and the mapping is a plain
+      ! local copy, transfer device->device into the pw mirror instead of going
+      ! through the host.
+      simple = (.NOT. rs%desc%distributed .AND. .NOT. rs%desc%parallel .AND. &
+                rs%desc%border == 0 .AND. SIZE(pw%array) == rs%ngpts_local)
+      IF (use_device .AND. simple .AND. offload_buffer_is_device_current(rs%buffer)) THEN
+         rs_dev = offload_get_buffer_device_pointer(rs%buffer)
+         IF (C_ASSOCIATED(rs_dev)) THEN
+            nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*8_C_SIZE_T
+            IF (nbytes > 0) THEN
+               IF (C_ASSOCIATED(pw%device_data) .AND. pw%device_capacity < nbytes) THEN
+                  CALL offload_device_free(pw%device_data)
+                  pw%device_data = C_NULL_PTR
+                  pw%device_capacity = 0_C_SIZE_T
+                  pw%device_valid = .FALSE.
+               END IF
+               IF (.NOT. C_ASSOCIATED(pw%device_data)) THEN
+                  pw%device_data = offload_device_alloc(nbytes)
+                  pw%device_capacity = nbytes
+               END IF
+               CALL offload_device_d2d(pw%device_data, rs_dev, nbytes)
+               pw%device_valid = .TRUE.
+               pw%host_valid = .FALSE.
+               CALL timestop(handle)
+               CALL timestop(handle2)
+               RETURN
+            END IF
+         END IF
+      END IF
+      ! Any host-path access must see current host data.
+      IF (offload_buffer_is_device_current(rs%buffer)) THEN
+         CALL offload_buffer_sync_to_host(rs%buffer, rs%ngpts_local)
+      END IF
+#else
+      IF (PRESENT(device)) CONTINUE
+#endif
 
       IF (rs%desc%distributed) THEN
          CALL transfer_rs2pw_distributed(rs, pw)
@@ -690,15 +747,23 @@ CONTAINS
 !> \brief ...
 !> \param rs ...
 !> \param pw ...
+!> \param device ...
 ! **************************************************************************************************
-   SUBROUTINE transfer_pw2rs(rs, pw)
+   SUBROUTINE transfer_pw2rs(rs, pw, device)
 
       TYPE(realspace_grid_type), INTENT(IN)              :: rs
       TYPE(pw_r3d_rs_type), INTENT(IN)                   :: pw
+      LOGICAL, INTENT(IN), OPTIONAL                      :: device
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'transfer_pw2rs'
 
       INTEGER                                            :: handle, handle2, i, im, j, jm, k, km
+      LOGICAL                                            :: use_device
+#if defined(__OFFLOAD)
+      INTEGER(KIND=C_SIZE_T)                             :: nbytes
+      LOGICAL                                            :: simple
+      TYPE(C_PTR)                                        :: rs_dev
+#endif
 
       CALL timeset(routineN, handle2)
       CALL timeset(routineN//"_"//TRIM(ADJUSTL(cp_to_string(CEILING(pw%pw_grid%cutoff/10)*10))), handle)
@@ -706,6 +771,39 @@ CONTAINS
       IF (.NOT. ASSOCIATED(rs%desc%pw, pw%pw_grid)) THEN
          CPABORT("Different rs and pw indentifiers")
       END IF
+
+      use_device = .FALSE.
+      IF (PRESENT(device)) use_device = device
+
+#if defined(__OFFLOAD)
+      ! Phase A: write the potential straight into the grid's device buffer when
+      ! the pw mirror is current and the mapping is a plain local copy, so the
+      ! following integrate can skip its host->device upload.
+      simple = (.NOT. rs%desc%distributed .AND. .NOT. rs%desc%parallel .AND. &
+                rs%desc%border == 0 .AND. SIZE(pw%array) == rs%ngpts_local)
+      IF (use_device .AND. simple .AND. pw%device_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
+         rs_dev = offload_get_buffer_device_pointer(rs%buffer)
+         IF (C_ASSOCIATED(rs_dev)) THEN
+            nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*8_C_SIZE_T
+            IF (nbytes > 0) THEN
+               CALL offload_device_d2d(rs_dev, pw%device_data, nbytes)
+               CALL offload_buffer_mark_device_current(rs%buffer)
+               CALL timestop(handle)
+               CALL timestop(handle2)
+               RETURN
+            END IF
+         END IF
+      END IF
+      ! Host fallback: if only the device mirror is current, refresh the pw host
+      ! array before the generic host copy reads it.
+      IF (use_device .AND. pw%device_valid .AND. .NOT. pw%host_valid .AND. &
+          C_ASSOCIATED(pw%device_data)) THEN
+         nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*8_C_SIZE_T
+         IF (nbytes > 0) CALL offload_device_d2h(C_LOC(pw%array), pw%device_data, nbytes)
+      END IF
+#else
+      IF (PRESENT(device)) CONTINUE
+#endif
 
       IF (rs%desc%distributed) THEN
          CALL transfer_pw2rs_distributed(rs, pw)
@@ -749,6 +847,12 @@ CONTAINS
 !$OMP          END PARALLEL DO
          END IF
       END IF
+
+#if defined(__OFFLOAD)
+      ! Host path writes the grid on the host: mark the host authoritative so a
+      ! later device consumer does not reuse a stale device mirror.
+      CALL offload_buffer_mark_host_current(rs%buffer)
+#endif
 
       CALL timestop(handle)
       CALL timestop(handle2)

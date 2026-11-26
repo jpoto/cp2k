@@ -51,6 +51,7 @@ MODULE qs_integrate_potential_product
    USE kinds,                           ONLY: default_string_length,&
                                               dp
    USE message_passing,                 ONLY: mp_comm_type
+   USE offload_api,                     ONLY: offload_grid_resident_enabled
    USE orbital_pointers,                ONLY: ncoset
    USE particle_types,                  ONLY: particle_type
    USE pw_env_types,                    ONLY: pw_env_get,&
@@ -708,8 +709,10 @@ CONTAINS
       ! get mpi group from rs_v
       group = rs_v(1)%desc%group
 
-      ! transform the potential on the rs_multigrids
-      CALL potential_pw2rs(rs_v, v_rspace, pw_env)
+      ! transform the potential on the rs_multigrids (Phase A: leave the
+      ! result on the device so the following grid integrate can skip H2D).
+      CALL potential_pw2rs(rs_v, v_rspace, pw_env, &
+                           device=offload_grid_resident_enabled())
 
       nimages = dft_control%nimages
       IF (nimages > 1) THEN
