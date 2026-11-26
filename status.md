@@ -390,10 +390,10 @@ host XC consumers; SKALA GPW (RKS/UKS) matches the host path. See
 `cp2k_gpu_port.md` §4.7.
 
 ## Open / not pursued
-- **Pre-existing fused-path bug (not Phase A):** `CP2K_PW_GPU_FUSED=1` gives a
-  wrong energy for GAPW + `PSOLVER WAVELET` (`QS/regtest-gpw-1/h2test`:
-  `0.0906` vs `-1.0653`). Phase A (`CP2K_GRID_DEVICE_RESIDENT=1`, fused off) is
-  clean on that input; fused-only is unchanged by the Phase A commits.
+- **Fixed (GAPW + WAVELET):** the fused `rho_tot_gspace` device mirror is now
+  skipped when the Poisson method is `PSOLVER WAVELET` (rs-grid), because the
+  device FFT chain is not valid there. `QS/regtest-gpw-1` passes **56/56** with
+  fused and with fused+resident (former `h2test` wrong energy `0.0906`).
 - **Stress/virial device Poisson** (needs device `pw_derive`/gradient).
 - **Distributed-grid device FFT** (multi-rank PPC; currently `PW_MODE_LOCAL` /
   `ray_distribution` only).
