@@ -1575,7 +1575,7 @@ CONTAINS
             NULLIFY (pw_env_local, poisson_env_local)
             CALL get_qs_env(qs_env, pw_env=pw_env_local)
             CALL pw_env_get(pw_env_local, poisson_env=poisson_env_local)
-            fuse_rho = (poisson_env_local%method /= pw_poisson_wavelet)
+            fuse_rho = (poisson_env_local%parameters%solver /= pw_poisson_wavelet)
             IF (fuse_rho) THEN
                IF (.NOT. my_skip) THEN
                   IF (dft_control%qs_control%gapw) THEN
