@@ -1761,9 +1761,6 @@ CONTAINS
             ELSE
                rho_ao => my_rho(ispin, :)
                ksmat => ks_matrix(ispin, :)
-               ! Phase A: make the summed potential device-current so
-               ! potential_pw2rs stays on the device and integrate skips its H2D.
-               IF (use_device_potential) CALL v_rspace_new(ispin)%ensure_device()
                CALL integrate_v_rspace(v_rspace=v_rspace_new(ispin), &
                                        pmat_kp=rho_ao, hmat_kp=ksmat, &
                                        qs_env=qs_env, &

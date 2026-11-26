@@ -324,13 +324,13 @@ the local single-grid case. Toggle: **`CP2K_GRID_DEVICE_RESIDENT`** (default
 
 Status / measured: single-grid PBE/OT energies match the host path to ~1e-12
 (4- and 16-H₂O), and multi-grid is unchanged (byte-identical path). The
-integrate side is now active too: `sum_up_and_integrate` calls `ensure_device()`
-on the summed `v_xc + v_hartree` potential (single grid only) and
-`potential_pw2rs` transfers it straight into the grid device buffer (identity
-interpolation for one grid), so the integrate H2D is skipped. The
-`v_xc + v_hartree` sum is formed on the device via `pw_offload_axpy_r3d` when
-both potentials are device-current (GPU XC); otherwise it falls back to the host
-`pw_axpy` followed by `ensure_device`. On 4 H₂O nsys
+integrate side is now active too: for a single grid `potential_pw2rs` uploads
+the summed potential straight into the grid device buffer (D2D if it is already
+device-current, otherwise one H2D directly from the host array — no intermediate
+`mgrid` staging), so the integrate H2D is skipped. The `v_xc + v_hartree` sum is
+formed on the device via `pw_offload_axpy_r3d` when both potentials are
+device-current (future GPU-XC backends); otherwise it uses the host `pw_axpy`.
+On 4 H₂O nsys
 shows host→device transfers drop from 4801 to 4699 calls (~+102 D2D instead) and
 total mem-copy time down ~30 %; the collocate D2H and FFT-input H2D also
 disappear. The D2D path does a device-wide synchronize, so larger systems (where

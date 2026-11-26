@@ -38,7 +38,8 @@ MODULE realspace_grid_types
         offload_buffer_is_device_current, offload_buffer_mark_device_current, &
         offload_buffer_mark_host_current, offload_buffer_sync_to_host, offload_buffer_type, &
         offload_create_buffer, offload_device_alloc, offload_device_d2d, offload_device_d2h, &
-        offload_device_free, offload_free_buffer, offload_get_buffer_device_pointer
+        offload_device_free, offload_device_h2d, offload_free_buffer, &
+        offload_get_buffer_device_pointer
    USE pw_grid_types,                   ONLY: PW_MODE_LOCAL,&
                                               pw_grid_type
    USE pw_grids,                        ONLY: pw_grid_release,&
@@ -781,12 +782,17 @@ CONTAINS
       ! following integrate can skip its host->device upload.
       simple = (.NOT. rs%desc%distributed .AND. .NOT. rs%desc%parallel .AND. &
                 rs%desc%border == 0 .AND. SIZE(pw%array) == rs%ngpts_local)
-      IF (use_device .AND. simple .AND. pw%device_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
+      IF (use_device .AND. simple) THEN
          rs_dev = offload_get_buffer_device_pointer(rs%buffer)
          IF (C_ASSOCIATED(rs_dev)) THEN
             nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*8_C_SIZE_T
             IF (nbytes > 0) THEN
-               CALL offload_device_d2d(rs_dev, pw%device_data, nbytes)
+               IF (pw%device_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
+                  CALL offload_device_d2d(rs_dev, pw%device_data, nbytes)
+               ELSE
+                  ! Host-source potential: upload straight into the grid mirror.
+                  CALL offload_device_h2d(rs_dev, C_LOC(pw%array), nbytes)
+               END IF
                CALL offload_buffer_mark_device_current(rs%buffer)
                CALL timestop(handle)
                CALL timestop(handle2)

@@ -380,9 +380,10 @@ multi-grid and `GRID%VALIDATE` excluded). Single-grid PBE/OT energies match the
 host path (~1e-12); multi-grid is unchanged. The integrate side is active too:
 `sum_up_and_integrate` ensures the summed `v_xc+v_hartree` potential is
 device-current (single grid) and `potential_pw2rs` does a direct device→device
-transfer, so integrate skips its H2D. The `v_xc+v_hartree` sum uses a device
-r3d axpy (`pw_offload_axpy_r3d`) when both potentials are device-current (GPU XC);
-otherwise host `pw_axpy` + `ensure_device`. On 4-H₂O nsys, HtoD drops 4801→4699 calls
+transfer (D2D if device-current, else one direct H2D from the host array), so
+integrate skips its H2D. The `v_xc+v_hartree` sum uses a device r3d axpy
+(`pw_offload_axpy_r3d`) when both potentials are device-current (future GPU-XC
+backends); otherwise host `pw_axpy`. On 4-H₂O nsys, HtoD drops 4801→4699 calls
 and total mem-copy time ~30 %. D2D does a device-wide sync, so larger grids are
 the real target. The density host copy is refreshed (`rho%ensure_host()`) for
 host XC consumers; SKALA GPW (RKS/UKS) matches the host path. See
