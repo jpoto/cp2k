@@ -217,4 +217,71 @@ void offload_default_stream_synchronize(void) {
 #endif
 }
 
+/*******************************************************************************
+ * \brief Creates an opaque GPU event.
+ ******************************************************************************/
+void *offload_event_create(void) {
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+  offloadEvent_t event;
+  offloadEventCreate(&event);
+  return (void *)event;
+#else
+  return NULL;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Destroys an opaque GPU event.
+ ******************************************************************************/
+void offload_event_destroy(void *event) {
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+  if (event != NULL) {
+    offloadEventDestroy((offloadEvent_t)event);
+  }
+#else
+  (void)event;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Records an event on a stream (NULL = legacy default stream).
+ ******************************************************************************/
+void offload_event_record(void *event, void *stream) {
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+  if (event != NULL) {
+    offloadEventRecord((offloadEvent_t)event, (offloadStream_t)stream);
+  }
+#else
+  (void)event;
+  (void)stream;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Makes a stream (NULL = legacy default) wait for an event.
+ ******************************************************************************/
+void offload_event_wait(void *event, void *stream) {
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+  if (event != NULL) {
+    offloadStreamWaitEvent((offloadStream_t)stream, (offloadEvent_t)event);
+  }
+#else
+  (void)event;
+  (void)stream;
+#endif
+}
+
+/*******************************************************************************
+ * \brief Blocks the host until an event has completed.
+ ******************************************************************************/
+void offload_event_synchronize(void *event) {
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+  if (event != NULL) {
+    offloadEventSynchronize((offloadEvent_t)event);
+  }
+#else
+  (void)event;
+#endif
+}
+
 // EOF

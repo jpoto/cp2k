@@ -38,6 +38,16 @@ void offload_set_chosen_device(int device_id);
 void offload_default_stream_synchronize(void);
 
 /*******************************************************************************
+ * \brief Opaque GPU event helpers for cross-stream ordering. A NULL stream
+ *        argument denotes the legacy default stream.
+ ******************************************************************************/
+void *offload_event_create(void);
+void offload_event_destroy(void *event);
+void offload_event_record(void *event, void *stream);
+void offload_event_wait(void *event, void *stream);
+void offload_event_synchronize(void *event);
+
+/*******************************************************************************
  * \brief Returns the chosen device.
  * \author Ole Schuett
  ******************************************************************************/

@@ -31,7 +31,9 @@ MODULE offload_api
    PUBLIC :: offload_buffer_type, offload_create_buffer, offload_free_buffer, &
              offload_buffer_h2d, offload_buffer_d2h, &
              offload_get_buffer_device_pointer, offload_device_synchronize, &
-             offload_default_stream_synchronize
+             offload_default_stream_synchronize, offload_event_create, &
+             offload_event_destroy, offload_event_record, offload_event_wait, &
+             offload_event_synchronize
    PUBLIC :: offload_malloc_pinned_mem, offload_free_pinned_mem
    PUBLIC :: offload_device_alloc, offload_device_free, offload_device_h2d, &
              offload_device_d2h, offload_device_d2d
@@ -664,6 +666,101 @@ CONTAINS
 
       CALL offload_default_stream_synchronize_c()
    END SUBROUTINE offload_default_stream_synchronize
+
+! **************************************************************************************************
+!> \brief Creates an opaque GPU event (cross-stream ordering helper).
+!> \return ...
+! **************************************************************************************************
+   FUNCTION offload_event_create() RESULT(event)
+      TYPE(C_PTR)                                        :: event
+
+      INTERFACE
+         FUNCTION offload_event_create_c() RESULT(e) BIND(C, name="offload_event_create")
+            IMPORT :: C_PTR
+            TYPE(C_PTR)                               :: e
+         END FUNCTION offload_event_create_c
+      END INTERFACE
+
+      event = offload_event_create_c()
+   END FUNCTION offload_event_create
+
+! **************************************************************************************************
+!> \brief Destroys an opaque GPU event.
+!> \param event ...
+! **************************************************************************************************
+   SUBROUTINE offload_event_destroy(event)
+      TYPE(C_PTR), INTENT(IN)                            :: event
+
+      INTERFACE
+         SUBROUTINE offload_event_destroy_c(event) BIND(C, name="offload_event_destroy")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: event
+         END SUBROUTINE offload_event_destroy_c
+      END INTERFACE
+
+      CALL offload_event_destroy_c(event)
+   END SUBROUTINE offload_event_destroy
+
+! **************************************************************************************************
+!> \brief Records an event on a stream (C_NULL_PTR = legacy default stream).
+!> \param event ...
+!> \param stream ...
+! **************************************************************************************************
+   SUBROUTINE offload_event_record(event, stream)
+      TYPE(C_PTR), INTENT(IN)                            :: event
+      TYPE(C_PTR), INTENT(IN), OPTIONAL                  :: stream
+
+      TYPE(C_PTR)                                        :: my_stream
+      INTERFACE
+         SUBROUTINE offload_event_record_c(event, stream) BIND(C, name="offload_event_record")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: event, stream
+         END SUBROUTINE offload_event_record_c
+      END INTERFACE
+
+      my_stream = C_NULL_PTR
+      IF (PRESENT(stream)) my_stream = stream
+      CALL offload_event_record_c(event, my_stream)
+   END SUBROUTINE offload_event_record
+
+! **************************************************************************************************
+!> \brief Makes a stream wait for an event.
+!> \param event ...
+!> \param stream ...
+! **************************************************************************************************
+   SUBROUTINE offload_event_wait(event, stream)
+      TYPE(C_PTR), INTENT(IN)                            :: event
+      TYPE(C_PTR), INTENT(IN), OPTIONAL                  :: stream
+
+      TYPE(C_PTR)                                        :: my_stream
+      INTERFACE
+         SUBROUTINE offload_event_wait_c(event, stream) BIND(C, name="offload_event_wait")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: event, stream
+         END SUBROUTINE offload_event_wait_c
+      END INTERFACE
+
+      my_stream = C_NULL_PTR
+      IF (PRESENT(stream)) my_stream = stream
+      CALL offload_event_wait_c(event, my_stream)
+   END SUBROUTINE offload_event_wait
+
+! **************************************************************************************************
+!> \brief Blocks the host until an event has completed.
+!> \param event ...
+! **************************************************************************************************
+   SUBROUTINE offload_event_synchronize(event)
+      TYPE(C_PTR), INTENT(IN)                            :: event
+
+      INTERFACE
+         SUBROUTINE offload_event_synchronize_c(event) BIND(C, name="offload_event_synchronize")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: event
+         END SUBROUTINE offload_event_synchronize_c
+      END INTERFACE
+
+      CALL offload_event_synchronize_c(event)
+   END SUBROUTINE offload_event_synchronize
 ! **************************************************************************************************
 !> \brief Return a C pointer to the buffer's host memory.
 !> \param buffer ...
