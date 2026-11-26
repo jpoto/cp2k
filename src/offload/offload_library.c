@@ -206,4 +206,15 @@ void offload_device_synchronize(void) {
 #endif
 }
 
+/*******************************************************************************
+ * \brief Blocks until outstanding work on the legacy default stream is done.
+ ******************************************************************************/
+void offload_default_stream_synchronize(void) {
+#if defined(__OFFLOAD_CUDA)
+  OFFLOAD_CHECK(cudaStreamSynchronize(NULL));
+#elif defined(__OFFLOAD_HIP)
+  OFFLOAD_CHECK(hipStreamSynchronize(NULL));
+#endif
+}
+
 // EOF

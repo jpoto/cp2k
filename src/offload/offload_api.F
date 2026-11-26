@@ -30,7 +30,8 @@ MODULE offload_api
    PUBLIC :: offload_timeset, offload_timestop, offload_mem_info
    PUBLIC :: offload_buffer_type, offload_create_buffer, offload_free_buffer, &
              offload_buffer_h2d, offload_buffer_d2h, &
-             offload_get_buffer_device_pointer, offload_device_synchronize
+             offload_get_buffer_device_pointer, offload_device_synchronize, &
+             offload_default_stream_synchronize
    PUBLIC :: offload_malloc_pinned_mem, offload_free_pinned_mem
    PUBLIC :: offload_device_alloc, offload_device_free, offload_device_h2d, &
              offload_device_d2h, offload_device_d2d
@@ -650,6 +651,19 @@ CONTAINS
 
       CALL offload_device_synchronize_c()
    END SUBROUTINE offload_device_synchronize
+
+! **************************************************************************************************
+!> \brief Blocks until outstanding work on the legacy default stream is done.
+! **************************************************************************************************
+   SUBROUTINE offload_default_stream_synchronize()
+      INTERFACE
+         SUBROUTINE offload_default_stream_synchronize_c() &
+            BIND(C, name="offload_default_stream_synchronize")
+         END SUBROUTINE offload_default_stream_synchronize_c
+      END INTERFACE
+
+      CALL offload_default_stream_synchronize_c()
+   END SUBROUTINE offload_default_stream_synchronize
 ! **************************************************************************************************
 !> \brief Return a C pointer to the buffer's host memory.
 !> \param buffer ...

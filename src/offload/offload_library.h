@@ -31,6 +31,13 @@ int offload_get_device_count(void);
 void offload_set_chosen_device(int device_id);
 
 /*******************************************************************************
+ * \brief Blocks until outstanding work on the legacy default stream is done
+ *        (cheaper than a whole-device sync; safe under the default-stream
+ * model).
+ ******************************************************************************/
+void offload_default_stream_synchronize(void);
+
+/*******************************************************************************
  * \brief Returns the chosen device.
  * \author Ole Schuett
  ******************************************************************************/

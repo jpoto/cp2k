@@ -201,7 +201,8 @@ int offload_buffer_is_device_resident(const offload_buffer *buffer) {
   return buffer->device_resident;
 }
 
-void offload_buffer_set_device_resident(offload_buffer *buffer, const int value) {
+void offload_buffer_set_device_resident(offload_buffer *buffer,
+                                        const int value) {
   cp_assert(NULL != buffer);
   buffer->device_resident = value;
 }
@@ -289,7 +290,11 @@ void offload_device_d2d(void *dst_device, const void *src_device,
   offload_activate_chosen_device();
 #if defined(__OFFLOAD)
   offloadMemcpyAsyncDtoD(dst_device, src_device, bytes, 0);
-  offloadDeviceSynchronize();
+  // The copy runs on the legacy default stream, which is implicitly ordered
+  // against the other (blocking) streams. Synchronising just that stream makes
+  // the copy complete for the caller without waiting for unrelated kernels on
+  // other streams (a whole-device sync used to serialise against those).
+  offloadStreamSynchronize((offloadStream_t)0);
 #else
   memcpy(dst_device, src_device, bytes);
 #endif

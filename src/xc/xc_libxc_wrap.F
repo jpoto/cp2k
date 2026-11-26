@@ -938,9 +938,12 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE libxc_sync_device()
 #if defined(__OFFLOAD) && !defined(__NO_OFFLOAD_LIBXC)
-      USE offload_api, ONLY: offload_device_synchronize
+      USE offload_api, ONLY: offload_default_stream_synchronize
 
-      CALL offload_device_synchronize()
+      ! The staging copies and LibXC's device kernels run on the legacy default
+      ! stream; waiting on that stream is enough and avoids serialising against
+      ! unrelated FFT/grid kernels on other streams.
+      CALL offload_default_stream_synchronize()
 #endif
    END SUBROUTINE libxc_sync_device
 
