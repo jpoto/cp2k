@@ -404,7 +404,10 @@ Apply this loop to each hot region identified by profiling:
   `ghatmap`/ray mapping and the PPC transpose on device.
 - **Interp/integrate glue**: implement device gather/scatter for the sparse
   `gidx` mapping so `density_rs2pw`/`potential_pw2rs`/multigrid stay device-side;
-  move the volume-ratio scaling into a device kernel.
+  move the volume-ratio scaling into a device kernel. **This is the blocker for
+  multi-grid**: an attempt showed the default `pw_interp` levels have different
+  `ngpts` (so `pw_offload_copy/axpy_c1d` abort) and a per-level H2D upload into
+  the rs device buffer gave wrong multi-grid GPW energies; reverted.
 - **Defer `ensure_host`**: remove the unconditional D2H after each device FFT by
   tracking which consumers are device-only and syncing only at true host
   boundaries.

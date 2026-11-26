@@ -394,12 +394,19 @@ host XC consumers; SKALA GPW (RKS/UKS) matches the host path. See
   skipped when the Poisson method is `PSOLVER WAVELET` (rs-grid), because the
   device FFT chain is not valid there. `QS/regtest-gpw-1` passes **56/56** with
   fused and with fused+resident (former `h2test` wrong energy `0.0906`).
+- **Multi-grid device path (attempted, blocked):** default `pw_interp` needs a
+  device **gather/scatter** (the `gidx`/`reference` remap between differing
+  per-level `ngpts`); `pw_offload_copy/axpy_c1d` abort on size mismatch, and a
+  per-level H2D-upload + integrate-skip attempt gave wrong energies on
+  multi-grid GPW (`H2`, `Ar`, `K2`). `spline3` would additionally need device
+  restrict/prolongate. Reverted; single-grid Phase A unaffected.
 - **Stress/virial device Poisson** (needs device `pw_derive`/gradient).
 - **Distributed-grid device FFT** (multi-rank PPC; currently `PW_MODE_LOCAL` /
   `ray_distribution` only).
 - **Device-pointer dense LA** (cuSOLVERMp/SLATE directly on device buffers);
   cuSOLVERMp path not built/validated here.
-- **nsys before/after counters** not yet captured (nsys absent in dev container).
+- **nsys before/after counters** still to be systematised (nsys is available at
+  `/usr/local/cuda/bin/nsys`; used ad hoc here, not in CI).
 - **Realspace/grid residency** judged **not worth it**: host consumers
   (XC, CPU integrate, CDFT/Hirshfeld/CNeo, STM/ELF/cube) would each need to
   become device-aware; the flags + r3d sum are the safe foundation.
