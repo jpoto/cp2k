@@ -429,8 +429,11 @@ A/B of mempool+sync-coarsening on fused OT showed ~2 % mean wall improvement
 # Next steps (data-driven priority)
 
 1. **Reduce GPU allocation/free + sync churn** (pooling / persistent buffers,
-   reuse streams): targets the largest non-GPU overhead for PBE/OT
-   (hundreds of thousands of `cudaMalloc/cudaFree`, long `cudaStreamSynchronize`).
+   reuse streams): targets the largest non-GPU overhead for PBE/OT. Profiling
+   the current build (16-H₂O) shows the mempool already cut `cudaMalloc/Free` to
+   a few thousand calls; the cost is now dominated by `cudaStreamSynchronize`
+   (per-FFT) and copies. Done so far: `offload_device_d2d` and LibXC staging use
+   a default-stream sync instead of whole-device (≈22 ms → ≈1 ms device-sync).
 2. **Grid collocate/integrate** are the dominant GPU kernels for PBE and ADMM —
    tune kernel/batching settings (LWD scheme, CUTLASS, batch size).
 3. **Host-side OT multiply cost** (DBCSR cannon loop, 20–45 % of wall) — batch
