@@ -54,6 +54,7 @@ MODULE qs_ks_utils
                                               cp_print_key_finished_output,&
                                               cp_print_key_should_output,&
                                               cp_print_key_unit_nr
+   USE gaussian_gridlevels,             ONLY: gridlevel_info_type
    USE hfx_admm_utils,                  ONLY: tddft_hfx_matrix
    USE hfx_derivatives,                 ONLY: derivatives_four_center
    USE hfx_types,                       ONLY: hfx_type
@@ -80,6 +81,7 @@ MODULE qs_ks_utils
                                               calculate_ri_ks_matrix
    USE mathlib,                         ONLY: abnormal_value
    USE message_passing,                 ONLY: mp_para_env_type
+   USE offload_api,                     ONLY: offload_grid_resident_enabled
    USE ps_implicit_types,               ONLY: MIXED_BC,&
                                               MIXED_PERIODIC_BC,&
                                               NEUMANN_BC,&
@@ -1533,9 +1535,8 @@ CONTAINS
       INTEGER                                            :: handle, igroup, ikind, img, ispin, &
                                                             nkind, nspins
       INTEGER, DIMENSION(:, :, :), POINTER               :: cell_to_index
-      LOGICAL                                            :: do_ppl, gapw, gapw_composite_direct_ao, &
-                                                            gapw_composite_reference, gapw_xc, &
-                                                            lrigpw, rigpw, use_work_v_rspace
+      LOGICAL :: do_ppl, gapw, gapw_composite_direct_ao, gapw_composite_reference, gapw_xc, &
+         lrigpw, rigpw, use_device_potential, use_work_v_rspace
       REAL(KIND=dp)                                      :: csign, dvol, fadm
       TYPE(admm_type), POINTER                           :: admm_env
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
@@ -1544,6 +1545,7 @@ CONTAINS
                                                             matrix_ks_aux_fit_dft, rho_ao_aux, &
                                                             rho_ao_kp
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(gridlevel_info_type), POINTER                 :: gridlevel_info
       TYPE(kpoint_type), POINTER                         :: kpoints
       TYPE(lri_density_type), POINTER                    :: lri_density
       TYPE(lri_environment_type), POINTER                :: lri_env
@@ -1594,6 +1596,14 @@ CONTAINS
       END IF
 
       nspins = dft_control%nspins
+
+      ! Phase A: only the single-grid case can keep the summed potential on the
+      ! device through potential_pw2rs + integrate.
+      use_device_potential = .FALSE.
+      IF (offload_grid_resident_enabled()) THEN
+         gridlevel_info => pw_env%gridlevel_info
+         use_device_potential = (gridlevel_info%ngrid_levels == 1)
+      END IF
 
       ! sum up potentials and integrate
       IF (ASSOCIATED(v_rspace_new)) THEN
@@ -1742,6 +1752,9 @@ CONTAINS
             ELSE
                rho_ao => my_rho(ispin, :)
                ksmat => ks_matrix(ispin, :)
+               ! Phase A: make the summed potential device-current so
+               ! potential_pw2rs stays on the device and integrate skips its H2D.
+               IF (use_device_potential) CALL v_rspace_new(ispin)%ensure_device()
                CALL integrate_v_rspace(v_rspace=v_rspace_new(ispin), &
                                        pmat_kp=rho_ao, hmat_kp=ksmat, &
                                        qs_env=qs_env, &

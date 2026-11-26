@@ -254,6 +254,19 @@ CONTAINS
 
       CALL pw_pools_create_pws(pw_pools, mgrid_rspace)
 
+      ! Phase A: for a single grid the interpolation is the identity, so go
+      ! straight from the (possibly device-resident) potential into the grid's
+      ! device buffer. This lets the following integrate skip its H2D.
+#if defined(__OFFLOAD)
+      IF (use_device .AND. gridlevel_info%ngrid_levels == 1 .AND. &
+          ASSOCIATED(rs_v(1)%desc%pw, v_rspace%pw_grid)) THEN
+         CALL transfer_pw2rs(rs_v(1), v_rspace, device=.TRUE.)
+         CALL pw_pools_give_back_pws(pw_pools, mgrid_rspace)
+         CALL timestop(handle)
+         RETURN
+      END IF
+#endif
+
       ! use either realspace or fft techniques to get the potential on the rs multigrids
       CALL section_vals_val_get(pw_env%interp_section, "KIND", i_val=interp_kind)
       SELECT CASE (interp_kind)

@@ -377,10 +377,12 @@ off). For local single-grid (`NGRIDS 1`), the GPU grid backend skips the
 collocate D2H / integrate H2D, and `transfer_rs2pw`/`transfer_pw2rs` do
 device→device copies (`calculate_rho_elec` / `integrate_v_rspace` opt in;
 multi-grid and `GRID%VALIDATE` excluded). Single-grid PBE/OT energies match the
-host path (~1e-12); 4-H₂O nsys shows the collocate + FFT-input copies replaced by
-one D2D, total mem-op time within noise (D2D does a device-wide sync). The
-integrate skip is wired but dormant until the potential is left device-resident
-(consumer still host-syncs `v_hartree_rspace`). See `cp2k_gpu_port.md` §4.7.
+host path (~1e-12); multi-grid is unchanged. The integrate side is active too:
+`sum_up_and_integrate` ensures the summed `v_xc+v_hartree` potential is
+device-current (single grid) and `potential_pw2rs` does a direct device→device
+transfer, so integrate skips its H2D. On 4-H₂O nsys, HtoD drops 4801→4699 calls
+and total mem-copy time ~30 %. D2D does a device-wide sync, so larger grids are
+the real target. See `cp2k_gpu_port.md` §4.7.
 
 ## Open / not pursued
 - **Stress/virial device Poisson** (needs device `pw_derive`/gradient).

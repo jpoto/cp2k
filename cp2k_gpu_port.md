@@ -323,14 +323,17 @@ the local single-grid case. Toggle: **`CP2K_GRID_DEVICE_RESIDENT`** (default
   `potential_pw2rs`. The multi-grid spline path and `GRID%VALIDATE` are excluded.
 
 Status / measured: single-grid PBE/OT energies match the host path to ~1e-12
-(4- and 16-H₂O). nsys on 4 H₂O shows the collocate D2H and the FFT input H2D
-disappearing (one D2D replaces them), but total mem-op time is within noise at
-this size because the extra `offload_device_d2d` does a device-wide synchronize.
-The **integrate** skip is wired but dormant until the potential is left
-device-resident by the consumer (the current fused path host-syncs
-`v_hartree_rspace`), which is the next step. Raw `rs%r` host consumers outside
-the batched transfer functions still require an explicit sync, and the multi-grid
-/ distributed cases are intentionally not covered yet.
+(4- and 16-H₂O), and multi-grid is unchanged (byte-identical path). The
+integrate side is now active too: `sum_up_and_integrate` calls `ensure_device()`
+on the summed `v_xc + v_hartree` potential (single grid only) and
+`potential_pw2rs` transfers it straight into the grid device buffer (identity
+interpolation for one grid), so the integrate H2D is skipped. On 4 H₂O nsys
+shows host→device transfers drop from 4801 to 4699 calls (~+102 D2D instead) and
+total mem-copy time down ~30 %; the collocate D2H and FFT-input H2D also
+disappear. The D2D path does a device-wide synchronize, so larger systems (where
+the grid transfers dominate) are the real target. Raw `rs%r` host consumers
+outside the batched transfer functions still require an explicit sync, and the
+multi-grid / distributed cases are intentionally not covered yet.
 
 ______________________________________________________________________
 
