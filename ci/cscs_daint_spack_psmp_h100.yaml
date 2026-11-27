@@ -122,7 +122,7 @@ fused/grid-resident regtests cp2k daint:
       podman run --device nvidia.com/gpu=all --env HDF5_DO_MPI_FILE_SYNC --shm-size=1g -v ${PWD}:/mnt ${DOCKERHUB_IMAGE_NAME} bash -lc '
         cd /tmp &&
         env CP2K_BIN_DIR=/opt/cp2k/install/bin CP2K_DATA_DIR=/opt/cp2k/install/share/cp2k/data MPIRANKS=2 OMPTHREADS=1 "MPIEXEC=mpiexec -bind-to none" FUSED_REGTEST_DIRS="QS/regtest-gpu-resident" FUSED_REG_MODES="default fused resident both" /mnt/tools/run_fused_regtests.sh &&
-        env CP2K_BIN_DIR=/opt/cp2k/install/bin CP2K_DATA_DIR=/opt/cp2k/install/share/cp2k/data MPIRANKS=2 OMPTHREADS=1 "MPIEXEC=mpiexec -bind-to none" FUSED_REGTEST_DIRS="QS/regtest-kp-4 QS/regtest-gpw-8" FUSED_REG_MODES="default fused" /mnt/tools/run_fused_regtests.sh
+        env CP2K_BIN_DIR=/opt/cp2k/install/bin CP2K_DATA_DIR=/opt/cp2k/install/share/cp2k/data MPIRANKS=2 OMPTHREADS=1 "MPIEXEC=mpiexec -bind-to none" FUSED_REGTEST_DIRS="QS/regtest-kp-4 QS/regtest-gpw-8 QS/regtest-gapw-1" FUSED_REG_MODES="default fused" /mnt/tools/run_fused_regtests.sh
       ' 2>&1 | tee fused_report.log
     - 'grep -q "fused-regtests: OK" fused_report.log || { echo "fused/grid-resident regtests FAILED"; exit 1; }'
   variables:
