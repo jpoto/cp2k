@@ -339,7 +339,10 @@ refreshed (`rho%ensure_host()`) so host XC consumers (SKALA/libxc on CPU) still
 see current data — this keeps the saved host `dcopy` and FFT-input H2D while
 moving only the D2H. Raw `rs%r` host consumers outside the batched transfer
 functions still require an explicit sync, and the multi-grid / distributed cases
-are intentionally not covered yet.
+are intentionally not covered yet. **GAPW is excluded from the Phase A residency
+(grid and potential)**: its density machinery reads the realspace grids on the
+host, which otherwise produces sporadic "rho0 ... bad integration" and SCF
+divergence. The fused reciprocal chain still applies to GAPW.
 
 ______________________________________________________________________
 

@@ -1604,7 +1604,10 @@ CONTAINS
       ! device (skip the D2H); density_rs2pw then transfers it device->device.
       ! Only the single-grid (NGRIDS 1) case has a device-only consumer chain;
       ! the multi-grid interpolation still runs on the host.
-      IF (offload_grid_resident_enabled() .AND. SIZE(rs_rho) == 1) THEN
+      ! GAPW reads the realspace grids on the host in its density machinery, so
+      ! keep the collocate host copy there (device residency is GPW-only).
+      IF (offload_grid_resident_enabled() .AND. SIZE(rs_rho) == 1 .AND. &
+          .NOT. dft_control%qs_control%gapw) THEN
          CALL offload_buffer_set_device_resident(rs_rho(1)%buffer, .TRUE.)
       END IF
 

@@ -712,7 +712,7 @@ CONTAINS
       ! transform the potential on the rs_multigrids (Phase A: leave the
       ! result on the device so the following grid integrate can skip H2D).
       CALL potential_pw2rs(rs_v, v_rspace, pw_env, &
-                           device=offload_grid_resident_enabled())
+                           device=offload_grid_resident_enabled() .AND. .NOT. my_gapw)
 
       nimages = dft_control%nimages
       IF (nimages > 1) THEN

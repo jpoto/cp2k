@@ -351,10 +351,11 @@ plan). Only the essentials are kept here.
   distributed PPC FFT, stress/virial device Poisson, GPU-XC device-resident VXC
   (device `pw_offload_axpy_r3d` dormant), device-pointer dense LA, broad
   realspace consumers, CI/2-rank validation. Fixed: GAPW+WAVELET fused energy.
-  **New:** GAPW + `CP2K_GRID_DEVICE_RESIDENT=1` intermittently prints
-  "rho0 ... bad integration" and can diverge (seen once under the regtest
-  harness); GAPW is therefore excluded from the resident gate and left on the
-  `QS/regtest-gapw-1` fused path pending a fix.
+  **GAPW:** Phase A grid/potential residency is disabled for GAPW (its density
+  machinery reads host grids, which caused "rho0 ... bad integration" /
+  divergence under `CP2K_GRID_DEVICE_RESIDENT`); the fused reciprocal chain
+  still applies. `QS/regtest-gpu-resident` now covers PBE (non-OT) and PBE0 (OT)
+  GAPW in all toggle modes.
 
 ---
 

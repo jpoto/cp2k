@@ -1603,7 +1603,7 @@ CONTAINS
       use_device_potential = .FALSE.
       IF (offload_grid_resident_enabled()) THEN
          gridlevel_info => pw_env%gridlevel_info
-         use_device_potential = (gridlevel_info%ngrid_levels == 1)
+         use_device_potential = (gridlevel_info%ngrid_levels == 1) .AND. .NOT. gapw
       END IF
 
       ! sum up potentials and integrate
