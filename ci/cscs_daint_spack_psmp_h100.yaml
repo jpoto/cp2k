@@ -109,6 +109,31 @@ regression test cp2k daint:
     SLURM_TIMELIMIT: 90
     USE_MPI: YES
 
+fused/grid-resident regtests cp2k daint:
+  extends: .baremetal-runner-daint-gh200
+  stage: test
+  needs: ["build cp2k daint","test cp2k daint"]
+  timeout: 4h
+  script:
+    - git --no-pager log -1 --pretty="%nCommitSHA:%x20%H%nCommitTime:%x20%ci%nCommitAuthor:%x20%an%nCommitSubject:%x20%s%n"
+    # Phase A (NGRIDS 1) in all toggle modes; the existing force/stress dirs in
+    # default+fused to keep the runtime bounded.
+    - |
+      podman run --device nvidia.com/gpu=all --env HDF5_DO_MPI_FILE_SYNC --shm-size=1g -v ${PWD}:/mnt ${DOCKERHUB_IMAGE_NAME} bash -lc '
+        cd /tmp &&
+        env CP2K_BIN_DIR=/opt/cp2k/install/bin CP2K_DATA_DIR=/opt/cp2k/install/share/cp2k/data MPIRANKS=2 OMPTHREADS=1 "MPIEXEC=mpiexec -bind-to none" FUSED_REGTEST_DIRS="QS/regtest-gpu-resident" FUSED_REG_MODES="default fused resident both" /mnt/tools/run_fused_regtests.sh &&
+        env CP2K_BIN_DIR=/opt/cp2k/install/bin CP2K_DATA_DIR=/opt/cp2k/install/share/cp2k/data MPIRANKS=2 OMPTHREADS=1 "MPIEXEC=mpiexec -bind-to none" FUSED_REGTEST_DIRS="QS/regtest-kp-4 QS/regtest-gpw-8" FUSED_REG_MODES="default fused" /mnt/tools/run_fused_regtests.sh
+      ' 2>&1 | tee fused_report.log
+    - 'grep -q "fused-regtests: OK" fused_report.log || { echo "fused/grid-resident regtests FAILED"; exit 1; }'
+  variables:
+    HDF5_DO_MPI_FILE_SYNC: 0
+    SLURM_DEBUG: 1
+    SLURM_HINT: nomultithread
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 8
+    SLURM_TIMELIMIT: 90
+    USE_MPI: YES
+
 benchmark cp2k 1 daint node:
   extends: .container-runner-daint-gh200
   stage: benchmark

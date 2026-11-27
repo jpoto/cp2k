@@ -476,8 +476,9 @@ python3 tests/do_regtest.py /workspace/build/bin psmp \
   --cp2kdatadir /workspace/data --mpiexec "mpirun --allow-run-as-root -np {N}"
 # with CP2K_PW_GPU_FUSED=1 for the fused run
 
-# Force/stress CI gate (default + fused)
-tools/run_fused_regtests.sh
+# Toggle regtest gate: default / fused / grid-resident / both
+FUSED_REG_MODES="default fused resident both" \
+FUSED_REGTEST_DIRS="QS/regtest-gpu-resident" tools/run_fused_regtests.sh
 ```
 
 Also validate with `NGRIDS 1` PBE/OT 4–8 H₂O to confirm the `_dev` FFT path
@@ -506,7 +507,9 @@ density mirror; **M4/M5** device Poisson chain for **Γ-point and k-point** (str
 still host); grid→device producer; read-sync of stale sources in
 `pw_axpy`/`pw_copy`; sync coarsening; cuSOLVERMp workspace pooling;
 **residency/leak unit test** (`pw_unittest`); **force/stress CI gate**
-(`tools/run_fused_regtests.sh`); Hartree potential kept device-resident into
+(`tools/run_fused_regtests.sh`, wired into the H100 CI with all toggle modes;
+`QS/regtest-gpu-resident` added, `offload_cuda`-only); Hartree potential kept
+device-resident into
 integrate. Validated: γ-OT fused≈default; force gate `kp-4`/`gpw-8` default+fused;
 fused regtests `admm-dm`/`gapw-1`/`kp-2`; `make_pretty` clean.
 

@@ -1,0 +1,64 @@
+&GLOBAL
+  PROJECT pbe_ot_ngrids1
+  RUN_TYPE ENERGY_FORCE
+  PRINT_LEVEL MEDIUM
+  &TIMINGS
+    SORT_BY_SELF_TIME T
+    THRESHOLD 0.001
+  &END TIMINGS
+&END GLOBAL
+
+&FORCE_EVAL
+  METHOD Quickstep
+  &DFT
+    BASIS_SET_FILE_NAME GTH_BASIS_SETS
+    POTENTIAL_FILE_NAME GTH_POTENTIALS
+    &MGRID
+      NGRIDS 1
+      CUTOFF 300
+      REL_CUTOFF 50
+    &END MGRID
+    &SCF
+      EPS_SCF 1.0E-6
+      MAX_SCF 200
+      SCF_GUESS ATOMIC
+      &OT
+        MINIMIZER DIIS
+        PRECONDITIONER FULL_ALL
+      &END OT
+    &END SCF
+    &XC
+      &XC_FUNCTIONAL PBE
+      &END XC_FUNCTIONAL
+    &END XC
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC 9.8528 9.8528 9.8528
+    &END CELL
+    &COORD
+      O       2.280398       9.146539       5.088696 H2O
+      H       1.762019       9.820429       5.528454 H2O
+      H       3.095987       9.107088       5.588186 H2O
+      O       1.251703       2.406261       7.769908 H2O
+      H       0.554129       2.982634       8.082024 H2O
+      H       1.771257       2.954779       7.182181 H2O
+      O       1.596302       6.920128       0.656695 H2O
+      H       2.112148       6.126321       0.798136 H2O
+      H       1.776389       7.463264       1.424030 H2O
+      O       2.957518       3.771868       1.877387 H2O
+      H       3.754249       3.824017       1.349436 H2O
+      H       3.010580       4.524142       2.466878 H2O
+
+    
+    &END COORD
+    &KIND H
+      BASIS_SET DZVP-GTH
+      POTENTIAL GTH-PBE-q1
+    &END KIND
+    &KIND O
+      BASIS_SET DZVP-GTH
+      POTENTIAL GTH-PBE-q6
+    &END KIND
+  &END SUBSYS
+&END FORCE_EVAL

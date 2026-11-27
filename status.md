@@ -382,6 +382,9 @@ plan). Only the essentials are kept here.
    FFT, and nsys before/after counters. See `cp2k_gpu_port.md` §6/§9.
 8. Add lifetime assertions / DBCSR sync-vs-async equivalence test; keep the
    `perf-baseline/` A/B harness current.
+9. **Toggle regtest gate (done):** `QS/regtest-gpu-resident` (NGRIDS 1 PBE/OT +
+   GAPW, `offload_cuda` only) plus `tools/run_fused_regtests.sh` modes
+   `default|fused|resident|both`, wired into `ci/cscs_daint_spack_psmp_h100.yaml`.
 
 ## How to run
 

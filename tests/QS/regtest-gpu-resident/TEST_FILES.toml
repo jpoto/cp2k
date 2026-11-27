@@ -1,0 +1,6 @@
+# GPU-resident (Phase A) regtests: NGRIDS 1 so the device-resident grid path
+# actually fires. The toggled runs are driven by tools/run_fused_regtests.sh
+# (default / CP2K_PW_GPU_FUSED / CP2K_GRID_DEVICE_RESIDENT / both).
+"pbe_ot_ngrids1.inp" = [{matcher = "E_total", tol = 1e-7, ref = -68.823553663481349}]
+"H2O-gapw-gth.inp"   = [{matcher = "E_total", tol = 1e-7, ref = -17.160345064687398}]
+#EOF
