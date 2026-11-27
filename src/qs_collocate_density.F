@@ -1491,7 +1491,7 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'calculate_rho_elec'
 
       CHARACTER(LEN=default_string_length)               :: my_basis_type
-      INTEGER                                            :: ga_gb_function, handle, igrid_level, img, nimages
+      INTEGER                                            :: ga_gb_function, handle, img, nimages
       LOGICAL                                            :: my_compute_grad, &
                                                             my_compute_tau, my_soft_valid
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_images
@@ -1605,9 +1605,7 @@ CONTAINS
       ! Only the single-grid (NGRIDS 1) case has a device-only consumer chain;
       ! the multi-grid interpolation still runs on the host.
       IF (offload_grid_resident_enabled() .AND. SIZE(rs_rho) == 1) THEN
-         DO igrid_level = 1, SIZE(rs_rho)
-            CALL offload_buffer_set_device_resident(rs_rho(igrid_level)%buffer, .TRUE.)
-         END DO
+         CALL offload_buffer_set_device_resident(rs_rho(1)%buffer, .TRUE.)
       END IF
 
       ! Map all tasks onto the grids

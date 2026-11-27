@@ -30,21 +30,17 @@ MODULE offload_api
    PUBLIC :: offload_timeset, offload_timestop, offload_mem_info
    PUBLIC :: offload_buffer_type, offload_create_buffer, offload_free_buffer, &
              offload_buffer_h2d, offload_buffer_d2h, &
-             offload_get_buffer_device_pointer, offload_device_synchronize, &
-             offload_default_stream_synchronize, offload_event_create, &
-             offload_event_destroy, offload_event_record, offload_event_wait, &
-             offload_event_synchronize
+             offload_get_buffer_device_pointer, offload_default_stream_synchronize
    PUBLIC :: offload_malloc_pinned_mem, offload_free_pinned_mem
    PUBLIC :: offload_device_alloc, offload_device_free, offload_device_h2d, &
              offload_device_d2h, offload_device_d2d
    PUBLIC :: offload_mempool_stats_print
    PUBLIC :: offload_mempool_device_bytes
    PUBLIC :: offload_get_buffer_host_pointer
-   PUBLIC :: offload_buffer_is_device_current, offload_buffer_is_host_current, &
+   PUBLIC :: offload_buffer_is_device_current, &
              offload_buffer_mark_device_current, offload_buffer_mark_host_current, &
-             offload_buffer_sync_to_host, offload_buffer_sync_to_device, &
-             offload_buffer_is_device_resident, offload_buffer_set_device_resident, &
-             offload_buffer_wait_event, offload_buffer_d2d_streamed
+             offload_buffer_sync_to_host, offload_buffer_set_device_resident, &
+             offload_buffer_d2d_streamed
    PUBLIC :: offload_grid_resident_enabled
 
    TYPE offload_buffer_type
@@ -478,27 +474,6 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param buffer ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION offload_buffer_is_host_current(buffer) RESULT(res)
-      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
-      LOGICAL                                            :: res
-
-      INTERFACE
-         FUNCTION offload_buffer_is_host_current_c(buffer) RESULT(r) &
-            BIND(C, name="offload_buffer_is_host_current")
-            IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), VALUE                        :: buffer
-            INTEGER(KIND=C_INT)                       :: r
-         END FUNCTION offload_buffer_is_host_current_c
-      END INTERFACE
-
-      res = (offload_buffer_is_host_current_c(buffer%c_ptr) /= 0)
-   END FUNCTION offload_buffer_is_host_current
-
-! **************************************************************************************************
-!> \brief ...
-!> \param buffer ...
 ! **************************************************************************************************
    SUBROUTINE offload_buffer_mark_device_current(buffer)
       TYPE(offload_buffer_type), INTENT(IN)              :: buffer
@@ -533,27 +508,6 @@ CONTAINS
    END SUBROUTINE offload_buffer_mark_host_current
 
 ! **************************************************************************************************
-!> \brief Whether the grid backend may keep a buffer device-resident (Phase A).
-!> \param buffer ...
-!> \return ...
-! **************************************************************************************************
-   FUNCTION offload_buffer_is_device_resident(buffer) RESULT(res)
-      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
-      LOGICAL                                            :: res
-
-      INTERFACE
-         FUNCTION offload_buffer_is_device_resident_c(buffer) RESULT(r) &
-            BIND(C, name="offload_buffer_is_device_resident")
-            IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), VALUE                        :: buffer
-            INTEGER(KIND=C_INT)                       :: r
-         END FUNCTION offload_buffer_is_device_resident_c
-      END INTERFACE
-
-      res = (offload_buffer_is_device_resident_c(buffer%c_ptr) /= 0)
-   END FUNCTION offload_buffer_is_device_resident
-
-! **************************************************************************************************
 !> \brief Enable/disable device-resident grid handling for a buffer.
 !> \param buffer ...
 !> \param value ...
@@ -573,24 +527,6 @@ CONTAINS
 
       CALL offload_buffer_set_device_resident_c(buffer%c_ptr, MERGE(1_C_INT, 0_C_INT, value))
    END SUBROUTINE offload_buffer_set_device_resident
-
-! **************************************************************************************************
-!> \brief Wait for the producer-stream event recorded on a buffer (no-op if none).
-!> \param buffer ...
-! **************************************************************************************************
-   SUBROUTINE offload_buffer_wait_event(buffer)
-      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
-
-      INTERFACE
-         SUBROUTINE offload_buffer_wait_event_c(buffer) &
-            BIND(C, name="offload_buffer_wait_event")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                        :: buffer
-         END SUBROUTINE offload_buffer_wait_event_c
-      END INTERFACE
-
-      CALL offload_buffer_wait_event_c(buffer%c_ptr)
-   END SUBROUTINE offload_buffer_wait_event
 
 ! **************************************************************************************************
 !> \brief D2D copy ordered after the buffer's producer event (dedicated copy stream).
@@ -663,41 +599,6 @@ CONTAINS
    END SUBROUTINE offload_buffer_sync_to_host
 
 ! **************************************************************************************************
-!> \brief ...
-!> \param buffer ...
-!> \param length ...
-! **************************************************************************************************
-   SUBROUTINE offload_buffer_sync_to_device(buffer, length)
-      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
-      INTEGER, INTENT(IN)                                :: length
-
-      INTERFACE
-         SUBROUTINE offload_buffer_sync_to_device_c(buffer, length) &
-            BIND(C, name="offload_buffer_sync_to_device")
-            IMPORT :: C_PTR, C_INT
-            TYPE(C_PTR), VALUE                        :: buffer
-            INTEGER(KIND=C_INT), VALUE                :: length
-         END SUBROUTINE offload_buffer_sync_to_device_c
-      END INTERFACE
-
-      CALL offload_buffer_sync_to_device_c(buffer%c_ptr, length)
-   END SUBROUTINE offload_buffer_sync_to_device
-
-! **************************************************************************************************
-!> \brief Blocks until all outstanding device work has completed.
-!> \author Samal Bibek
-! **************************************************************************************************
-   SUBROUTINE offload_device_synchronize()
-      INTERFACE
-         SUBROUTINE offload_device_synchronize_c() &
-            BIND(C, name="offload_device_synchronize")
-         END SUBROUTINE offload_device_synchronize_c
-      END INTERFACE
-
-      CALL offload_device_synchronize_c()
-   END SUBROUTINE offload_device_synchronize
-
-! **************************************************************************************************
 !> \brief Blocks until outstanding work on the legacy default stream is done.
 ! **************************************************************************************************
    SUBROUTINE offload_default_stream_synchronize()
@@ -710,100 +611,6 @@ CONTAINS
       CALL offload_default_stream_synchronize_c()
    END SUBROUTINE offload_default_stream_synchronize
 
-! **************************************************************************************************
-!> \brief Creates an opaque GPU event (cross-stream ordering helper).
-!> \return ...
-! **************************************************************************************************
-   FUNCTION offload_event_create() RESULT(event)
-      TYPE(C_PTR)                                        :: event
-
-      INTERFACE
-         FUNCTION offload_event_create_c() RESULT(e) BIND(C, name="offload_event_create")
-            IMPORT :: C_PTR
-            TYPE(C_PTR)                               :: e
-         END FUNCTION offload_event_create_c
-      END INTERFACE
-
-      event = offload_event_create_c()
-   END FUNCTION offload_event_create
-
-! **************************************************************************************************
-!> \brief Destroys an opaque GPU event.
-!> \param event ...
-! **************************************************************************************************
-   SUBROUTINE offload_event_destroy(event)
-      TYPE(C_PTR), INTENT(IN)                            :: event
-
-      INTERFACE
-         SUBROUTINE offload_event_destroy_c(event) BIND(C, name="offload_event_destroy")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                        :: event
-         END SUBROUTINE offload_event_destroy_c
-      END INTERFACE
-
-      CALL offload_event_destroy_c(event)
-   END SUBROUTINE offload_event_destroy
-
-! **************************************************************************************************
-!> \brief Records an event on a stream (C_NULL_PTR = legacy default stream).
-!> \param event ...
-!> \param stream ...
-! **************************************************************************************************
-   SUBROUTINE offload_event_record(event, stream)
-      TYPE(C_PTR), INTENT(IN)                            :: event
-      TYPE(C_PTR), INTENT(IN), OPTIONAL                  :: stream
-
-      TYPE(C_PTR)                                        :: my_stream
-      INTERFACE
-         SUBROUTINE offload_event_record_c(event, stream) BIND(C, name="offload_event_record")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                        :: event, stream
-         END SUBROUTINE offload_event_record_c
-      END INTERFACE
-
-      my_stream = C_NULL_PTR
-      IF (PRESENT(stream)) my_stream = stream
-      CALL offload_event_record_c(event, my_stream)
-   END SUBROUTINE offload_event_record
-
-! **************************************************************************************************
-!> \brief Makes a stream wait for an event.
-!> \param event ...
-!> \param stream ...
-! **************************************************************************************************
-   SUBROUTINE offload_event_wait(event, stream)
-      TYPE(C_PTR), INTENT(IN)                            :: event
-      TYPE(C_PTR), INTENT(IN), OPTIONAL                  :: stream
-
-      TYPE(C_PTR)                                        :: my_stream
-      INTERFACE
-         SUBROUTINE offload_event_wait_c(event, stream) BIND(C, name="offload_event_wait")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                        :: event, stream
-         END SUBROUTINE offload_event_wait_c
-      END INTERFACE
-
-      my_stream = C_NULL_PTR
-      IF (PRESENT(stream)) my_stream = stream
-      CALL offload_event_wait_c(event, my_stream)
-   END SUBROUTINE offload_event_wait
-
-! **************************************************************************************************
-!> \brief Blocks the host until an event has completed.
-!> \param event ...
-! **************************************************************************************************
-   SUBROUTINE offload_event_synchronize(event)
-      TYPE(C_PTR), INTENT(IN)                            :: event
-
-      INTERFACE
-         SUBROUTINE offload_event_synchronize_c(event) BIND(C, name="offload_event_synchronize")
-            IMPORT :: C_PTR
-            TYPE(C_PTR), VALUE                        :: event
-         END SUBROUTINE offload_event_synchronize_c
-      END INTERFACE
-
-      CALL offload_event_synchronize_c(event)
-   END SUBROUTINE offload_event_synchronize
 ! **************************************************************************************************
 !> \brief Return a C pointer to the buffer's host memory.
 !> \param buffer ...

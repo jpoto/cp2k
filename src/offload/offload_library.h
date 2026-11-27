@@ -44,8 +44,6 @@ void offload_default_stream_synchronize(void);
 void *offload_event_create(void);
 void offload_event_destroy(void *event);
 void offload_event_record(void *event, void *stream);
-void offload_event_wait(void *event, void *stream);
-void offload_event_synchronize(void *event);
 /* D2D that waits for a producer event on a dedicated copy stream, then copies.
  */
 void offload_device_d2d_streamed(void *event, void *dst, const void *src,
@@ -90,8 +88,6 @@ int offload_host_malloc(void **ptr__, const size_t size__);
  * \brief free pinned memory (or simple free when there is no gpu)
  ******************************************************************************/
 int offload_host_free(void *ptr__);
-
-void offload_device_synchronize(void);
 
 #ifdef __cplusplus
 }

@@ -328,101 +328,29 @@ Where it does **not** help:
 # Work stream 3: pw device-mirror / GPU cache (`jvp-gpu-cache-v2`)
 
 **Canonical write-up: `cp2k_gpu_port.md`** (unified porting guide + fused-region
-plan). Summary below.
+plan). Only the essentials are kept here.
 
-## Goal
-Remove the ~20 MB real-space/FFT host↔device transfers (the dominant copy cost
-from the profiling: ~1.2 s/13.4 s OT16, ~1 s/33 s ADMM16; the ≥4 MB copies are
-92 % of transfer time).
-
-## Root cause (from nsys)
-The 20/10/5 MB buffers are the **plane-wave FFT arrays**, copied on every
-transform by the pw FFT wrappers (now `fft_gpu.c`; originally
-`pw_gpu_internal.c`): r3d→c1d does `HtoD(din)`+`DtoH(zout)`, c1d→r3d does
-`HtoD(zin)`+`DtoH(dout)`. Data path: grid collocate writes `rs_rho` offload
-buffers → `density_rs2pw` (`qs_collocate_density.F:1611`) merges/FFTs into pw
-`rho`/`rho_g` → integrate reads `rs_v`. Skipping a single copy only swaps one
-D2H for another because SCF interleaves host copies/reductions; hence the
-**fused device-only region** approach.
-
-## Fused pipeline (done, M1–M6)
-The whole reciprocal chain stays device-resident; only tiny boundary transfers
-remain (G=0 16 B, `ehartree` 8 B, plus `v_hartree_rspace` D2H for the host
-real-space integrator). Landing:
-
-- Device mirror + residency contract in `pw_types.F` (`ensure_device`,
-  `ensure_host`, `sync_host`, `invalidate_device`, `mark_device_current`,
-  `release`, capacity, defined assignment that detaches `device_data`).
-- Pooled device allocator + H2D/D2H/D2D + `offload_buffer` authority flags
-  (`offload_api.F`, `offload_buffer.{c,h}`, `offload_mempool.{c,h}`).
-- Device-pointer FFT variants + c1d multiply/axpy/dot + r3d full-sum
-  (`fft_gpu.F`, `fft_gpu.c`, `fft_gpu_kernels.{cu,h}`).
-- `pw_offload.F` (new, `pw_gpu`-independent glue; single toggle
-  `CP2K_PW_GPU_FUSED`, default off).
-- **M3** device `rho_tot_gspace` (`qs_ks_methods.F`); **M4/M5** device Poisson
-  reciprocal chain for **Γ-point and k-point** (stress still host), influence-fn
-  leak fixed; grid→device producer (`rs_pw_interface.F`); Hartree potential kept
-  device-resident into integrate.
-- Residency/leak unit test (`pw_unittest.F`), force/stress CI gate
-  (`tools/run_fused_regtests.sh`), cuSOLVERMp workspace pooling (compiled only
-  with `CP2K_USE_CUSOLVER_MP=ON`; not built here).
-
-The code-review findings from the earlier `jvp-gpu-cache` diff (influence-fn
-value-copy leak, unguarded `multiply/dot`, missing capacity tracking, static
-`dot_dev` leak, prettifier cosmetics) were addressed in the v2 port.
-
-## Phase A: device-resident grid round-trip (implemented, default off)
-Adds `offload_buffer::device_resident` + `CP2K_GRID_DEVICE_RESIDENT` (default
-off). For local single-grid (`NGRIDS 1`), the GPU grid backend skips the
-collocate D2H / integrate H2D, and `transfer_rs2pw`/`transfer_pw2rs` do
-device→device copies (`calculate_rho_elec` / `integrate_v_rspace` opt in;
-multi-grid and `GRID%VALIDATE` excluded). Single-grid PBE/OT energies match the
-host path (~1e-12); multi-grid is unchanged. The integrate side is active too:
-`sum_up_and_integrate` ensures the summed `v_xc+v_hartree` potential is
-device-current (single grid) and `potential_pw2rs` does a direct device→device
-transfer (D2D if device-current, else one direct H2D from the host array), so
-integrate skips its H2D. The `v_xc+v_hartree` sum uses a device r3d axpy
-(`pw_offload_axpy_r3d`) when both potentials are device-current (future GPU-XC
-backends); otherwise host `pw_axpy`. On 4-H₂O nsys, HtoD drops 4801→4699 calls
-and total mem-copy time ~30 %. D2D does a device-wide sync, so larger grids are
-the real target. The density host copy is refreshed (`rho%ensure_host()`) for
-host XC consumers; SKALA GPW (RKS/UKS) matches the host path. See
-`cp2k_gpu_port.md` §4.7.
-
-## Open / not pursued
-- **Fixed (GAPW + WAVELET):** the fused `rho_tot_gspace` device mirror is now
-  skipped when the Poisson method is `PSOLVER WAVELET` (rs-grid), because the
-  device FFT chain is not valid there. `QS/regtest-gpw-1` passes **56/56** with
-  fused and with fused+resident (former `h2test` wrong energy `0.0906`).
-- **Multi-grid device path (attempted, blocked):** default `pw_interp` needs a
-  device **gather/scatter** (the `gidx`/`reference` remap between differing
-  per-level `ngpts`); `pw_offload_copy/axpy_c1d` abort on size mismatch, and a
-  per-level H2D-upload + integrate-skip attempt gave wrong energies on
-  multi-grid GPW (`H2`, `Ar`, `K2`). `spline3` would additionally need device
-  restrict/prolongate. Reverted; single-grid Phase A unaffected.
-- **Stress/virial device Poisson** (needs device `pw_derive`/gradient).
-- **Distributed-grid device FFT** (multi-rank PPC; currently `PW_MODE_LOCAL` /
-  `ray_distribution` only).
-- **Device-pointer dense LA** (cuSOLVERMp/SLATE directly on device buffers);
-  cuSOLVERMp path not built/validated here.
-- **nsys before/after counters** still to be systematised (nsys is available at
-  `/usr/local/cuda/bin/nsys`; used ad hoc here, not in CI).
-- **Realspace/grid residency** judged **not worth it**: host consumers
-  (XC, CPU integrate, CDFT/Hirshfeld/CNeo, STM/ELF/cube) would each need to
-  become device-aware; the flags + r3d sum are the safe foundation.
-
-## Build / profiling
-Clean build via `build_cp2k.sh -j 16` (installs `/workspace/install`). For NVTX
-attribution, `-DCP2K_WITH_GPU_PROFILING=ON` is a plain CMake flag (a local line
-was injected into `tools/toolchain/build_cp2k.sh`); the toolchain is only needed
-for compilers/deps.
-
-## Validation (2 ranks, OMP 1)
-`QS/regtest-admm-dm` 7/7 default and 7/7 fused, `QS/regtest-kp-2` 19/19 fused
-(FULLSPACE → exercises M5), `QS/regtest-gapw-1` 16/16 fused (GAPW M3);
-multi-rank (2×16) OT/ADMM fused vs default agree to ~1e-12; `make_pretty` clean.
-A/B of mempool+sync-coarsening on fused OT showed ~2 % mean wall improvement
-(small sample).
+- **Problem:** the ~20 MB plane-wave FFT arrays are copied host↔device on every
+  transform (`r3d→c1d` H2D+DtoH, `c1d→r3d` HtoD+D2H); the SCF interleaves host
+  copies, so skipping a single copy just swaps one D2H for another.
+- **Approach:** treat the reciprocal chain as one device-only region (fused) plus
+  a device-resident grid round-trip (Phase A).
+- **Fused pipeline (M1–M6, default off via `CP2K_PW_GPU_FUSED`):** pw device
+  mirrors + residency contract (`pw_types.F`), pooled device allocator +
+  `offload_buffer` authority flags, device FFT variants + c1d kernels + r3d sum,
+  `pw_offload.F`, device `rho_tot_gspace` (M3) and Poisson chain Γ/k-point
+  (M4/M5), grid→device producer. Validated by `pw_unittest`, `run_fused_regtests`
+  and `QS/regtest-gpw-1` 56/56.
+- **Phase A (default off via `CP2K_GRID_DEVICE_RESIDENT`):** local single-grid
+  collocate D2H / integrate H2D skipped; pw transfers use D2D (or one direct
+  H2D from host); the summed `v_xc+v_hartree` is kept device-current and the
+  collocate completion is handed to the D2D via an event on a copy stream.
+  Energies match host (~1e-12); multi-grid unchanged. See `cp2k_gpu_port.md`
+  §4.7.
+- **Open:** multi-grid (blocked on device gather/scatter + device spline),
+  distributed PPC FFT, stress/virial device Poisson, GPU-XC device-resident VXC
+  (device `pw_offload_axpy_r3d` dormant), device-pointer dense LA, broad
+  realspace consumers, CI/2-rank validation. Fixed: GAPW+WAVELET fused energy.
 
 ---
 

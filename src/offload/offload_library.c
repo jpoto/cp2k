@@ -195,18 +195,6 @@ int offload_host_free(void *ptr__) {
 }
 
 /*******************************************************************************
- * \brief Blocks until all outstanding device work has completed.
- * \author Samal Bibek
- ******************************************************************************/
-void offload_device_synchronize(void) {
-#if defined(__OFFLOAD_CUDA)
-  OFFLOAD_CHECK(cudaDeviceSynchronize());
-#elif defined(__OFFLOAD_HIP)
-  OFFLOAD_CHECK(hipDeviceSynchronize());
-#endif
-}
-
-/*******************************************************************************
  * \brief Blocks until outstanding work on the legacy default stream is done.
  ******************************************************************************/
 void offload_default_stream_synchronize(void) {
@@ -258,20 +246,6 @@ void offload_event_record(void *event, void *stream) {
 }
 
 /*******************************************************************************
- * \brief Makes a stream (NULL = legacy default) wait for an event.
- ******************************************************************************/
-void offload_event_wait(void *event, void *stream) {
-#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
-  if (event != NULL) {
-    offloadStreamWaitEvent((offloadStream_t)stream, (offloadEvent_t)event);
-  }
-#else
-  (void)event;
-  (void)stream;
-#endif
-}
-
-/*******************************************************************************
  * \brief D2D copy on a dedicated per-thread stream, ordered after an event.
  ******************************************************************************/
 void offload_device_d2d_streamed(void *event, void *dst, const void *src,
@@ -281,6 +255,9 @@ void offload_device_d2d_streamed(void *event, void *dst, const void *src,
     return;
   }
   offload_activate_chosen_device();
+  // One private copy stream per host thread, created lazily and intentionally
+  // kept for the process lifetime: destroying it at thread exit is not worth
+  // the bookkeeping (a single handle per FFT worker thread).
   static __thread offloadStream_t copy_stream;
   if (copy_stream == NULL) {
     offloadStreamCreate(&copy_stream);
@@ -295,19 +272,6 @@ void offload_device_d2d_streamed(void *event, void *dst, const void *src,
   (void)dst;
   (void)src;
   (void)bytes;
-#endif
-}
-
-/*******************************************************************************
- * \brief Blocks the host until an event has completed.
- ******************************************************************************/
-void offload_event_synchronize(void *event) {
-#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
-  if (event != NULL) {
-    offloadEventSynchronize((offloadEvent_t)event);
-  }
-#else
-  (void)event;
 #endif
 }
 

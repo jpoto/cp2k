@@ -184,12 +184,6 @@ int offload_buffer_is_device_current(const offload_buffer *buffer) {
   cp_assert(NULL != buffer);
   return buffer->device_current;
 }
-
-int offload_buffer_is_host_current(const offload_buffer *buffer) {
-  cp_assert(NULL != buffer);
-  return buffer->host_current;
-}
-
 void offload_buffer_mark_device_current(offload_buffer *buffer) {
   cp_assert(NULL != buffer);
   buffer->device_current = 1;
@@ -220,14 +214,6 @@ void offload_buffer_record_event(offload_buffer *buffer, void *stream) {
   }
   offload_event_record(buffer->ready_event, stream);
 }
-
-void offload_buffer_wait_event(offload_buffer *buffer) {
-  cp_assert(NULL != buffer);
-  if (buffer->ready_event != NULL) {
-    offload_event_wait(buffer->ready_event, NULL);
-  }
-}
-
 void offload_buffer_d2d_streamed(offload_buffer *wait_buffer, void *dst_device,
                                  const void *src_device, size_t bytes) {
   const void *event = (wait_buffer != NULL) ? wait_buffer->ready_event : NULL;
@@ -239,13 +225,6 @@ void offload_buffer_sync_to_host(offload_buffer *buffer, const int length) {
     offload_buffer_d2h(buffer, length);
   }
 }
-
-void offload_buffer_sync_to_device(offload_buffer *buffer, const int length) {
-  if (buffer->host_current && !buffer->device_current) {
-    offload_buffer_h2d(buffer, length);
-  }
-}
-
 /*******************************************************************************
  * \brief Allocate device-only memory (no host mirror).
  *

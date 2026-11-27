@@ -75,7 +75,6 @@ void offload_buffer_d2h(offload_buffer *buffer, const int length);
  *        host_current=1, device_current=0 (i.e. existing behaviour).
  ******************************************************************************/
 int offload_buffer_is_device_current(const offload_buffer *buffer);
-int offload_buffer_is_host_current(const offload_buffer *buffer);
 void offload_buffer_mark_device_current(offload_buffer *buffer);
 void offload_buffer_mark_host_current(offload_buffer *buffer);
 int offload_buffer_is_device_resident(const offload_buffer *buffer);
@@ -83,7 +82,6 @@ void offload_buffer_set_device_resident(offload_buffer *buffer,
                                         const int value);
 /* Record/wait a producer-stream event stored on the buffer. */
 void offload_buffer_record_event(offload_buffer *buffer, void *stream);
-void offload_buffer_wait_event(offload_buffer *buffer);
 /*******************************************************************************
  * \brief Ensure host is up to date (D2H only if the device is authoritative).
  ******************************************************************************/
@@ -91,7 +89,6 @@ void offload_buffer_sync_to_host(offload_buffer *buffer, const int length);
 /*******************************************************************************
  * \brief Ensure device is up to date (H2D only if the host is authoritative).
  ******************************************************************************/
-void offload_buffer_sync_to_device(offload_buffer *buffer, const int length);
 
 /*******************************************************************************
  * \brief Allocate device-only memory (no host mirror), reusable across calls.

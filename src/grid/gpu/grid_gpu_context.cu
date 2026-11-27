@@ -634,13 +634,14 @@ extern "C" void grid_gpu_integrate_task_list(
   // Select GPU device.
   ctx->set_device();
 
+  const bool allow_device_resident = !grid_library_get_config().validate;
   for (int level = 0; level < ctx->nlevels; level++) {
     if (ctx->number_of_tasks_per_level_[level]) {
       ctx->grid_[level].associate(grids[level]->host_buffer,
                                   grids[level]->device_buffer,
                                   grids[level]->size / sizeof(double));
       // Phase A: if the producer left the grid device-resident, skip the H2D.
-      if (!(!grid_library_get_config().validate &&
+      if (!(allow_device_resident &&
             offload_buffer_is_device_resident(grids[level]) &&
             offload_buffer_is_device_current(grids[level]))) {
         ctx->grid_[level].copy_to_gpu(ctx->level_streams[level]);

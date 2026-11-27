@@ -651,6 +651,23 @@ CONTAINS
 
    END SUBROUTINE rs_grid_print
 
+#if defined(__OFFLOAD)
+! **************************************************************************************************
+!> \brief Whether an rs<->pw transfer is a plain local copy (device D2D possible).
+!> \param rs ...
+!> \param pw ...
+!> \return ...
+! **************************************************************************************************
+   PURE FUNCTION transfer_is_simple(rs, pw) RESULT(simple)
+      TYPE(realspace_grid_type), INTENT(IN)              :: rs
+      TYPE(pw_r3d_rs_type), INTENT(IN)                   :: pw
+      LOGICAL                                            :: simple
+
+      simple = (.NOT. rs%desc%distributed .AND. .NOT. rs%desc%parallel .AND. &
+                rs%desc%border == 0 .AND. SIZE(pw%array) == rs%ngpts_local)
+   END FUNCTION transfer_is_simple
+#endif
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param rs ...
@@ -687,8 +704,7 @@ CONTAINS
       ! on the device (collocate wrote it there) and the mapping is a plain
       ! local copy, transfer device->device into the pw mirror instead of going
       ! through the host.
-      simple = (.NOT. rs%desc%distributed .AND. .NOT. rs%desc%parallel .AND. &
-                rs%desc%border == 0 .AND. SIZE(pw%array) == rs%ngpts_local)
+      simple = transfer_is_simple(rs, pw)
       IF (use_device .AND. simple .AND. offload_buffer_is_device_current(rs%buffer)) THEN
          rs_dev = offload_get_buffer_device_pointer(rs%buffer)
          IF (C_ASSOCIATED(rs_dev)) THEN
@@ -780,8 +796,7 @@ CONTAINS
       ! Phase A: write the potential straight into the grid's device buffer when
       ! the pw mirror is current and the mapping is a plain local copy, so the
       ! following integrate can skip its host->device upload.
-      simple = (.NOT. rs%desc%distributed .AND. .NOT. rs%desc%parallel .AND. &
-                rs%desc%border == 0 .AND. SIZE(pw%array) == rs%ngpts_local)
+      simple = transfer_is_simple(rs, pw)
       IF (use_device .AND. simple) THEN
          rs_dev = offload_get_buffer_device_pointer(rs%buffer)
          IF (C_ASSOCIATED(rs_dev)) THEN
