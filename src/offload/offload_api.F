@@ -43,7 +43,8 @@ MODULE offload_api
    PUBLIC :: offload_buffer_is_device_current, offload_buffer_is_host_current, &
              offload_buffer_mark_device_current, offload_buffer_mark_host_current, &
              offload_buffer_sync_to_host, offload_buffer_sync_to_device, &
-             offload_buffer_is_device_resident, offload_buffer_set_device_resident
+             offload_buffer_is_device_resident, offload_buffer_set_device_resident, &
+             offload_buffer_wait_event, offload_buffer_d2d_streamed
    PUBLIC :: offload_grid_resident_enabled
 
    TYPE offload_buffer_type
@@ -572,6 +573,48 @@ CONTAINS
 
       CALL offload_buffer_set_device_resident_c(buffer%c_ptr, MERGE(1_C_INT, 0_C_INT, value))
    END SUBROUTINE offload_buffer_set_device_resident
+
+! **************************************************************************************************
+!> \brief Wait for the producer-stream event recorded on a buffer (no-op if none).
+!> \param buffer ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_wait_event(buffer)
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
+
+      INTERFACE
+         SUBROUTINE offload_buffer_wait_event_c(buffer) &
+            BIND(C, name="offload_buffer_wait_event")
+            IMPORT :: C_PTR
+            TYPE(C_PTR), VALUE                        :: buffer
+         END SUBROUTINE offload_buffer_wait_event_c
+      END INTERFACE
+
+      CALL offload_buffer_wait_event_c(buffer%c_ptr)
+   END SUBROUTINE offload_buffer_wait_event
+
+! **************************************************************************************************
+!> \brief D2D copy ordered after the buffer's producer event (dedicated copy stream).
+!> \param buffer ...
+!> \param dst_device ...
+!> \param src_device ...
+!> \param bytes ...
+! **************************************************************************************************
+   SUBROUTINE offload_buffer_d2d_streamed(buffer, dst_device, src_device, bytes)
+      TYPE(offload_buffer_type), INTENT(IN)              :: buffer
+      TYPE(C_PTR), INTENT(IN)                            :: dst_device, src_device
+      INTEGER(KIND=C_SIZE_T), INTENT(IN)                 :: bytes
+
+      INTERFACE
+         SUBROUTINE offload_buffer_d2d_streamed_c(buffer, dst, src, bytes) &
+            BIND(C, name="offload_buffer_d2d_streamed")
+            IMPORT :: C_PTR, C_SIZE_T
+            TYPE(C_PTR), VALUE                        :: buffer, dst, src
+            INTEGER(KIND=C_SIZE_T), VALUE             :: bytes
+         END SUBROUTINE offload_buffer_d2d_streamed_c
+      END INTERFACE
+
+      CALL offload_buffer_d2d_streamed_c(buffer%c_ptr, dst_device, src_device, bytes)
+   END SUBROUTINE offload_buffer_d2d_streamed
 
 ! **************************************************************************************************
 !> \brief Runtime toggle for the device-resident grid round-trip (Phase A).

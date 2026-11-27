@@ -46,6 +46,10 @@ void offload_event_destroy(void *event);
 void offload_event_record(void *event, void *stream);
 void offload_event_wait(void *event, void *stream);
 void offload_event_synchronize(void *event);
+/* D2D that waits for a producer event on a dedicated copy stream, then copies.
+ */
+void offload_device_d2d_streamed(void *event, void *dst, const void *src,
+                                 size_t bytes);
 
 /*******************************************************************************
  * \brief Returns the chosen device.

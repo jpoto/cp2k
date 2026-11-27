@@ -29,6 +29,9 @@ typedef struct {
    * the buffer is consumed on the device before any host read. Default: 0
    * (existing host-authoritative behaviour). */
   int device_resident;
+  /* Optional event recording when the buffer's device copy was produced on a
+   * non-default stream (grid backend). Consumers wait on it before reading. */
+  void *ready_event;
 } offload_buffer;
 
 /*******************************************************************************
@@ -76,7 +79,11 @@ int offload_buffer_is_host_current(const offload_buffer *buffer);
 void offload_buffer_mark_device_current(offload_buffer *buffer);
 void offload_buffer_mark_host_current(offload_buffer *buffer);
 int offload_buffer_is_device_resident(const offload_buffer *buffer);
-void offload_buffer_set_device_resident(offload_buffer *buffer, const int value);
+void offload_buffer_set_device_resident(offload_buffer *buffer,
+                                        const int value);
+/* Record/wait a producer-stream event stored on the buffer. */
+void offload_buffer_record_event(offload_buffer *buffer, void *stream);
+void offload_buffer_wait_event(offload_buffer *buffer);
 /*******************************************************************************
  * \brief Ensure host is up to date (D2H only if the device is authoritative).
  ******************************************************************************/

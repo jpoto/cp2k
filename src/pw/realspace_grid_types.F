@@ -35,11 +35,11 @@ MODULE realspace_grid_types
                                               mp_waitall,&
                                               mp_waitany
    USE offload_api,                     ONLY: &
-        offload_buffer_is_device_current, offload_buffer_mark_device_current, &
-        offload_buffer_mark_host_current, offload_buffer_sync_to_host, offload_buffer_type, &
-        offload_create_buffer, offload_device_alloc, offload_device_d2d, offload_device_d2h, &
-        offload_device_free, offload_device_h2d, offload_free_buffer, &
-        offload_get_buffer_device_pointer
+        offload_buffer_d2d_streamed, offload_buffer_is_device_current, &
+        offload_buffer_mark_device_current, offload_buffer_mark_host_current, &
+        offload_buffer_sync_to_host, offload_buffer_type, offload_create_buffer, &
+        offload_device_alloc, offload_device_d2d, offload_device_d2h, offload_device_free, &
+        offload_device_h2d, offload_free_buffer, offload_get_buffer_device_pointer
    USE pw_grid_types,                   ONLY: PW_MODE_LOCAL,&
                                               pw_grid_type
    USE pw_grids,                        ONLY: pw_grid_release,&
@@ -788,7 +788,7 @@ CONTAINS
             nbytes = INT(SIZE(pw%array), KIND=C_SIZE_T)*8_C_SIZE_T
             IF (nbytes > 0) THEN
                IF (pw%device_valid .AND. C_ASSOCIATED(pw%device_data)) THEN
-                  CALL offload_device_d2d(rs_dev, pw%device_data, nbytes)
+                  CALL offload_buffer_d2d_streamed(rs%buffer, rs_dev, pw%device_data, nbytes)
                ELSE
                   ! Host-source potential: upload straight into the grid mirror.
                   CALL offload_device_h2d(rs_dev, C_LOC(pw%array), nbytes)

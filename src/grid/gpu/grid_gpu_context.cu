@@ -572,7 +572,8 @@ extern "C" void grid_gpu_collocate_task_list(const grid_gpu_task_list *ptr,
   // host buffer against the reference backend, so it always needs host data.
   const bool allow_device_resident = !grid_library_get_config().validate;
   for (int level = 0; level < ctx->nlevels; level++) {
-    if (allow_device_resident && offload_buffer_is_device_resident(grids[level])) {
+    if (allow_device_resident &&
+        offload_buffer_is_device_resident(grids[level])) {
       offload_buffer_mark_device_current(grids[level]);
     } else {
       ctx->grid_[level].copy_to_host(ctx->level_streams[level]);
@@ -601,9 +602,16 @@ extern "C" void grid_gpu_collocate_task_list(const grid_gpu_task_list *ptr,
     }
   }
 
-  // need to wait for all streams to finish
+  // Wait for all streams to finish, or — for a device-resident buffer — record
+  // an event on the level stream and let the consumer (pw D2D) wait on it.
   for (int level = 0; level < ctx->nlevels; level++) {
-    ctx->synchronize(ctx->level_streams[level]);
+    if (allow_device_resident &&
+        offload_buffer_is_device_resident(grids[level])) {
+      offload_buffer_record_event(grids[level],
+                                  (void *)ctx->level_streams[level]);
+    } else {
+      ctx->synchronize(ctx->level_streams[level]);
+    }
   }
 }
 

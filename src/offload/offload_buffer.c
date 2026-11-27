@@ -24,6 +24,10 @@
  ******************************************************************************/
 static void offload_free_buffer_internal(offload_buffer *buffer) {
   cp_assert(NULL != buffer);
+  if (buffer->ready_event != NULL) {
+    offload_event_destroy(buffer->ready_event);
+    buffer->ready_event = NULL;
+  }
 #if defined(OFFLOAD_BUFFER_MEMPOOL)
   if (NULL != buffer->host_buffer &&
       buffer->host_buffer != buffer->device_buffer) {
@@ -62,6 +66,7 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
       (*buffer)->host_current = 0;
       (*buffer)->device_current = 0;
       (*buffer)->device_resident = 0;
+      (*buffer)->ready_event = NULL;
       return;
     } else if (requested_size <= (*buffer)->size) {
       return; // reuse existing buffer
@@ -79,6 +84,7 @@ void offload_create_buffer(const int length, offload_buffer **buffer) {
   (*buffer)->host_current = 0;
   (*buffer)->device_current = 0;
   (*buffer)->device_resident = 0;
+  (*buffer)->ready_event = NULL;
   if (0 == requested_size) {
     return;
   }
@@ -205,6 +211,27 @@ void offload_buffer_set_device_resident(offload_buffer *buffer,
                                         const int value) {
   cp_assert(NULL != buffer);
   buffer->device_resident = value;
+}
+
+void offload_buffer_record_event(offload_buffer *buffer, void *stream) {
+  cp_assert(NULL != buffer);
+  if (buffer->ready_event == NULL) {
+    buffer->ready_event = offload_event_create();
+  }
+  offload_event_record(buffer->ready_event, stream);
+}
+
+void offload_buffer_wait_event(offload_buffer *buffer) {
+  cp_assert(NULL != buffer);
+  if (buffer->ready_event != NULL) {
+    offload_event_wait(buffer->ready_event, NULL);
+  }
+}
+
+void offload_buffer_d2d_streamed(offload_buffer *wait_buffer, void *dst_device,
+                                 const void *src_device, size_t bytes) {
+  const void *event = (wait_buffer != NULL) ? wait_buffer->ready_event : NULL;
+  offload_device_d2d_streamed((void *)event, dst_device, src_device, bytes);
 }
 
 void offload_buffer_sync_to_host(offload_buffer *buffer, const int length) {

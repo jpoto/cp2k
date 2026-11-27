@@ -272,6 +272,33 @@ void offload_event_wait(void *event, void *stream) {
 }
 
 /*******************************************************************************
+ * \brief D2D copy on a dedicated per-thread stream, ordered after an event.
+ ******************************************************************************/
+void offload_device_d2d_streamed(void *event, void *dst, const void *src,
+                                 size_t bytes) {
+#if defined(__OFFLOAD_CUDA) || defined(__OFFLOAD_HIP)
+  if (NULL == dst || NULL == src || 0 == bytes) {
+    return;
+  }
+  offload_activate_chosen_device();
+  static __thread offloadStream_t copy_stream;
+  if (copy_stream == NULL) {
+    offloadStreamCreate(&copy_stream);
+  }
+  if (event != NULL) {
+    offloadStreamWaitEvent(copy_stream, (offloadEvent_t)event);
+  }
+  offloadMemcpyAsyncDtoD(dst, src, bytes, copy_stream);
+  offloadStreamSynchronize(copy_stream);
+#else
+  (void)event;
+  (void)dst;
+  (void)src;
+  (void)bytes;
+#endif
+}
+
+/*******************************************************************************
  * \brief Blocks the host until an event has completed.
  ******************************************************************************/
 void offload_event_synchronize(void *event) {
